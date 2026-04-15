@@ -351,6 +351,7 @@ function Deck({ id, ch, ctx:ac, color, local, remote, onChange, midi:mt, bpmResu
     setPlay(nowPlaying);
     setHi(remote.eqHi??0);setMid(remote.eqMid??0);setLo(remote.eqLo??0);setVol(remote.vol??1);
     if(remote.trackName)setName(remote.trackName);
+    if(remote.duration)setDur(remote.duration);
     if(remote.waveformPeaks)setWfPeaks(remote.waveformPeaks);
     // Update interpolation refs when we get a new progress value
     if(remote.progress!=null){
@@ -398,7 +399,7 @@ function Deck({ id, ch, ctx:ac, color, local, remote, onChange, midi:mt, bpmResu
     const ab=await f.arrayBuffer();
     const d=await ac.decodeAudioData(ab);
     stop_();setPlay(false);setProg(0);off.current=0;
-    setBuf(d);setDur(d.duration);
+    setBuf(d);setDur(d.duration);onChange?.("duration",d.duration);
     const n=f.name.replace(/\.[^.]+$/,"");
     setName(n);onChange?.("trackName",n);
     bpmAnalyze?.(d, id);
