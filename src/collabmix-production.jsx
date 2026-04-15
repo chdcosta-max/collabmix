@@ -526,12 +526,16 @@ function Deck({ id, ch, ctx:ac, color, local, remote, onChange, midi:mt, bpmResu
         <span style={{fontSize:10,color:"#333"}}>-{fmt(dur-cur)}</span>
       </div>
 
-      {local&&(
+      {local?(
         <div style={{display:"flex",gap:4,justifyContent:"center"}}>
           <button onClick={cue} disabled={!buf} style={TB("#223")}>⏮</button>
           <button onClick={()=>seek(Math.max(0,prog-.01))} disabled={!buf} style={TB("#223")}>◂◂</button>
           <button onClick={toggle} disabled={!buf} style={{...TB(color),width:38,height:38,fontSize:14,background:play?color+"22":color+"0d",boxShadow:play&&buf?`0 0 12px ${color}55`:""}}>{play?"⏸":"▶"}</button>
           <button onClick={()=>seek(Math.min(1,prog+.01))} disabled={!buf} style={TB("#223")}>▸▸</button>
+        </div>
+      ):(
+        <div style={{height:38,display:"flex",alignItems:"center",justifyContent:"center"}}>
+          <span style={{fontSize:6,fontFamily:"monospace",color:color+"33",letterSpacing:2}}>{play?"● PLAYING":"— STOPPED —"}</span>
         </div>
       )}
 
@@ -1063,70 +1067,76 @@ export default function CollabMix({ initialPage = "landing", djName = null }) {
         </div>
       </div>
 
-      {/* MAIN LAYOUT */}
-      <div style={{ flex:1, display:"grid", gridTemplateColumns:"1fr 155px 1fr 195px", gap:8, padding:9, minHeight:0, overflow:"hidden" }}>
+      {/* MAIN LAYOUT — 3 equal columns: YOUR DECKS | MIXER | PARTNER DECKS */}
+      <div style={{ flex:1, display:"grid", gridTemplateColumns:"1fr 148px 1fr", gap:8, padding:"8px 10px", minHeight:0, overflow:"hidden" }}>
 
-        {/* MY DECKS */}
-        <div style={{ display:"flex", flexDirection:"column", gap:6, overflowY:"auto" }}>
-          <div style={{ display:"flex", gap:5, alignItems:"center" }}>
-            <div style={{ width:5, height:5, borderRadius:"50%", background:"#00d4ff", boxShadow:"0 0 7px #00d4ff" }}/>
-            <span style={{ fontSize:7, fontFamily:"monospace", color:"#00d4ff", letterSpacing:2 }}>{session.name} (YOU)</span>
+        {/* ── YOUR DECKS ── */}
+        <div style={{ display:"flex", flexDirection:"column", gap:6, minWidth:0, overflowY:"auto" }}>
+          <div style={{ display:"flex", gap:5, alignItems:"center", paddingLeft:2 }}>
+            <div style={{ width:6, height:6, borderRadius:"50%", background:"#00d4ff", boxShadow:"0 0 8px #00d4ff" }}/>
+            <span style={{ fontSize:7, fontFamily:"monospace", color:"#00d4ff", letterSpacing:2, fontWeight:700 }}>{session.name} (YOU)</span>
           </div>
           <Deck id="A" ch={eng.current?.A} ctx={eng.current?.ctx} color="#00d4ff" local onChange={dh("A")} midi={midiEvt} bpmResult={bpm.results["A"]} bpmAnalyze={bpm.analyze}/>
           <Deck id="B" ch={eng.current?.B} ctx={eng.current?.ctx} color="#3b82f6" local onChange={dh("B")} midi={midiEvt} bpmResult={bpm.results["B"]} bpmAnalyze={bpm.analyze}/>
         </div>
 
-        {/* CENTER MIXER */}
-        <div style={{ display:"flex", flexDirection:"column", gap:8, overflowY:"auto" }}>
-          <div style={{ background:"#09091a", border:"1px solid #141424", borderRadius:12, padding:"11px 9px", display:"flex", flexDirection:"column", gap:8 }}>
-            <div style={{ fontSize:6, fontFamily:"monospace", color:"#333", letterSpacing:2, textAlign:"center" }}>CROSSFADER</div>
+        {/* ── CENTER MIXER ── */}
+        <div style={{ display:"flex", flexDirection:"column", gap:6, overflowY:"auto", minWidth:0 }}>
+
+          {/* Crossfader */}
+          <div style={{ background:"#08081a", border:"1px solid #141428", borderRadius:10, padding:"10px 8px", display:"flex", flexDirection:"column", gap:7 }}>
+            <div style={{ fontSize:6, fontFamily:"monospace", color:"#2a2a4a", letterSpacing:2, textAlign:"center" }}>CROSSFADER</div>
             <div style={{ display:"flex", justifyContent:"space-between", fontSize:7, fontFamily:"monospace" }}>
-              <span style={{ color:"#00d4ff" }}>A {(xg(xf).a*100).toFixed(0)}%</span>
-              <span style={{ color:"#ff6b35" }}>B {(xg(xf).b*100).toFixed(0)}%</span>
+              <span style={{ color:"#00d4ff", fontWeight:700 }}>A</span>
+              <span style={{ color:"#ff6b35", fontWeight:700 }}>B</span>
             </div>
-            <div style={{ position:"relative", height:24, display:"flex", alignItems:"center" }}>
-              <div style={{ width:"100%", height:4, borderRadius:2, background:`linear-gradient(90deg,#00d4ff ${xf*100}%,#ff6b35 ${xf*100}%)`, border:"1px solid #141424" }}/>
-              <input type="range" min={0} max={1} step={.005} value={xf} onChange={e=>setXfLocal(Number(e.target.value))} style={{ position:"absolute", width:"100%", opacity:0, cursor:"pointer", height:24 }}/>
-              <div style={{ position:"absolute", left:`calc(${xf*100}% - 10px)`, width:20, height:20, background:"linear-gradient(135deg,#1c1c30,#0e0e1e)", border:"2px solid #e8e8f077", borderRadius:4, boxShadow:"0 2px 8px rgba(0,0,0,.6)", pointerEvents:"none", display:"flex", alignItems:"center", justifyContent:"center" }}>
-                <div style={{ width:2, height:10, background:"#e8e8f0", borderRadius:1 }}/>
+            <div style={{ position:"relative", height:26, display:"flex", alignItems:"center" }}>
+              <div style={{ width:"100%", height:5, borderRadius:3, background:`linear-gradient(90deg,#00d4ff44 ${xf*100}%,#ff6b3544 ${xf*100}%)`, border:"1px solid #1a1a2e" }}/>
+              <input type="range" min={0} max={1} step={.005} value={xf} onChange={e=>setXfLocal(Number(e.target.value))} style={{ position:"absolute", width:"100%", opacity:0, cursor:"pointer", height:26 }}/>
+              <div style={{ position:"absolute", left:`calc(${xf*100}% - 11px)`, width:22, height:22, background:"linear-gradient(135deg,#1e1e35,#0c0c1e)", border:"2px solid #ffffff22", borderRadius:5, boxShadow:"0 3px 10px rgba(0,0,0,.7)", pointerEvents:"none", display:"flex", alignItems:"center", justifyContent:"center" }}>
+                <div style={{ width:2, height:11, background:"#e8e8f0bb", borderRadius:1 }}/>
               </div>
             </div>
-            <button onClick={()=>setXfLocal(.5)} style={{ ...sBtn("#334"), fontSize:6, height:16, width:"100%", justifyContent:"center" }}>CENTER</button>
-            <div style={{ height:1, background:"#0f0f1e" }}/>
-            {[["ROOM",session.room],["YOU",session.name],["PARTNER",sync.partner||"—"],["PING",sync.ping?`${sync.ping}ms`:"—"],["AUDIO",rtc.state==="connected"?"LIVE":"OFF"],["REC",rec.state==="recording"?"● LIVE":rec.recs.length>0?`${rec.recs.length} SAVED`:"OFF"]].map(([l,v])=>(
-              <div key={l} style={{ display:"flex", justifyContent:"space-between", fontSize:6, fontFamily:"monospace" }}>
-                <span style={{ color:"#2a2a3a" }}>{l}</span>
-                <span style={{ color:l==="AUDIO"&&rtc.state==="connected"?"#22c55e":l==="REC"&&rec.state==="recording"?"#ef4444":"#444" }}>{v}</span>
+            <button onClick={()=>setXfLocal(.5)} style={{ ...sBtn("#223"), fontSize:6, height:18, width:"100%", justifyContent:"center" }}>CENTER</button>
+          </div>
+
+          {/* Status info */}
+          <div style={{ background:"#08081a", border:"1px solid #141428", borderRadius:10, padding:"8px" }}>
+            {[["ROOM",session.room],["YOU",session.name],["PARTNER",sync.partner||"—"],["PING",sync.ping?`${sync.ping}ms`:"—"],["AUDIO",rtc.state==="connected"?"LIVE":"OFF"],["REC",rec.state==="recording"?"● REC":rec.recs.length>0?`${rec.recs.length} SAVED`:"—"]].map(([l,v])=>(
+              <div key={l} style={{ display:"flex", justifyContent:"space-between", fontSize:6, fontFamily:"monospace", padding:"2px 0", borderBottom:"1px solid #0a0a18" }}>
+                <span style={{ color:"#2a2a4a" }}>{l}</span>
+                <span style={{ color:l==="AUDIO"&&rtc.state==="connected"?"#22c55e":l==="REC"&&rec.state==="recording"?"#ef4444":"#555", maxWidth:80, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap", textAlign:"right" }}>{v}</span>
               </div>
             ))}
           </div>
+
+          {/* Tool panels */}
+          <div style={{ flex:1, background:"#07070f", border:"1px solid #0f0f1e", borderRadius:10, display:"flex", flexDirection:"column", overflow:"hidden", minHeight:120 }}>
+            <div style={{ display:"flex", borderBottom:"1px solid #0f0f1e", flexShrink:0 }}>
+              {PANELS.map(([id,l])=>(
+                <button key={id} onClick={()=>setPanel(id)} style={{ flex:1, padding:"5px 1px", fontSize:5.5, fontFamily:"monospace", background:panel===id?"#0d0d20":"transparent", color:panel===id?"#00d4ff":"#2a2a3a", border:"none", borderBottom:`2px solid ${panel===id?"#00d4ff":"transparent"}`, cursor:"pointer", outline:"none" }}>{l}</button>
+              ))}
+            </div>
+            <div style={{ flex:1, overflow:"auto" }}>
+              {panel==="sync" && <SyncPanel bpmA={bpm.results.A?.bpm} bpmB={bpm.results.B?.bpm} rateA={rateA} rateB={rateB} onSyncB={()=>syncDecks("B",bpm.results.A?.bpm)} onSyncA={()=>syncDecks("A",bpm.results.B?.bpm)}/>}
+              {panel==="rtc"  && <RTCPanel rtc={rtc} partner={sync.partner} syncOk={sync.status==="connected"}/>}
+              {panel==="rec"  && <RecPanel rec={rec} ready={ready}/>}
+              {panel==="chat" && <ChatPanel log={chat} send={msg=>sync.send({type:"chat",msg})} me={session.name}/>}
+              {panel==="midi" && <MidiPanel midi={midi}/>}
+            </div>
+          </div>
         </div>
 
-        {/* PARTNER DECKS */}
-        <div style={{ display:"flex", flexDirection:"column", gap:6, overflowY:"auto" }}>
-          <div style={{ display:"flex", gap:5, alignItems:"center" }}>
-            <div style={{ width:5, height:5, borderRadius:"50%", background:sync.partner?"#ff6b35":"#333", transition:"all .3s" }}/>
-            <span style={{ fontSize:7, fontFamily:"monospace", color:sync.partner?"#ff6b35":"#333", letterSpacing:2 }}>{sync.partner||"WAITING FOR PARTNER..."}</span>
+        {/* ── PARTNER DECKS ── */}
+        <div style={{ display:"flex", flexDirection:"column", gap:6, minWidth:0, overflowY:"auto" }}>
+          <div style={{ display:"flex", gap:5, alignItems:"center", paddingLeft:2 }}>
+            <div style={{ width:6, height:6, borderRadius:"50%", background:sync.partner?"#ff6b35":"#222", boxShadow:sync.partner?"0 0 8px #ff6b35":"none", transition:"all .3s" }}/>
+            <span style={{ fontSize:7, fontFamily:"monospace", color:sync.partner?"#ff6b35":"#2a2a3a", letterSpacing:2, fontWeight:700 }}>{sync.partner||"WAITING FOR PARTNER..."}</span>
           </div>
           <Deck id="A" ch={null} ctx={null} color="#ff6b35" remote={pA} bpmResult={null} bpmAnalyze={null}/>
           <Deck id="B" ch={null} ctx={null} color="#f59e0b" remote={pB} bpmResult={null} bpmAnalyze={null}/>
         </div>
 
-        {/* RIGHT SIDEBAR */}
-        <div style={{ background:"#07070f", border:"1px solid #0f0f1e", borderRadius:12, display:"flex", flexDirection:"column", overflow:"hidden" }}>
-          <div style={{ display:"flex", borderBottom:"1px solid #0f0f1e", flexShrink:0, flexWrap:"wrap" }}>
-            {PANELS.map(([id,l])=>(
-              <button key={id} onClick={()=>setPanel(id)} style={{ flex:1, padding:"6px 2px", fontSize:6, fontFamily:"monospace", letterSpacing:.5, background:panel===id?"#0d0d20":"transparent", color:panel===id?"#00d4ff":"#333", border:"none", borderBottom:`1px solid ${panel===id?"#00d4ff":"transparent"}`, cursor:"pointer", outline:"none", minWidth:32 }}>{l}</button>
-            ))}
-          </div>
-          <div style={{ flex:1, overflow:"auto", display:"flex", flexDirection:"column" }}>
-            {panel==="sync" && <SyncPanel bpmA={bpm.results.A?.bpm} bpmB={bpm.results.B?.bpm} rateA={rateA} rateB={rateB} onSyncB={()=>syncDecks("B",bpm.results.A?.bpm)} onSyncA={()=>syncDecks("A",bpm.results.B?.bpm)}/>}
-            {panel==="rtc"  && <RTCPanel rtc={rtc} partner={sync.partner} syncOk={sync.status==="connected"}/>}
-            {panel==="rec"  && <RecPanel rec={rec} ready={ready}/>}
-            {panel==="chat" && <ChatPanel log={chat} send={msg=>sync.send({type:"chat",msg})} me={session.name}/>}
-            {panel==="midi" && <MidiPanel midi={midi}/>}
-          </div>
-        </div>
       </div>
     </div>
   );
