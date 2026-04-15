@@ -276,38 +276,59 @@ function VU({ an, color, w=100 }) {
   return <canvas ref={ref} width={w} height={6} style={{width:"100%",borderRadius:2}}/>;
 }
 
-function WF({ buf, peaks, prog, color, onSeek, h=50 }) {
+function freqColor(ratio, played) {
+  // 0=bass(red) → 0.4=mid(yellow) → 1=highs(cyan/blue), like Rekordbox
+  const hue = ratio * 180;
+  return played ? `hsl(${hue},100%,58%)` : `hsl(${hue},60%,18%)`;
+}
+
+function WF({ buf, peaks, freq, prog, onSeek, h=64 }) {
   const ref=useRef(null);
   useEffect(()=>{
     if(!ref.current)return;
     const c=ref.current,ctx=c.getContext("2d"),W=c.width,H=c.height;
     ctx.clearRect(0,0,W,H);
     const px=Math.floor(prog*W);
-    let raw=null;
+    let rawAmp=null,rawFreq=null;
+
     if(buf){
-      // All channels for true stereo peak detection
       const step=Math.max(1,Math.floor(buf.length/W));
-      raw=new Float32Array(W);
-      for(let ch=0;ch<buf.numberOfChannels;ch++){const d=buf.getChannelData(ch);for(let x=0;x<W;x++){let mx=0;for(let j=0;j<step;j++)mx=Math.max(mx,Math.abs(d[x*step+j]||0));raw[x]=Math.max(raw[x],mx);}}
-    } else if(peaks&&peaks.length){
-      raw=peaks;
-    }
-    if(raw){
-      // Normalize to track's actual peak so quiet tracks still look full
-      let maxP=0; for(let x=0;x<raw.length;x++)maxP=Math.max(maxP,raw[x]); if(maxP<0.001)maxP=1;
-      const step=raw.length/W, mid=H/2;
-      for(let x=0;x<W;x++){
-        const norm=Math.sqrt((raw[Math.floor(x*step)]||0)/maxP); // sqrt boosts contrast
-        const bh=Math.max(1,norm*mid*0.95);
-        ctx.fillStyle=x<px?color:x===px?"#fff":color+"44";
-        ctx.fillRect(x,mid-bh,1,bh*2); // symmetric mirror above+below center
+      rawAmp=new Float32Array(W); rawFreq=new Float32Array(W);
+      for(let ch=0;ch<buf.numberOfChannels;ch++){
+        const d=buf.getChannelData(ch);
+        for(let x=0;x<W;x++){
+          let mx=0,zcr=0; const s=x*step;
+          for(let j=0;j<step;j++) mx=Math.max(mx,Math.abs(d[s+j]||0));
+          for(let j=1;j<step;j++) if((d[s+j]>=0)!==(d[s+j-1]>=0))zcr++;
+          if(mx>rawAmp[x]){rawAmp[x]=mx; rawFreq[x]=Math.min(1,(zcr/step)*4);}
+        }
       }
-      ctx.fillStyle="#fff";ctx.shadowColor="#fff";ctx.shadowBlur=8;ctx.fillRect(px,0,2,H);ctx.shadowBlur=0;
-    } else {
-      ctx.fillStyle="#0c0c18";for(let x=0;x<W;x+=3)ctx.fillRect(x,H/2-1,1,2);
+    } else if(peaks&&peaks.length){
+      rawAmp=peaks; rawFreq=freq||null;
     }
-  },[buf,peaks,prog,color]);
-  return <canvas ref={ref} width={460} height={h} onClick={e=>{if(!onSeek||!ref.current)return;const r=ref.current.getBoundingClientRect();onSeek((e.clientX-r.left)/r.width);}} style={{width:"100%",height:h,background:"#04040b",borderRadius:6,cursor:onSeek?"crosshair":"default"}}/>;
+
+    if(rawAmp){
+      let maxP=0; for(let x=0;x<rawAmp.length;x++)maxP=Math.max(maxP,rawAmp[x]); if(maxP<0.001)maxP=1;
+      const step=rawAmp.length/W, mid=H/2;
+      for(let x=0;x<W;x++){
+        const i=Math.floor(x*step);
+        const norm=Math.sqrt((rawAmp[i]||0)/maxP);
+        const bh=Math.max(1,norm*mid*0.96);
+        const fr=rawFreq?(rawFreq[i]||0):0.5;
+        ctx.fillStyle=freqColor(fr,x<px);
+        if(x===px){ctx.fillStyle="#fff";}
+        ctx.fillRect(x,mid-bh,1,bh*2);
+      }
+      // Playhead
+      ctx.fillStyle="#fff"; ctx.shadowColor="#fff"; ctx.shadowBlur=10;
+      ctx.fillRect(px,0,2,H); ctx.shadowBlur=0;
+    } else {
+      // Empty — subtle dot line
+      ctx.fillStyle="#0d0d20";
+      for(let x=0;x<W;x+=4)ctx.fillRect(x,H/2-1,2,2);
+    }
+  },[buf,peaks,freq,prog]);
+  return <canvas ref={ref} width={460} height={h} onClick={e=>{if(!onSeek||!ref.current)return;const r=ref.current.getBoundingClientRect();onSeek((e.clientX-r.left)/r.width);}} style={{width:"100%",height:h,background:"#03030e",borderRadius:6,cursor:onSeek?"crosshair":"default",imageRendering:"pixelated"}}/>;
 }
 
 function BeatGrid({ bpm, dur, prog, color }) {
@@ -337,7 +358,7 @@ function Deck({ id, ch, ctx:ac, color, local, remote, onChange, midi:mt, bpmResu
   const [hi,setHi]=useState(0),[mid,setMid]=useState(0),[lo,setLo]=useState(0),[vol,setVol]=useState(1);
   const [rate,setRate]=useState(1); // FIX: track actual playback rate
   const [dragOver,setDragOver]=useState(false);
-  const [wfPeaks,setWfPeaks]=useState(null);
+  const [wfPeaks,setWfPeaks]=useState(null),[wfFreq,setWfFreq]=useState(null);
   const src=useRef(null),st=useRef(0),off=useRef(0),raf=useRef(null),fr=useRef(null);
   const remProgRef=useRef(0),remTimeRef=useRef(0),remRateRef=useRef(0),remRaf=useRef(null);
 
@@ -364,6 +385,7 @@ function Deck({ id, ch, ctx:ac, color, local, remote, onChange, midi:mt, bpmResu
     if(remote.trackName)setName(remote.trackName);
     if(remote.duration)setDur(remote.duration);
     if(remote.waveformPeaks)setWfPeaks(remote.waveformPeaks);
+    if(remote.waveformFreq)setWfFreq(remote.waveformFreq);
     // Update interpolation refs when we get a new progress value
     if(remote.progress!=null){
       const now=performance.now();
@@ -414,12 +436,22 @@ function Deck({ id, ch, ctx:ac, color, local, remote, onChange, midi:mt, bpmResu
     const n=f.name.replace(/\.[^.]+$/,"");
     setName(n);onChange?.("trackName",n);
     bpmAnalyze?.(d, id);
-    // Compute compact peaks (460 values, all channels) and send to partner
+    // Compute compact peaks + frequency ratio (ZCR-based) for all channels
     const W=460,step=Math.max(1,Math.floor(d.length/W));
-    const pk=new Array(W).fill(0);
-    for(let ch=0;ch<d.numberOfChannels;ch++){const data=d.getChannelData(ch);for(let x=0;x<W;x++){let mx=0;for(let j=0;j<step;j++)mx=Math.max(mx,Math.abs(data[x*step+j]||0));pk[x]=Math.max(pk[x],mx);}}
-    const pkRounded=pk.map(v=>Math.round(v*1000)/1000);
-    setWfPeaks(pkRounded);onChange?.("waveformPeaks",pkRounded);
+    const pk=new Array(W).fill(0),fq=new Array(W).fill(0);
+    for(let ch=0;ch<d.numberOfChannels;ch++){
+      const data=d.getChannelData(ch);
+      for(let x=0;x<W;x++){
+        let mx=0,zcr=0; const s=x*step;
+        for(let j=0;j<step;j++)mx=Math.max(mx,Math.abs(data[s+j]||0));
+        for(let j=1;j<step;j++)if((data[s+j]>=0)!==(data[s+j-1]>=0))zcr++;
+        if(mx>pk[x]){pk[x]=mx;fq[x]=Math.min(1,(zcr/step)*4);}
+      }
+    }
+    const pkR=pk.map(v=>Math.round(v*1000)/1000);
+    const fqR=fq.map(v=>Math.round(v*1000)/1000);
+    setWfPeaks(pkR);setWfFreq(fqR);
+    onChange?.("waveformPeaks",pkR);onChange?.("waveformFreq",fqR);
   };
 
   // Expose rate setter for beat sync (called from parent)
@@ -460,7 +492,7 @@ function Deck({ id, ch, ctx:ac, color, local, remote, onChange, midi:mt, bpmResu
       )}
       <input ref={fr} type="file" accept="audio/*" style={{display:"none"}} onChange={e=>e.target.files[0]&&load(e.target.files[0])}/>
 
-      <WF buf={buf} peaks={wfPeaks} prog={prog} color={color} onSeek={local?seek:null}/>
+      <WF buf={buf} peaks={wfPeaks} freq={wfFreq} prog={prog} color={color} onSeek={local?seek:null}/>
       {bpmResult?.bpm&&dur>0&&<BeatGrid bpm={bpmResult.bpm*rate} dur={dur} prog={prog} color={color}/>}
 
       <div style={{display:"flex",justifyContent:"space-between",fontFamily:"monospace"}}>
