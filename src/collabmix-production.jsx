@@ -328,6 +328,7 @@ function Deck({ id, ch, ctx:ac, color, local, remote, onChange, midi:mt, bpmResu
   const [dragOver,setDragOver]=useState(false);
   const [wfPeaks,setWfPeaks]=useState(null);
   const src=useRef(null),st=useRef(0),off=useRef(0),raf=useRef(null),fr=useRef(null);
+  const remProgRef=useRef(0),remTimeRef=useRef(0),remRateRef=useRef(0),remRaf=useRef(null);
 
   // Prevent browser from navigating to dropped files
   useEffect(()=>{
@@ -343,8 +344,38 @@ function Deck({ id, ch, ctx:ac, color, local, remote, onChange, midi:mt, bpmResu
   useEffect(()=>{if(ch){ch.lo.gain.value=lo;}},[lo,ch]);
   useEffect(()=>{if(ch){ch.vol.gain.value=vol;}},[vol,ch]);
 
-  // Mirror remote state
-  useEffect(()=>{ if(!remote||local)return; setPlay(remote.playing||false);setProg(remote.progress||0);setHi(remote.eqHi??0);setMid(remote.eqMid??0);setLo(remote.eqLo??0);setVol(remote.vol??1);if(remote.trackName)setName(remote.trackName);if(remote.waveformPeaks)setWfPeaks(remote.waveformPeaks); },[remote,local]);
+  // Mirror remote state + smooth interpolation for playhead
+  useEffect(()=>{
+    if(!remote||local)return;
+    const wasPlaying=play; const nowPlaying=remote.playing||false;
+    setPlay(nowPlaying);
+    setHi(remote.eqHi??0);setMid(remote.eqMid??0);setLo(remote.eqLo??0);setVol(remote.vol??1);
+    if(remote.trackName)setName(remote.trackName);
+    if(remote.waveformPeaks)setWfPeaks(remote.waveformPeaks);
+    // Update interpolation refs when we get a new progress value
+    if(remote.progress!=null){
+      const now=performance.now();
+      if(remTimeRef.current>0&&remProgRef.current!=null){
+        const dt=now-remTimeRef.current;
+        if(dt>0) remRateRef.current=(remote.progress-remProgRef.current)/dt;
+      }
+      remProgRef.current=remote.progress;
+      remTimeRef.current=now;
+      setProg(remote.progress);
+    }
+    // Start/stop smooth interpolation RAF
+    cancelAnimationFrame(remRaf.current);
+    if(nowPlaying){
+      const animate=()=>{
+        const elapsed=performance.now()-remTimeRef.current;
+        const interp=Math.min(1,Math.max(0,remProgRef.current+remRateRef.current*elapsed));
+        setProg(interp);
+        remRaf.current=requestAnimationFrame(animate);
+      };
+      remRaf.current=requestAnimationFrame(animate);
+    }
+    return()=>cancelAnimationFrame(remRaf.current);
+  },[remote,local]);
 
   // MIDI routing
   const sfx=`DECK_${id}`;
@@ -356,7 +387,7 @@ function Deck({ id, ch, ctx:ac, color, local, remote, onChange, midi:mt, bpmResu
     const s=ac.createBufferSource(); s.buffer=buf; s.playbackRate.value=rate; s.connect(ch.trim); s.start(0,o);
     s.onended=()=>{setPlay(false);setProg(0);off.current=0;onChange?.("playing",false);};
     src.current=s; st.current=ac.currentTime; off.current=o;
-    let ls=0; const tick=()=>{ const c=off.current+(ac.currentTime-st.current); const p=Math.min(1,c/buf.duration); setProg(p); if(c-ls>.5){onChange?.("progress",p);ls=c;} if(c<buf.duration)raf.current=requestAnimationFrame(tick); }; tick(); };
+    const tick=()=>{ const c=off.current+(ac.currentTime-st.current); const p=Math.min(1,c/buf.duration); setProg(p); onChange?.("progress",p); if(c<buf.duration)raf.current=requestAnimationFrame(tick); }; tick(); };
 
   const toggle=useCallback(()=>{ if(!buf)return; if(play){off.current=Math.min(buf.duration,off.current+(ac.currentTime-st.current));stop_();setPlay(false);onChange?.("playing",false);}else{play_(off.current);setPlay(true);onChange?.("playing",true);} },[buf,play,ac,rate]);
   const seek  =useCallback((p)=>{ const o=p*(buf?.duration||0);off.current=o;if(play)play_(o);else setProg(p);onChange?.("progress",p); },[buf,play,rate]);
