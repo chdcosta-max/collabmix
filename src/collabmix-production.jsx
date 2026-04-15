@@ -276,9 +276,26 @@ function VU({ an, color, w=100 }) {
   return <canvas ref={ref} width={w} height={6} style={{width:"100%",borderRadius:2}}/>;
 }
 
-function WF({ buf, prog, color, onSeek, h=50 }) {
+function WF({ buf, peaks, prog, color, onSeek, h=50 }) {
   const ref=useRef(null);
-  useEffect(()=>{ if(!ref.current)return; const c=ref.current,ctx=c.getContext("2d"),W=c.width,H=c.height; ctx.clearRect(0,0,W,H); if(!buf){ctx.fillStyle="#0c0c18";for(let x=0;x<W;x+=3)ctx.fillRect(x,H/2-1,1,2);return;} const data=buf.getChannelData(0),step=Math.floor(data.length/W),px=Math.floor(prog*W); for(let x=0;x<W;x++){let mx=0;for(let j=0;j<step;j++)mx=Math.max(mx,Math.abs(data[x*step+j]||0));const bh=mx*H*.9;ctx.fillStyle=x<px?color:x===px?"#fff":color+"33";ctx.fillRect(x,(H-bh)/2,1,Math.max(1,bh));} ctx.fillStyle="#fff";ctx.shadowColor="#fff";ctx.shadowBlur=6;ctx.fillRect(Math.floor(prog*W),0,2,H);ctx.shadowBlur=0; },[buf,prog,color]);
+  useEffect(()=>{
+    if(!ref.current)return;
+    const c=ref.current,ctx=c.getContext("2d"),W=c.width,H=c.height;
+    ctx.clearRect(0,0,W,H);
+    const px=Math.floor(prog*W);
+    if(buf){
+      // Full resolution from AudioBuffer
+      const data=buf.getChannelData(0),step=Math.floor(data.length/W);
+      for(let x=0;x<W;x++){let mx=0;for(let j=0;j<step;j++)mx=Math.max(mx,Math.abs(data[x*step+j]||0));const bh=mx*H*.9;ctx.fillStyle=x<px?color:x===px?"#fff":color+"33";ctx.fillRect(x,(H-bh)/2,1,Math.max(1,bh));}
+    } else if(peaks&&peaks.length){
+      // Compact peaks array from partner
+      const step=peaks.length/W;
+      for(let x=0;x<W;x++){const mx=peaks[Math.floor(x*step)]||0;const bh=mx*H*.9;ctx.fillStyle=x<px?color:x===px?"#fff":color+"33";ctx.fillRect(x,(H-bh)/2,1,Math.max(1,bh));}
+    } else {
+      ctx.fillStyle="#0c0c18";for(let x=0;x<W;x+=3)ctx.fillRect(x,H/2-1,1,2);return;
+    }
+    ctx.fillStyle="#fff";ctx.shadowColor="#fff";ctx.shadowBlur=6;ctx.fillRect(px,0,2,H);ctx.shadowBlur=0;
+  },[buf,peaks,prog,color]);
   return <canvas ref={ref} width={460} height={h} onClick={e=>{if(!onSeek||!ref.current)return;const r=ref.current.getBoundingClientRect();onSeek((e.clientX-r.left)/r.width);}} style={{width:"100%",height:h,background:"#04040b",borderRadius:6,cursor:onSeek?"crosshair":"default"}}/>;
 }
 
@@ -309,6 +326,7 @@ function Deck({ id, ch, ctx:ac, color, local, remote, onChange, midi:mt, bpmResu
   const [hi,setHi]=useState(0),[mid,setMid]=useState(0),[lo,setLo]=useState(0),[vol,setVol]=useState(1);
   const [rate,setRate]=useState(1); // FIX: track actual playback rate
   const [dragOver,setDragOver]=useState(false);
+  const [wfPeaks,setWfPeaks]=useState(null);
   const src=useRef(null),st=useRef(0),off=useRef(0),raf=useRef(null),fr=useRef(null);
 
   // Prevent browser from navigating to dropped files
@@ -326,7 +344,7 @@ function Deck({ id, ch, ctx:ac, color, local, remote, onChange, midi:mt, bpmResu
   useEffect(()=>{if(ch){ch.vol.gain.value=vol;}},[vol,ch]);
 
   // Mirror remote state
-  useEffect(()=>{ if(!remote||local)return; setPlay(remote.playing||false);setProg(remote.progress||0);setHi(remote.eqHi??0);setMid(remote.eqMid??0);setLo(remote.eqLo??0);setVol(remote.vol??1);if(remote.trackName)setName(remote.trackName); },[remote,local]);
+  useEffect(()=>{ if(!remote||local)return; setPlay(remote.playing||false);setProg(remote.progress||0);setHi(remote.eqHi??0);setMid(remote.eqMid??0);setLo(remote.eqLo??0);setVol(remote.vol??1);if(remote.trackName)setName(remote.trackName);if(remote.waveformPeaks)setWfPeaks(remote.waveformPeaks); },[remote,local]);
 
   // MIDI routing
   const sfx=`DECK_${id}`;
@@ -352,7 +370,11 @@ function Deck({ id, ch, ctx:ac, color, local, remote, onChange, midi:mt, bpmResu
     setBuf(d);setDur(d.duration);
     const n=f.name.replace(/\.[^.]+$/,"");
     setName(n);onChange?.("trackName",n);
-    bpmAnalyze?.(d, id); // ← FIX: trigger BPM analysis
+    bpmAnalyze?.(d, id);
+    // Compute compact peaks (460 values) and send to partner
+    const data=d.getChannelData(0),W=460,step=Math.floor(data.length/W);
+    const pk=Array.from({length:W},(_,x)=>{let mx=0;for(let j=0;j<step;j++)mx=Math.max(mx,Math.abs(data[x*step+j]||0));return Math.round(mx*1000)/1000;});
+    setWfPeaks(pk);onChange?.("waveformPeaks",pk);
   };
 
   // Expose rate setter for beat sync (called from parent)
@@ -393,7 +415,7 @@ function Deck({ id, ch, ctx:ac, color, local, remote, onChange, midi:mt, bpmResu
       )}
       <input ref={fr} type="file" accept="audio/*" style={{display:"none"}} onChange={e=>e.target.files[0]&&load(e.target.files[0])}/>
 
-      <WF buf={buf} prog={prog} color={color} onSeek={local?seek:null}/>
+      <WF buf={buf} peaks={wfPeaks} prog={prog} color={color} onSeek={local?seek:null}/>
       {bpmResult?.bpm&&dur>0&&<BeatGrid bpm={bpmResult.bpm*rate} dur={dur} prog={prog} color={color}/>}
 
       <div style={{display:"flex",justifyContent:"space-between",fontFamily:"monospace"}}>
