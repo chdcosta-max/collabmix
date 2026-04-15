@@ -174,8 +174,8 @@ function useSync({ url, onMsg }) {
       };
       w.onmessage = (e) => {
         let m; try{m=JSON.parse(e.data);}catch{return;}
-        if(m.type==="joined")        setPartner(m.partnerName);
-        if(m.type==="partner_joined")setPartner(m.djName);
+        if(m.type==="joined"){setPartner(m.partnerName);if(m.partnerState){if(m.partnerState.deckA)setPA(m.partnerState.deckA);if(m.partnerState.deckB)setPB(m.partnerState.deckB);}}
+        if(m.type==="partner_joined"){setPartner(m.djName);sync.send({type:"sync_request"});}
         if(m.type==="partner_left")  setPartner(null);
         if(m.type==="pong")          setPing(Date.now()-m.clientTime);
         if(m.type==="error")         setConnErr(m.msg);
