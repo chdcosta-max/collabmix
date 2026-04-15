@@ -283,18 +283,29 @@ function WF({ buf, peaks, prog, color, onSeek, h=50 }) {
     const c=ref.current,ctx=c.getContext("2d"),W=c.width,H=c.height;
     ctx.clearRect(0,0,W,H);
     const px=Math.floor(prog*W);
+    let raw=null;
     if(buf){
-      // Full resolution from AudioBuffer
-      const data=buf.getChannelData(0),step=Math.floor(data.length/W);
-      for(let x=0;x<W;x++){let mx=0;for(let j=0;j<step;j++)mx=Math.max(mx,Math.abs(data[x*step+j]||0));const bh=mx*H*.9;ctx.fillStyle=x<px?color:x===px?"#fff":color+"33";ctx.fillRect(x,(H-bh)/2,1,Math.max(1,bh));}
+      // All channels for true stereo peak detection
+      const step=Math.max(1,Math.floor(buf.length/W));
+      raw=new Float32Array(W);
+      for(let ch=0;ch<buf.numberOfChannels;ch++){const d=buf.getChannelData(ch);for(let x=0;x<W;x++){let mx=0;for(let j=0;j<step;j++)mx=Math.max(mx,Math.abs(d[x*step+j]||0));raw[x]=Math.max(raw[x],mx);}}
     } else if(peaks&&peaks.length){
-      // Compact peaks array from partner
-      const step=peaks.length/W;
-      for(let x=0;x<W;x++){const mx=peaks[Math.floor(x*step)]||0;const bh=mx*H*.9;ctx.fillStyle=x<px?color:x===px?"#fff":color+"33";ctx.fillRect(x,(H-bh)/2,1,Math.max(1,bh));}
-    } else {
-      ctx.fillStyle="#0c0c18";for(let x=0;x<W;x+=3)ctx.fillRect(x,H/2-1,1,2);return;
+      raw=peaks;
     }
-    ctx.fillStyle="#fff";ctx.shadowColor="#fff";ctx.shadowBlur=6;ctx.fillRect(px,0,2,H);ctx.shadowBlur=0;
+    if(raw){
+      // Normalize to track's actual peak so quiet tracks still look full
+      let maxP=0; for(let x=0;x<raw.length;x++)maxP=Math.max(maxP,raw[x]); if(maxP<0.001)maxP=1;
+      const step=raw.length/W, mid=H/2;
+      for(let x=0;x<W;x++){
+        const norm=Math.sqrt((raw[Math.floor(x*step)]||0)/maxP); // sqrt boosts contrast
+        const bh=Math.max(1,norm*mid*0.95);
+        ctx.fillStyle=x<px?color:x===px?"#fff":color+"44";
+        ctx.fillRect(x,mid-bh,1,bh*2); // symmetric mirror above+below center
+      }
+      ctx.fillStyle="#fff";ctx.shadowColor="#fff";ctx.shadowBlur=8;ctx.fillRect(px,0,2,H);ctx.shadowBlur=0;
+    } else {
+      ctx.fillStyle="#0c0c18";for(let x=0;x<W;x+=3)ctx.fillRect(x,H/2-1,1,2);
+    }
   },[buf,peaks,prog,color]);
   return <canvas ref={ref} width={460} height={h} onClick={e=>{if(!onSeek||!ref.current)return;const r=ref.current.getBoundingClientRect();onSeek((e.clientX-r.left)/r.width);}} style={{width:"100%",height:h,background:"#04040b",borderRadius:6,cursor:onSeek?"crosshair":"default"}}/>;
 }
@@ -403,10 +414,12 @@ function Deck({ id, ch, ctx:ac, color, local, remote, onChange, midi:mt, bpmResu
     const n=f.name.replace(/\.[^.]+$/,"");
     setName(n);onChange?.("trackName",n);
     bpmAnalyze?.(d, id);
-    // Compute compact peaks (460 values) and send to partner
-    const data=d.getChannelData(0),W=460,step=Math.floor(data.length/W);
-    const pk=Array.from({length:W},(_,x)=>{let mx=0;for(let j=0;j<step;j++)mx=Math.max(mx,Math.abs(data[x*step+j]||0));return Math.round(mx*1000)/1000;});
-    setWfPeaks(pk);onChange?.("waveformPeaks",pk);
+    // Compute compact peaks (460 values, all channels) and send to partner
+    const W=460,step=Math.max(1,Math.floor(d.length/W));
+    const pk=new Array(W).fill(0);
+    for(let ch=0;ch<d.numberOfChannels;ch++){const data=d.getChannelData(ch);for(let x=0;x<W;x++){let mx=0;for(let j=0;j<step;j++)mx=Math.max(mx,Math.abs(data[x*step+j]||0));pk[x]=Math.max(pk[x],mx);}}
+    const pkRounded=pk.map(v=>Math.round(v*1000)/1000);
+    setWfPeaks(pkRounded);onChange?.("waveformPeaks",pkRounded);
   };
 
   // Expose rate setter for beat sync (called from parent)
