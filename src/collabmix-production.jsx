@@ -486,73 +486,128 @@ function Deck({ id, ch, ctx:ac, color, local, remote, onChange, midi:mt, bpmResu
   const sy=(setter,field)=>(v)=>{setter(v);onChange?.(field,v);};
   const cur=prog*dur;
 
+  const DK = {
+    wrapper: { background:"linear-gradient(160deg,#0c0c20 0%,#060610 100%)", border:`1px solid ${play?color+"66":"#181828"}`, borderRadius:14, overflow:"hidden", display:"flex", flexDirection:"column", boxShadow: play ? `0 0 30px ${color}18, inset 0 1px 0 ${color}22` : "inset 0 1px 0 #ffffff08", transition:"border-color .3s,box-shadow .3s" },
+    header: { padding:"10px 14px 8px", display:"flex", justifyContent:"space-between", alignItems:"center", borderBottom:`1px solid #0e0e1e` },
+    trackArea: { padding:"10px 14px 6px", cursor: local?"pointer":"default" },
+    wfWrap: { padding:"0 0 0 0" },
+    timeRow: { padding:"6px 14px", display:"flex", justifyContent:"space-between", alignItems:"center", background:"#04040c" },
+    controls: { padding:"8px 14px", display:"flex", gap:8, justifyContent:"center", alignItems:"center", background:"#04040c", borderTop:"1px solid #0e0e1e" },
+    eqRow: { padding:"10px 14px", display:"flex", gap:0, justifyContent:"space-around", alignItems:"flex-end", borderTop:"1px solid #0e0e1e", background:"#05050e" },
+  };
+
   return (
-    <div style={{background:"linear-gradient(155deg,#0d0d1f,#07070f)",border:`1px solid ${play?color+"55":"#141424"}`,borderRadius:12,padding:12,display:"flex",flexDirection:"column",gap:7,boxShadow:play?`0 0 22px ${color}14`:"none",transition:"border-color .3s,box-shadow .3s"}}>
-      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
-        <div style={{display:"flex",gap:6,alignItems:"center"}}>
-          <span style={{fontFamily:"'Barlow Condensed',sans-serif",fontWeight:800,fontSize:13,letterSpacing:3,color}}> DECK {id}</span>
-          {!local&&<span style={{fontSize:6,fontFamily:"monospace",color:color+"88",background:color+"11",borderRadius:3,padding:"1px 5px"}}>PARTNER</span>}
-          {play&&<div style={{width:4,height:4,borderRadius:"50%",background:color,boxShadow:`0 0 7px ${color}`,animation:"blink 1s ease-in-out infinite"}}/>}
-        </div>
+    <div style={DK.wrapper}>
+
+      {/* HEADER — deck label + BPM + VU */}
+      <div style={DK.header}>
         <div style={{display:"flex",gap:8,alignItems:"center"}}>
-          {/* FIX: show live BPM accounting for rate */}
-          {bpmResult?.bpm&&<span style={{fontSize:9,fontFamily:"monospace",fontWeight:700,color:color+"cc"}}>{(bpmResult.bpm*rate).toFixed(1)} <span style={{fontSize:6,color:"#444"}}>BPM</span></span>}
-          {bpmResult?.analyzing&&<span style={{fontSize:7,fontFamily:"monospace",color:"#f59e0b",animation:"pulse .8s infinite"}}>ANALYZING</span>}
+          <span style={{fontFamily:"'Barlow Condensed',sans-serif",fontWeight:900,fontSize:16,letterSpacing:4,color}}>{local?"":"⟵ "}DECK {id}</span>
+          {!local&&<span style={{fontSize:8,fontFamily:"monospace",color:color,background:color+"18",border:`1px solid ${color}33`,borderRadius:4,padding:"1px 6px",letterSpacing:1}}>PARTNER</span>}
+          {play&&<div style={{width:5,height:5,borderRadius:"50%",background:color,boxShadow:`0 0 9px ${color}`,animation:"blink 1s ease-in-out infinite"}}/>}
+        </div>
+        <div style={{display:"flex",gap:10,alignItems:"center"}}>
+          {bpmResult?.analyzing&&<span style={{fontSize:7,fontFamily:"monospace",color:"#f59e0b",animation:"pulse .8s infinite",letterSpacing:1}}>ANALYZING</span>}
+          {bpmResult?.bpm&&(
+            <div style={{textAlign:"right"}}>
+              <div style={{fontSize:18,fontFamily:"monospace",fontWeight:800,color,lineHeight:1}}>{(bpmResult.bpm*rate).toFixed(1)}</div>
+              <div style={{fontSize:7,color:"#333",fontFamily:"monospace",letterSpacing:1}}>BPM</div>
+            </div>
+          )}
           <VU an={ch?.an} color={color}/>
         </div>
       </div>
 
+      {/* TRACK NAME / DROP ZONE */}
       {local?(
         <div
           onClick={()=>fr.current?.click()}
           onDragOver={e=>{e.preventDefault();e.stopPropagation();setDragOver(true);}}
           onDragLeave={()=>setDragOver(false)}
           onDrop={e=>{e.preventDefault();e.stopPropagation();setDragOver(false);const f=e.dataTransfer.files[0];if(f&&f.type.startsWith("audio/"))load(f);}}
-          style={{background:dragOver?color+"11":"#07070f",border:`1px dashed ${dragOver?color:buf?color+"22":"#141424"}`,borderRadius:7,padding:"6px 10px",cursor:"pointer",display:"flex",justifyContent:"space-between",alignItems:"center",transition:"all .15s"}}>
-          <div><div style={{fontSize:10,fontWeight:600,color:buf?"#d8d8e8":dragOver?color:"#2a2a3a",fontFamily:"'Barlow Condensed',sans-serif"}}>{dragOver?"DROP TO LOAD":name||"CLICK OR DRAG TRACK"}</div>{buf&&<div style={{fontSize:6,color:"#444",fontFamily:"monospace",marginTop:1}}>{fmt(dur)} · {(buf.sampleRate/1000).toFixed(1)}kHz</div>}</div>
-          <span style={{color:dragOver?color:color+"44",fontSize:13}}>⊕</span>
+          style={{...DK.trackArea, background:dragOver?color+"0d":"transparent", borderBottom:`1px solid ${dragOver?color+"44":"#0e0e1e"}`, transition:"all .15s"}}>
+          {buf?(
+            <div>
+              <div style={{fontSize:13,fontWeight:700,color:"#d8d8ee",fontFamily:"'Barlow Condensed',sans-serif",letterSpacing:.5,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{name}</div>
+              <div style={{fontSize:9,color:"#444",fontFamily:"monospace",marginTop:2}}>{fmt(dur)} · {(buf.sampleRate/1000).toFixed(1)}kHz · {buf.numberOfChannels===2?"STEREO":"MONO"}</div>
+            </div>
+          ):(
+            <div style={{display:"flex",alignItems:"center",gap:8,padding:"4px 0"}}>
+              <div style={{width:28,height:28,borderRadius:6,border:`1px dashed ${dragOver?color:color+"33"}`,display:"flex",alignItems:"center",justifyContent:"center",color:dragOver?color:color+"44",fontSize:16,flexShrink:0}}>+</div>
+              <div>
+                <div style={{fontSize:11,fontWeight:700,color:dragOver?color:"#2a2a4a",fontFamily:"'Barlow Condensed',sans-serif",letterSpacing:.5}}>{dragOver?"DROP TO LOAD":"CLICK OR DRAG A TRACK"}</div>
+                <div style={{fontSize:8,color:"#1e1e2e",fontFamily:"monospace",marginTop:1}}>MP3, WAV, FLAC, AAC supported</div>
+              </div>
+            </div>
+          )}
         </div>
       ):(
-        <div style={{background:"#07070f",border:"1px solid #111",borderRadius:7,padding:"6px 10px"}}><div style={{fontSize:10,color:name?"#6666aa":"#1e1e2e",fontFamily:"'Barlow Condensed',sans-serif"}}>{name||"WAITING FOR PARTNER..."}</div></div>
+        <div style={{...DK.trackArea, borderBottom:"1px solid #0e0e1e", minHeight:44, display:"flex", alignItems:"center"}}>
+          {name?(
+            <div>
+              <div style={{fontSize:13,fontWeight:700,color:color+"cc",fontFamily:"'Barlow Condensed',sans-serif",letterSpacing:.5,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{name}</div>
+              <div style={{fontSize:9,color:"#333",fontFamily:"monospace",marginTop:2}}>{fmt(dur)}</div>
+            </div>
+          ):(
+            <div style={{fontSize:10,color:"#1e1e2e",fontFamily:"monospace",letterSpacing:2}}>WAITING FOR PARTNER...</div>
+          )}
+        </div>
       )}
       <input ref={fr} type="file" accept="audio/*" style={{display:"none"}} onChange={e=>e.target.files[0]&&load(e.target.files[0])}/>
 
-      <WF buf={buf} peaks={wfPeaks} freq={wfFreq} prog={prog} color={color} onSeek={local?seek:null}/>
-      {bpmResult?.bpm&&dur>0&&<BeatGrid bpm={bpmResult.bpm*rate} dur={dur} prog={prog} color={color}/>}
-
-      <div style={{display:"flex",justifyContent:"space-between",fontFamily:"monospace"}}>
-        <span style={{fontSize:10,color,fontWeight:700}}>{fmt(cur)}</span>
-        <span style={{fontSize:6,color:"#2a2a3a"}}>{buf?`${(prog*100).toFixed(1)}%`:""}</span>
-        <span style={{fontSize:10,color:"#333"}}>-{fmt(dur-cur)}</span>
+      {/* WAVEFORM */}
+      <div style={{background:"#03030e"}}>
+        <WF buf={buf} peaks={wfPeaks} freq={wfFreq} prog={prog} color={color} onSeek={local?seek:null}/>
+        {bpmResult?.bpm&&dur>0&&<BeatGrid bpm={bpmResult.bpm*rate} dur={dur} prog={prog} color={color}/>}
       </div>
 
+      {/* TIME ROW */}
+      <div style={DK.timeRow}>
+        <div>
+          <div style={{fontSize:22,fontFamily:"monospace",fontWeight:800,color,lineHeight:1,letterSpacing:2}}>{fmt(cur)}</div>
+          <div style={{fontSize:8,color:"#2a2a3a",fontFamily:"monospace",letterSpacing:1,marginTop:2}}>ELAPSED</div>
+        </div>
+        <div style={{textAlign:"center"}}>
+          {buf&&<div style={{fontSize:9,color:"#2a2a3a",fontFamily:"monospace",letterSpacing:1}}>{(prog*100).toFixed(1)}%</div>}
+          {play&&<div style={{width:6,height:6,borderRadius:"50%",background:color,boxShadow:`0 0 8px ${color}`,margin:"0 auto",animation:"pulse .6s infinite"}}/>}
+        </div>
+        <div style={{textAlign:"right"}}>
+          <div style={{fontSize:22,fontFamily:"monospace",fontWeight:800,color:"#2a2a4a",lineHeight:1,letterSpacing:2}}>-{fmt(Math.max(0,dur-cur))}</div>
+          <div style={{fontSize:8,color:"#2a2a3a",fontFamily:"monospace",letterSpacing:1,marginTop:2}}>REMAIN</div>
+        </div>
+      </div>
+
+      {/* TRANSPORT CONTROLS */}
       {local?(
-        <div style={{display:"flex",gap:4,justifyContent:"center"}}>
-          <button onClick={cue} disabled={!buf} style={TB("#223")}>⏮</button>
-          <button onClick={()=>seek(Math.max(0,prog-.01))} disabled={!buf} style={TB("#223")}>◂◂</button>
-          <button onClick={toggle} disabled={!buf} style={{...TB(color),width:38,height:38,fontSize:14,background:play?color+"22":color+"0d",boxShadow:play&&buf?`0 0 12px ${color}55`:""}}>{play?"⏸":"▶"}</button>
-          <button onClick={()=>seek(Math.min(1,prog+.01))} disabled={!buf} style={TB("#223")}>▸▸</button>
+        <div style={DK.controls}>
+          <button onClick={cue} disabled={!buf} title="Cue" style={TB2("#334",28)}>⏮</button>
+          <button onClick={()=>seek(Math.max(0,prog-.005))} disabled={!buf} title="Back" style={TB2("#334",28)}>◂◂</button>
+          <button onClick={toggle} disabled={!buf} style={{height:44,width:56,background:play?color+"22":"#0a0a1c",border:`2px solid ${play?color:color+"44"}`,color:play?color:color+"88",borderRadius:10,cursor:buf?"pointer":"default",fontSize:20,display:"flex",alignItems:"center",justifyContent:"center",boxShadow:play?`0 0 18px ${color}55`:"",transition:"all .15s"}}>
+            {play?"⏸":"▶"}
+          </button>
+          <button onClick={()=>seek(Math.min(1,prog+.005))} disabled={!buf} title="Fwd" style={TB2("#334",28)}>▸▸</button>
         </div>
       ):(
-        <div style={{height:38,display:"flex",alignItems:"center",justifyContent:"center"}}>
-          <span style={{fontSize:6,fontFamily:"monospace",color:color+"33",letterSpacing:2}}>{play?"● PLAYING":"— STOPPED —"}</span>
+        <div style={{...DK.controls, justifyContent:"center"}}>
+          <span style={{fontSize:9,fontFamily:"monospace",color:play?color+"88":"#1e1e2e",letterSpacing:2}}>{play?"● PLAYING":"■ STOPPED"}</span>
         </div>
       )}
 
-      <div style={{display:"flex",gap:4,justifyContent:"space-around",alignItems:"flex-end",background:"#05050c",borderRadius:7,padding:"6px 3px",border:"1px solid #0f0f1e"}}>
-        <Knob v={hi}  set={local?sy(setHi,"eqHi"):()=>{}}  min={-12} max={12} ctr={0} label="HI"  color={color} size={34} off={!local}/>
-        <Knob v={mid} set={local?sy(setMid,"eqMid"):()=>{}} min={-12} max={12} ctr={0} label="MID" color={color} size={34} off={!local}/>
-        <Knob v={lo}  set={local?sy(setLo,"eqLo"):()=>{}}  min={-12} max={12} ctr={0} label="LO"  color={color} size={34} off={!local}/>
-        <div style={{width:1,background:"#1a1a2e",alignSelf:"stretch",margin:"0 1px"}}/>
-        <Knob v={vol} set={local?(v)=>{setVol(v);onChange?.("vol",v);}:()=>{}} min={0} max={1.5} ctr={1} label="VOL" color="#666" size={34} off={!local}/>
+      {/* EQ + VOL */}
+      <div style={DK.eqRow}>
+        <Knob v={hi}  set={local?sy(setHi,"eqHi"):()=>{}}  min={-12} max={12} ctr={0} label="HI"  color={color} size={40} off={!local}/>
+        <Knob v={mid} set={local?sy(setMid,"eqMid"):()=>{}} min={-12} max={12} ctr={0} label="MID" color={color} size={40} off={!local}/>
+        <Knob v={lo}  set={local?sy(setLo,"eqLo"):()=>{}}  min={-12} max={12} ctr={0} label="LO"  color={color} size={40} off={!local}/>
+        <div style={{width:1,background:"#1a1a2e",alignSelf:"stretch",margin:"0 4px"}}/>
+        <Knob v={vol} set={local?(v)=>{setVol(v);onChange?.("vol",v);}:()=>{}} min={0} max={1.5} ctr={1} label="VOL" color={color+"aa"} size={40} off={!local}/>
       </div>
 
-      {/* FIX: expose setRate so parent can do beat sync */}
       <div style={{display:"none"}} data-set-rate={id} ref={el=>{if(el)el._setRate=setRate;}}/>
     </div>
   );
 }
 const TB=(c)=>({height:28,padding:"0 7px",background:"#0a0a18",border:`1px solid ${c}44`,color:c,borderRadius:5,cursor:"pointer",fontFamily:"monospace",fontSize:8,outline:"none",display:"flex",alignItems:"center",justifyContent:"center"});
+const TB2=(c,h=28)=>({height:h,width:h+8,background:"#080818",border:`1px solid ${c}55`,color:c+"bb",borderRadius:7,cursor:"pointer",fontFamily:"monospace",fontSize:10,outline:"none",display:"flex",alignItems:"center",justifyContent:"center",transition:"all .1s"});
 const sBtn=(c)=>({padding:"5px 8px",fontSize:8,fontFamily:"monospace",background:c+"11",border:`1px solid ${c}33`,color:c,borderRadius:6,cursor:"pointer",letterSpacing:1,display:"flex",alignItems:"center",justifyContent:"center",gap:4});
 
 // ── Sidebar Panels ────────────────────────────────────────────
