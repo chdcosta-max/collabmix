@@ -308,7 +308,17 @@ function Deck({ id, ch, ctx:ac, color, local, remote, onChange, midi:mt, bpmResu
   const [prog,setProg]=useState(0),[dur,setDur]=useState(0);
   const [hi,setHi]=useState(0),[mid,setMid]=useState(0),[lo,setLo]=useState(0),[vol,setVol]=useState(1);
   const [rate,setRate]=useState(1); // FIX: track actual playback rate
+  const [dragOver,setDragOver]=useState(false);
   const src=useRef(null),st=useRef(0),off=useRef(0),raf=useRef(null),fr=useRef(null);
+
+  // Prevent browser from navigating to dropped files
+  useEffect(()=>{
+    if(!local)return;
+    const stop=(e)=>{e.preventDefault();e.stopPropagation();};
+    document.addEventListener("dragover",stop);
+    document.addEventListener("drop",stop);
+    return()=>{document.removeEventListener("dragover",stop);document.removeEventListener("drop",stop);};
+  },[local]);
 
   useEffect(()=>{if(ch){ch.hi.gain.value=hi;}},[hi,ch]);
   useEffect(()=>{if(ch){ch.mid.gain.value=mid;}},[mid,ch]);
@@ -369,9 +379,14 @@ function Deck({ id, ch, ctx:ac, color, local, remote, onChange, midi:mt, bpmResu
       </div>
 
       {local?(
-        <div onClick={()=>fr.current?.click()} style={{background:"#07070f",border:`1px dashed ${buf?color+"22":"#141424"}`,borderRadius:7,padding:"6px 10px",cursor:"pointer",display:"flex",justifyContent:"space-between",alignItems:"center"}}>
-          <div><div style={{fontSize:10,fontWeight:600,color:buf?"#d8d8e8":"#2a2a3a",fontFamily:"'Barlow Condensed',sans-serif"}}>{name||"CLICK TO LOAD TRACK"}</div>{buf&&<div style={{fontSize:6,color:"#444",fontFamily:"monospace",marginTop:1}}>{fmt(dur)} · {(buf.sampleRate/1000).toFixed(1)}kHz</div>}</div>
-          <span style={{color:color+"44",fontSize:13}}>⊕</span>
+        <div
+          onClick={()=>fr.current?.click()}
+          onDragOver={e=>{e.preventDefault();e.stopPropagation();setDragOver(true);}}
+          onDragLeave={()=>setDragOver(false)}
+          onDrop={e=>{e.preventDefault();e.stopPropagation();setDragOver(false);const f=e.dataTransfer.files[0];if(f&&f.type.startsWith("audio/"))load(f);}}
+          style={{background:dragOver?color+"11":"#07070f",border:`1px dashed ${dragOver?color:buf?color+"22":"#141424"}`,borderRadius:7,padding:"6px 10px",cursor:"pointer",display:"flex",justifyContent:"space-between",alignItems:"center",transition:"all .15s"}}>
+          <div><div style={{fontSize:10,fontWeight:600,color:buf?"#d8d8e8":dragOver?color:"#2a2a3a",fontFamily:"'Barlow Condensed',sans-serif"}}>{dragOver?"DROP TO LOAD":name||"CLICK OR DRAG TRACK"}</div>{buf&&<div style={{fontSize:6,color:"#444",fontFamily:"monospace",marginTop:1}}>{fmt(dur)} · {(buf.sampleRate/1000).toFixed(1)}kHz</div>}</div>
+          <span style={{color:dragOver?color:color+"44",fontSize:13}}>⊕</span>
         </div>
       ):(
         <div style={{background:"#07070f",border:"1px solid #111",borderRadius:7,padding:"6px 10px"}}><div style={{fontSize:10,color:name?"#6666aa":"#1e1e2e",fontFamily:"'Barlow Condensed',sans-serif"}}>{name||"WAITING FOR PARTNER..."}</div></div>
