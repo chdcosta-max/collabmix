@@ -276,17 +276,16 @@ function VU({ an, color, w=100 }) {
   return <canvas ref={ref} width={w} height={6} style={{width:"100%",borderRadius:2}}/>;
 }
 
-function freqColor(ratio, played) {
-  // 0=bass(red) → 0.4=mid(yellow) → 1=highs(cyan/blue), like Rekordbox
-  const hue = ratio * 180;
-  return played ? `hsl(${hue},100%,58%)` : `hsl(${hue},60%,18%)`;
-}
-
-function WF({ buf, peaks, freq, prog, onSeek, h=64 }) {
+function WF({ buf, peaks, freq, prog, onSeek, h=80 }) {
   const ref=useRef(null);
   useEffect(()=>{
     if(!ref.current)return;
-    const c=ref.current,ctx=c.getContext("2d"),W=c.width,H=c.height;
+    const canvas=ref.current;
+    const dpr=window.devicePixelRatio||1;
+    const W=canvas.clientWidth||460, H=h;
+    canvas.width=W*dpr; canvas.height=H*dpr;
+    const ctx=canvas.getContext("2d");
+    ctx.scale(dpr,dpr);
     ctx.clearRect(0,0,W,H);
     const px=Math.floor(prog*W);
     let rawAmp=null,rawFreq=null;
@@ -310,25 +309,51 @@ function WF({ buf, peaks, freq, prog, onSeek, h=64 }) {
     if(rawAmp){
       let maxP=0; for(let x=0;x<rawAmp.length;x++)maxP=Math.max(maxP,rawAmp[x]); if(maxP<0.001)maxP=1;
       const step=rawAmp.length/W, mid=H/2;
+      // Center line
+      ctx.fillStyle="#ffffff08"; ctx.fillRect(0,mid-1,W,1);
       for(let x=0;x<W;x++){
-        const i=Math.floor(x*step);
-        const norm=Math.sqrt((rawAmp[i]||0)/maxP);
-        const bh=Math.max(1,norm*mid*0.96);
+        const i=Math.min(rawAmp.length-1,Math.floor(x*step));
+        // Power 0.3 — much more aggressive than sqrt, fills the canvas
+        const norm=Math.pow((rawAmp[i]||0)/maxP, 0.3);
+        const bh=Math.max(1.5, norm*(mid-2)*0.98);
         const fr=rawFreq?(rawFreq[i]||0):0.5;
-        ctx.fillStyle=freqColor(fr,x<px);
-        if(x===px){ctx.fillStyle="#fff";}
+        const hue=fr*180; // 0=red, 90=yellow, 180=cyan
+        const played=x<px;
+        // Draw bar with gradient: bright peak, slightly dimmer root
+        const grad=ctx.createLinearGradient(0,mid-bh,0,mid+bh);
+        if(played){
+          grad.addColorStop(0,  `hsl(${hue},100%,72%)`);
+          grad.addColorStop(0.4,`hsl(${hue},100%,55%)`);
+          grad.addColorStop(0.5,`hsl(${hue}, 80%,30%)`);
+          grad.addColorStop(0.6,`hsl(${hue},100%,55%)`);
+          grad.addColorStop(1,  `hsl(${hue},100%,72%)`);
+        } else {
+          grad.addColorStop(0,  `hsl(${hue},70%,32%)`);
+          grad.addColorStop(0.4,`hsl(${hue},70%,22%)`);
+          grad.addColorStop(0.5,`hsl(${hue},40%,12%)`);
+          grad.addColorStop(0.6,`hsl(${hue},70%,22%)`);
+          grad.addColorStop(1,  `hsl(${hue},70%,32%)`);
+        }
+        ctx.fillStyle=grad;
         ctx.fillRect(x,mid-bh,1,bh*2);
       }
       // Playhead
-      ctx.fillStyle="#fff"; ctx.shadowColor="#fff"; ctx.shadowBlur=10;
+      const phGrad=ctx.createLinearGradient(px,0,px+2,0);
+      phGrad.addColorStop(0,"#ffffff");phGrad.addColorStop(1,"#ffffff99");
+      ctx.fillStyle=phGrad; ctx.shadowColor="#fff"; ctx.shadowBlur=12;
       ctx.fillRect(px,0,2,H); ctx.shadowBlur=0;
     } else {
-      // Empty — subtle dot line
-      ctx.fillStyle="#0d0d20";
-      for(let x=0;x<W;x+=4)ctx.fillRect(x,H/2-1,2,2);
+      ctx.fillStyle="#ffffff08";
+      for(let x=0;x<W;x+=5)ctx.fillRect(x,H/2,2,1);
     }
   },[buf,peaks,freq,prog]);
-  return <canvas ref={ref} width={460} height={h} onClick={e=>{if(!onSeek||!ref.current)return;const r=ref.current.getBoundingClientRect();onSeek((e.clientX-r.left)/r.width);}} style={{width:"100%",height:h,background:"#03030e",borderRadius:6,cursor:onSeek?"crosshair":"default",imageRendering:"pixelated"}}/>;
+
+  const onClick=e=>{
+    if(!onSeek||!ref.current)return;
+    const r=ref.current.getBoundingClientRect();
+    onSeek((e.clientX-r.left)/r.width);
+  };
+  return <canvas ref={ref} onClick={onClick} style={{width:"100%",height:h,background:"#03030e",borderRadius:6,cursor:onSeek?"crosshair":"default",display:"block"}}/>;
 }
 
 function BeatGrid({ bpm, dur, prog, color }) {
