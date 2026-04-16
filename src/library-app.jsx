@@ -999,6 +999,7 @@ export default function MusicLibrary() {
   const [rbPicker,          setRbPicker]           = useState(null); // { tracks, playlists, selectedPls, importMode }
   const [rbFileHandle,      setRbFileHandle]       = useState(null); // legacy XML file handle
   const [rbDirHandle,       setRbDirHandle]        = useState(null); // directory handle → reads master.db
+  const [scanDirHandle,     setScanDirHandle]      = useState(null); // remembered music folder → skip picker on rescan
   const searchRef = useRef(null);
 
   useEffect(() => {
@@ -1043,10 +1044,10 @@ export default function MusicLibrary() {
       if (savedItunes?.handle) setItunesDirHandle(savedItunes.handle);
       if (savedRb?.handle) setRbFileHandle(savedRb.handle);
       if (savedRbDir?.handle) setRbDirHandle(savedRbDir.handle);
-      // Auto-rescan the previously chosen music folder to pick up new downloads.
-      // We pass `ts` explicitly so the scan knows which tracks already exist,
-      // avoiding duplicates before React state has had a chance to populate.
+      // Restore the saved music folder handle and auto-rescan if permission is still granted.
+      // Passing `ts` avoids re-importing tracks already in the library.
       if (savedScanDir?.handle) {
+        setScanDirHandle(savedScanDir.handle);
         try {
           const perm = await savedScanDir.handle.queryPermission({ mode: "read" });
           if (perm === "granted") {
@@ -1114,7 +1115,8 @@ export default function MusicLibrary() {
   // existingTracks can be passed explicitly (e.g. on auto-rescan at startup before React
   // state is populated) — falls back to the current `tracks` state for manual scans.
   const scanFolder = async (preHandle = null, existingTracks = null) => {
-    let dirHandle = preHandle;
+    // Use a previously-saved folder handle so the user doesn't have to pick again
+    let dirHandle = preHandle ?? scanDirHandle;
     if (!dirHandle) {
       try { dirHandle = await window.showDirectoryPicker({ mode:"read", startIn:"downloads" }); }
       catch { return; }
@@ -1190,8 +1192,9 @@ export default function MusicLibrary() {
       setScanProg(p => ({ ...p, total: found }));
       setScanning(false);
       processQueue();
-      // Save the folder handle so we can auto-rescan next visit
+      // Save the folder handle so future button clicks and page loads skip the picker
       if (db) await dbPut(db, "handles", { id: "scan_dir", handle: dirHandle });
+      setScanDirHandle(dirHandle);
     }
   };
 
