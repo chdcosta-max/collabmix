@@ -122,7 +122,7 @@ function parseID3(buffer) {
   const ver = bytes[3];
   const size = ((bytes[6]&0x7F)<<21)|((bytes[7]&0x7F)<<14)|((bytes[8]&0x7F)<<7)|(bytes[9]&0x7F);
   let off = 10; const end = Math.min(off+size, buffer.byteLength);
-  const fmap = { "TIT2":"title","TPE1":"artist","TBPM":"bpm","TKEY":"key","TCON":"genre","TALB":"album","TRCK":"track","TYER":"year" };
+  const fmap = { "TIT2":"title","TPE1":"artist","TBPM":"bpm","TKEY":"key","TCON":"genre","TALB":"album","TRCK":"track","TYER":"year","TPUB":"label" };
   function rStr(o, len) {
     const enc = bytes[o]; const sl = bytes.slice(o+1, o+len);
     try { return enc===1||enc===2 ? new TextDecoder("utf-16").decode(sl).replace(/\0/g,"").trim() : new TextDecoder("utf-8").decode(sl).replace(/\0/g,"").trim(); }
@@ -201,6 +201,7 @@ function parseiTunesXML(xmlText) {
         artist: t["Artist"] || t["Album Artist"] || "",
         album: t["Album"] || "",
         genre: t["Genre"] || "",
+        label: t["Publisher"] || "",
         bpm: t["BPM"] ? parseFloat(t["BPM"]) : null,
         key: keyRaw || null,
         duration: t["Total Time"] ? t["Total Time"] / 1000 : null,
@@ -476,73 +477,55 @@ function ArtistView({ tracks, crates, onAddToCrate, onSelect, selected, onPlay }
   );
 }
 
-// ── Genre & Energy view ───────────────────────────────────────
-function GenreView({ tracks, crates, onAddToCrate, onSelect, selected, onPlay }) {
-  const [activeKey, setActiveKey] = useState(null); // "genre:Rock" or "energy:Peak Hour"
-  const [mode, setMode] = useState("energy"); // "energy" | "genre"
+// ── Generic grouped sidebar + tracklist view ───────────────────
+function GroupedView({ tracks, crates, onAddToCrate, onSelect, selected, onPlay, getKey, sortGroups, colorFn, accentColor, emptyText }) {
+  const [activeKey, setActiveKey] = useState(null);
+  const color = accentColor || G;
 
-  const energyGroups = useMemo(() => {
-    const map = {};
-    for (const e of ENERGY_ORDER) map[e] = [];
-    for (const t of tracks) {
-      const e = t.energy?.label || "Unknown";
-      if (map[e]) map[e].push(t);
-      else map[e] = [t];
-    }
-    return Object.entries(map).filter(([,v]) => v.length > 0);
-  }, [tracks]);
-
-  const genreGroups = useMemo(() => {
+  const groups = useMemo(() => {
     const map = {};
     for (const t of tracks) {
-      const g = t.genre || "Unknown Genre";
-      if (!map[g]) map[g] = [];
-      map[g].push(t);
+      const k = getKey(t) || "Unknown";
+      if (!map[k]) map[k] = [];
+      map[k].push(t);
     }
-    return Object.entries(map).sort((a,b) => b[1].length - a[1].length);
+    const entries = Object.entries(map);
+    return sortGroups ? sortGroups(entries) : entries.sort((a,b) => b[1].length - a[1].length);
   }, [tracks]);
 
-  const groups = mode === "energy" ? energyGroups : genreGroups;
-  const filteredTracks = activeKey
-    ? tracks.filter(t => {
-        if (mode === "energy") return (t.energy?.label||"Unknown") === activeKey;
-        return (t.genre||"Unknown Genre") === activeKey;
-      })
-    : [];
+  const filteredTracks = useMemo(() =>
+    activeKey ? tracks.filter(t => (getKey(t) || "Unknown") === activeKey) : [],
+  [tracks, activeKey]);
 
   return (
     <div style={{ display:"flex", height:"100%", overflow:"hidden" }}>
-      {/* Sidebar */}
       <div style={{ width:220, flexShrink:0, overflowY:"auto", borderRight:`1px solid ${C.border}`, background:C.bg }}>
-        <div style={{ display:"flex", gap:0, padding:"8px 10px", borderBottom:`1px solid ${C.border}` }}>
-          {[["energy","ENERGY"],["genre","GENRE"]].map(([id,l]) => (
-            <button key={id} onClick={() => { setMode(id); setActiveKey(null); }}
-              style={{ flex:1, padding:"5px 0", fontSize:9, fontFamily:"'DM Mono',monospace", background:"transparent", color:mode===id?G:C.muted, border:"none", borderBottom:`2px solid ${mode===id?G:"transparent"}`, cursor:"pointer", letterSpacing:1.5 }}>{l}</button>
-          ))}
-        </div>
         {groups.map(([label, gtracks]) => {
-          const color = mode==="energy" ? (ENERGY_COLOR[label]||C.muted) : G;
+          const c = colorFn ? colorFn(label) : color;
           const isActive = activeKey === label;
           return (
             <div key={label} onClick={() => setActiveKey(isActive ? null : label)}
-              style={{ padding:"10px 14px", display:"flex", alignItems:"center", gap:10, cursor:"pointer", background:isActive?`${color}0d`:"transparent", borderBottom:`1px solid ${C.border}44` }}
-              onMouseEnter={e=>e.currentTarget.style.background=isActive?`${color}0d`:C.raised}
-              onMouseLeave={e=>e.currentTarget.style.background=isActive?`${color}0d`:"transparent"}
+              style={{ padding:"10px 14px", display:"flex", alignItems:"center", gap:10, cursor:"pointer", background:isActive?`${c}0d`:"transparent", borderBottom:`1px solid ${C.border}44`, transition:"background .1s" }}
+              onMouseEnter={e=>e.currentTarget.style.background=isActive?`${c}0d`:C.raised}
+              onMouseLeave={e=>e.currentTarget.style.background=isActive?`${c}0d`:"transparent"}
             >
-              <div style={{ width:8, height:8, borderRadius:"50%", background:color, flexShrink:0 }}/>
-              <div style={{ flex:1, fontSize:12, color:isActive?color:C.text, fontFamily:"'DM Sans',sans-serif" }}>{label}</div>
-              <span style={{ fontSize:10, color:C.muted, fontFamily:"'DM Mono',monospace" }}>{gtracks.length}</span>
+              <div style={{ width:8, height:8, borderRadius:"50%", background:c, flexShrink:0 }}/>
+              <div style={{ flex:1, fontSize:12, color:isActive?c:C.text, fontFamily:"'DM Sans',sans-serif", whiteSpace:"nowrap", overflow:"hidden", textOverflow:"ellipsis" }}>{label}</div>
+              <span style={{ fontSize:10, color:C.muted, fontFamily:"'DM Mono',monospace", flexShrink:0 }}>{gtracks.length}</span>
             </div>
           );
         })}
+        {groups.length === 0 && (
+          <div style={{ padding:"20px 14px", fontSize:10, color:C.muted, fontFamily:"'DM Mono',monospace", lineHeight:1.8 }}>
+            {emptyText || "No data yet.\nAnalysis will fill this in."}
+          </div>
+        )}
       </div>
-
-      {/* Tracks */}
       <div style={{ flex:1, overflow:"hidden", display:"flex", flexDirection:"column" }}>
         {activeKey ? (
           <>
             <div style={{ padding:"12px 16px", borderBottom:`1px solid ${C.border}`, background:C.surface, flexShrink:0, display:"flex", alignItems:"center", gap:10 }}>
-              {mode==="energy" && <div style={{ width:10, height:10, borderRadius:"50%", background:ENERGY_COLOR[activeKey]||C.muted }}/>}
+              <div style={{ width:10, height:10, borderRadius:"50%", background:colorFn?colorFn(activeKey):color, flexShrink:0 }}/>
               <div style={{ fontSize:18, fontWeight:600, color:C.text, fontFamily:"'DM Sans',sans-serif" }}>{activeKey}</div>
               <div style={{ fontSize:10, color:C.muted, fontFamily:"'DM Mono',monospace" }}>{filteredTracks.length} tracks</div>
             </div>
@@ -551,12 +534,50 @@ function GenreView({ tracks, crates, onAddToCrate, onSelect, selected, onPlay })
             </div>
           </>
         ) : (
-          <div style={{ display:"flex", alignItems:"center", justifyContent:"center", height:"100%", color:C.muted, fontFamily:"'DM Mono',monospace", fontSize:11 }}>
+          <div style={{ display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"center", height:"100%", gap:6, color:C.muted, fontFamily:"'DM Mono',monospace", fontSize:11, letterSpacing:1 }}>
+            <div style={{ fontSize:22, opacity:.15 }}>←</div>
             SELECT A CATEGORY
           </div>
         )}
       </div>
     </div>
+  );
+}
+
+// ── Energy view ───────────────────────────────────────────────
+function EnergyView(props) {
+  return (
+    <GroupedView {...props}
+      getKey={t => t.energy?.label || null}
+      sortGroups={entries => {
+        const order = ENERGY_ORDER;
+        return entries.sort((a,b) => order.indexOf(a[0]) - order.indexOf(b[0]));
+      }}
+      colorFn={label => ENERGY_COLOR[label] || C.muted}
+      emptyText={"Tracks are analyzed as they load.\nEnergy levels will appear here."}
+    />
+  );
+}
+
+// ── Genre view ────────────────────────────────────────────────
+function GenreView(props) {
+  return (
+    <GroupedView {...props}
+      getKey={t => t.genre || null}
+      accentColor={G}
+      emptyText={"No genre tags found yet.\nID3 tags will fill this in."}
+    />
+  );
+}
+
+// ── Label view ────────────────────────────────────────────────
+function LabelView(props) {
+  return (
+    <GroupedView {...props}
+      getKey={t => t.label || null}
+      accentColor={"#00d4ff"}
+      emptyText={"No record label tags found.\nLabels come from ID3 TPUB tags\nor iTunes Publisher field."}
+    />
   );
 }
 
@@ -787,6 +808,7 @@ export default function MusicLibrary() {
         artist: tags.artist || "",
         album:  tags.album  || "",
         genre:  tags.genre  || "",
+        label:  tags.label  || "",
         year:   tags.year   || "",
         bpm:    tags.bpm    ? parseFloat(tags.bpm) : null,
         key:    tags.key    || null,
@@ -936,7 +958,9 @@ export default function MusicLibrary() {
   const VIEWS = [
     ["tracks",  "♫ ALL TRACKS"],
     ["artists", "👤 ARTISTS"],
-    ["genres",  "⚡ ENERGY / GENRE"],
+    ["energy",  "⚡ ENERGY"],
+    ["genres",  "◎ GENRE"],
+    ["labels",  "🏷 LABEL"],
     ["crates",  "◈ CRATES"],
   ];
 
@@ -1173,9 +1197,11 @@ export default function MusicLibrary() {
           {tracks.length > 0 && (
             <div style={{ flex:1, overflow:"hidden", display:"flex", flexDirection:"column" }}>
               {view==="tracks"  && <TrackListView  tracks={filteredTracks} crates={crates} onAddToCrate={addToCrate} onSelect={t=>setSelected(t.id)} selected={selected} onPlay={null}/>}
-              {view==="artists" && <ArtistView      tracks={filteredTracks} crates={crates} onAddToCrate={addToCrate} onSelect={t=>setSelected(t.id)} selected={selected} onPlay={null}/>}
-              {view==="genres"  && <GenreView       tracks={filteredTracks} crates={crates} onAddToCrate={addToCrate} onSelect={t=>setSelected(t.id)} selected={selected} onPlay={null}/>}
-              {view==="crates"  && <CratesView      tracks={tracks}         crates={crates} onCreateCrate={createCrate} onDeleteCrate={deleteCrate} onRemoveFromCrate={removeFromCrate} onAddToCrate={addToCrate} onSelect={t=>setSelected(t.id)} selected={selected} onPlay={null}/>}
+              {view==="artists" && <ArtistView     tracks={filteredTracks} crates={crates} onAddToCrate={addToCrate} onSelect={t=>setSelected(t.id)} selected={selected} onPlay={null}/>}
+              {view==="energy"  && <EnergyView     tracks={filteredTracks} crates={crates} onAddToCrate={addToCrate} onSelect={t=>setSelected(t.id)} selected={selected} onPlay={null}/>}
+              {view==="genres"  && <GenreView      tracks={filteredTracks} crates={crates} onAddToCrate={addToCrate} onSelect={t=>setSelected(t.id)} selected={selected} onPlay={null}/>}
+              {view==="labels"  && <LabelView      tracks={filteredTracks} crates={crates} onAddToCrate={addToCrate} onSelect={t=>setSelected(t.id)} selected={selected} onPlay={null}/>}
+              {view==="crates"  && <CratesView     tracks={tracks}         crates={crates} onCreateCrate={createCrate} onDeleteCrate={deleteCrate} onRemoveFromCrate={removeFromCrate} onAddToCrate={addToCrate} onSelect={t=>setSelected(t.id)} selected={selected} onPlay={null}/>}
             </div>
           )}
         </div>
