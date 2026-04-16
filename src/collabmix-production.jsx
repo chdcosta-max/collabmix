@@ -173,14 +173,50 @@ function createLibWorker(){return new Worker(URL.createObjectURL(new Blob([LIB_W
 // ── Energy color map ──────────────────────────────────────────
 const ENERGY_COLOR={"Ambient":"#4A90D9","Warm-Up":"#22c55e","Build":"#f59e0b","Peak Hour":"#ff6b35","Hard":"#ef4444"};
 
-// ── useLibrary hook ───────────────────────────────────────────
+// ── Shared IndexedDB helpers (cm_music_library — same DB as standalone library app) ──
+const CM_DB_NAME="cm_music_library", CM_DB_VER=2;
+function openCmDB(){
+  return new Promise((res,rej)=>{
+    const req=indexedDB.open(CM_DB_NAME,CM_DB_VER);
+    req.onupgradeneeded=e=>{
+      const db=e.target.result;
+      if(!db.objectStoreNames.contains("tracks"))  db.createObjectStore("tracks",{keyPath:"id"});
+      if(!db.objectStoreNames.contains("crates"))  db.createObjectStore("crates",{keyPath:"id"});
+      if(!db.objectStoreNames.contains("handles")) db.createObjectStore("handles",{keyPath:"id"});
+      if(!db.objectStoreNames.contains("settings"))db.createObjectStore("settings");
+    };
+    req.onsuccess=e=>res(e.target.result);
+    req.onerror=e=>rej(e.target.error);
+  });
+}
+async function cmDbAll(store){
+  const db=await openCmDB();
+  return new Promise((res,rej)=>{const tx=db.transaction(store,"readonly");const r=tx.objectStore(store).getAll();r.onsuccess=e=>res(e.target.result);r.onerror=e=>rej(e.target.error);});
+}
+async function cmDbGet(store,key){
+  const db=await openCmDB();
+  return new Promise((res,rej)=>{const tx=db.transaction(store,"readonly");const r=tx.objectStore(store).get(key);r.onsuccess=e=>res(e.target.result);r.onerror=e=>rej(e.target.error);});
+}
+
+// ── useLibrary hook — reads from shared cm_music_library IDB ─────────────────
 function useLibrary(){
-  const [library,setLibrary]=useState(()=>{try{return JSON.parse(localStorage.getItem("cm_lib")||"[]");}catch{return [];}});
+  const [library,setLibrary]=useState([]);
   const [importing,setImporting]=useState(false);
   const workerRef=useRef(null),queueRef=useRef([]),activeRef=useRef(false),fileMap=useRef({});
   const audioCtx=useRef(null);
 
-  useEffect(()=>{const s=library.map(({file,...r})=>r);localStorage.setItem("cm_lib",JSON.stringify(s));},[library]);
+  // Load tracks from shared IDB and poll for updates from the library app
+  useEffect(()=>{
+    const load=async()=>{
+      try{
+        const tracks=await cmDbAll("tracks");
+        if(tracks.length>0) setLibrary(tracks);
+      }catch{}
+    };
+    load();
+    const iv=setInterval(load,5000);
+    return()=>clearInterval(iv);
+  },[]);
 
   useEffect(()=>{
     workerRef.current=createLibWorker();
@@ -211,6 +247,7 @@ function useLibrary(){
     })();
   },[]);
 
+  // Quick-add files directly in the mixer (in-memory only, doesn't save to IDB)
   const importFiles=useCallback(async(files)=>{
     const audio=[...files].filter(f=>f.type.startsWith("audio/")||f.name.match(/\.(mp3|wav|flac|aac|ogg|m4a)$/i));
     if(!audio.length)return;
@@ -227,7 +264,23 @@ function useLibrary(){
     setImporting(false); processQ();
   },[processQ]);
 
-  const getFile=(id)=>fileMap.current[id]||null;
+  // Get File object — in-memory first, then IDB handle (from library app)
+  const getFile=useCallback(async(id)=>{
+    if(fileMap.current[id]) return fileMap.current[id];
+    try{
+      const handle=await cmDbGet("handles",id);
+      if(!handle) return null;
+      const perm=await handle.queryPermission({mode:"read"});
+      if(perm!=="granted"){
+        const req=await handle.requestPermission({mode:"read"});
+        if(req!=="granted") return null;
+      }
+      const file=await handle.getFile();
+      fileMap.current[id]=file;
+      return file;
+    }catch{return null;}
+  },[]);
+
   const clear=()=>{setLibrary([]);fileMap.current={};};
 
   return{library,importing,importFiles,getFile,clear};
@@ -1455,9 +1508,9 @@ export default function CollabMix({ initialPage = "landing", djName = null }) {
     if (trackMeta) setPlayingTrack(trackMeta);
   }, []);
 
-  const handleLibLoad = useCallback((track, deck) => {
-    const file = lib.getFile(track.id);
-    if (!file) { alert("File not in memory — please re-add this track to your library."); return; }
+  const handleLibLoad = useCallback(async (track, deck) => {
+    const file = await lib.getFile(track.id);
+    if (!file) { alert("File not available — open the Music Library app to grant folder access, then try again."); return; }
     if (deck === "A") setLibLoadA({ track, file, ts: Date.now() });
     else              setLibLoadB({ track, file, ts: Date.now() });
     setPlayingTrack(track);
@@ -1755,6 +1808,7 @@ export default function CollabMix({ initialPage = "landing", djName = null }) {
             {lib.importing&&<span style={{ fontSize:8, fontFamily:"'DM Mono',monospace", color:G, animation:"pulse .8s infinite" }}>analyzing...</span>}
             {partnerLibrary.length>0&&<span style={{ fontSize:9, fontFamily:"'DM Mono',monospace", color:"#ff6b3577" }}>· {partnerLibrary.length} partner</span>}
           </div>
+          <a href="/library" target="_blank" rel="noreferrer" onClick={e=>e.stopPropagation()} style={{ fontSize:8, fontFamily:"'DM Mono',monospace", padding:"2px 10px", background:"transparent", border:`1px solid ${G}33`, color:`${G}99`, borderRadius:4, textDecoration:"none", letterSpacing:1, cursor:"pointer" }}>LIBRARY APP ↗</a>
           <label style={{ fontSize:9, fontFamily:"'DM Mono',monospace", padding:"3px 12px", background:`${G}14`, border:`1px solid ${G}33`, color:G, borderRadius:5, cursor:"pointer", letterSpacing:1 }}>
             + ADD TRACKS
             <input type="file" accept="audio/*" multiple style={{display:"none"}} onChange={e=>lib.importFiles(e.target.files)}/>
