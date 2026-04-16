@@ -191,6 +191,40 @@ function makeWorker() {
 }
 
 // ── Artwork cache + fetcher (iTunes Search API — no key needed) ──
+// ── MusicBrainz label fetcher ─────────────────────────────────
+// Rate-limited to 1 req/sec per MusicBrainz policy.
+const labelCache = new Map(); // "artist|title" → label string | null
+let _mbLastCall = 0;
+async function fetchLabel(artist, title) {
+  const key = `${artist}|${title}`;
+  if (labelCache.has(key)) return labelCache.get(key);
+  labelCache.set(key, null);
+  if (!artist && !title) return null;
+  try {
+    // Throttle to 1 req/sec
+    const now = Date.now();
+    const wait = Math.max(0, 1100 - (now - _mbLastCall));
+    if (wait > 0) await new Promise(r => setTimeout(r, wait));
+    _mbLastCall = Date.now();
+
+    const q = [artist && `artist:"${artist}"`, title && `recording:"${title}"`].filter(Boolean).join(" AND ");
+    const r = await fetch(
+      `https://musicbrainz.org/ws/2/recording/?query=${encodeURIComponent(q)}&limit=1&fmt=json`,
+      { headers: { "User-Agent": "CollabMix/1.0 (collabmix.vercel.app)" } }
+    );
+    if (!r.ok) return null;
+    const data = await r.json();
+    const releases = data.recordings?.[0]?.releases;
+    if (!releases?.length) return null;
+    // Find the first release that has label info
+    for (const rel of releases) {
+      const label = rel["label-info"]?.[0]?.label?.name;
+      if (label) { labelCache.set(key, label); return label; }
+    }
+  } catch {}
+  return null;
+}
+
 const artworkCache = new Map(); // "artist|title" → url string | null
 async function fetchArtwork(artist, title) {
   const key = `${artist}|${title}`;
@@ -509,7 +543,7 @@ function Pill({ label, color, small }) {
 }
 
 // ── Track row ─────────────────────────────────────────────────
-function TrackRow({ track, selected, onClick, onAddToCrate, crates, onPlay, onSendToDeck, queueIds, onToggleQueue }) {
+function TrackRow({ track, selected, onClick, onAddToCrate, crates, onPlay, onSendToDeck, queueIds, onToggleQueue, onLabelFound }) {
   const [hov, setHov] = useState(false);
   const [showCrateMenu, setShowCrateMenu] = useState(false);
   const [artworkUrl, setArtworkUrl] = useState(() => artworkCache.get(`${track.artist}|${track.title}`) || null);
@@ -524,13 +558,23 @@ function TrackRow({ track, selected, onClick, onAddToCrate, crates, onPlay, onSe
 
   // Fetch artwork lazily
   useEffect(() => {
-    if (artworkUrl) return; // already have it
+    if (artworkUrl) return;
     let cancelled = false;
     fetchArtwork(track.artist || "", track.title || "").then(url => {
       if (!cancelled && url) setArtworkUrl(url);
     });
     return () => { cancelled = true; };
   }, [track.artist, track.title]);
+
+  // Fetch label from MusicBrainz if not embedded in tags
+  useEffect(() => {
+    if (track.label || !track.artist || !track.title) return;
+    let cancelled = false;
+    fetchLabel(track.artist, track.title).then(label => {
+      if (!cancelled && label && onLabelFound) onLabelFound(track.id, label);
+    });
+    return () => { cancelled = true; };
+  }, [track.id, track.artist, track.title, track.label]);
 
   return (
     <div
@@ -591,7 +635,10 @@ function TrackRow({ track, selected, onClick, onAddToCrate, crates, onPlay, onSe
         </div>
         <div style={{ fontSize:10, color:C.subtle, whiteSpace:"nowrap", overflow:"hidden", textOverflow:"ellipsis", fontFamily:"'DM Sans',sans-serif", marginTop:1 }}>
           {track.artist || "Unknown Artist"}
-          {track.genre ? <span style={{color:C.muted}}> · {track.genre}</span> : null}
+          {track.label
+            ? <span style={{color:C.muted}}> · <span style={{color:`${G}cc`,fontFamily:"'DM Mono',monospace",fontSize:9,letterSpacing:.3}}>{track.label}</span></span>
+            : track.genre ? <span style={{color:C.muted}}> · {track.genre}</span> : null
+          }
         </div>
       </div>
 
@@ -691,7 +738,7 @@ function ColHeader({ cols, sortBy, sortDir, onSort }) {
 }
 
 // ── Track list view ────────────────────────────────────────────
-function TrackListView({ tracks, crates, onAddToCrate, onSelect, selected, onPlay, onSendToDeck, queueIds, onToggleQueue }) {
+function TrackListView({ tracks, crates, onAddToCrate, onSelect, selected, onPlay, onSendToDeck, queueIds, onToggleQueue, onLabelFound }) {
   const [sortBy, setSortBy] = useState("addedAt");
   const [sortDir, setSortDir] = useState(-1);
 
@@ -719,7 +766,7 @@ function TrackListView({ tracks, crates, onAddToCrate, onSelect, selected, onPla
         {sorted.map(t => (
           <TrackRow key={t.id} track={t} selected={selected===t.id} onClick={onSelect}
             onAddToCrate={onAddToCrate} crates={crates} onPlay={onPlay} onSendToDeck={onSendToDeck}
-            queueIds={queueIds} onToggleQueue={onToggleQueue}/>
+            queueIds={queueIds} onToggleQueue={onToggleQueue} onLabelFound={onLabelFound}/>
         ))}
         {tracks.length === 0 && (
           <div style={{ display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"center", height:"100%", gap:16, fontFamily:"'DM Mono',monospace" }}>
@@ -1653,6 +1700,17 @@ export default function MusicLibrary() {
     setQueueIds(prev => { const n = new Set(prev); n.delete(trackId); return n; });
   };
   const toggleQueue = (trackId) => queueIds.has(trackId) ? removeFromQueue(trackId) : addToQueue(trackId);
+
+  // ── Save a fetched label back to the track ───────────────────
+  const handleLabelFound = useCallback(async (trackId, label) => {
+    setTracks(prev => prev.map(t => t.id === trackId ? { ...t, label } : t));
+    const db = dbRef.current;
+    if (!db) return;
+    const tx = db.transaction("tracks", "readwrite");
+    const st = tx.objectStore("tracks");
+    const existing = await new Promise(r => { const rq = st.get(trackId); rq.onsuccess = () => r(rq.result); });
+    if (existing) { existing.label = label; st.put(existing); }
+  }, []);
   const clearQueue  = async () => {
     const db = dbRef.current; if (!db) return;
     await dbClear(db, "queue");
@@ -2496,11 +2554,11 @@ export default function MusicLibrary() {
           {/* Views */}
           {tracks.length > 0 && !(sourceFilter && filteredTracks.length === 0 && !scanning) && (
             <div style={{ flex:1, overflow:"hidden", display:"flex", flexDirection:"column" }}>
-              {view==="tracks"  && <TrackListView  tracks={filteredTracks} crates={crates} onAddToCrate={addToCrate} onSelect={t=>setSelected(t.id)} selected={selected} onPlay={null} onSendToDeck={sendToDeck} queueIds={queueIds} onToggleQueue={toggleQueue}/>}
-              {view==="artists" && <ArtistView     tracks={filteredTracks} crates={crates} onAddToCrate={addToCrate} onSelect={t=>setSelected(t.id)} selected={selected} onPlay={null} onSendToDeck={sendToDeck} queueIds={queueIds} onToggleQueue={toggleQueue}/>}
-              {view==="energy"  && <EnergyView     tracks={filteredTracks} crates={crates} onAddToCrate={addToCrate} onSelect={t=>setSelected(t.id)} selected={selected} onPlay={null} onSendToDeck={sendToDeck} queueIds={queueIds} onToggleQueue={toggleQueue}/>}
-              {view==="genres"  && <GenreView      tracks={filteredTracks} crates={crates} onAddToCrate={addToCrate} onSelect={t=>setSelected(t.id)} selected={selected} onPlay={null} onSendToDeck={sendToDeck} queueIds={queueIds} onToggleQueue={toggleQueue}/>}
-              {view==="labels"  && <LabelView      tracks={filteredTracks} crates={crates} onAddToCrate={addToCrate} onSelect={t=>setSelected(t.id)} selected={selected} onPlay={null} onSendToDeck={sendToDeck} queueIds={queueIds} onToggleQueue={toggleQueue}/>}
+              {view==="tracks"  && <TrackListView  tracks={filteredTracks} crates={crates} onAddToCrate={addToCrate} onSelect={t=>setSelected(t.id)} selected={selected} onPlay={null} onSendToDeck={sendToDeck} queueIds={queueIds} onToggleQueue={toggleQueue} onLabelFound={handleLabelFound}/>}
+              {view==="artists" && <ArtistView     tracks={filteredTracks} crates={crates} onAddToCrate={addToCrate} onSelect={t=>setSelected(t.id)} selected={selected} onPlay={null} onSendToDeck={sendToDeck} queueIds={queueIds} onToggleQueue={toggleQueue} onLabelFound={handleLabelFound}/>}
+              {view==="energy"  && <EnergyView     tracks={filteredTracks} crates={crates} onAddToCrate={addToCrate} onSelect={t=>setSelected(t.id)} selected={selected} onPlay={null} onSendToDeck={sendToDeck} queueIds={queueIds} onToggleQueue={toggleQueue} onLabelFound={handleLabelFound}/>}
+              {view==="genres"  && <GenreView      tracks={filteredTracks} crates={crates} onAddToCrate={addToCrate} onSelect={t=>setSelected(t.id)} selected={selected} onPlay={null} onSendToDeck={sendToDeck} queueIds={queueIds} onToggleQueue={toggleQueue} onLabelFound={handleLabelFound}/>}
+              {view==="labels"  && <LabelView      tracks={filteredTracks} crates={crates} onAddToCrate={addToCrate} onSelect={t=>setSelected(t.id)} selected={selected} onPlay={null} onSendToDeck={sendToDeck} queueIds={queueIds} onToggleQueue={toggleQueue} onLabelFound={handleLabelFound}/>}
               {view==="queue" && (() => {
                 const queuedTracks = [...queueIds].map(id => tracks.find(t=>t.id===id)).filter(Boolean);
                 const totalSec = queuedTracks.reduce((s, t) => s + (t.duration || 0), 0);
@@ -2542,7 +2600,7 @@ export default function MusicLibrary() {
                             <div style={{ flex:1, minWidth:0 }}>
                               <TrackRow track={{...t,_rowNum:i+1}} selected={selected===t.id} onClick={tr=>setSelected(tr.id)}
                                 onAddToCrate={addToCrate} crates={crates} onPlay={null} onSendToDeck={sendToDeck}
-                                queueIds={queueIds} onToggleQueue={toggleQueue}/>
+                                queueIds={queueIds} onToggleQueue={toggleQueue} onLabelFound={handleLabelFound}/>
                             </div>
                             <button onClick={()=>removeFromQueue(t.id)} title="Remove from queue"
                               style={{ flexShrink:0, margin:"0 10px", background:"none", border:"none", color:C.muted, cursor:"pointer", fontSize:13, opacity:.4, padding:"0 2px" }}
@@ -2589,7 +2647,7 @@ export default function MusicLibrary() {
                             <div style={{ flex:1, minWidth:0 }}>
                               <TrackRow track={{...t,_rowNum:i+1}} selected={selected===t.id} onClick={tr=>setSelected(tr.id)}
                                 onAddToCrate={addToCrate} crates={crates} onPlay={null} onSendToDeck={sendToDeck}
-                                queueIds={queueIds} onToggleQueue={toggleQueue}/>
+                                queueIds={queueIds} onToggleQueue={toggleQueue} onLabelFound={handleLabelFound}/>
                             </div>
                             <button
                               onClick={()=>removeFromCrate(t.id, activeCrateId)}
