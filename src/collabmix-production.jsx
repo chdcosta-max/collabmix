@@ -174,16 +174,18 @@ function createLibWorker(){return new Worker(URL.createObjectURL(new Blob([LIB_W
 const ENERGY_COLOR={"Ambient":"#4A90D9","Warm-Up":"#22c55e","Build":"#f59e0b","Peak Hour":"#ff6b35","Hard":"#ef4444"};
 
 // ── Shared IndexedDB helpers (cm_music_library — same DB as standalone library app) ──
-const CM_DB_NAME="cm_music_library", CM_DB_VER=2;
+const CM_DB_NAME="cm_music_library", CM_DB_VER=4;
 function openCmDB(){
   return new Promise((res,rej)=>{
     const req=indexedDB.open(CM_DB_NAME,CM_DB_VER);
     req.onupgradeneeded=e=>{
       const db=e.target.result;
-      if(!db.objectStoreNames.contains("tracks"))  db.createObjectStore("tracks",{keyPath:"id"});
-      if(!db.objectStoreNames.contains("crates"))  db.createObjectStore("crates",{keyPath:"id"});
-      if(!db.objectStoreNames.contains("handles")) db.createObjectStore("handles",{keyPath:"id"});
-      if(!db.objectStoreNames.contains("settings"))db.createObjectStore("settings");
+      if(!db.objectStoreNames.contains("tracks"))   db.createObjectStore("tracks",{keyPath:"id"});
+      if(!db.objectStoreNames.contains("crates"))   db.createObjectStore("crates",{keyPath:"id"});
+      if(!db.objectStoreNames.contains("handles"))  db.createObjectStore("handles",{keyPath:"id"});
+      if(!db.objectStoreNames.contains("settings")) db.createObjectStore("settings");
+      if(!db.objectStoreNames.contains("requests")) db.createObjectStore("requests",{keyPath:"id"});
+      if(!db.objectStoreNames.contains("queue"))    db.createObjectStore("queue",{keyPath:"trackId"});
     };
     req.onsuccess=e=>res(e.target.result);
     req.onerror=e=>rej(e.target.error);
@@ -197,10 +199,15 @@ async function cmDbGet(store,key){
   const db=await openCmDB();
   return new Promise((res,rej)=>{const tx=db.transaction(store,"readonly");const r=tx.objectStore(store).get(key);r.onsuccess=e=>res(e.target.result);r.onerror=e=>rej(e.target.error);});
 }
+async function cmDbDelete(store,key){
+  const db=await openCmDB();
+  return new Promise((res,rej)=>{const tx=db.transaction(store,"readwrite");const r=tx.objectStore(store).delete(key);r.onsuccess=()=>res();r.onerror=e=>rej(e.target.error);});
+}
 
 // ── useLibrary hook — reads from shared cm_music_library IDB ─────────────────
 function useLibrary(){
   const [library,setLibrary]=useState([]);
+  const [queue,setQueue]=useState([]);   // ordered array of trackIds in session queue
   const [importing,setImporting]=useState(false);
   const workerRef=useRef(null),queueRef=useRef([]),activeRef=useRef(false),fileMap=useRef({});
   const audioCtx=useRef(null);
@@ -211,6 +218,8 @@ function useLibrary(){
       try{
         const tracks=await cmDbAll("tracks");
         if(tracks.length>0) setLibrary(tracks);
+        const q=await cmDbAll("queue");
+        setQueue(q.sort((a,b)=>a.order-b.order).map(r=>r.trackId));
       }catch{}
     };
     load();
@@ -283,7 +292,7 @@ function useLibrary(){
 
   const clear=()=>{setLibrary([]);fileMap.current={};};
 
-  return{library,importing,importFiles,getFile,clear};
+  return{library,queue,importing,importFiles,getFile,clear};
 }
 
 // ── Library Panel UI ──────────────────────────────────────────
@@ -358,20 +367,26 @@ function TrackRow({track, onLoadA, onLoadB, isRec, reasons, isPartner, canLoad})
   );
 }
 
-function LibraryCol({title, color, tracks, onLoadA, onLoadB, playingTrack, partnerTracks, importing, onImport, onDrop, isOwn}){
+function LibraryCol({title, color, tracks, queue, onLoadA, onLoadB, playingTrack, partnerTracks, importing, onImport, onDrop, isOwn}){
   const [filter,setFilter]=useState("");
   const [sortBy,setSortBy]=useState("title");
   const [sortDir,setSortDir]=useState(1);
-  const [tab,setTab]=useState("all");
+  // Default to "queue" if there are queued tracks, else "suggest" if playing, else "all"
+  const defaultTab = queue?.length>0 ? "queue" : "all";
+  const [tab,setTab]=useState(defaultTab);
   const fileRef=useRef(null);
   const G="#C8A96E";
 
-  const crossRecs = playingTrack&&partnerTracks?.length>0 ? recommendTracks(playingTrack, partnerTracks) : [];
   const selfRecs  = playingTrack&&tracks?.length>0 ? recommendTracks(playingTrack, tracks) : [];
+  const crossRecs = playingTrack&&partnerTracks?.length>0 ? recommendTracks(playingTrack, partnerTracks) : [];
   const activeRecs= tab==="suggest" ? (isOwn ? selfRecs : crossRecs) : [];
   const recIds    = new Set(activeRecs.map(r=>r.id));
 
-  const filtered = (tab==="suggest" ? activeRecs : tracks)
+  // Queued tracks (in queue order)
+  const queuedTracks = (queue||[]).map(id=>tracks.find(t=>t.id===id)).filter(Boolean);
+
+  const baseTracks = tab==="queue" ? queuedTracks : tab==="suggest" ? activeRecs : tracks;
+  const filtered = baseTracks
     .filter(t=>{const q=filter.toLowerCase();return !q||t.title?.toLowerCase().includes(q)||t.artist?.toLowerCase().includes(q)||t.genre?.toLowerCase().includes(q);})
     .sort((a,b)=>{const va=a[sortBy]||0,vb=b[sortBy]||0;return(typeof va==="string"?va.localeCompare(vb):(va-vb))*sortDir;});
 
@@ -380,6 +395,10 @@ function LibraryCol({title, color, tracks, onLoadA, onLoadB, playingTrack, partn
       {label}{sortBy===key?(sortDir===1?" ↑":" ↓"):""}
     </div>
   );
+
+  const tabs = isOwn
+    ? [["queue",`QUEUE${queuedTracks.length>0?` (${queuedTracks.length})`:""}`],["suggest",`SUGGEST (${selfRecs.length})`],["all","ALL"]]
+    : [["suggest",`SUGGEST (${crossRecs.length})`],["all","ALL"]];
 
   return(
     <div style={{display:"flex",flexDirection:"column",height:"100%",overflow:"hidden"}}>
@@ -396,13 +415,13 @@ function LibraryCol({title, color, tracks, onLoadA, onLoadB, playingTrack, partn
           )}
         </div>
         <div style={{display:"flex",gap:3,marginBottom:8}}>
-          {[["all","ALL"],["suggest",`SUGGEST (${isOwn?selfRecs.length:crossRecs.length})`]].map(([id,l])=>(
+          {tabs.map(([id,l])=>(
             <button key={id} onClick={()=>setTab(id)} style={{padding:"3px 9px",fontSize:7,fontFamily:"'DM Mono',monospace",letterSpacing:1,background:tab===id?color+"18":"transparent",color:tab===id?color:"#3A3555",border:`1px solid ${tab===id?color+"33":"#1C1830"}`,borderRadius:4,cursor:"pointer",outline:"none"}}>{l}</button>
           ))}
         </div>
-        <input value={filter} onChange={e=>setFilter(e.target.value)} placeholder="Search tracks..." style={{width:"100%",background:"#080710",border:`1px solid #1C1830`,color:"#d0d0e0",borderRadius:5,padding:"5px 9px",fontSize:9,fontFamily:"'DM Mono',monospace",outline:"none"}}/>
+        <input value={filter} onChange={e=>setFilter(e.target.value)} placeholder="Search..." style={{width:"100%",background:"#080710",border:`1px solid #1C1830`,color:"#d0d0e0",borderRadius:5,padding:"5px 9px",fontSize:9,fontFamily:"'DM Mono',monospace",outline:"none"}}/>
       </div>
-      {tracks.length>0&&(
+      {baseTracks.length>0&&(
         <div style={{display:"grid",gridTemplateColumns:"1fr 52px 44px 72px 40px 64px",gap:6,padding:"6px 10px",borderBottom:"1px solid #0a0a14",flexShrink:0}}>
           {colHdr("TITLE","title")}
           {colHdr("BPM","bpm")}
@@ -413,7 +432,15 @@ function LibraryCol({title, color, tracks, onLoadA, onLoadB, playingTrack, partn
         </div>
       )}
       <div style={{flex:1,overflowY:"auto",padding:"3px 4px"}} onDragOver={isOwn?e=>{e.preventDefault();}:undefined} onDrop={isOwn?onDrop:undefined}>
-        {tracks.length===0&&isOwn?(
+        {tab==="queue"&&queuedTracks.length===0?(
+          <div style={{display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",height:"100%",gap:10,padding:16}}>
+            <div style={{fontSize:28,opacity:.15}}>◉</div>
+            <div style={{fontFamily:"'DM Mono',monospace",fontSize:8,color:"#3A3555",textAlign:"center",letterSpacing:1,lineHeight:2}}>
+              NO TRACKS QUEUED<br/>
+              <span style={{color:"#22c55e55"}}>Open the Music Library →<br/>hover a track → click + QUEUE</span>
+            </div>
+          </div>
+        ):tracks.length===0&&isOwn?(
           <div onClick={()=>fileRef.current?.click()} style={{display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",height:"100%",gap:12,cursor:"pointer",padding:20,border:`2px dashed #C8A96E18`,borderRadius:8,margin:8}}>
             <div style={{fontSize:32,opacity:.2}}>♫</div>
             <div style={{fontFamily:"'DM Mono',monospace",fontSize:9,color:"#3A3555",textAlign:"center",letterSpacing:1,lineHeight:2}}>DROP TRACKS HERE<br/>OR CLICK ADD<br/><br/>MP3 WAV FLAC AAC</div>
@@ -473,6 +500,7 @@ function LibraryPanel({lib, onLoad, playingTrack, partnerName, partnerLibrary}){
           title="YOUR LIBRARY"
           color="#00d4ff"
           tracks={lib.library}
+          queue={lib.queue}
           onLoadA={(t)=>onLoad(t,"A")}
           onLoadB={(t)=>onLoad(t,"B")}
           playingTrack={playingTrack}
@@ -1515,6 +1543,27 @@ export default function CollabMix({ initialPage = "landing", djName = null }) {
     else              setLibLoadB({ track, file, ts: Date.now() });
     setPlayingTrack(track);
   }, [lib]);
+
+  // Poll library "requests" store — picks up tracks sent from the Library app (→ A / → B buttons)
+  useEffect(() => {
+    const poll = async () => {
+      try {
+        const reqs = await cmDbAll("requests");
+        for (const req of reqs) {
+          if (!req.trackId || !req.deck) continue;
+          // Only act on fresh requests (< 10s old)
+          if (Date.now() - req.ts > 10000) { await cmDbDelete("requests", req.id); continue; }
+          const track = lib.library.find(t => t.id === req.trackId);
+          if (track) {
+            await handleLibLoad(track, req.deck);
+            await cmDbDelete("requests", req.id);
+          }
+        }
+      } catch {}
+    };
+    const iv = setInterval(poll, 2000);
+    return () => clearInterval(iv);
+  }, [lib.library, handleLibLoad]);
 
   const applyXF = useCallback((v) => {
     if (!eng.current) return;

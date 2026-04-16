@@ -7,7 +7,7 @@ import { useState, useEffect, useRef, useCallback, useMemo } from "react";
 // ═══════════════════════════════════════════════════════════════
 
 const DB_NAME = "cm_music_library";
-const DB_VER  = 2;
+const DB_VER  = 4;
 const G = "#C8A96E";
 
 // ── Palette ───────────────────────────────────────────────────
@@ -63,6 +63,12 @@ function openDB() {
       }
       if (!db.objectStoreNames.contains("settings")) {
         db.createObjectStore("settings", { keyPath: "key" });
+      }
+      if (!db.objectStoreNames.contains("requests")) {
+        db.createObjectStore("requests", { keyPath: "id" });
+      }
+      if (!db.objectStoreNames.contains("queue")) {
+        db.createObjectStore("queue", { keyPath: "trackId" });
       }
     };
     req.onsuccess = () => res(req.result);
@@ -244,6 +250,17 @@ async function* scanDir(dirHandle, path="") {
 const fmt = (s) => s != null ? `${Math.floor(s/60)}:${String(Math.floor(s%60)).padStart(2,"0")}` : "--";
 const fmtBPM = (b) => b ? b.toFixed(1) : "--";
 
+// ── Open Apple Music (deep-link via anchor click — works in Chrome/Safari/Edge) ──
+function openAppleMusic(artist, title) {
+  const term = encodeURIComponent(`${artist||""} ${title||""}`.trim());
+  const a = document.createElement("a");
+  a.href = `music://music.apple.com/search?term=${term}`;
+  a.style.display = "none";
+  document.body.appendChild(a);
+  a.click();
+  setTimeout(() => { try { document.body.removeChild(a); } catch {} }, 200);
+}
+
 // ── Pill component ────────────────────────────────────────────
 function Pill({ label, color, small }) {
   return (
@@ -264,7 +281,7 @@ function Pill({ label, color, small }) {
 }
 
 // ── Track row ─────────────────────────────────────────────────
-function TrackRow({ track, selected, onClick, onAddToCrate, crates, onPlay }) {
+function TrackRow({ track, selected, onClick, onAddToCrate, crates, onPlay, onSendToDeck, queueIds, onToggleQueue }) {
   const [hov, setHov] = useState(false);
   const [showCrateMenu, setShowCrateMenu] = useState(false);
   const camelot = CAMELOT[track.key];
@@ -293,7 +310,9 @@ function TrackRow({ track, selected, onClick, onAddToCrate, crates, onPlay }) {
       {/* # / play */}
       <div style={{ textAlign:"center", color: hov ? G : C.muted, fontSize:10, fontFamily:"'DM Mono',monospace" }}>
         {hov
-          ? <span onClick={e=>{e.stopPropagation();onPlay&&onPlay(track);}} style={{fontSize:14,cursor:"pointer"}}>{track.cloudOnly?"☁":"▶"}</span>
+          ? track.cloudOnly
+            ? <span onClick={e=>{e.stopPropagation();openAppleMusic(track.artist,track.title);}} title="Open in Apple Music to download" style={{fontSize:14,cursor:"pointer",color:"#60a5fa"}}>⬇</span>
+            : <span onClick={e=>{e.stopPropagation();onPlay&&onPlay(track);}} style={{fontSize:14,cursor:"pointer"}}>▶</span>
           : track.cloudOnly
             ? <span title="Cloud only — not downloaded" style={{fontSize:11,color:"#60a5fa",opacity:.7}}>☁</span>
             : <span>{track._rowNum||""}</span>
@@ -306,7 +325,7 @@ function TrackRow({ track, selected, onClick, onAddToCrate, crates, onPlay }) {
           <div style={{ fontSize:13, fontWeight:500, color: track.cloudOnly ? C.subtle : C.text, whiteSpace:"nowrap", overflow:"hidden", textOverflow:"ellipsis", fontFamily:"'DM Sans',sans-serif" }}>
             {track.title || track.filename}
           </div>
-          {track.cloudOnly && <span title="Stored in iCloud — open Apple Music to download" style={{fontSize:9,color:"#60a5fa",background:"#60a5fa15",border:"1px solid #60a5fa33",borderRadius:3,padding:"1px 4px",flexShrink:0,fontFamily:"'DM Mono',monospace",letterSpacing:.5}}>CLOUD</span>}
+          {track.cloudOnly && <span onClick={e=>{e.stopPropagation();openAppleMusic(track.artist,track.title);}} title="Click to open in Apple Music and download" style={{fontSize:9,color:"#60a5fa",background:"#60a5fa15",border:"1px solid #60a5fa33",borderRadius:3,padding:"1px 4px",flexShrink:0,fontFamily:"'DM Mono',monospace",letterSpacing:.5,cursor:"pointer"}}>☁ CLOUD</span>}
         </div>
         <div style={{ fontSize:10, color:C.subtle, whiteSpace:"nowrap", overflow:"hidden", textOverflow:"ellipsis", fontFamily:"'DM Sans',sans-serif", marginTop:1 }}>
           {[track.artist, track.album].filter(Boolean).join(" · ") || "Unknown Artist"}
@@ -342,6 +361,37 @@ function TrackRow({ track, selected, onClick, onAddToCrate, crates, onPlay }) {
 
       {/* Actions */}
       <div style={{ display:"flex", gap:4, justifyContent:"flex-end", opacity: hov ? 1 : 0, transition:"opacity .1s" }}>
+        {onToggleQueue && (() => {
+          const inQ = queueIds?.has(track.id);
+          return (
+            <button
+              onClick={e=>{ e.stopPropagation(); onToggleQueue(track.id); }}
+              title={inQ ? "Remove from session queue" : "Add to session queue"}
+              style={{ fontSize:9, fontFamily:"'DM Mono',monospace", padding:"3px 7px", background:inQ?"#22c55e18":"transparent", border:`1px solid ${inQ?"#22c55e55":C.border}`, color:inQ?"#22c55e":C.muted, borderRadius:4, cursor:"pointer", whiteSpace:"nowrap", transition:"all .15s" }}
+            >{inQ ? "✓ QUEUED" : "+ QUEUE"}</button>
+          );
+        })()}
+        {track.cloudOnly && (
+          <button
+            onClick={e=>{ e.stopPropagation(); openAppleMusic(track.artist, track.title); }}
+            title="Open in Apple Music to download this track"
+            style={{ fontSize:9, fontFamily:"'DM Mono',monospace", padding:"3px 7px", background:"#60a5fa14", border:"1px solid #60a5fa44", color:"#60a5fa", borderRadius:4, cursor:"pointer", whiteSpace:"nowrap" }}
+          >⬇ MUSIC</button>
+        )}
+        {!track.cloudOnly && onSendToDeck && (
+          <>
+            <button
+              onClick={e=>{ e.stopPropagation(); onSendToDeck(track,"A"); }}
+              title="Send to Deck A in the mixer"
+              style={{ fontSize:9, fontFamily:"'DM Mono',monospace", padding:"3px 7px", background:"#C8A96E14", border:"1px solid #C8A96E44", color:"#C8A96E", borderRadius:4, cursor:"pointer", whiteSpace:"nowrap" }}
+            >→ A</button>
+            <button
+              onClick={e=>{ e.stopPropagation(); onSendToDeck(track,"B"); }}
+              title="Send to Deck B in the mixer"
+              style={{ fontSize:9, fontFamily:"'DM Mono',monospace", padding:"3px 7px", background:"#00d4ff14", border:"1px solid #00d4ff44", color:"#00d4ff", borderRadius:4, cursor:"pointer", whiteSpace:"nowrap" }}
+            >→ B</button>
+          </>
+        )}
         <div style={{ position:"relative" }}>
           <button
             onClick={e=>{ e.stopPropagation(); setShowCrateMenu(v=>!v); }}
@@ -382,7 +432,7 @@ function ColHeader({ cols, sortBy, sortDir, onSort }) {
 }
 
 // ── Track list view ────────────────────────────────────────────
-function TrackListView({ tracks, crates, onAddToCrate, onSelect, selected, onPlay }) {
+function TrackListView({ tracks, crates, onAddToCrate, onSelect, selected, onPlay, onSendToDeck, queueIds, onToggleQueue }) {
   const [sortBy, setSortBy] = useState("addedAt");
   const [sortDir, setSortDir] = useState(-1);
 
@@ -409,7 +459,8 @@ function TrackListView({ tracks, crates, onAddToCrate, onSelect, selected, onPla
       <div style={{ flex:1, overflowY:"auto" }}>
         {sorted.map(t => (
           <TrackRow key={t.id} track={t} selected={selected===t.id} onClick={onSelect}
-            onAddToCrate={onAddToCrate} crates={crates} onPlay={onPlay}/>
+            onAddToCrate={onAddToCrate} crates={crates} onPlay={onPlay} onSendToDeck={onSendToDeck}
+            queueIds={queueIds} onToggleQueue={onToggleQueue}/>
         ))}
         {tracks.length === 0 && (
           <div style={{ display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"center", height:"100%", gap:12, color:C.muted, fontFamily:"'DM Mono',monospace", fontSize:11 }}>
@@ -423,7 +474,7 @@ function TrackListView({ tracks, crates, onAddToCrate, onSelect, selected, onPla
 }
 
 // ── Artist view ───────────────────────────────────────────────
-function ArtistView({ tracks, crates, onAddToCrate, onSelect, selected, onPlay }) {
+function ArtistView({ tracks, crates, onAddToCrate, onSelect, selected, onPlay, onSendToDeck, queueIds, onToggleQueue }) {
   const [activeArtist, setActiveArtist] = useState(null);
 
   const byArtist = useMemo(() => {
@@ -470,7 +521,7 @@ function ArtistView({ tracks, crates, onAddToCrate, onSelect, selected, onPlay }
               <div style={{ fontSize:10, color:C.muted, fontFamily:"'DM Mono',monospace", marginTop:2 }}>{artistTracks.length} tracks</div>
             </div>
             <div style={{ flex:1, overflow:"hidden" }}>
-              <TrackListView tracks={artistTracks} crates={crates} onAddToCrate={onAddToCrate} onSelect={onSelect} selected={selected} onPlay={onPlay}/>
+              <TrackListView tracks={artistTracks} crates={crates} onAddToCrate={onAddToCrate} onSelect={onSelect} selected={selected} onPlay={onPlay} onSendToDeck={onSendToDeck} queueIds={queueIds} onToggleQueue={onToggleQueue}/>
             </div>
           </>
         ) : (
@@ -484,7 +535,7 @@ function ArtistView({ tracks, crates, onAddToCrate, onSelect, selected, onPlay }
 }
 
 // ── Generic grouped sidebar + tracklist view ───────────────────
-function GroupedView({ tracks, crates, onAddToCrate, onSelect, selected, onPlay, getKey, sortGroups, colorFn, accentColor, emptyText }) {
+function GroupedView({ tracks, crates, onAddToCrate, onSelect, selected, onPlay, onSendToDeck, queueIds, onToggleQueue, getKey, sortGroups, colorFn, accentColor, emptyText }) {
   const [activeKey, setActiveKey] = useState(null);
   const color = accentColor || G;
 
@@ -536,7 +587,7 @@ function GroupedView({ tracks, crates, onAddToCrate, onSelect, selected, onPlay,
               <div style={{ fontSize:10, color:C.muted, fontFamily:"'DM Mono',monospace" }}>{filteredTracks.length} tracks</div>
             </div>
             <div style={{ flex:1, overflow:"hidden" }}>
-              <TrackListView tracks={filteredTracks} crates={crates} onAddToCrate={onAddToCrate} onSelect={onSelect} selected={selected} onPlay={onPlay}/>
+              <TrackListView tracks={filteredTracks} crates={crates} onAddToCrate={onAddToCrate} onSelect={onSelect} selected={selected} onPlay={onPlay} onSendToDeck={onSendToDeck} queueIds={queueIds} onToggleQueue={onToggleQueue}/>
             </div>
           </>
         ) : (
@@ -709,7 +760,13 @@ export default function MusicLibrary() {
   const [bpmRange, setBpmRange] = useState([60, 180]);
   const [energyFilter, setEnergyFilter] = useState(null);
   const [keyFilter,    setKeyFilter]    = useState(null);
-  const [showItunesHelper, setShowItunesHelper] = useState(false);
+  const [showItunesHelper,  setShowItunesHelper]  = useState(false);
+  const [cratesExpanded,    setCratesExpanded]     = useState(true);
+  const [activeCrateId,     setActiveCrateId]      = useState(null);
+  const [showNewCrateInput, setShowNewCrateInput]  = useState(false);
+  const [newCrateName,      setNewCrateName]        = useState("");
+  const [queueIds,          setQueueIds]            = useState(() => new Set());
+
   useEffect(() => {
     if (!showItunesHelper) return;
     const close = (e) => { if (!e.target.closest("[data-itunes-helper]")) setShowItunesHelper(false); };
@@ -717,14 +774,20 @@ export default function MusicLibrary() {
     return () => document.removeEventListener("mousedown", close);
   }, [showItunesHelper]);
 
+  // Helper: switch standard view and clear crate selection
+  const selectView = (id) => { setView(id); setActiveCrateId(null); };
+  // Helper: select a crate
+  const selectCrate = (id) => { setActiveCrateId(id); setView("crate"); };
+
   // ── Init DB + worker ────────────────────────────────────────
   useEffect(() => {
     openDB().then(db => {
       dbRef.current = db;
-      return Promise.all([dbGetAll(db,"tracks"), dbGetAll(db,"crates")]);
-    }).then(([ts,cs]) => {
+      return Promise.all([dbGetAll(db,"tracks"), dbGetAll(db,"crates"), dbGetAll(db,"queue")]);
+    }).then(([ts,cs,qs]) => {
       setTracks(ts.sort((a,b)=>b.addedAt-a.addedAt));
       setCrates(cs);
+      setQueueIds(new Set(qs.map(q=>q.trackId)));
     });
 
     const w = makeWorker();
@@ -924,6 +987,24 @@ export default function MusicLibrary() {
     processQueue();
   };
 
+  // ── Session Queue operations ─────────────────────────────────
+  const addToQueue = async (trackId) => {
+    const db = dbRef.current; if (!db) return;
+    await dbPut(db, "queue", { trackId, order: Date.now() });
+    setQueueIds(prev => new Set([...prev, trackId]));
+  };
+  const removeFromQueue = async (trackId) => {
+    const db = dbRef.current; if (!db) return;
+    await dbDelete(db, "queue", trackId);
+    setQueueIds(prev => { const n = new Set(prev); n.delete(trackId); return n; });
+  };
+  const toggleQueue = (trackId) => queueIds.has(trackId) ? removeFromQueue(trackId) : addToQueue(trackId);
+  const clearQueue  = async () => {
+    const db = dbRef.current; if (!db) return;
+    await dbClear(db, "queue");
+    setQueueIds(new Set());
+  };
+
   // ── Crate operations ────────────────────────────────────────
   const createCrate = async (name) => {
     const cr = { id:`cr_${Date.now()}`, name, trackIds:[], createdAt:Date.now() };
@@ -982,14 +1063,20 @@ export default function MusicLibrary() {
   const cloudCount    = tracks.filter(t=>t.cloudOnly).length;
   const analyzing = queueRef.current.length > 0 || activeRef.current;
 
-  // ── NAV VIEWS ────────────────────────────────────────────────
+  // ── sendToDeck — writes a "load this track to deck X" request to IDB ────────
+  const sendToDeck = useCallback(async (track, deck) => {
+    const db = dbRef.current;
+    if (!db) return;
+    await dbPut(db, "requests", { id: `deck_${deck}`, deck, trackId: track.id, ts: Date.now() });
+  }, []);
+
+  // ── NAV VIEWS (no crates — handled inline in sidebar) ────────
   const VIEWS = [
     ["tracks",  "♫ ALL TRACKS"],
     ["artists", "👤 ARTISTS"],
     ["energy",  "⚡ ENERGY"],
     ["genres",  "◎ GENRE"],
     ["labels",  "🏷 LABEL"],
-    ["crates",  "◈ CRATES"],
   ];
 
   return (
@@ -1057,35 +1144,49 @@ export default function MusicLibrary() {
               ♪ iTunes
             </button>
             {showItunesHelper && (
-              <div data-itunes-helper style={{ position:"absolute", top:"calc(100% + 8px)", right:0, width:320, background:C.raised, border:`1px solid #8B5CF644`, borderRadius:12, padding:18, zIndex:200, boxShadow:"0 16px 48px rgba(0,0,0,.8)" }}>
-                <div style={{ fontSize:13, fontWeight:600, color:C.text, fontFamily:"'DM Sans',sans-serif", marginBottom:4 }}>Import from iTunes / Apple Music</div>
-                <div style={{ fontSize:11, color:"#60a5fa", marginBottom:14, fontFamily:"'DM Sans',sans-serif", lineHeight:1.5 }}>
-                  ☁ Most of your library is in iCloud — to see ALL your tracks (cloud + local), import via XML.
+              <div data-itunes-helper style={{ position:"absolute", top:"calc(100% + 8px)", right:0, width:360, background:C.raised, border:`1px solid #8B5CF644`, borderRadius:12, padding:18, zIndex:200, boxShadow:"0 16px 48px rgba(0,0,0,.8)" }}>
+                <div style={{ fontSize:13, fontWeight:600, color:C.text, fontFamily:"'DM Sans',sans-serif", marginBottom:12 }}>Import Apple Music Library</div>
+
+                {/* Step 1 */}
+                <div style={{ display:"flex", gap:10, marginBottom:12 }}>
+                  <div style={{ width:22, height:22, borderRadius:"50%", background:"#8B5CF622", border:"1px solid #8B5CF655", color:"#8B5CF6", display:"flex", alignItems:"center", justifyContent:"center", fontSize:11, fontFamily:"'DM Mono',monospace", flexShrink:0 }}>1</div>
+                  <div>
+                    <div style={{ fontSize:11, fontWeight:600, color:C.text, fontFamily:"'DM Sans',sans-serif", marginBottom:4 }}>Export from Apple Music first</div>
+                    <div style={{ fontSize:10, color:C.subtle, fontFamily:"'DM Sans',sans-serif", lineHeight:1.7 }}>
+                      Open Apple Music on your Mac, then:<br/>
+                      <span style={{color:G,fontFamily:"'DM Mono',monospace",fontSize:10}}>File</span>
+                      {" → "}
+                      <span style={{color:G,fontFamily:"'DM Mono',monospace",fontSize:10}}>Library</span>
+                      {" → "}
+                      <span style={{color:G,fontFamily:"'DM Mono',monospace",fontSize:10}}>Export Library...</span>
+                    </div>
+                    <div style={{ marginTop:6, padding:"6px 10px", background:"#f59e0b11", border:"1px solid #f59e0b33", borderRadius:6, fontSize:10, color:"#f59e0b", fontFamily:"'DM Sans',sans-serif", lineHeight:1.5 }}>
+                      💡 Save the file to your <strong>Desktop</strong>. It will be named <strong>Library.xml</strong> — NOT the "Music Library" file already in your Music folder.
+                    </div>
+                  </div>
                 </div>
 
-                {/* PRIMARY: XML import */}
-                <div style={{ background:C.bg, borderRadius:8, padding:12, marginBottom:10, border:`1px solid #8B5CF633` }}>
-                  <div style={{ fontSize:10, fontFamily:"'DM Mono',monospace", color:"#8B5CF6", letterSpacing:1, marginBottom:8 }}>STEP 1 — In Apple Music:</div>
-                  <div style={{ fontSize:11, color:C.text, fontFamily:"'DM Sans',sans-serif", lineHeight:1.8, marginBottom:10 }}>
-                    <span style={{color:G}}>File</span> → <span style={{color:G}}>Library</span> → <span style={{color:G}}>Export Library...</span><br/>
-                    Save the file to your Desktop.
-                  </div>
-                  <div style={{ fontSize:10, fontFamily:"'DM Mono',monospace", color:"#8B5CF6", letterSpacing:1, marginBottom:8 }}>STEP 2 — Select that file:</div>
-                  <label style={{ display:"flex", alignItems:"center", justifyContent:"center", gap:8, padding:"10px", background:"#8B5CF622", border:"1px solid #8B5CF655", color:"#8B5CF6", fontFamily:"'DM Mono',monospace", fontSize:11, letterSpacing:1, borderRadius:7, cursor:"pointer" }}>
-                    ♪ Select Library XML File
-                    <input type="file" accept=".xml" style={{display:"none"}} onChange={e=>{ if(e.target.files[0]) importFromItunes(e.target.files[0]); e.target.value=""; setShowItunesHelper(false); }}/>
-                  </label>
-                  <div style={{ fontSize:9, color:C.muted, fontFamily:"'DM Mono',monospace", marginTop:6, textAlign:"center" }}>
-                    Imports your FULL library including ☁ cloud tracks
+                {/* Step 2 */}
+                <div style={{ display:"flex", gap:10, marginBottom:14 }}>
+                  <div style={{ width:22, height:22, borderRadius:"50%", background:"#8B5CF622", border:"1px solid #8B5CF655", color:"#8B5CF6", display:"flex", alignItems:"center", justifyContent:"center", fontSize:11, fontFamily:"'DM Mono',monospace", flexShrink:0 }}>2</div>
+                  <div style={{ flex:1 }}>
+                    <div style={{ fontSize:11, fontWeight:600, color:C.text, fontFamily:"'DM Sans',sans-serif", marginBottom:8 }}>Then select the Library.xml file here</div>
+                    <label style={{ display:"flex", alignItems:"center", justifyContent:"center", gap:8, padding:"11px", background:"#8B5CF622", border:"1px solid #8B5CF666", color:"#8B5CF6", fontFamily:"'DM Mono',monospace", fontSize:11, letterSpacing:1, borderRadius:7, cursor:"pointer" }}>
+                      ♪ Select Library.xml
+                      <input type="file" accept=".xml" style={{display:"none"}} onChange={e=>{ if(e.target.files[0]) importFromItunes(e.target.files[0]); e.target.value=""; setShowItunesHelper(false); }}/>
+                    </label>
+                    <div style={{ fontSize:9, color:C.muted, fontFamily:"'DM Mono',monospace", marginTop:5, textAlign:"center" }}>
+                      Navigate to Desktop → select Library.xml · Imports ☁ cloud + downloaded tracks
+                    </div>
                   </div>
                 </div>
 
-                {/* SECONDARY: folder scan */}
-                <div style={{ borderTop:`1px solid ${C.border}`, paddingTop:10 }}>
-                  <div style={{ fontSize:10, color:C.muted, marginBottom:8, fontFamily:"'DM Mono',monospace" }}>OR — scan downloaded music only:</div>
+                {/* Folder scan fallback */}
+                <div style={{ borderTop:`1px solid ${C.border}`, paddingTop:10, display:"flex", alignItems:"center", justifyContent:"space-between" }}>
+                  <span style={{ fontSize:9, color:C.muted, fontFamily:"'DM Mono',monospace" }}>Only want downloaded files?</span>
                   <button onClick={itunesScan}
-                    style={{ width:"100%", padding:"8px", background:"transparent", border:`1px solid ${C.border}`, color:C.muted, fontFamily:"'DM Mono',monospace", fontSize:10, letterSpacing:1, borderRadius:7, cursor:"pointer" }}>
-                    ⊕ Scan Local Music Folder
+                    style={{ padding:"4px 10px", background:"transparent", border:`1px solid ${C.border}`, color:C.muted, fontFamily:"'DM Mono',monospace", fontSize:9, letterSpacing:1, borderRadius:5, cursor:"pointer" }}>
+                    ⊕ Scan folder instead
                   </button>
                 </div>
               </div>
@@ -1123,12 +1224,97 @@ export default function MusicLibrary() {
         {/* ── LEFT NAV ── */}
         <div style={{ width:200, flexShrink:0, background:C.surface, borderRight:`1px solid ${C.border}`, display:"flex", flexDirection:"column", padding:"12px 0" }}>
           {VIEWS.map(([id,label]) => (
-            <button key={id} onClick={()=>setView(id)}
-              style={{ padding:"11px 18px", textAlign:"left", background:"transparent", border:"none", borderLeft:`3px solid ${view===id?G:"transparent"}`, color:view===id?G:C.subtle, fontFamily:"'DM Sans',sans-serif", fontSize:13, fontWeight:view===id?500:400, cursor:"pointer", letterSpacing:.3, transition:"all .15s" }}
-              onMouseEnter={e=>{ if(view!==id) e.currentTarget.style.color=C.text; }}
-              onMouseLeave={e=>{ if(view!==id) e.currentTarget.style.color=C.subtle; }}
+            <button key={id} onClick={()=>selectView(id)}
+              style={{ padding:"11px 18px", textAlign:"left", background:"transparent", border:"none", borderLeft:`3px solid ${view===id&&!activeCrateId?G:"transparent"}`, color:view===id&&!activeCrateId?G:C.subtle, fontFamily:"'DM Sans',sans-serif", fontSize:13, fontWeight:view===id&&!activeCrateId?500:400, cursor:"pointer", letterSpacing:.3, transition:"all .15s" }}
+              onMouseEnter={e=>{ if(!(view===id&&!activeCrateId)) e.currentTarget.style.color=C.text; }}
+              onMouseLeave={e=>{ if(!(view===id&&!activeCrateId)) e.currentTarget.style.color=C.subtle; }}
             >{label}</button>
           ))}
+
+          {/* ── SESSION QUEUE ── */}
+          <div style={{ marginTop:2 }}>
+            <button
+              onClick={()=>selectView("queue")}
+              style={{ width:"100%", padding:"11px 18px", textAlign:"left", background:"transparent", border:"none", borderLeft:`3px solid ${view==="queue"&&!activeCrateId?"#22c55e":"transparent"}`, color:view==="queue"&&!activeCrateId?"#22c55e":C.subtle, fontFamily:"'DM Sans',sans-serif", fontSize:13, fontWeight:view==="queue"&&!activeCrateId?500:400, cursor:"pointer", letterSpacing:.3, transition:"all .15s", display:"flex", alignItems:"center", justifyContent:"space-between" }}
+              onMouseEnter={e=>{ if(!(view==="queue"&&!activeCrateId)) e.currentTarget.style.color=C.text; }}
+              onMouseLeave={e=>{ if(!(view==="queue"&&!activeCrateId)) e.currentTarget.style.color=C.subtle; }}
+            >
+              <span>◉ SESSION QUEUE</span>
+              {queueIds.size > 0 && <span style={{ fontSize:9, fontFamily:"'DM Mono',monospace", background:"#22c55e22", color:"#22c55e", padding:"1px 6px", borderRadius:10, border:"1px solid #22c55e44" }}>{queueIds.size}</span>}
+            </button>
+          </div>
+
+          {/* ── DJ CRATES section ── */}
+          <div style={{ marginTop:6, borderTop:`1px solid ${C.border}` }}>
+            {/* Header row */}
+            <div style={{ display:"flex", alignItems:"center", padding:"10px 14px 6px", cursor:"pointer", userSelect:"none" }}>
+              <div onClick={()=>setCratesExpanded(v=>!v)} style={{ display:"flex", alignItems:"center", gap:6, flex:1 }}>
+                <span style={{ fontSize:12, color:G, fontFamily:"'DM Mono',monospace", letterSpacing:.5 }}>◈ DJ CRATES</span>
+                <span style={{ fontSize:10, color:C.muted }}>{cratesExpanded?"▾":"▸"}</span>
+              </div>
+              <button
+                onClick={e=>{ e.stopPropagation(); setShowNewCrateInput(v=>!v); setCratesExpanded(true); }}
+                title="New crate"
+                style={{ background:"transparent", border:`1px solid ${G}33`, color:G, borderRadius:4, padding:"1px 7px", fontSize:13, lineHeight:1, cursor:"pointer", flexShrink:0 }}
+              >+</button>
+            </div>
+
+            {cratesExpanded && (
+              <div>
+                {/* New crate inline input */}
+                {showNewCrateInput && (
+                  <div style={{ padding:"4px 12px 8px" }}>
+                    <input
+                      autoFocus
+                      value={newCrateName}
+                      onChange={e=>setNewCrateName(e.target.value)}
+                      onKeyDown={e=>{
+                        if(e.key==="Enter" && newCrateName.trim()){
+                          createCrate(newCrateName.trim());
+                          setNewCrateName("");
+                          setShowNewCrateInput(false);
+                        }
+                        if(e.key==="Escape"){ setShowNewCrateInput(false); setNewCrateName(""); }
+                      }}
+                      onBlur={()=>{ if(!newCrateName.trim()){ setShowNewCrateInput(false); } }}
+                      placeholder="Crate name…"
+                      maxLength={30}
+                      style={{ width:"100%", background:C.raised, border:`1px solid ${G}44`, color:C.text, borderRadius:6, padding:"6px 9px", fontSize:11, fontFamily:"'DM Sans',sans-serif", outline:"none" }}
+                    />
+                    <div style={{ fontSize:9, color:C.muted, fontFamily:"'DM Mono',monospace", marginTop:3 }}>↵ enter to save · esc to cancel</div>
+                  </div>
+                )}
+
+                {/* Crate list */}
+                {crates.map(cr => {
+                  const isActive = activeCrateId === cr.id;
+                  return (
+                    <div key={cr.id}
+                      onClick={()=>selectCrate(cr.id)}
+                      style={{ padding:"8px 12px 8px 20px", display:"flex", alignItems:"center", gap:6, cursor:"pointer", background:isActive?`${G}0d`:"transparent", borderLeft:`3px solid ${isActive?G:"transparent"}`, transition:"all .12s" }}
+                      onMouseEnter={e=>e.currentTarget.style.background=isActive?`${G}0d`:C.raised}
+                      onMouseLeave={e=>e.currentTarget.style.background=isActive?`${G}0d`:"transparent"}
+                    >
+                      <span style={{ fontSize:10, color:isActive?G:C.muted, flexShrink:0 }}>◈</span>
+                      <span style={{ flex:1, fontSize:12, color:isActive?G:C.text, fontFamily:"'DM Sans',sans-serif", whiteSpace:"nowrap", overflow:"hidden", textOverflow:"ellipsis" }}>{cr.name}</span>
+                      <span style={{ fontSize:9, color:C.muted, fontFamily:"'DM Mono',monospace", flexShrink:0, marginRight:2 }}>{(cr.trackIds||[]).length}</span>
+                      <button
+                        onClick={e=>{ e.stopPropagation(); deleteCrate(cr.id); if(activeCrateId===cr.id){setActiveCrateId(null);setView("tracks");} }}
+                        style={{ background:"none", border:"none", color:C.muted, cursor:"pointer", fontSize:11, opacity:.4, padding:0, lineHeight:1, flexShrink:0 }}
+                        onMouseEnter={e=>e.currentTarget.style.opacity=1}
+                        onMouseLeave={e=>e.currentTarget.style.opacity=.4}
+                      >✕</button>
+                    </div>
+                  );
+                })}
+                {crates.length===0 && !showNewCrateInput && (
+                  <div style={{ padding:"6px 20px 10px", fontSize:10, color:C.muted, fontFamily:"'DM Mono',monospace", lineHeight:1.8, opacity:.7 }}>
+                    No crates yet.<br/>Click <span style={{color:G}}>+</span> to create one.
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
 
           <div style={{ flex:1 }}/>
 
@@ -1203,33 +1389,54 @@ export default function MusicLibrary() {
                 </button>
               </div>
               {showItunesHelper && (
-                <div style={{ background:C.raised, border:"1px solid #8B5CF633", borderRadius:14, padding:24, maxWidth:420, width:"100%" }}>
-                  <div style={{ fontSize:16, fontWeight:600, color:C.text, marginBottom:6 }}>Get your full iTunes library</div>
-                  <div style={{ fontSize:12, color:"#60a5fa", marginBottom:18, lineHeight:1.6 }}>
-                    ☁ If most of your music is in iCloud, a folder scan will only find downloaded tracks.<br/>
-                    The XML method imports <strong>everything</strong> — cloud or not.
+                <div style={{ background:C.raised, border:"1px solid #8B5CF633", borderRadius:14, padding:24, maxWidth:480, width:"100%" }}>
+                  <div style={{ fontSize:18, fontWeight:600, color:C.text, marginBottom:6, fontFamily:"'DM Sans',sans-serif" }}>Import your Apple Music library</div>
+                  <div style={{ fontSize:12, color:"#60a5fa", marginBottom:20, lineHeight:1.6 }}>
+                    Since most of your music is in iCloud, you need to export a file from Apple Music — this gives you access to <strong>every</strong> track, whether it's downloaded or not.
                   </div>
 
-                  <div style={{ background:C.bg, borderRadius:10, padding:"14px 16px", marginBottom:16, border:`1px solid #8B5CF633` }}>
-                    <div style={{ fontSize:11, fontFamily:"'DM Mono',monospace", color:"#8B5CF6", letterSpacing:1, marginBottom:10 }}>STEP 1 — In Apple Music on your Mac:</div>
-                    <div style={{ fontSize:13, color:C.text, lineHeight:2, marginBottom:14 }}>
-                      <span style={{background:`${G}18`,color:G,padding:"2px 6px",borderRadius:4,fontFamily:"'DM Mono',monospace",fontSize:11}}>File</span>
-                      {"  →  "}
-                      <span style={{background:`${G}18`,color:G,padding:"2px 6px",borderRadius:4,fontFamily:"'DM Mono',monospace",fontSize:11}}>Library</span>
-                      {"  →  "}
-                      <span style={{background:`${G}18`,color:G,padding:"2px 6px",borderRadius:4,fontFamily:"'DM Mono',monospace",fontSize:11}}>Export Library...</span>
-                      <br/>
-                      <span style={{fontSize:11,color:C.muted}}>Save it somewhere easy to find, like your Desktop.</span>
+                  {/* Step 1 */}
+                  <div style={{ display:"flex", gap:14, marginBottom:16 }}>
+                    <div style={{ width:28, height:28, borderRadius:"50%", background:"#8B5CF622", border:"2px solid #8B5CF666", color:"#8B5CF6", display:"flex", alignItems:"center", justifyContent:"center", fontSize:13, fontFamily:"'DM Mono',monospace", fontWeight:600, flexShrink:0 }}>1</div>
+                    <div>
+                      <div style={{ fontSize:14, fontWeight:600, color:C.text, fontFamily:"'DM Sans',sans-serif", marginBottom:6 }}>Open Apple Music and export your library</div>
+                      <div style={{ fontSize:12, color:C.subtle, fontFamily:"'DM Sans',sans-serif", lineHeight:1.8, marginBottom:10 }}>
+                        In the Apple Music menu bar:<br/>
+                        <span style={{background:`${G}18`,color:G,padding:"2px 8px",borderRadius:4,fontFamily:"'DM Mono',monospace",fontSize:11,marginRight:4}}>File</span>
+                        →
+                        <span style={{background:`${G}18`,color:G,padding:"2px 8px",borderRadius:4,fontFamily:"'DM Mono',monospace",fontSize:11,margin:"0 4px"}}>Library</span>
+                        →
+                        <span style={{background:`${G}18`,color:G,padding:"2px 8px",borderRadius:4,fontFamily:"'DM Mono',monospace",fontSize:11,marginLeft:4}}>Export Library...</span>
+                        <br/>
+                        <span style={{fontSize:11,color:C.muted}}>When it asks where to save — choose your Desktop.</span>
+                      </div>
+                      <div style={{ padding:"8px 12px", background:"#f59e0b0d", border:"1px solid #f59e0b33", borderRadius:8, fontSize:11, color:"#f59e0b", lineHeight:1.6 }}>
+                        ⚠️ <strong>Important:</strong> The file this creates is called <strong style={{fontFamily:"'DM Mono',monospace"}}>Library.xml</strong>.<br/>
+                        It is <em>not</em> the same as "Music Library" which is already in your Music folder and cannot be used here.
+                      </div>
                     </div>
-                    <div style={{ fontSize:11, fontFamily:"'DM Mono',monospace", color:"#8B5CF6", letterSpacing:1, marginBottom:10 }}>STEP 2 — Select that file here:</div>
-                    <label style={{ display:"flex", alignItems:"center", justifyContent:"center", gap:8, padding:"12px 20px", background:"#8B5CF622", border:"1px solid #8B5CF666", color:"#8B5CF6", fontFamily:"'DM Mono',monospace", fontSize:12, letterSpacing:1.5, borderRadius:8, cursor:"pointer", transition:"all .2s" }}>
-                      ♪ Select iTunes Library XML
-                      <input type="file" accept=".xml" style={{display:"none"}} onChange={e=>{ if(e.target.files[0]) importFromItunes(e.target.files[0]); e.target.value=""; setShowItunesHelper(false); }}/>
-                    </label>
                   </div>
 
-                  <div style={{ textAlign:"center" }}>
-                    <span style={{ fontSize:10, color:C.muted, fontFamily:"'DM Mono',monospace" }}>Only have local files? </span>
+                  {/* Step 2 */}
+                  <div style={{ display:"flex", gap:14, marginBottom:20 }}>
+                    <div style={{ width:28, height:28, borderRadius:"50%", background:"#8B5CF622", border:"2px solid #8B5CF666", color:"#8B5CF6", display:"flex", alignItems:"center", justifyContent:"center", fontSize:13, fontFamily:"'DM Mono',monospace", fontWeight:600, flexShrink:0 }}>2</div>
+                    <div style={{ flex:1 }}>
+                      <div style={{ fontSize:14, fontWeight:600, color:C.text, fontFamily:"'DM Sans',sans-serif", marginBottom:8 }}>Select Library.xml here</div>
+                      <label style={{ display:"flex", alignItems:"center", justifyContent:"center", gap:10, padding:"14px 20px", background:"#8B5CF622", border:"2px solid #8B5CF666", color:"#8B5CF6", fontFamily:"'DM Mono',monospace", fontSize:13, letterSpacing:1, borderRadius:10, cursor:"pointer", transition:"all .2s" }}
+                        onMouseEnter={e=>{e.currentTarget.style.background="#8B5CF633";e.currentTarget.style.borderColor="#8B5CF6aa";}}
+                        onMouseLeave={e=>{e.currentTarget.style.background="#8B5CF622";e.currentTarget.style.borderColor="#8B5CF666";}}>
+                        ♪ Select Library.xml
+                        <input type="file" accept=".xml" style={{display:"none"}} onChange={e=>{ if(e.target.files[0]) importFromItunes(e.target.files[0]); e.target.value=""; setShowItunesHelper(false); }}/>
+                      </label>
+                      <div style={{ fontSize:10, color:C.muted, fontFamily:"'DM Mono',monospace", marginTop:8, lineHeight:1.7, textAlign:"center" }}>
+                        Navigate to Desktop → look for Library.xml<br/>
+                        Imports ALL tracks including ☁ cloud-only
+                      </div>
+                    </div>
+                  </div>
+
+                  <div style={{ borderTop:`1px solid ${C.border}`, paddingTop:14, display:"flex", alignItems:"center", justifyContent:"space-between" }}>
+                    <span style={{ fontSize:10, color:C.muted, fontFamily:"'DM Mono',monospace" }}>Only have downloaded files?</span>
                     <button onClick={itunesScan} style={{ fontSize:10, color:C.subtle, fontFamily:"'DM Mono',monospace", background:"none", border:"none", cursor:"pointer", textDecoration:"underline" }}>
                       Scan a local folder instead
                     </button>
@@ -1245,12 +1452,99 @@ export default function MusicLibrary() {
           {/* Views */}
           {tracks.length > 0 && (
             <div style={{ flex:1, overflow:"hidden", display:"flex", flexDirection:"column" }}>
-              {view==="tracks"  && <TrackListView  tracks={filteredTracks} crates={crates} onAddToCrate={addToCrate} onSelect={t=>setSelected(t.id)} selected={selected} onPlay={null}/>}
-              {view==="artists" && <ArtistView     tracks={filteredTracks} crates={crates} onAddToCrate={addToCrate} onSelect={t=>setSelected(t.id)} selected={selected} onPlay={null}/>}
-              {view==="energy"  && <EnergyView     tracks={filteredTracks} crates={crates} onAddToCrate={addToCrate} onSelect={t=>setSelected(t.id)} selected={selected} onPlay={null}/>}
-              {view==="genres"  && <GenreView      tracks={filteredTracks} crates={crates} onAddToCrate={addToCrate} onSelect={t=>setSelected(t.id)} selected={selected} onPlay={null}/>}
-              {view==="labels"  && <LabelView      tracks={filteredTracks} crates={crates} onAddToCrate={addToCrate} onSelect={t=>setSelected(t.id)} selected={selected} onPlay={null}/>}
-              {view==="crates"  && <CratesView     tracks={tracks}         crates={crates} onCreateCrate={createCrate} onDeleteCrate={deleteCrate} onRemoveFromCrate={removeFromCrate} onAddToCrate={addToCrate} onSelect={t=>setSelected(t.id)} selected={selected} onPlay={null}/>}
+              {view==="tracks"  && <TrackListView  tracks={filteredTracks} crates={crates} onAddToCrate={addToCrate} onSelect={t=>setSelected(t.id)} selected={selected} onPlay={null} onSendToDeck={sendToDeck} queueIds={queueIds} onToggleQueue={toggleQueue}/>}
+              {view==="artists" && <ArtistView     tracks={filteredTracks} crates={crates} onAddToCrate={addToCrate} onSelect={t=>setSelected(t.id)} selected={selected} onPlay={null} onSendToDeck={sendToDeck} queueIds={queueIds} onToggleQueue={toggleQueue}/>}
+              {view==="energy"  && <EnergyView     tracks={filteredTracks} crates={crates} onAddToCrate={addToCrate} onSelect={t=>setSelected(t.id)} selected={selected} onPlay={null} onSendToDeck={sendToDeck} queueIds={queueIds} onToggleQueue={toggleQueue}/>}
+              {view==="genres"  && <GenreView      tracks={filteredTracks} crates={crates} onAddToCrate={addToCrate} onSelect={t=>setSelected(t.id)} selected={selected} onPlay={null} onSendToDeck={sendToDeck} queueIds={queueIds} onToggleQueue={toggleQueue}/>}
+              {view==="labels"  && <LabelView      tracks={filteredTracks} crates={crates} onAddToCrate={addToCrate} onSelect={t=>setSelected(t.id)} selected={selected} onPlay={null} onSendToDeck={sendToDeck} queueIds={queueIds} onToggleQueue={toggleQueue}/>}
+              {view==="queue" && (() => {
+                const queuedTracks = [...queueIds].map(id => tracks.find(t=>t.id===id)).filter(Boolean);
+                return (
+                  <div style={{ flex:1, overflow:"hidden", display:"flex", flexDirection:"column" }}>
+                    <div style={{ padding:"12px 16px", borderBottom:`1px solid ${C.border}`, background:C.surface, flexShrink:0, display:"flex", alignItems:"center", gap:12 }}>
+                      <span style={{ fontSize:20, color:"#22c55e" }}>◉</span>
+                      <div style={{ flex:1 }}>
+                        <div style={{ fontSize:18, fontWeight:600, color:C.text, fontFamily:"'DM Sans',sans-serif" }}>Session Queue</div>
+                        <div style={{ fontSize:10, color:C.muted, fontFamily:"'DM Mono',monospace", marginTop:2 }}>
+                          {queuedTracks.length} tracks queued · hover any track in the library and click <span style={{color:"#22c55e"}}>+ QUEUE</span> to add
+                        </div>
+                      </div>
+                      {queueIds.size > 0 && (
+                        <button onClick={clearQueue} style={{ fontSize:9, fontFamily:"'DM Mono',monospace", padding:"4px 10px", background:"transparent", border:"1px solid #ef444433", color:"#ef444466", borderRadius:5, cursor:"pointer" }}>
+                          ✕ CLEAR QUEUE
+                        </button>
+                      )}
+                    </div>
+                    <div style={{ flex:1, overflowY:"auto" }}>
+                      {queuedTracks.length === 0 ? (
+                        <div style={{ display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"center", height:"100%", gap:12, color:C.muted, fontFamily:"'DM Mono',monospace", fontSize:11 }}>
+                          <div style={{ fontSize:40, opacity:.1 }}>◉</div>
+                          <div style={{ textAlign:"center", lineHeight:1.8 }}>
+                            Your session queue is empty.<br/>
+                            Browse your library and hover any track,<br/>
+                            then click <span style={{color:"#22c55e"}}>+ QUEUE</span> to add it here.
+                          </div>
+                        </div>
+                      ) : (
+                        queuedTracks.map((t,i) => (
+                          <div key={t.id} style={{ display:"flex", alignItems:"center" }}>
+                            <div style={{ flex:1, minWidth:0 }}>
+                              <TrackRow track={{...t,_rowNum:i+1}} selected={selected===t.id} onClick={tr=>setSelected(tr.id)}
+                                onAddToCrate={addToCrate} crates={crates} onPlay={null} onSendToDeck={sendToDeck}
+                                queueIds={queueIds} onToggleQueue={toggleQueue}/>
+                            </div>
+                            <button onClick={()=>removeFromQueue(t.id)} title="Remove from queue"
+                              style={{ flexShrink:0, margin:"0 10px", background:"none", border:"none", color:C.muted, cursor:"pointer", fontSize:13, opacity:.4, padding:"0 2px" }}
+                              onMouseEnter={e=>e.currentTarget.style.opacity=1}
+                              onMouseLeave={e=>e.currentTarget.style.opacity=.4}>✕</button>
+                          </div>
+                        ))
+                      )}
+                    </div>
+                  </div>
+                );
+              })()}
+              {view==="crate" && activeCrateId && (() => {
+                const crate = crates.find(c=>c.id===activeCrateId);
+                const crateTracks = crate ? (crate.trackIds||[]).map(id=>tracks.find(t=>t.id===id)).filter(Boolean) : [];
+                return (
+                  <div style={{ flex:1, overflow:"hidden", display:"flex", flexDirection:"column" }}>
+                    {/* Crate header */}
+                    <div style={{ padding:"12px 16px", borderBottom:`1px solid ${C.border}`, background:C.surface, flexShrink:0, display:"flex", alignItems:"center", gap:12 }}>
+                      <span style={{ fontSize:22, color:G }}>◈</span>
+                      <div style={{ flex:1 }}>
+                        <div style={{ fontSize:18, fontWeight:600, color:C.text, fontFamily:"'DM Sans',sans-serif" }}>{crate?.name}</div>
+                        <div style={{ fontSize:10, color:C.muted, fontFamily:"'DM Mono',monospace", marginTop:2 }}>{crateTracks.length} tracks · hover a track below and click <span style={{color:G}}>+ CRATE</span> to add more</div>
+                      </div>
+                    </div>
+                    {/* Crate tracks */}
+                    <div style={{ flex:1, overflowY:"auto" }}>
+                      {crateTracks.length === 0 ? (
+                        <div style={{ display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"center", height:200, gap:10, color:C.muted, fontFamily:"'DM Mono',monospace", fontSize:11 }}>
+                          <div style={{ fontSize:28, opacity:.2 }}>◈</div>
+                          Browse any view and hover a track — click <span style={{color:G,margin:"0 4px"}}>+ CRATE</span> to add it here
+                        </div>
+                      ) : (
+                        crateTracks.map((t,i) => (
+                          <div key={t.id} style={{ display:"flex", alignItems:"center" }}>
+                            <div style={{ flex:1, minWidth:0 }}>
+                              <TrackRow track={{...t,_rowNum:i+1}} selected={selected===t.id} onClick={tr=>setSelected(tr.id)}
+                                onAddToCrate={addToCrate} crates={crates} onPlay={null} onSendToDeck={sendToDeck}/>
+                            </div>
+                            <button
+                              onClick={()=>removeFromCrate(t.id, activeCrateId)}
+                              title="Remove from crate"
+                              style={{ flexShrink:0, margin:"0 10px", background:"none", border:"none", color:C.muted, cursor:"pointer", fontSize:13, opacity:.4, padding:"0 2px", lineHeight:1 }}
+                              onMouseEnter={e=>e.currentTarget.style.opacity=1}
+                              onMouseLeave={e=>e.currentTarget.style.opacity=.4}
+                            >✕</button>
+                          </div>
+                        ))
+                      )}
+                    </div>
+                  </div>
+                );
+              })()}
             </div>
           )}
         </div>
