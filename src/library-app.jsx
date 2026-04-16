@@ -867,7 +867,7 @@ export default function MusicLibrary() {
   const scanFolder = async (preHandle = null) => {
     let dirHandle = preHandle;
     if (!dirHandle) {
-      try { dirHandle = await window.showDirectoryPicker({ mode:"read" }); }
+      try { dirHandle = await window.showDirectoryPicker({ mode:"read", startIn:"music" }); }
       catch { return; }
     }
 
@@ -1196,6 +1196,7 @@ export default function MusicLibrary() {
         ::-webkit-scrollbar-thumb{background:${C.border};border-radius:2px}
         @keyframes spin{to{transform:rotate(360deg)}}
         @keyframes pulse{0%,100%{opacity:1}50%{opacity:.4}}
+        @keyframes scanPulse{0%,100%{width:20%;opacity:.6}50%{width:60%;opacity:1}}
         input::placeholder{color:${C.muted}}
       `}</style>
 
@@ -1306,10 +1307,10 @@ export default function MusicLibrary() {
             )}
           </div>
           <button onClick={scanFolder} disabled={scanning}
-            style={{ padding:"9px 16px", background:scanning?"transparent":`${G}22`, border:`1px solid ${G}55`, color:scanning?C.muted:G, fontFamily:"'DM Mono',monospace", fontSize:10, letterSpacing:1.5, borderRadius:8, cursor:scanning?"not-allowed":"pointer", display:"flex", alignItems:"center", gap:8, transition:"all .2s" }}>
+            style={{ padding:"9px 16px", background:scanning?"transparent":`${G}22`, border:`1px solid ${G}55`, color:scanning?G:G, fontFamily:"'DM Mono',monospace", fontSize:10, letterSpacing:1.5, borderRadius:8, cursor:scanning?"not-allowed":"pointer", display:"flex", alignItems:"center", gap:8, transition:"all .2s" }}>
             {scanning
-              ? <><span style={{ width:10, height:10, border:`1.5px solid ${G}44`, borderTop:`1.5px solid ${G}`, borderRadius:"50%", animation:"spin 1s linear infinite", display:"inline-block" }}/> SCANNING...</>
-              : "⊕ SCAN FOLDER"
+              ? <><span style={{ width:10, height:10, border:`1.5px solid ${G}44`, borderTop:`1.5px solid ${G}`, borderRadius:"50%", animation:"spin 1s linear infinite", display:"inline-block" }}/> {scanProg.found > 0 ? `${scanProg.found} found…` : "SCANNING…"}</>
+              : <><span style={{ fontSize:14, lineHeight:1 }}>＋</span> ADD MUSIC</>
             }
           </button>
           {tracks.length>0 && analyzedCount<tracks.length && (
@@ -1321,8 +1322,16 @@ export default function MusicLibrary() {
 
       {/* ── SCAN PROGRESS BAR ── */}
       {scanning && (
-        <div style={{ height:3, background:C.raised, flexShrink:0 }}>
-          <div style={{ height:"100%", background:`linear-gradient(90deg,${G}66,${G})`, width:`${scanProg.total>0?(scanProg.found/scanProg.total)*100:30}%`, transition:"width .3s" }}/>
+        <div style={{ flexShrink:0 }}>
+          <div style={{ height:3, background:C.raised }}>
+            <div style={{ height:"100%", background:`linear-gradient(90deg,${G}66,${G})`, width:`${scanProg.total>0?(scanProg.found/scanProg.total)*100:30}%`, transition:"width .3s", animation: scanProg.total===0?"scanPulse 1.2s ease-in-out infinite":undefined }}/>
+          </div>
+          {scanProg.found > 0 && (
+            <div style={{ padding:"4px 20px", fontSize:9, fontFamily:"'DM Mono',monospace", color:G, opacity:.7, display:"flex", gap:16 }}>
+              <span>📂 {scanProg.found} tracks found</span>
+              {scanProg.analyzed > 0 && <span>⚡ {scanProg.analyzed} analyzed</span>}
+            </div>
+          )}
         </div>
       )}
       {!scanning && analyzedCount < tracks.length && tracks.length>0 && (
@@ -1455,6 +1464,17 @@ export default function MusicLibrary() {
             </button>
           </div>
 
+          {/* ── ADD MUSIC button ── */}
+          <div style={{ padding:"10px 12px 4px", borderTop:`1px solid ${C.border}` }}>
+            <button onClick={scanFolder} disabled={scanning}
+              style={{ width:"100%", padding:"9px 12px", background:scanning?`${G}08`:`${G}12`, border:`1px solid ${G}${scanning?"22":"44"}`, color:scanning?C.muted:G, fontFamily:"'DM Mono',monospace", fontSize:10, letterSpacing:1.5, borderRadius:8, cursor:scanning?"not-allowed":"pointer", display:"flex", alignItems:"center", justifyContent:"center", gap:7, transition:"all .2s" }}>
+              {scanning
+                ? <><span style={{ width:8, height:8, border:`1.5px solid ${G}44`, borderTop:`1.5px solid ${G}`, borderRadius:"50%", animation:"spin 1s linear infinite", display:"inline-block" }}/> SCANNING...</>
+                : <><span style={{ fontSize:14 }}>＋</span> ADD MUSIC</>
+              }
+            </button>
+          </div>
+
           {/* ── DJ CRATES section ── */}
           <div style={{ marginTop:6, borderTop:`1px solid ${C.border}` }}>
             {/* Header row */}
@@ -1571,41 +1591,63 @@ export default function MusicLibrary() {
         {/* ── MAIN CONTENT ── */}
         <div style={{ flex:1, overflow:"hidden", display:"flex", flexDirection:"column" }}>
 
-          {/* Empty state */}
+          {/* ── EMPTY STATE / ONBOARDING ── */}
           {tracks.length === 0 && !scanning && (
-            <div style={{ flex:1, display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"center", gap:24, padding:40 }}>
-              <div style={{ fontSize:64, opacity:.15 }}>♫</div>
-              <div style={{ textAlign:"center" }}>
-                <div style={{ fontFamily:"'Cormorant Garamond',serif", fontSize:32, fontWeight:700, color:C.text, marginBottom:10 }}>Your music, organized</div>
-                <div style={{ fontSize:14, color:C.muted, maxWidth:480, lineHeight:1.8 }}>
-                  It doesn't matter how messy your files are. Click <strong style={{color:G}}>Scan Folder</strong> and point it at your music folder. Every track gets automatically analyzed — BPM, musical key, and energy level detected from the actual audio.
+            <div style={{ flex:1, display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"center", padding:40 }}>
+              {/* Card */}
+              <div style={{ width:"100%", maxWidth:560, background:C.surface, border:`1px solid ${C.border}`, borderRadius:20, padding:"48px 40px", display:"flex", flexDirection:"column", alignItems:"center", gap:28, boxShadow:`0 32px 80px rgba(0,0,0,.5), 0 0 0 1px ${G}08` }}>
+
+                {/* Icon */}
+                <div style={{ width:72, height:72, borderRadius:20, background:`${G}10`, border:`1px solid ${G}25`, display:"flex", alignItems:"center", justifyContent:"center" }}>
+                  <span style={{ fontSize:34 }}>🎵</span>
                 </div>
-              </div>
-              <div style={{ display:"flex", gap:20 }}>
-                {[["⚡","Auto-detects BPM, key, energy from audio"],["◈","Organize into crates & playlists"],["↔","Syncs live into the Collab//Mix session"]].map(([ic,t])=>(
-                  <div key={t} style={{ textAlign:"center", maxWidth:160 }}>
-                    <div style={{ fontSize:28, marginBottom:8, opacity:.6 }}>{ic}</div>
-                    <div style={{ fontSize:11, color:C.muted, lineHeight:1.6 }}>{t}</div>
+
+                {/* Headline */}
+                <div style={{ textAlign:"center" }}>
+                  <div style={{ fontFamily:"'Cormorant Garamond',serif", fontSize:30, fontWeight:700, color:C.text, marginBottom:8, lineHeight:1.2 }}>Find your music</div>
+                  <div style={{ fontSize:13, color:C.subtle, lineHeight:1.8, maxWidth:380 }}>
+                    Point it at any folder — your Music library, a hard drive, a USB stick. Tracks appear instantly, BPM and key are detected in the background.
                   </div>
-                ))}
-              </div>
-              <div style={{ display:"flex", gap:12, flexWrap:"wrap", justifyContent:"center" }}>
+                </div>
+
+                {/* Primary CTA */}
                 <button onClick={scanFolder}
-                  style={{ padding:"14px 36px", background:`linear-gradient(135deg,${G}22,${G}11)`, border:`1px solid ${G}55`, color:G, fontFamily:"'DM Mono',monospace", fontSize:12, letterSpacing:2, borderRadius:10, cursor:"pointer", boxShadow:`0 0 32px ${G}18`, transition:"all .2s" }}>
-                  ⊕ SCAN MUSIC FOLDER
+                  style={{ width:"100%", padding:"16px 24px", background:`linear-gradient(135deg,${G}28,${G}14)`, border:`1px solid ${G}66`, color:G, fontFamily:"'DM Mono',monospace", fontSize:13, letterSpacing:2, borderRadius:12, cursor:"pointer", boxShadow:`0 0 40px ${G}18`, transition:"all .2s", display:"flex", alignItems:"center", justifyContent:"center", gap:10 }}>
+                  <span style={{ fontSize:16 }}>📂</span> FIND MY MUSIC
                 </button>
-                <button onClick={()=>{ autoImportItunes(); }}
-                  style={{ padding:"14px 28px", background:"#8B5CF611", border:`1px solid #8B5CF644`, color:"#8B5CF6", fontFamily:"'DM Mono',monospace", fontSize:12, letterSpacing:2, borderRadius:10, cursor:"pointer", display:"flex", alignItems:"center", gap:8, transition:"all .2s" }}>
-                  ♪ iTunes / Apple Music
-                </button>
+
+                {/* Feature pills */}
+                <div style={{ display:"flex", gap:8, flexWrap:"wrap", justifyContent:"center" }}>
+                  {[["⚡","BPM & key detected"],["🎚️","Energy classified"],["◈","Crates & playlists"],["🔒","Files stay on your computer"]].map(([ic,t])=>(
+                    <div key={t} style={{ display:"flex", alignItems:"center", gap:5, padding:"5px 11px", background:C.raised, border:`1px solid ${C.border}`, borderRadius:20 }}>
+                      <span style={{ fontSize:11 }}>{ic}</span>
+                      <span style={{ fontSize:10, color:C.subtle, fontFamily:"'DM Mono',monospace" }}>{t}</span>
+                    </div>
+                  ))}
+                </div>
+
+                {/* Divider */}
+                <div style={{ width:"100%", display:"flex", alignItems:"center", gap:12 }}>
+                  <div style={{ flex:1, height:1, background:C.border }}/>
+                  <span style={{ fontSize:10, color:C.muted, fontFamily:"'DM Mono',monospace" }}>OR</span>
+                  <div style={{ flex:1, height:1, background:C.border }}/>
+                </div>
+
+                {/* Secondary: Apple Music */}
+                <div style={{ width:"100%", display:"flex", flexDirection:"column", gap:8 }}>
+                  <button onClick={()=>{ autoImportItunes(); }}
+                    style={{ width:"100%", padding:"12px 20px", background:"#8B5CF610", border:`1px solid #8B5CF640`, color:"#8B5CF6", fontFamily:"'DM Mono',monospace", fontSize:11, letterSpacing:1.5, borderRadius:10, cursor:"pointer", display:"flex", alignItems:"center", justifyContent:"center", gap:8, transition:"all .2s" }}>
+                    🎵 IMPORT FROM APPLE MUSIC
+                  </button>
+                  <div style={{ fontSize:9, color:C.muted, fontFamily:"'DM Mono',monospace", textAlign:"center", lineHeight:1.7 }}>
+                    Pulls playlists, BPM & genre tags from your Apple Music library
+                  </div>
+                </div>
+
               </div>
-              {/* iTunes auto-import hint */}
-              <div style={{ fontSize:10, color:C.muted, fontFamily:"'DM Mono',monospace", textAlign:"center", lineHeight:1.8 }}>
-                First time with iTunes? Enable in Apple Music:<br/>
-                <span style={{color:"#8B5CF6"}}>Settings → Advanced → Share iTunes Library XML</span>
-              </div>
-              <div style={{ fontSize:10, color:C.muted, fontFamily:"'DM Mono',monospace", letterSpacing:1, textAlign:"center" }}>
-                Works with Chrome or Edge · Your files never leave your computer
+
+              <div style={{ marginTop:16, fontSize:10, color:C.muted, fontFamily:"'DM Mono',monospace", letterSpacing:1 }}>
+                Works in Chrome or Edge
               </div>
             </div>
           )}
