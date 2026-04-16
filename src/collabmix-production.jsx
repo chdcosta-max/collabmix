@@ -1586,15 +1586,28 @@ export default function CollabMix({ initialPage = "landing", djName = null }) {
     eng.current = createEngine();
     setReady(true); setSession(info); setPage("session");
     sync.connect(info.room, info.name);
+    // Persist session so library app can link back and page reloads auto-rejoin
+    try { localStorage.setItem("cm_session", JSON.stringify({room: info.room, name: info.name})); } catch {}
   };
 
   const leave = () => {
     rtc.endCall(); sync.disconnect();
     setReady(false); setSession(null); setPage("lobby");
     eng.current = null; setRateA(1); setRateB(1);
-    // Clear room from URL so a fresh room is generated on next visit
+    try { localStorage.removeItem("cm_session"); } catch {}
     window.history.replaceState({}, "", window.location.pathname);
   };
+
+  // Auto-rejoin if library app (or any link) navigates back with ?room=X&name=Y
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const paramRoom = params.get("room");
+    const paramName = params.get("name");
+    if (paramRoom && paramName) {
+      window.history.replaceState({}, "", window.location.pathname);
+      join({ room: paramRoom, name: paramName });
+    }
+  }, []);
 
   // Sync library metadata to partner when library changes
   useEffect(() => {

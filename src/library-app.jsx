@@ -158,6 +158,73 @@ function makeWorker() {
   return new Worker(URL.createObjectURL(new Blob([WORKER_SRC], { type:"application/javascript" })));
 }
 
+// ── iTunes XML parser ─────────────────────────────────────────
+function parseiTunesXML(xmlText) {
+  const parser = new DOMParser();
+  const doc = parser.parseFromString(xmlText, "text/xml");
+  const root = doc.querySelector("plist > dict");
+  if (!root) return { tracks: [], playlists: [] };
+
+  function parseDict(dictEl) {
+    const obj = {};
+    const kids = Array.from(dictEl.children);
+    for (let i = 0; i < kids.length - 1; i += 2) {
+      const key = kids[i]?.textContent;
+      const val = kids[i+1];
+      if (!key || !val) continue;
+      const t = val.tagName;
+      if (t==="string")  obj[key] = val.textContent;
+      else if (t==="integer") obj[key] = parseInt(val.textContent, 10);
+      else if (t==="real")    obj[key] = parseFloat(val.textContent);
+      else if (t==="true")    obj[key] = true;
+      else if (t==="false")   obj[key] = false;
+      else if (t==="dict")    obj[key] = parseDict(val);
+      else if (t==="array")   obj[key] = Array.from(val.children).map(el => el.tagName==="dict" ? parseDict(el) : el.textContent);
+    }
+    return obj;
+  }
+
+  const rootObj = parseDict(root);
+  const tracksDict = rootObj["Tracks"] || {};
+  const playlistsArr = rootObj["Playlists"] || [];
+
+  const tracks = Object.values(tracksDict)
+    .filter(t => t["Location"] && !t["Podcast"] && t["Track Type"] !== "URL")
+    .map(t => {
+      const loc = decodeURIComponent((t["Location"] || "").replace(/^file:\/\//, ""));
+      const filename = loc.split("/").pop();
+      const keyRaw = t["Initial Key"] || "";
+      return {
+        id: `itunes_${t["Track ID"]}`,
+        itunesId: String(t["Track ID"]),
+        title: t["Name"] || filename.replace(/\.[^.]+$/, ""),
+        artist: t["Artist"] || t["Album Artist"] || "",
+        album: t["Album"] || "",
+        genre: t["Genre"] || "",
+        bpm: t["BPM"] ? parseFloat(t["BPM"]) : null,
+        key: keyRaw || null,
+        duration: t["Total Time"] ? t["Total Time"] / 1000 : null,
+        location: loc,
+        filename: filename.replace(/\.[^.]+$/, ""),
+        year: t["Year"] ? String(t["Year"]) : "",
+        playCount: t["Play Count"] || 0,
+        analyzed: !!(t["BPM"] || keyRaw),
+        energy: null,
+        addedAt: Date.now(),
+        source: "itunes",
+      };
+    });
+
+  const playlists = playlistsArr
+    .filter(p => !p["Master"] && !p["Distinguished Kind"] && p["Name"] && p["Playlist Items"]?.length > 0)
+    .map(p => ({
+      name: p["Name"],
+      trackIds: (p["Playlist Items"] || []).map(item => `itunes_${item["Track ID"]}`),
+    }));
+
+  return { tracks, playlists };
+}
+
 // ── Recursive folder scanner ───────────────────────────────────
 async function* scanDir(dirHandle, path="") {
   for await (const [name, handle] of dirHandle.entries()) {
@@ -731,6 +798,59 @@ export default function MusicLibrary() {
     processQueue();
   };
 
+  // ── iTunes import ────────────────────────────────────────────
+  const importFromItunes = async (file) => {
+    if (!file) return;
+    setScanning(true);
+    setScanProg({ found:0, analyzed:0, total:0 });
+    try {
+      const text = await file.text();
+      const { tracks: itTracks, playlists: itPlaylists } = parseiTunesXML(text);
+      if (!itTracks.length) { setScanning(false); alert("No tracks found in this iTunes library file."); return; }
+
+      const db = dbRef.current;
+      const existing = new Set(tracks.map(t=>t.id));
+      // Also build a filename→id map so we can match against itunes tracks later
+      const filenameMap = {};
+      tracks.forEach(t => { filenameMap[t.filename] = t.id; });
+
+      let added = 0;
+      for (const t of itTracks) {
+        if (existing.has(t.id)) continue;
+        // Check if we already have a scanned track with same filename (from folder scan)
+        const matchId = filenameMap[t.filename];
+        if (matchId) {
+          // Merge iTunes metadata into existing track
+          setTracks(prev => prev.map(tr => tr.id === matchId ? {...tr, bpm:tr.bpm||t.bpm, key:tr.key||t.key, genre:tr.genre||t.genre, album:tr.album||t.album, playCount:t.playCount, itunesId:t.itunesId} : tr));
+          const exTrack = tracks.find(tr=>tr.id===matchId);
+          if (exTrack) await dbPut(db, "tracks", {...exTrack, bpm:exTrack.bpm||t.bpm, key:exTrack.key||t.key, genre:exTrack.genre||t.genre, itunesId:t.itunesId, playCount:t.playCount});
+          continue;
+        }
+        setTracks(prev => [t, ...prev]);
+        await dbPut(db, "tracks", t);
+        added++;
+        setScanProg(p => ({ ...p, found: added }));
+        // Queue for energy analysis if we can match a file later
+        // (energy analysis requires actual audio — will run when user scans media folder)
+      }
+
+      // Import playlists as crates
+      for (const pl of itPlaylists) {
+        const existingCrate = crates.find(c=>c.name===pl.name);
+        if (!existingCrate && pl.trackIds.some(tid=>!existing.has(tid)||filenameMap[tid])) {
+          const cr = { id:`cr_${Date.now()}_${Math.random().toString(36).slice(2,5)}`, name:pl.name, trackIds:pl.trackIds.filter(tid=>itTracks.find(t=>t.id===tid)), createdAt:Date.now() };
+          if (cr.trackIds.length>0) { setCrates(p=>[...p,cr]); await dbPut(db,"crates",cr); }
+        }
+      }
+
+      setScanProg({ found: added, analyzed:0, total: itTracks.length });
+    } catch(e) {
+      console.error("iTunes import error", e);
+      alert("Error reading iTunes library. Make sure you selected an iTunes XML file.");
+    }
+    setScanning(false);
+  };
+
   // ── Re-analyze (for tracks already in DB) ──────────────────
   const reanalyzeAll = async () => {
     const unanalyzed = tracks.filter(t => !t.analyzed);
@@ -863,6 +983,10 @@ export default function MusicLibrary() {
               </div>
             )}
           </div>
+          <label title="Import from iTunes / Apple Music XML library" style={{ padding:"9px 14px", background:"#8B5CF615", border:"1px solid #8B5CF655", color:"#8B5CF6", fontFamily:"'DM Mono',monospace", fontSize:10, letterSpacing:1.5, borderRadius:8, cursor:"pointer", display:"flex", alignItems:"center", gap:6, transition:"all .2s", whiteSpace:"nowrap" }}>
+            ♪ iTunes
+            <input type="file" accept=".xml" style={{display:"none"}} onChange={e=>{ if(e.target.files[0]) importFromItunes(e.target.files[0]); e.target.value=""; }}/>
+          </label>
           <button onClick={scanFolder} disabled={scanning}
             style={{ padding:"9px 16px", background:scanning?"transparent":`${G}22`, border:`1px solid ${G}55`, color:scanning?C.muted:G, fontFamily:"'DM Mono',monospace", fontSize:10, letterSpacing:1.5, borderRadius:8, cursor:scanning?"not-allowed":"pointer", display:"flex", alignItems:"center", gap:8, transition:"all .2s" }}>
             {scanning
@@ -921,8 +1045,23 @@ export default function MusicLibrary() {
 
           {/* Link back to mixer */}
           <div style={{ padding:"10px 18px", borderTop:`1px solid ${C.border}` }}>
-            <a href="/" style={{ fontSize:10, fontFamily:"'DM Mono',monospace", color:C.muted, textDecoration:"none", letterSpacing:1, display:"flex", alignItems:"center", gap:6 }}>
-              ← OPEN MIXER
+            <a href="#" onClick={e=>{
+              e.preventDefault();
+              // If opened from mixer tab, focus it and close this tab
+              if (window.opener && !window.opener.closed) {
+                window.opener.focus();
+                window.close();
+              } else {
+                // Navigate with session params for auto-rejoin
+                try {
+                  const s = JSON.parse(localStorage.getItem("cm_session")||"null");
+                  if (s?.room && s?.name) {
+                    window.location.href = `/?room=${encodeURIComponent(s.room)}&name=${encodeURIComponent(s.name)}`;
+                  } else { window.location.href = "/"; }
+                } catch { window.location.href = "/"; }
+              }
+            }} style={{ fontSize:10, fontFamily:"'DM Mono',monospace", color:C.muted, textDecoration:"none", letterSpacing:1, display:"flex", alignItems:"center", gap:6, cursor:"pointer" }}>
+              ← BACK TO MIXER
             </a>
           </div>
         </div>
@@ -948,11 +1087,19 @@ export default function MusicLibrary() {
                   </div>
                 ))}
               </div>
-              <button onClick={scanFolder}
-                style={{ padding:"14px 36px", background:`linear-gradient(135deg,${G}22,${G}11)`, border:`1px solid ${G}55`, color:G, fontFamily:"'DM Mono',monospace", fontSize:12, letterSpacing:2, borderRadius:10, cursor:"pointer", boxShadow:`0 0 32px ${G}18`, transition:"all .2s" }}>
-                ⊕ SCAN YOUR MUSIC FOLDER
-              </button>
-              <div style={{ fontSize:10, color:C.muted, fontFamily:"'DM Mono',monospace", letterSpacing:1 }}>Requires Chrome or Edge · Your files stay on your computer</div>
+              <div style={{ display:"flex", gap:12, flexWrap:"wrap", justifyContent:"center" }}>
+                <button onClick={scanFolder}
+                  style={{ padding:"14px 36px", background:`linear-gradient(135deg,${G}22,${G}11)`, border:`1px solid ${G}55`, color:G, fontFamily:"'DM Mono',monospace", fontSize:12, letterSpacing:2, borderRadius:10, cursor:"pointer", boxShadow:`0 0 32px ${G}18`, transition:"all .2s" }}>
+                  ⊕ SCAN MUSIC FOLDER
+                </button>
+                <label title="Import your iTunes or Apple Music library (XML file)" style={{ padding:"14px 28px", background:"#8B5CF611", border:"1px solid #8B5CF644", color:"#8B5CF6", fontFamily:"'DM Mono',monospace", fontSize:12, letterSpacing:2, borderRadius:10, cursor:"pointer", display:"flex", alignItems:"center", gap:8, transition:"all .2s" }}>
+                  ♪ IMPORT iTunes / Apple Music
+                  <input type="file" accept=".xml" style={{display:"none"}} onChange={e=>{ if(e.target.files[0]) importFromItunes(e.target.files[0]); e.target.value=""; }}/>
+                </label>
+              </div>
+              <div style={{ fontSize:10, color:C.muted, fontFamily:"'DM Mono',monospace", letterSpacing:1, textAlign:"center" }}>
+                iTunes: File → Library → Export Library to get your XML · Scan Folder works with any music folder
+              </div>
             </div>
           )}
 
