@@ -105,6 +105,350 @@ function useBPM() {
   return { results, analyze };
 }
 
+// ── Camelot wheel + recommendation engine ────────────────────
+const CAMELOT = {
+  "C":"8B","G":"9B","D":"10B","A":"11B","E":"12B","B":"1B","F#":"2B","Db":"3B","Ab":"4B","Eb":"5B","Bb":"6B","F":"7B",
+  "Am":"8A","Em":"9A","Bm":"10A","F#m":"11A","C#m":"12A","G#m":"1A","D#m":"2A","A#m":"3A","Fm":"4A","Cm":"5A","Gm":"6A","Dm":"7A",
+};
+function camelotScore(a,b){
+  if(!a||!b)return 0; if(a===b)return 1;
+  const nA=parseInt(a),nB=parseInt(b),tA=a.slice(-1),tB=b.slice(-1);
+  const diff=Math.min(Math.abs(nA-nB),12-Math.abs(nA-nB));
+  if(tA===tB&&diff<=1)return .9; if(tA!==tB&&diff===0)return .8;
+  if(tA===tB&&diff===2)return .5; return Math.max(0,.4-diff*.1);
+}
+function recommendTracks(current,library,limit=6){
+  if(!current||library.length===0)return [];
+  return library.filter(t=>t.id!==current.id&&t.analyzed).map(t=>{
+    const bpmDiff=Math.abs((t.bpm||0)-(current.bpm||0));
+    const bpmScore=bpmDiff===0?1:Math.max(0,1-bpmDiff/12);
+    const keyScore=camelotScore(CAMELOT[current.key],CAMELOT[t.key]);
+    const energyDiff=Math.abs((t.energy?.score||50)-(current.energy?.score||50));
+    const energyScore=Math.max(0,1-energyDiff/100);
+    const total=bpmScore*.40+keyScore*.35+energyScore*.25;
+    const reasons=[];
+    if(bpmDiff<=2)reasons.push(bpmDiff===0?"Same BPM":`${t.bpm>current.bpm?"+":""}${Math.round(t.bpm-current.bpm)} BPM`);
+    if(keyScore>=.8)reasons.push(keyScore===1?"Same key":"Harmonic");
+    if(energyDiff<=10)reasons.push("Matched energy");
+    return {...t,score:total,bpmDiff,reasons:reasons.slice(0,2)};
+  }).sort((a,b)=>b.score-a.score).slice(0,limit);
+}
+
+// ── ID3 parser (minimal) ──────────────────────────────────────
+function parseID3(buffer){
+  const bytes=new Uint8Array(buffer),view=new DataView(buffer),tags={};
+  if(bytes[0]!==0x49||bytes[1]!==0x44||bytes[2]!==0x33)return tags;
+  const ver=bytes[3];
+  const size=((bytes[6]&0x7F)<<21)|((bytes[7]&0x7F)<<14)|((bytes[8]&0x7F)<<7)|(bytes[9]&0x7F);
+  let off=10;const end=Math.min(off+size,buffer.byteLength);
+  const fmap={"TIT2":"title","TPE1":"artist","TBPM":"bpm","TKEY":"key","TCON":"genre","TALB":"album"};
+  function rStr(o,len){const enc=bytes[o];const sl=bytes.slice(o+1,o+len);try{return enc===1||enc===2?new TextDecoder("utf-16").decode(sl).replace(/\0/g,"").trim():new TextDecoder("utf-8").decode(sl).replace(/\0/g,"").trim();}catch{return "";}}
+  while(off+10<end){
+    const fid=String.fromCharCode(bytes[off],bytes[off+1],bytes[off+2],bytes[off+3]);
+    if(!fid.match(/^[A-Z0-9]{4}$/))break;
+    const fsz=ver>=4?((bytes[off+4]&0x7F)<<21)|((bytes[off+5]&0x7F)<<14)|((bytes[off+6]&0x7F)<<7)|(bytes[off+7]&0x7F):view.getUint32(off+4);
+    if(fmap[fid]&&fsz>1)tags[fmap[fid]]=rStr(off+10,fsz);
+    off+=10+fsz; if(fsz===0)break;
+  }
+  return tags;
+}
+
+// ── Library analysis worker ───────────────────────────────────
+const LIB_WORKER=`
+function bpf(s,sr,lo,hi){const o=new Float32Array(s.length);const rL=1/(2*Math.PI*hi/sr+1),rH=1/(2*Math.PI*lo/sr+1);let pi=0,po=0;const hp=new Float32Array(s.length);for(let i=0;i<s.length;i++){hp[i]=rH*(po+s[i]-pi);pi=s[i];po=hp[i];}let pv=0;for(let i=0;i<hp.length;i++){pv=o[i]=pv+(1-rL)*(hp[i]-pv);}return o;}
+function dbpm(mono,sr){const ar=200,hop=Math.floor(sr/ar),nf=Math.floor(mono.length/hop);const f=bpf(mono,sr,100,400);for(let i=0;i<f.length;i++)f[i]=f[i]>0?f[i]:0;const env=new Float32Array(nf);for(let i=0;i<nf;i++){let s=0;const st=i*hop,en=Math.min(st+hop,mono.length);for(let j=st;j<en;j++)s+=f[j]*f[j];env[i]=Math.sqrt(s/(en-st));}const on=new Float32Array(nf);for(let i=1;i<nf;i++){const d=env[i]-env[i-1];on[i]=d>0?d:0;}const mn=on.reduce((s,v)=>s+v,0)/nf;const sd=Math.sqrt(on.reduce((s,v)=>s+(v-mn)**2,0)/nf)||1;for(let i=0;i<nf;i++)on[i]=(on[i]-mn)/sd;const ml=Math.floor(60/200*ar),xl=Math.ceil(ar),al=xl-ml+1;const ac=new Float32Array(al);for(let li=0;li<al;li++){const lag=li+ml;let s=0;for(let i=0;i<nf-lag;i++)s+=on[i]*on[i+lag];ac[li]=s/(nf-lag);}let best=0,bi=0;for(let i=0;i<ac.length;i++)if(ac[i]>best){best=ac[i];bi=i;}if(!best)return null;const raw=(60/(bi+ml))*ar;let b=raw;while(b<100)b*=2;while(b>175)b/=2;return Math.round(b*10)/10;}
+function dkey(mono,sr){const fftSize=4096,hopSize=2048,NOTES=["C","C#","D","Eb","E","F","F#","G","Ab","A","Bb","B"];const chroma=new Float32Array(12);const win=new Float32Array(fftSize);for(let i=0;i<fftSize;i++)win[i]=0.5-0.5*Math.cos(2*Math.PI*i/fftSize);const hops=Math.min(Math.floor((mono.length-fftSize)/hopSize),40);for(let h=0;h<hops;h++){const st=h*hopSize;for(let pc=0;pc<12;pc++){const freq=440*Math.pow(2,(pc-9)/12);let re=0,im=0;for(let i=0;i<fftSize;i+=4){const s=mono[st+i]*win[i];const p=2*Math.PI*freq*i/sr;re+=s*Math.cos(p);im+=s*Math.sin(p);}chroma[pc]+=Math.sqrt(re*re+im*im);}}const mx=Math.max(...chroma);if(mx>0)for(let i=0;i<12;i++)chroma[i]/=mx;const majP=[6.35,2.23,3.48,2.33,4.38,4.09,2.52,5.19,2.39,3.66,2.29,2.88];const minP=[6.33,2.68,3.52,5.38,2.60,3.53,2.54,4.75,3.98,2.69,3.34,3.17];let best=-Infinity,bk="C";for(let r=0;r<12;r++){let ms=0,ns=0;for(let i=0;i<12;i++){ms+=chroma[(r+i)%12]*majP[i];ns+=chroma[(r+i)%12]*minP[i];}if(ms>best){best=ms;bk=NOTES[r];}if(ns>best){best=ns;bk=NOTES[r]+"m";}}return bk;}
+function denergy(mono,sr){const chunk=Math.min(mono.length,sr*30);let rms=0;for(let i=0;i<chunk;i++)rms+=mono[i]*mono[i];rms=Math.sqrt(rms/chunk);let zc=0;for(let i=1;i<chunk;i++)if((mono[i]>=0)!==(mono[i-1]>=0))zc++;const rn=Math.min(1,rms*8),zn=Math.min(1,zc/(chunk/sr)/3000),score=rn*.7+zn*.3;const labels=["Ambient","Warm-Up","Build","Peak Hour","Hard"];const label=score<.25?"Ambient":score<.45?"Warm-Up":score<.65?"Build":score<.82?"Peak Hour":"Hard";return{score:Math.round(score*100),label};}
+self.onmessage=function(e){
+  const{cd,sr,id,skipBPM,skipKey}=e.data;
+  const mono=new Float32Array(cd[0].length);
+  for(let c=0;c<cd.length;c++){const d=cd[c];for(let i=0;i<mono.length;i++)mono[i]+=d[i]/cd.length;}
+  const bpm=skipBPM?null:dbpm(mono,sr);
+  const key=skipKey?null:dkey(mono,sr);
+  const energy=denergy(mono,sr);
+  self.postMessage({id,bpm,key,energy});
+};`;
+function createLibWorker(){return new Worker(URL.createObjectURL(new Blob([LIB_WORKER],{type:"application/javascript"})));}
+
+// ── Energy color map ──────────────────────────────────────────
+const ENERGY_COLOR={"Ambient":"#4A90D9","Warm-Up":"#22c55e","Build":"#f59e0b","Peak Hour":"#ff6b35","Hard":"#ef4444"};
+
+// ── useLibrary hook ───────────────────────────────────────────
+function useLibrary(){
+  const [library,setLibrary]=useState(()=>{try{return JSON.parse(localStorage.getItem("cm_lib")||"[]");}catch{return [];}});
+  const [importing,setImporting]=useState(false);
+  const workerRef=useRef(null),queueRef=useRef([]),activeRef=useRef(false),fileMap=useRef({});
+  const audioCtx=useRef(null);
+
+  useEffect(()=>{const s=library.map(({file,...r})=>r);localStorage.setItem("cm_lib",JSON.stringify(s));},[library]);
+
+  useEffect(()=>{
+    workerRef.current=createLibWorker();
+    workerRef.current.onmessage=(e)=>{
+      const{id,bpm,key,energy}=e.data;
+      setLibrary(prev=>prev.map(t=>t.id===id?{...t,bpm:bpm||t.bpm,key:key||t.key,energy,analyzed:true}:t));
+      activeRef.current=false; processQ();
+    };
+    return()=>workerRef.current?.terminate();
+  },[]);
+
+  const processQ=useCallback(()=>{
+    if(activeRef.current||queueRef.current.length===0)return;
+    const{id,file,skipBPM,skipKey}=queueRef.current.shift();
+    activeRef.current=true;
+    (async()=>{
+      try{
+        if(!audioCtx.current)audioCtx.current=new(window.AudioContext||window.webkitAudioContext)();
+        const ab=await file.arrayBuffer();
+        const buf=await audioCtx.current.decodeAudioData(ab);
+        setLibrary(prev=>prev.map(t=>t.id===id?{...t,duration:buf.duration}:t));
+        const cd=[];for(let c=0;c<buf.numberOfChannels;c++)cd.push(buf.getChannelData(c).slice());
+        workerRef.current.postMessage({cd,sr:buf.sampleRate,id,skipBPM,skipKey});
+      }catch{
+        setLibrary(prev=>prev.map(t=>t.id===id?{...t,analyzed:true,error:true}:t));
+        activeRef.current=false; processQ();
+      }
+    })();
+  },[]);
+
+  const importFiles=useCallback(async(files)=>{
+    const audio=[...files].filter(f=>f.type.startsWith("audio/")||f.name.match(/\.(mp3|wav|flac|aac|ogg|m4a)$/i));
+    if(!audio.length)return;
+    setImporting(true);
+    for(const file of audio){
+      const id=`t_${Date.now()}_${Math.random().toString(36).slice(2,6)}`;
+      let tags={};
+      try{const sl=file.slice(0,262144);tags=parseID3(await sl.arrayBuffer());}catch{}
+      const track={id,filename:file.name.replace(/\.[^.]+$/,""),title:tags.title||file.name.replace(/\.[^.]+$/,""),artist:tags.artist||"",album:tags.album||"",genre:tags.genre||"",bpm:tags.bpm?parseFloat(tags.bpm):null,key:tags.key||null,duration:null,energy:null,analyzed:false,error:false,addedAt:Date.now()};
+      fileMap.current[id]=file;
+      setLibrary(prev=>{if(prev.find(t=>t.filename===track.filename))return prev;return [...prev,track];});
+      queueRef.current.push({id,file,skipBPM:!!track.bpm,skipKey:!!track.key});
+    }
+    setImporting(false); processQ();
+  },[processQ]);
+
+  const getFile=(id)=>fileMap.current[id]||null;
+  const clear=()=>{setLibrary([]);fileMap.current={};};
+
+  return{library,importing,importFiles,getFile,clear};
+}
+
+// ── Library Panel UI ──────────────────────────────────────────
+function TrackRow({track, onLoadA, onLoadB, isRec, reasons, isPartner, canLoad}){
+  const [hov,setHov]=useState(false);
+  const G="#C8A96E";
+  const eColor=ENERGY_COLOR[track.energy?.label]||"#444";
+  const fmt=(s)=>s?`${Math.floor(s/60)}:${String(Math.floor(s%60)).padStart(2,"0")}`:"--";
+  const camelot=CAMELOT[track.key];
+  const isMinor=camelot?.endsWith("A");
+  const keyColor=isMinor?"#8B6EAF":G;
+
+  return(
+    <div
+      onMouseEnter={()=>setHov(true)}
+      onMouseLeave={()=>setHov(false)}
+      style={{
+        display:"grid",
+        gridTemplateColumns:"1fr 52px 44px 72px 40px 64px",
+        gap:6,
+        alignItems:"center",
+        padding:"7px 10px",
+        borderRadius:5,
+        marginBottom:1,
+        background:isRec?"#22c55e07":hov?"#1C183099":"transparent",
+        border:`1px solid ${isRec?"#22c55e18":hov?"#C8A96E14":"transparent"}`,
+        transition:"all .1s",
+        cursor:"default",
+      }}
+    >
+      <div style={{overflow:"hidden",minWidth:0}}>
+        <div style={{display:"flex",gap:5,alignItems:"center"}}>
+          {isRec&&<div style={{width:4,height:4,borderRadius:"50%",background:"#22c55e",boxShadow:"0 0 4px #22c55e",flexShrink:0}}/>}
+          {!track.analyzed&&!track.error&&<div style={{width:8,height:8,border:`1.5px solid ${G}33`,borderTop:`1.5px solid ${G}`,borderRadius:"50%",animation:"spin 1s linear infinite",flexShrink:0}}/>}
+          <div style={{fontSize:11,color:hov?"#EDE8DF":"#c0bcd8",whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis",fontFamily:"'DM Sans',sans-serif",fontWeight:400}}>{track.title||track.filename}</div>
+        </div>
+        <div style={{fontSize:9,color:"#5a556a",fontFamily:"'DM Mono',monospace",whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis",marginTop:1}}>{track.artist||"Unknown Artist"}</div>
+        {reasons?.length>0&&(
+          <div style={{display:"flex",gap:3,marginTop:2}}>
+            {reasons.map(r=><span key={r} style={{fontSize:7,fontFamily:"'DM Mono',monospace",color:"#22c55e",background:"#22c55e11",borderRadius:2,padding:"0 4px",letterSpacing:.5}}>{r}</span>)}
+          </div>
+        )}
+      </div>
+      <div style={{textAlign:"right"}}>
+        <div style={{fontSize:11,fontFamily:"'DM Mono',monospace",color:track.bpm?G:"#2a2a3a",fontWeight:500}}>{track.bpm?track.bpm.toFixed(1):"--"}</div>
+        <div style={{fontSize:7,color:"#3A3555",fontFamily:"'DM Mono',monospace",letterSpacing:1}}>BPM</div>
+      </div>
+      <div style={{textAlign:"center"}}>
+        {camelot?(
+          <>
+            <div style={{fontSize:9,fontFamily:"'DM Mono',monospace",color:keyColor,background:keyColor+"18",borderRadius:3,padding:"1px 4px",display:"inline-block"}}>{camelot}</div>
+            <div style={{fontSize:7,color:"#3A3555",fontFamily:"'DM Mono',monospace",marginTop:1}}>{track.key}</div>
+          </>
+        ):<div style={{fontSize:9,color:"#3A3555",fontFamily:"'DM Mono',monospace"}}>--</div>}
+      </div>
+      <div>
+        {track.energy?(
+          <>
+            <div style={{height:3,background:"#0a0a18",borderRadius:2,marginBottom:3,overflow:"hidden"}}>
+              <div style={{height:"100%",width:`${track.energy.score}%`,background:eColor,borderRadius:2}}/>
+            </div>
+            <div style={{fontSize:7,fontFamily:"'DM Mono',monospace",color:eColor,letterSpacing:.5,whiteSpace:"nowrap"}}>{track.energy.label}</div>
+          </>
+        ):<div style={{fontSize:8,color:"#3A3555",fontFamily:"'DM Mono',monospace"}}>--</div>}
+      </div>
+      <div style={{fontSize:9,fontFamily:"'DM Mono',monospace",color:"#5a556a",textAlign:"right"}}>{fmt(track.duration)}</div>
+      <div style={{display:"flex",gap:3,opacity:hov&&canLoad?1:0,transition:"opacity .1s"}}>
+        {onLoadA&&<button onClick={e=>{e.stopPropagation();onLoadA(track);}} style={{padding:"2px 6px",fontSize:7,fontFamily:"'DM Mono',monospace",background:"#00d4ff15",border:"1px solid #00d4ff30",color:"#00d4ff",borderRadius:3,cursor:"pointer",letterSpacing:.5}}>A</button>}
+        {onLoadB&&<button onClick={e=>{e.stopPropagation();onLoadB(track);}} style={{padding:"2px 6px",fontSize:7,fontFamily:"'DM Mono',monospace",background:"#C8A96E15",border:"1px solid #C8A96E30",color:"#C8A96E",borderRadius:3,cursor:"pointer",letterSpacing:.5}}>B</button>}
+      </div>
+    </div>
+  );
+}
+
+function LibraryCol({title, color, tracks, onLoadA, onLoadB, playingTrack, partnerTracks, importing, onImport, onDrop, isOwn}){
+  const [filter,setFilter]=useState("");
+  const [sortBy,setSortBy]=useState("title");
+  const [sortDir,setSortDir]=useState(1);
+  const [tab,setTab]=useState("all");
+  const fileRef=useRef(null);
+  const G="#C8A96E";
+
+  const crossRecs = playingTrack&&partnerTracks?.length>0 ? recommendTracks(playingTrack, partnerTracks) : [];
+  const selfRecs  = playingTrack&&tracks?.length>0 ? recommendTracks(playingTrack, tracks) : [];
+  const activeRecs= tab==="suggest" ? (isOwn ? selfRecs : crossRecs) : [];
+  const recIds    = new Set(activeRecs.map(r=>r.id));
+
+  const filtered = (tab==="suggest" ? activeRecs : tracks)
+    .filter(t=>{const q=filter.toLowerCase();return !q||t.title?.toLowerCase().includes(q)||t.artist?.toLowerCase().includes(q)||t.genre?.toLowerCase().includes(q);})
+    .sort((a,b)=>{const va=a[sortBy]||0,vb=b[sortBy]||0;return(typeof va==="string"?va.localeCompare(vb):(va-vb))*sortDir;});
+
+  const colHdr=(label,key)=>(
+    <div onClick={()=>{if(sortBy===key)setSortDir(d=>-d);else{setSortBy(key);setSortDir(1);}}} style={{fontFamily:"'DM Mono',monospace",fontSize:8,color:sortBy===key?G:"#3A3555",cursor:"pointer",letterSpacing:1,userSelect:"none",whiteSpace:"nowrap"}}>
+      {label}{sortBy===key?(sortDir===1?" ↑":" ↓"):""}
+    </div>
+  );
+
+  return(
+    <div style={{display:"flex",flexDirection:"column",height:"100%",overflow:"hidden"}}>
+      <div style={{padding:"10px 10px 8px",borderBottom:`1px solid ${color}18`,flexShrink:0}}>
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:8}}>
+          <div style={{display:"flex",gap:6,alignItems:"center"}}>
+            <div style={{width:7,height:7,borderRadius:"50%",background:color,boxShadow:`0 0 6px ${color}`}}/>
+            <span style={{fontFamily:"'DM Mono',monospace",fontSize:10,color,letterSpacing:2}}>{title}</span>
+            <span style={{fontFamily:"'DM Mono',monospace",fontSize:8,color:"#3A3555"}}>{tracks.length} tracks</span>
+            {importing&&<div style={{width:9,height:9,border:`1.5px solid ${G}33`,borderTop:`1.5px solid ${G}`,borderRadius:"50%",animation:"spin 1s linear infinite"}}/>}
+          </div>
+          {isOwn&&(
+            <button onClick={()=>fileRef.current?.click()} style={{padding:"3px 10px",fontSize:8,fontFamily:"'DM Mono',monospace",background:G+"11",border:`1px solid ${G}33`,color:G,borderRadius:5,cursor:"pointer",letterSpacing:1}}>+ ADD</button>
+          )}
+        </div>
+        <div style={{display:"flex",gap:3,marginBottom:8}}>
+          {[["all","ALL"],["suggest",`SUGGEST (${isOwn?selfRecs.length:crossRecs.length})`]].map(([id,l])=>(
+            <button key={id} onClick={()=>setTab(id)} style={{padding:"3px 9px",fontSize:7,fontFamily:"'DM Mono',monospace",letterSpacing:1,background:tab===id?color+"18":"transparent",color:tab===id?color:"#3A3555",border:`1px solid ${tab===id?color+"33":"#1C1830"}`,borderRadius:4,cursor:"pointer",outline:"none"}}>{l}</button>
+          ))}
+        </div>
+        <input value={filter} onChange={e=>setFilter(e.target.value)} placeholder="Search tracks..." style={{width:"100%",background:"#080710",border:`1px solid #1C1830`,color:"#d0d0e0",borderRadius:5,padding:"5px 9px",fontSize:9,fontFamily:"'DM Mono',monospace",outline:"none"}}/>
+      </div>
+      {tracks.length>0&&(
+        <div style={{display:"grid",gridTemplateColumns:"1fr 52px 44px 72px 40px 64px",gap:6,padding:"6px 10px",borderBottom:"1px solid #0a0a14",flexShrink:0}}>
+          {colHdr("TITLE","title")}
+          {colHdr("BPM","bpm")}
+          <div style={{fontFamily:"'DM Mono',monospace",fontSize:8,color:"#3A3555",letterSpacing:1,textAlign:"center"}}>KEY</div>
+          <div style={{fontFamily:"'DM Mono',monospace",fontSize:8,color:"#3A3555",letterSpacing:1}}>ENERGY</div>
+          {colHdr("TIME","duration")}
+          <div/>
+        </div>
+      )}
+      <div style={{flex:1,overflowY:"auto",padding:"3px 4px"}} onDragOver={isOwn?e=>{e.preventDefault();}:undefined} onDrop={isOwn?onDrop:undefined}>
+        {tracks.length===0&&isOwn?(
+          <div onClick={()=>fileRef.current?.click()} style={{display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",height:"100%",gap:12,cursor:"pointer",padding:20,border:`2px dashed #C8A96E18`,borderRadius:8,margin:8}}>
+            <div style={{fontSize:32,opacity:.2}}>♫</div>
+            <div style={{fontFamily:"'DM Mono',monospace",fontSize:9,color:"#3A3555",textAlign:"center",letterSpacing:1,lineHeight:2}}>DROP TRACKS HERE<br/>OR CLICK ADD<br/><br/>MP3 WAV FLAC AAC</div>
+          </div>
+        ):tracks.length===0?(
+          <div style={{display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",height:"100%",gap:8,padding:16}}>
+            <div style={{fontSize:24,opacity:.15}}>♫</div>
+            <div style={{fontFamily:"'DM Mono',monospace",fontSize:8,color:"#1e1e2e",textAlign:"center",letterSpacing:1,lineHeight:1.8}}>WAITING FOR<br/>PARTNER LIBRARY</div>
+          </div>
+        ):(
+          filtered.map(track=>{
+            const recData=activeRecs.find(r=>r.id===track.id);
+            return(
+              <TrackRow
+                key={track.id}
+                track={track}
+                onLoadA={isOwn?()=>onLoadA(track):null}
+                onLoadB={isOwn?()=>onLoadB(track):null}
+                isRec={recIds.has(track.id)}
+                reasons={recData?.reasons}
+                isPartner={!isOwn}
+                canLoad={isOwn}
+              />
+            );
+          })
+        )}
+      </div>
+      {isOwn&&<input ref={fileRef} type="file" accept="audio/*" multiple style={{display:"none"}} onChange={e=>onImport(e.target.files)}/>}
+    </div>
+  );
+}
+
+function LibraryPanel({lib, onLoad, playingTrack, partnerName, partnerLibrary}){
+  const G="#C8A96E";
+  const handleDrop=(e)=>{e.preventDefault();lib.importFiles([...e.dataTransfer.files]);};
+  const crossRecs = playingTrack&&partnerLibrary?.length>0 ? recommendTracks(playingTrack, partnerLibrary) : [];
+
+  return(
+    <div style={{display:"flex",flexDirection:"column",height:"100%",overflow:"hidden"}}>
+      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"10px 12px",borderBottom:`1px solid ${G}14`,flexShrink:0}}>
+        <div style={{fontFamily:"'DM Mono',monospace",fontSize:10,color:G,letterSpacing:3}}>SHARED LIBRARY</div>
+        <div style={{display:"flex",gap:12,alignItems:"center"}}>
+          {playingTrack&&(
+            <div style={{display:"flex",gap:5,alignItems:"center"}}>
+              <div style={{width:5,height:5,borderRadius:"50%",background:"#22c55e",boxShadow:"0 0 5px #22c55e"}}/>
+              <span style={{fontFamily:"'DM Mono',monospace",fontSize:8,color:"#22c55e",letterSpacing:1}}>NOW PLAYING: {(playingTrack.title||playingTrack.filename||"").slice(0,20)}</span>
+              {crossRecs.length>0&&<span style={{fontFamily:"'DM Mono',monospace",fontSize:8,color:"#22c55e",background:"#22c55e11",borderRadius:3,padding:"1px 6px"}}>{crossRecs.length} partner matches</span>}
+            </div>
+          )}
+          {lib.library.length>0&&(
+            <button onClick={lib.clear} style={{fontSize:7,fontFamily:"'DM Mono',monospace",background:"transparent",border:"1px solid #ef444422",color:"#ef444455",borderRadius:3,padding:"1px 7px",cursor:"pointer"}}>CLEAR</button>
+          )}
+        </div>
+      </div>
+      <div style={{flex:1,display:"grid",gridTemplateColumns:"1fr 1px 1fr",overflow:"hidden"}}>
+        <LibraryCol
+          title="YOUR LIBRARY"
+          color="#00d4ff"
+          tracks={lib.library}
+          onLoadA={(t)=>onLoad(t,"A")}
+          onLoadB={(t)=>onLoad(t,"B")}
+          playingTrack={playingTrack}
+          partnerTracks={partnerLibrary}
+          importing={lib.importing}
+          onImport={lib.importFiles}
+          onDrop={handleDrop}
+          isOwn
+        />
+        <div style={{background:`#C8A96E14`,width:1}}/>
+        <LibraryCol
+          title={partnerName?`${partnerName.toUpperCase()}'S LIBRARY`:"PARTNER LIBRARY"}
+          color="#ff6b35"
+          tracks={partnerLibrary||[]}
+          onLoadA={null}
+          onLoadB={null}
+          playingTrack={playingTrack}
+          partnerTracks={lib.library}
+          importing={false}
+          onImport={null}
+          onDrop={null}
+          isOwn={false}
+        />
+      </div>
+    </div>
+  );
+}
+
+
 // ── Recording ────────────────────────────────────────────────
 function useRecorder({ engineRef }) {
   const [state, setState] = useState("idle");
@@ -381,7 +725,7 @@ function Knob({ v, set, min=-12, max=12, ctr=0, label, color="#00d4ff", size=38,
 }
 
 // ── Deck ─────────────────────────────────────────────────────
-function Deck({ id, ch, ctx:ac, color, local, remote, onChange, midi:mt, bpmResult, bpmAnalyze, eqHi=0, eqMid=0, eqLo=0, chanVol=1 }) {
+function Deck({ id, ch, ctx:ac, color, local, remote, onChange, midi:mt, bpmResult, bpmAnalyze, eqHi=0, eqMid=0, eqLo=0, chanVol=1, loadFromLibrary=null, onTrackInfo=null }) {
   const [buf,setBuf]=useState(null),[name,setName]=useState(null),[play,setPlay]=useState(false);
   const [prog,setProg]=useState(0),[dur,setDur]=useState(0);
   const [hi,setHi]=useState(0),[mid,setMid]=useState(0),[lo,setLo]=useState(0),[vol,setVol]=useState(1);
@@ -455,15 +799,18 @@ function Deck({ id, ch, ctx:ac, color, local, remote, onChange, midi:mt, bpmResu
   const seek  =useCallback((p)=>{ const o=p*(buf?.duration||0);off.current=o;if(play)play_(o);else setProg(p);onChange?.("progress",p); },[buf,play,rate]);
   const cue   =useCallback(()=>{ off.current=0;setProg(0);if(play){stop_();setPlay(false);onChange?.("playing",false);}onChange?.("progress",0); },[play]);
 
-  // FIX: actually call bpmAnalyze when buffer loads
-  const load=async(f)=>{
+  // Load a file, optionally with library track metadata
+  const load=async(f, trackMeta=null)=>{
     const ab=await f.arrayBuffer();
     const d=await ac.decodeAudioData(ab);
     stop_();setPlay(false);setProg(0);off.current=0;
     setBuf(d);setDur(d.duration);onChange?.("duration",d.duration);
-    const n=f.name.replace(/\.[^.]+$/,"");
+    const n=(trackMeta?.title)||f.name.replace(/\.[^.]+$/,"");
     setName(n);onChange?.("trackName",n);
     bpmAnalyze?.(d, id);
+    // If from library, report track info for recommendations
+    if(trackMeta) onTrackInfo?.(id, trackMeta);
+    else onTrackInfo?.(id, null);
     // Compute compact peaks + frequency ratio (ZCR-based) for all channels
     const W=460,step=Math.max(1,Math.floor(d.length/W));
     const pk=new Array(W).fill(0),fq=new Array(W).fill(0);
@@ -482,6 +829,13 @@ function Deck({ id, ch, ctx:ac, color, local, remote, onChange, midi:mt, bpmResu
     onChange?.("waveformPeaks",pkR);onChange?.("waveformFreq",fqR);
   };
 
+  // Handle library load trigger from parent
+  useEffect(()=>{
+    if(!loadFromLibrary||!local)return;
+    const{track,file}=loadFromLibrary;
+    load(file, track);
+  },[loadFromLibrary]);
+
   // Expose rate setter for beat sync (called from parent)
   useEffect(()=>{ if(src.current?.playbackRate){ src.current.playbackRate.setTargetAtTime(rate,ac?.currentTime||0,.05); } },[rate,ac]);
 
@@ -496,7 +850,7 @@ function Deck({ id, ch, ctx:ac, color, local, remote, onChange, midi:mt, bpmResu
       <div style={{display:"flex", alignItems:"stretch", minHeight:54, borderBottom:BD}}>
         <div style={{width:52, flexShrink:0, background:`linear-gradient(180deg,${color}15,${color}08)`, borderRight:`1px solid ${color}33`, display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"center", gap:3}}>
           <span style={{fontFamily:"'Barlow Condensed',sans-serif", fontWeight:900, fontSize:26, color, lineHeight:1, textShadow:`0 0 16px ${color}aa`}}>{id}</span>
-          <span style={{fontSize:7, color:color+"77", fontFamily:"'Barlow Condensed',sans-serif", fontWeight:700, letterSpacing:2}}>{local?"YOU":"PRTNR"}</span>
+          <span style={{fontSize:9, color:color+"99", fontFamily:"'Barlow Condensed',sans-serif", fontWeight:700, letterSpacing:2}}>{local?"YOU":"PRTNR"}</span>
           {play&&<div style={{width:5,height:5,borderRadius:"50%",background:color,boxShadow:`0 0 10px ${color}`,animation:"blink 1s infinite"}}/>}
         </div>
 
@@ -539,7 +893,7 @@ function Deck({ id, ch, ctx:ac, color, local, remote, onChange, midi:mt, bpmResu
           {bpmResult?.analyzing&&<div style={{fontSize:7,color:"#f59e0b",fontFamily:"monospace",animation:"pulse .8s infinite"}}>ANA...</div>}
           <div style={{textAlign:"right"}}>
             <div style={{fontSize:22, fontFamily:"monospace", fontWeight:800, color, lineHeight:1, letterSpacing:1}}>{bpmResult?.bpm?(bpmResult.bpm*rate).toFixed(1):"—"}</div>
-            <div style={{fontSize:7, color:"#5a5a7a", fontFamily:"monospace", letterSpacing:2}}>BPM</div>
+            <div style={{fontSize:9, color:"#7A7090", fontFamily:"monospace", letterSpacing:2}}>BPM</div>
           </div>
           <VU an={ch?.an} color={color}/>
         </div>
@@ -558,7 +912,7 @@ function Deck({ id, ch, ctx:ac, color, local, remote, onChange, midi:mt, bpmResu
       <div style={{display:"flex", alignItems:"center", justifyContent:"space-between", padding:"10px 16px", background:"#0E0C1A", borderBottom:BD}}>
         <div>
           <div style={{fontFamily:"monospace", fontWeight:800, fontSize:26, color, letterSpacing:3, lineHeight:1, textShadow:`0 0 18px ${color}66`}}>{fmt(cur)}</div>
-          <div style={{fontSize:7, color:"#7A7090", fontFamily:"monospace", letterSpacing:2, marginTop:3}}>ELAPSED</div>
+          <div style={{fontSize:9, color:"#7A7090", fontFamily:"monospace", letterSpacing:2, marginTop:3}}>ELAPSED</div>
         </div>
         <div style={{display:"flex", flexDirection:"column", alignItems:"center", gap:4}}>
           {play&&<div style={{width:7,height:7,borderRadius:"50%",background:color,boxShadow:`0 0 10px ${color}`,animation:"pulse .7s infinite"}}/>}
@@ -566,7 +920,7 @@ function Deck({ id, ch, ctx:ac, color, local, remote, onChange, midi:mt, bpmResu
         </div>
         <div style={{textAlign:"right"}}>
           <div style={{fontFamily:"monospace", fontWeight:800, fontSize:26, color:"#3A3555", letterSpacing:3, lineHeight:1}}>-{fmt(Math.max(0,dur-cur))}</div>
-          <div style={{fontSize:7, color:"#7A7090", fontFamily:"monospace", letterSpacing:2, marginTop:3}}>REMAIN</div>
+          <div style={{fontSize:9, color:"#7A7090", fontFamily:"monospace", letterSpacing:2, marginTop:3}}>REMAIN</div>
         </div>
       </div>
 
@@ -1089,6 +1443,25 @@ export default function CollabMix({ initialPage = "landing", djName = null }) {
 
   const bpm = useBPM();
   const rec = useRecorder({ engineRef: eng });
+  const lib = useLibrary();
+
+  // Library: track which deck is playing + metadata for recommendations
+  const [playingTrack, setPlayingTrack] = useState(null);
+  const [libLoadA, setLibLoadA] = useState(null);
+  const [libLoadB, setLibLoadB] = useState(null);
+  const [partnerLibrary, setPartnerLibrary] = useState([]);
+
+  const handleTrackInfo = useCallback((deckId, trackMeta) => {
+    if (trackMeta) setPlayingTrack(trackMeta);
+  }, []);
+
+  const handleLibLoad = useCallback((track, deck) => {
+    const file = lib.getFile(track.id);
+    if (!file) { alert("File not in memory — please re-add this track to your library."); return; }
+    if (deck === "A") setLibLoadA({ track, file, ts: Date.now() });
+    else              setLibLoadB({ track, file, ts: Date.now() });
+    setPlayingTrack(track);
+  }, [lib]);
 
   const applyXF = useCallback((v) => {
     if (!eng.current) return;
@@ -1106,7 +1479,8 @@ export default function CollabMix({ initialPage = "landing", djName = null }) {
     if (m.type==="xfade_update")   { setXf(m.value); applyXF(m.value); }
     if (m.type==="chat")           setChat(p=>[...p,m]);
     if (m.type==="partner_joined") setChat(p=>[...p,{type:"system",msg:`${m.djName} joined the session`}]);
-    if (m.type==="partner_left")   { setChat(p=>[...p,{type:"system",msg:`${m.djName} left`}]); setPA(null); setPB(null); }
+    if (m.type==="partner_left")   { setChat(p=>[...p,{type:"system",msg:`${m.djName} left`}]); setPA(null); setPB(null); setPartnerLibrary([]); }
+    if (m.type==="library_sync")   setPartnerLibrary(m.tracks||[]);
     if (m.type==="sync_request")   sync.send({type:"sync_response",state:lsRef.current});
     if (m.type==="sync_response")  { if(m.state?.deckA)setPA(m.state.deckA); if(m.state?.deckB)setPB(m.state.deckB); if(m.state?.xfade!=null){setXf(m.state.xfade);applyXF(m.state.xfade);} }
     rtc.handleRtc(m);
@@ -1169,6 +1543,15 @@ export default function CollabMix({ initialPage = "landing", djName = null }) {
     window.history.replaceState({}, "", window.location.pathname);
   };
 
+  // Sync library metadata to partner when library changes
+  useEffect(() => {
+    if (!session) return;
+    const meta = lib.library.map(({ file, ...rest }) => rest);
+    sync.send({ type:"library_sync", tracks: meta });
+  }, [lib.library, session]);
+
+  const [showLib, setShowLib] = useState(false);
+
   const SC = { connected:"#22c55e", connecting:"#f59e0b", disconnected:"#444", error:"#ef4444" };
   const PANELS = [["sync","⟳ SYNC"],["rtc","⚡ AUDIO"],["rec","⏺ REC"],["midi","⎍ MIDI"]];
 
@@ -1182,6 +1565,7 @@ export default function CollabMix({ initialPage = "landing", djName = null }) {
         @keyframes blink{0%,100%{box-shadow:0 0 5px currentColor}50%{box-shadow:0 0 14px currentColor}}
         @keyframes pulse{0%,100%{opacity:1}50%{opacity:.4}}
         @keyframes wave{0%,100%{transform:scaleY(.3)}50%{transform:scaleY(1)}}
+        @keyframes spin{to{transform:rotate(360deg)}}
         *{box-sizing:border-box}
         ::-webkit-scrollbar{width:3px}::-webkit-scrollbar-track{background:#080710}::-webkit-scrollbar-thumb{background:#1C1830;border-radius:2px}
       `}</style>
@@ -1221,9 +1605,9 @@ export default function CollabMix({ initialPage = "landing", djName = null }) {
         <div style={{ display:"flex", flexDirection:"column", gap:6, minWidth:0, overflowY:"auto" }}>
           <div style={{ display:"flex", gap:6, alignItems:"center", paddingLeft:2, paddingBottom:4, borderBottom:`1px solid ${G}14`, paddingTop:2 }}>
             <div style={{ width:6, height:6, borderRadius:"50%", background:"#00d4ff", boxShadow:"0 0 8px #00d4ff" }}/>
-            <span style={{ fontSize:8, fontFamily:"'DM Mono',monospace", fontWeight:500, color:"#00d4ff", letterSpacing:2 }}>{session.name} · YOU</span>
+            <span style={{ fontSize:10, fontFamily:"'DM Mono',monospace", fontWeight:500, color:"#00d4ff", letterSpacing:2 }}>{session.name} · YOU</span>
           </div>
-          <Deck id="A" ch={eng.current?.A} ctx={eng.current?.ctx} color="#00d4ff" local onChange={dh("A")} midi={midiEvt} bpmResult={bpm.results["A"]} bpmAnalyze={bpm.analyze} eqHi={eqA.hi} eqMid={eqA.mid} eqLo={eqA.lo} chanVol={eqA.vol}/>
+          <Deck id="A" ch={eng.current?.A} ctx={eng.current?.ctx} color="#00d4ff" local onChange={dh("A")} midi={midiEvt} bpmResult={bpm.results["A"]} bpmAnalyze={bpm.analyze} eqHi={eqA.hi} eqMid={eqA.mid} eqLo={eqA.lo} chanVol={eqA.vol} loadFromLibrary={libLoadA} onTrackInfo={handleTrackInfo}/>
         </div>
 
         {/* ── CENTER MIXER — Rekordbox style ── */}
@@ -1233,7 +1617,7 @@ export default function CollabMix({ initialPage = "landing", djName = null }) {
           <div style={{ padding:"8px 12px", borderBottom:`1px solid #C8A96E14`, display:"flex", alignItems:"center", justifyContent:"space-between", background:"#0E0C1A", flexShrink:0 }}>
             <div>
               <div style={{ fontFamily:"'Cormorant Garamond',serif", fontWeight:700, fontSize:14, color:"#EDE8DF" }}>Collab<span style={{color:"#C8A96E"}}>//</span>Mix</div>
-              <div style={{ fontSize:6, fontFamily:"'DM Mono',monospace", color:"#C8A96E44", letterSpacing:2 }}>MIXER · LIVE</div>
+              <div style={{ fontSize:8, fontFamily:"'DM Mono',monospace", color:"#C8A96E66", letterSpacing:2 }}>MIXER · LIVE</div>
             </div>
             <div style={{ display:"flex", flexDirection:"column", alignItems:"flex-end", gap:2 }}>
               <VU an={eng.current?.masterAn} color="#C8A96E" w={44}/>
@@ -1246,8 +1630,8 @@ export default function CollabMix({ initialPage = "landing", djName = null }) {
 
             {/* --- CH A --- */}
             <div style={{ display:"flex", flexDirection:"column", alignItems:"center", padding:"8px 6px", gap:6, borderRight:`1px solid #C8A96E14`, background:"#00d4ff04" }}>
-              <div style={{ fontFamily:"'DM Mono',monospace", fontSize:8, color:"#00d4ff", letterSpacing:2, fontWeight:500 }}>CH A</div>
-              <div style={{ fontSize:7, fontFamily:"'DM Mono',monospace", color:"#00d4ff44", letterSpacing:1, marginTop:-4 }}>{session.name}</div>
+              <div style={{ fontFamily:"'DM Mono',monospace", fontSize:11, color:"#00d4ff", letterSpacing:3, fontWeight:500 }}>CH A</div>
+              <div style={{ fontSize:9, fontFamily:"'DM Mono',monospace", color:"#00d4ff77", letterSpacing:1, marginTop:-2 }}>{session.name}</div>
               {/* GAIN */}
               <Knob v={eqA.vol>1?eqA.vol-1:0} set={v=>updateEqA("vol", 1+Math.max(0,v))} min={0} max={0.5} ctr={0} label="GAIN" color="#00d4ff" size={36}/>
               {/* EQ */}
@@ -1255,15 +1639,15 @@ export default function CollabMix({ initialPage = "landing", djName = null }) {
               <Knob v={eqA.mid} set={v=>updateEqA("mid",v)} min={-12} max={12} ctr={0} label="MID" color="#00d4ff" size={36}/>
               <Knob v={eqA.lo} set={v=>updateEqA("lo",v)} min={-12} max={12} ctr={0} label="LO" color="#00d4ff" size={36}/>
               {/* Channel fader */}
-              <div style={{ fontSize:6, fontFamily:"'DM Mono',monospace", color:"#00d4ff44", letterSpacing:1, marginTop:4 }}>VOL</div>
+              <div style={{ fontSize:9, fontFamily:"'DM Mono',monospace", color:"#00d4ff66", letterSpacing:1.5, marginTop:6 }}>VOL</div>
               <VerticalFader val={eqA.vol} set={v=>updateEqA("vol",v)} color="#00d4ff" h={110}/>
-              <div style={{ fontSize:7, fontFamily:"'DM Mono',monospace", color:"#00d4ff99", marginTop:2 }}>{(eqA.vol/1.5*100).toFixed(0)}%</div>
+              <div style={{ fontSize:10, fontFamily:"'DM Mono',monospace", color:"#00d4ffbb", marginTop:2 }}>{(eqA.vol/1.5*100).toFixed(0)}%</div>
             </div>
 
             {/* --- CH B (partner — read-only) --- */}
             <div style={{ display:"flex", flexDirection:"column", alignItems:"center", padding:"8px 6px", gap:6, background:"#ff6b3504" }}>
-              <div style={{ fontFamily:"'DM Mono',monospace", fontSize:8, color:"#ff6b35", letterSpacing:2, fontWeight:500 }}>CH B</div>
-              <div style={{ fontSize:7, fontFamily:"'DM Mono',monospace", color:"#ff6b3544", letterSpacing:1, marginTop:-4 }}>{sync.partner||"PARTNER"}</div>
+              <div style={{ fontFamily:"'DM Mono',monospace", fontSize:11, color:"#ff6b35", letterSpacing:3, fontWeight:500 }}>CH B</div>
+              <div style={{ fontSize:9, fontFamily:"'DM Mono',monospace", color:"#ff6b3577", letterSpacing:1, marginTop:-2 }}>{sync.partner||"PARTNER"}</div>
               {/* GAIN - read only */}
               <Knob v={pA?.vol>1?(pA?.vol||1)-1:0} set={()=>{}} min={0} max={0.5} ctr={0} label="GAIN" color="#ff6b35" size={36} off={true}/>
               {/* EQ - read only */}
@@ -1271,16 +1655,16 @@ export default function CollabMix({ initialPage = "landing", djName = null }) {
               <Knob v={pA?.eqMid||0} set={()=>{}} min={-12} max={12} ctr={0} label="MID" color="#ff6b35" size={36} off={true}/>
               <Knob v={pA?.eqLo||0} set={()=>{}} min={-12} max={12} ctr={0} label="LO" color="#ff6b35" size={36} off={true}/>
               {/* Channel fader - read only */}
-              <div style={{ fontSize:6, fontFamily:"'DM Mono',monospace", color:"#ff6b3544", letterSpacing:1, marginTop:4 }}>VOL</div>
+              <div style={{ fontSize:9, fontFamily:"'DM Mono',monospace", color:"#ff6b3566", letterSpacing:1.5, marginTop:6 }}>VOL</div>
               <VerticalFader val={pA?.vol||1} set={()=>{}} color="#ff6b35" h={110}/>
-              <div style={{ fontSize:7, fontFamily:"'DM Mono',monospace", color:"#ff6b3599", marginTop:2 }}>{((pA?.vol||1)/1.5*100).toFixed(0)}%</div>
+              <div style={{ fontSize:10, fontFamily:"'DM Mono',monospace", color:"#ff6b35aa", marginTop:2 }}>{((pA?.vol||1)/1.5*100).toFixed(0)}%</div>
             </div>
           </div>
 
           {/* MASTER VOL */}
           <div style={{ padding:"8px 12px 6px", borderTop:`1px solid #C8A96E14`, flexShrink:0 }}>
             <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:5 }}>
-              <span style={{ fontSize:7, fontFamily:"'DM Mono',monospace", color:"#C8A96E55", letterSpacing:2 }}>MASTER</span>
+              <span style={{ fontSize:9, fontFamily:"'DM Mono',monospace", color:"#C8A96E88", letterSpacing:2 }}>MASTER</span>
               <span style={{ fontSize:8, fontFamily:"'DM Mono',monospace", color:"#C8A96E" }}>{(mvol*100).toFixed(0)}%</span>
             </div>
             <div style={{ position:"relative", height:24, display:"flex", alignItems:"center" }}>
@@ -1296,12 +1680,12 @@ export default function CollabMix({ initialPage = "landing", djName = null }) {
           <div style={{ padding:"8px 12px 10px", borderTop:`1px solid #C8A96E14`, flexShrink:0, background:"#0E0C1A" }}>
             <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:7 }}>
               <div>
-                <div style={{ fontSize:9, fontFamily:"'DM Mono',monospace", color:"#00d4ff", fontWeight:500 }}>A</div>
+                <div style={{ fontSize:11, fontFamily:"'DM Mono',monospace", color:"#00d4ff", fontWeight:600 }}>A</div>
                 <div style={{ fontSize:7, fontFamily:"'DM Mono',monospace", color:"#00d4ff66" }}>{(xg(xf).a*100).toFixed(0)}%</div>
               </div>
-              <div style={{ fontSize:6, fontFamily:"'DM Mono',monospace", color:"#C8A96E44", letterSpacing:2 }}>CROSSFADER</div>
+              <div style={{ fontSize:9, fontFamily:"'DM Mono',monospace", color:"#C8A96E66", letterSpacing:2 }}>CROSSFADER</div>
               <div style={{ textAlign:"right" }}>
-                <div style={{ fontSize:9, fontFamily:"'DM Mono',monospace", color:"#ff6b35", fontWeight:500 }}>B</div>
+                <div style={{ fontSize:11, fontFamily:"'DM Mono',monospace", color:"#ff6b35", fontWeight:600 }}>B</div>
                 <div style={{ fontSize:7, fontFamily:"'DM Mono',monospace", color:"#ff6b3566" }}>{(xg(xf).b*100).toFixed(0)}%</div>
               </div>
             </div>
@@ -1326,8 +1710,8 @@ export default function CollabMix({ initialPage = "landing", djName = null }) {
             <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:"2px 4px" }}>
               {[["ROOM",session.room,"#00d4ff"],["PARTNER",sync.partner||"—","#ff6b35"],["PING",sync.ping?`${sync.ping}ms`:"—","#C8A96E"],["AUDIO",rtc.state==="connected"?"● LIVE":"OFFLINE",rtc.state==="connected"?"#22c55e":"#3A3555"]].map(([l,v,c])=>(
                 <div key={l} style={{ display:"flex", justifyContent:"space-between", alignItems:"center", padding:"2px 5px", background:"#080710", borderRadius:3, border:`1px solid #C8A96E0d` }}>
-                  <span style={{ fontSize:6, color:"#C8A96E44", fontFamily:"'DM Mono',monospace", letterSpacing:1 }}>{l}</span>
-                  <span style={{ fontSize:6, color:c, fontFamily:"'DM Mono',monospace", maxWidth:60, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{v}</span>
+                  <span style={{ fontSize:9, color:"#C8A96E66", fontFamily:"'DM Mono',monospace", letterSpacing:1 }}>{l}</span>
+                  <span style={{ fontSize:9, color:c, fontFamily:"'DM Mono',monospace", maxWidth:60, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{v}</span>
                 </div>
               ))}
             </div>
@@ -1337,10 +1721,10 @@ export default function CollabMix({ initialPage = "landing", djName = null }) {
           <div style={{ flex:0, display:"flex", flexDirection:"column", overflow:"hidden", borderTop:`1px solid #C8A96E14` }}>
             <div style={{ display:"flex", flexShrink:0, background:"#0E0C1A" }}>
               {PANELS.map(([pid,l])=>(
-                <button key={pid} onClick={()=>setPanel(pid)} style={{ flex:1, padding:"6px 2px", fontSize:6, fontFamily:"'DM Mono',monospace", background:"transparent", color:panel===pid?"#C8A96E":"#C8A96E44", border:"none", borderBottom:`2px solid ${panel===pid?"#C8A96E":"transparent"}`, cursor:"pointer", outline:"none", letterSpacing:.5 }}>{l}</button>
+                <button key={pid} onClick={()=>setPanel(pid)} style={{ flex:1, padding:"6px 2px", fontSize:9, fontFamily:"'DM Mono',monospace", background:"transparent", color:panel===pid?"#C8A96E":"#C8A96E55", border:"none", borderBottom:`2px solid ${panel===pid?"#C8A96E":"transparent"}`, cursor:"pointer", outline:"none", letterSpacing:1 }}>{l}</button>
               ))}
             </div>
-            <div style={{ maxHeight:120, overflow:"auto" }}>
+            <div style={{ maxHeight:140, overflow:"auto" }}>
               {panel==="sync" && <SyncPanel bpmA={bpm.results.A?.bpm} bpmB={bpm.results.B?.bpm} rateA={rateA} rateB={rateB} onSyncB={()=>syncDecks("B",bpm.results.A?.bpm)} onSyncA={()=>syncDecks("A",bpm.results.B?.bpm)}/>}
               {panel==="rtc"  && <RTCPanel rtc={rtc} partner={sync.partner} syncOk={sync.status==="connected"}/>}
               {panel==="rec"  && <RecPanel rec={rec} ready={ready}/>}
@@ -1353,11 +1737,34 @@ export default function CollabMix({ initialPage = "landing", djName = null }) {
         <div style={{ display:"flex", flexDirection:"column", gap:6, minWidth:0, overflowY:"auto" }}>
           <div style={{ display:"flex", gap:6, alignItems:"center", paddingLeft:2, paddingBottom:4, borderBottom:"1px solid #C8A96E14", paddingTop:2 }}>
             <div style={{ width:6, height:6, borderRadius:"50%", background:sync.partner?"#ff6b35":"#1C1830", boxShadow:sync.partner?"0 0 8px #ff6b35":"none", transition:"all .3s" }}/>
-            <span style={{ fontSize:8, fontFamily:"'DM Mono',monospace", fontWeight:500, color:sync.partner?"#ff6b35":"#3A3555", letterSpacing:2 }}>{sync.partner||"WAITING FOR PARTNER..."}</span>
+            <span style={{ fontSize:10, fontFamily:"'DM Mono',monospace", fontWeight:500, color:sync.partner?"#ff6b35":"#3A3555", letterSpacing:2 }}>{sync.partner||"WAITING FOR PARTNER..."}</span>
           </div>
           <Deck id="A" ch={null} ctx={null} color="#ff6b35" remote={pA} bpmResult={null} bpmAnalyze={null} eqHi={pA?.eqHi||0} eqMid={pA?.eqMid||0} eqLo={pA?.eqLo||0} chanVol={pA?.vol||1}/>
         </div>
 
+      </div>
+
+      {/* ── LIBRARY PANEL (full-width expandable drawer) ── */}
+      {/* ── LIBRARY PANEL (full-width expandable drawer) ── */}
+      <div style={{ flexShrink:0, borderTop:`1px solid ${G}18`, background:"#080710" }}>
+        {/* Library toggle bar */}
+        <div style={{ display:"flex", alignItems:"center", gap:10, padding:"6px 16px" }}>
+          <div style={{ display:"flex", alignItems:"center", gap:8, cursor:"pointer", flex:1 }} onClick={()=>setShowLib(v=>!v)}>
+            <span style={{ fontSize:10, fontFamily:"'DM Mono',monospace", color:showLib?G:`${G}66`, letterSpacing:2 }}>♫ {showLib?"▾ LIBRARY":"▸ LIBRARY"}</span>
+            {lib.library.length>0&&<span style={{ fontSize:9, fontFamily:"'DM Mono',monospace", color:`${G}88` }}>{lib.library.length} tracks</span>}
+            {lib.importing&&<span style={{ fontSize:8, fontFamily:"'DM Mono',monospace", color:G, animation:"pulse .8s infinite" }}>analyzing...</span>}
+            {partnerLibrary.length>0&&<span style={{ fontSize:9, fontFamily:"'DM Mono',monospace", color:"#ff6b3577" }}>· {partnerLibrary.length} partner</span>}
+          </div>
+          <label style={{ fontSize:9, fontFamily:"'DM Mono',monospace", padding:"3px 12px", background:`${G}14`, border:`1px solid ${G}33`, color:G, borderRadius:5, cursor:"pointer", letterSpacing:1 }}>
+            + ADD TRACKS
+            <input type="file" accept="audio/*" multiple style={{display:"none"}} onChange={e=>lib.importFiles(e.target.files)}/>
+          </label>
+        </div>
+        {showLib&&(
+          <div style={{ height:340, borderTop:`1px solid ${G}14` }}>
+            <LibraryPanel lib={lib} onLoad={handleLibLoad} playingTrack={playingTrack} partnerName={sync.partner} partnerLibrary={partnerLibrary}/>
+          </div>
+        )}
       </div>
 
       {/* PERSISTENT BOTTOM CHAT BAR */}
