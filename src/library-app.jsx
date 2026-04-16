@@ -766,6 +766,8 @@ export default function MusicLibrary() {
   const [showNewCrateInput, setShowNewCrateInput]  = useState(false);
   const [newCrateName,      setNewCrateName]        = useState("");
   const [queueIds,          setQueueIds]            = useState(() => new Set());
+  const [itunesPicker,      setItunesPicker]       = useState(null); // { tracks, playlists, selectedPls, importMode }
+  const searchRef = useRef(null);
 
   useEffect(() => {
     if (!showItunesHelper) return;
@@ -773,6 +775,19 @@ export default function MusicLibrary() {
     document.addEventListener("mousedown", close);
     return () => document.removeEventListener("mousedown", close);
   }, [showItunesHelper]);
+
+  // Keyboard shortcuts: "/" = focus search, Escape = clear search
+  useEffect(() => {
+    const handler = (e) => {
+      if (e.key === "/" && !e.target.matches("input,textarea,select")) {
+        e.preventDefault();
+        searchRef.current?.focus();
+        searchRef.current?.select();
+      }
+    };
+    document.addEventListener("keydown", handler);
+    return () => document.removeEventListener("keydown", handler);
+  }, []);
 
   // Helper: switch standard view and clear crate selection
   const selectView = (id) => { setView(id); setActiveCrateId(null); };
@@ -926,31 +941,54 @@ export default function MusicLibrary() {
     await scanFolder();
   };
 
-  // ── iTunes XML import (advanced / power users) ────────────────
-  const importFromItunes = async (file) => {
+  // ── iTunes XML: parse first, then show playlist picker ─────────
+  const prepareItunesImport = async (file) => {
     if (!file) return;
-    setScanning(true);
-    setScanProg({ found:0, analyzed:0, total:0 });
     try {
       const text = await file.text();
       const { tracks: itTracks, playlists: itPlaylists } = parseiTunesXML(text);
-      if (!itTracks.length) { setScanning(false); alert("No tracks found in this iTunes library file."); return; }
+      if (!itTracks.length) { alert("No tracks found in this iTunes library file. Make sure you exported Library.xml from File → Library → Export Library."); return; }
+      setShowItunesHelper(false);
+      setItunesPicker({
+        tracks: itTracks,
+        playlists: itPlaylists,
+        selectedPls: new Set(itPlaylists.map(p => p.name)),
+        importMode: "all",
+      });
+    } catch(e) {
+      console.error("iTunes parse error", e);
+      alert("Error reading the file. Make sure you selected a Library.xml file exported from Apple Music (File → Library → Export Library...).");
+    }
+  };
+
+  // ── Perform the iTunes import after playlist selection ─────────
+  const doItunesImport = async () => {
+    if (!itunesPicker) return;
+    const { tracks: itTracks, playlists: itPlaylists, selectedPls, importMode } = itunesPicker;
+    setItunesPicker(null);
+    setScanning(true);
+    setScanProg({ found:0, analyzed:0, total:0 });
+    try {
+      let tracksToImport = itTracks;
+      if (importMode === "playlists") {
+        const selectedTrackIds = new Set(
+          itPlaylists.filter(p => selectedPls.has(p.name)).flatMap(p => p.trackIds)
+        );
+        tracksToImport = itTracks.filter(t => selectedTrackIds.has(t.id));
+      }
 
       const db = dbRef.current;
-      const existing = new Set(tracks.map(t=>t.id));
-      // Also build a filename→id map so we can match against itunes tracks later
+      const existing = new Set(tracks.map(t => t.id));
       const filenameMap = {};
       tracks.forEach(t => { filenameMap[t.filename] = t.id; });
 
       let added = 0;
-      for (const t of itTracks) {
+      for (const t of tracksToImport) {
         if (existing.has(t.id)) continue;
-        // Check if we already have a scanned track with same filename (from folder scan)
         const matchId = filenameMap[t.filename];
         if (matchId) {
-          // Merge iTunes metadata into existing track
           setTracks(prev => prev.map(tr => tr.id === matchId ? {...tr, bpm:tr.bpm||t.bpm, key:tr.key||t.key, genre:tr.genre||t.genre, album:tr.album||t.album, playCount:t.playCount, itunesId:t.itunesId} : tr));
-          const exTrack = tracks.find(tr=>tr.id===matchId);
+          const exTrack = tracks.find(tr => tr.id === matchId);
           if (exTrack) await dbPut(db, "tracks", {...exTrack, bpm:exTrack.bpm||t.bpm, key:exTrack.key||t.key, genre:exTrack.genre||t.genre, itunesId:t.itunesId, playCount:t.playCount});
           continue;
         }
@@ -958,23 +996,27 @@ export default function MusicLibrary() {
         await dbPut(db, "tracks", t);
         added++;
         setScanProg(p => ({ ...p, found: added }));
-        // Queue for energy analysis if we can match a file later
-        // (energy analysis requires actual audio — will run when user scans media folder)
       }
 
-      // Import playlists as crates
-      for (const pl of itPlaylists) {
-        const existingCrate = crates.find(c=>c.name===pl.name);
-        if (!existingCrate && pl.trackIds.some(tid=>!existing.has(tid)||filenameMap[tid])) {
-          const cr = { id:`cr_${Date.now()}_${Math.random().toString(36).slice(2,5)}`, name:pl.name, trackIds:pl.trackIds.filter(tid=>itTracks.find(t=>t.id===tid)), createdAt:Date.now() };
-          if (cr.trackIds.length>0) { setCrates(p=>[...p,cr]); await dbPut(db,"crates",cr); }
+      // Create crates from playlists
+      const playlistsToProcess = importMode === "playlists"
+        ? itPlaylists.filter(p => selectedPls.has(p.name))
+        : itPlaylists;
+      for (const pl of playlistsToProcess) {
+        const existingCrate = crates.find(c => c.name === pl.name);
+        if (!existingCrate && pl.trackIds.length > 0) {
+          const validIds = pl.trackIds.filter(tid => tracksToImport.find(t => t.id === tid));
+          if (validIds.length > 0) {
+            const cr = { id:`cr_${Date.now()}_${Math.random().toString(36).slice(2,5)}`, name:pl.name, trackIds:validIds, createdAt:Date.now() };
+            setCrates(p => [...p, cr]);
+            await dbPut(db, "crates", cr);
+          }
         }
       }
-
-      setScanProg({ found: added, analyzed:0, total: itTracks.length });
+      setScanProg({ found: added, analyzed:0, total: tracksToImport.length });
     } catch(e) {
       console.error("iTunes import error", e);
-      alert("Error reading iTunes library. Make sure you selected an iTunes XML file.");
+      alert("Import error. Please try again.");
     }
     setScanning(false);
   };
@@ -1109,9 +1151,11 @@ export default function MusicLibrary() {
         <div style={{ flex:1, position:"relative", maxWidth:400 }}>
           <span style={{ position:"absolute", left:11, top:"50%", transform:"translateY(-50%)", color:C.muted, fontSize:13, pointerEvents:"none" }}>⌕</span>
           <input
+            ref={searchRef}
             value={search} onChange={e=>setSearch(e.target.value)}
-            placeholder="Search by title, artist, genre, album..."
-            style={{ width:"100%", background:C.raised, border:`1px solid ${C.border}`, color:C.text, borderRadius:8, padding:"9px 12px 9px 32px", fontSize:12, fontFamily:"'DM Sans',sans-serif", outline:"none" }}
+            onKeyDown={e=>{ if(e.key==="Escape"){ setSearch(""); e.currentTarget.blur(); } }}
+            placeholder="Search titles, artists, genres… ( / )"
+            style={{ width:"100%", background:C.raised, border:`1px solid ${search?G+66:C.border}`, color:C.text, borderRadius:8, padding:"9px 12px 9px 32px", fontSize:12, fontFamily:"'DM Sans',sans-serif", outline:"none", transition:"border-color .15s" }}
           />
         </div>
 
@@ -1127,6 +1171,14 @@ export default function MusicLibrary() {
             </button>
           ))}
         </div>
+
+        {/* Clear filters */}
+        {(search || energyFilter || keyFilter || bpmRange[0] > 60 || bpmRange[1] < 200) && (
+          <button onClick={()=>{ setSearch(""); setEnergyFilter(null); setKeyFilter(null); setBpmRange([60,200]); }}
+            style={{ padding:"4px 9px", fontSize:9, fontFamily:"'DM Mono',monospace", background:"transparent", border:`1px solid #ef444433`, color:"#ef4444aa", borderRadius:5, cursor:"pointer", whiteSpace:"nowrap", letterSpacing:.5 }}>
+            ✕ CLEAR
+          </button>
+        )}
 
         {/* Stats + actions */}
         <div style={{ display:"flex", alignItems:"center", gap:10, flexShrink:0 }}>
@@ -1173,7 +1225,7 @@ export default function MusicLibrary() {
                     <div style={{ fontSize:11, fontWeight:600, color:C.text, fontFamily:"'DM Sans',sans-serif", marginBottom:8 }}>Then select the Library.xml file here</div>
                     <label style={{ display:"flex", alignItems:"center", justifyContent:"center", gap:8, padding:"11px", background:"#8B5CF622", border:"1px solid #8B5CF666", color:"#8B5CF6", fontFamily:"'DM Mono',monospace", fontSize:11, letterSpacing:1, borderRadius:7, cursor:"pointer" }}>
                       ♪ Select Library.xml
-                      <input type="file" accept=".xml" style={{display:"none"}} onChange={e=>{ if(e.target.files[0]) importFromItunes(e.target.files[0]); e.target.value=""; setShowItunesHelper(false); }}/>
+                      <input type="file" accept=".xml" style={{display:"none"}} onChange={e=>{ if(e.target.files[0]) prepareItunesImport(e.target.files[0]); e.target.value=""; }}/>
                     </label>
                     <div style={{ fontSize:9, color:C.muted, fontFamily:"'DM Mono',monospace", marginTop:5, textAlign:"center" }}>
                       Navigate to Desktop → select Library.xml · Imports ☁ cloud + downloaded tracks
@@ -1215,6 +1267,104 @@ export default function MusicLibrary() {
       {!scanning && analyzedCount < tracks.length && tracks.length>0 && (
         <div style={{ height:2, background:C.raised, flexShrink:0 }}>
           <div style={{ height:"100%", background:`linear-gradient(90deg,#00d4ff44,#00d4ff)`, width:`${(analyzedCount/tracks.length)*100}%`, transition:"width .5s" }}/>
+        </div>
+      )}
+
+      {/* ── iTunes PLAYLIST PICKER MODAL ── */}
+      {itunesPicker && (
+        <div style={{ position:"fixed", inset:0, background:"rgba(0,0,0,.75)", zIndex:500, display:"flex", alignItems:"center", justifyContent:"center", padding:24 }}
+          onClick={e=>{ if(e.target===e.currentTarget) setItunesPicker(null); }}>
+          <div style={{ background:C.raised, border:"1px solid #8B5CF644", borderRadius:16, width:"100%", maxWidth:560, maxHeight:"80vh", display:"flex", flexDirection:"column", boxShadow:"0 24px 64px rgba(0,0,0,.8)" }}>
+
+            {/* Modal header */}
+            <div style={{ padding:"20px 24px 16px", borderBottom:`1px solid ${C.border}`, display:"flex", alignItems:"center", gap:12, flexShrink:0 }}>
+              <span style={{ fontSize:22 }}>♪</span>
+              <div style={{ flex:1 }}>
+                <div style={{ fontSize:17, fontWeight:600, color:C.text, fontFamily:"'DM Sans',sans-serif" }}>Apple Music Library</div>
+                <div style={{ fontSize:10, color:C.muted, fontFamily:"'DM Mono',monospace", marginTop:2 }}>
+                  Found {itunesPicker.tracks.length} tracks · {itunesPicker.playlists.length} playlists
+                </div>
+              </div>
+              <button onClick={()=>setItunesPicker(null)}
+                style={{ background:"none", border:"none", color:C.muted, cursor:"pointer", fontSize:18, lineHeight:1, padding:"0 4px" }}>✕</button>
+            </div>
+
+            {/* Import mode selector */}
+            <div style={{ padding:"16px 24px 12px", borderBottom:`1px solid ${C.border}`, flexShrink:0 }}>
+              <div style={{ fontSize:11, fontFamily:"'DM Mono',monospace", color:C.muted, letterSpacing:1, marginBottom:10 }}>WHAT TO IMPORT</div>
+              {[
+                ["all", `All tracks (${itunesPicker.tracks.length} total)`, "Everything in your Apple Music library"],
+                ["playlists", "Selected playlists only", "Choose which playlists to import — other tracks are skipped"],
+              ].map(([mode, label, desc]) => (
+                <label key={mode} style={{ display:"flex", gap:10, marginBottom:10, cursor:"pointer", alignItems:"flex-start" }}>
+                  <input type="radio" checked={itunesPicker.importMode===mode}
+                    onChange={() => setItunesPicker(p => ({...p, importMode:mode}))}
+                    style={{ marginTop:3, accentColor:"#8B5CF6", flexShrink:0 }}/>
+                  <div>
+                    <div style={{ fontSize:13, color:C.text, fontFamily:"'DM Sans',sans-serif", fontWeight:500 }}>{label}</div>
+                    <div style={{ fontSize:10, color:C.muted, fontFamily:"'DM Mono',monospace", marginTop:2 }}>{desc}</div>
+                  </div>
+                </label>
+              ))}
+            </div>
+
+            {/* Playlist list */}
+            {itunesPicker.importMode === "playlists" && (
+              <div style={{ flex:1, overflowY:"auto", padding:"8px 24px" }}>
+                <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", padding:"8px 0", position:"sticky", top:0, background:C.raised }}>
+                  <div style={{ fontSize:10, fontFamily:"'DM Mono',monospace", color:C.muted, letterSpacing:1 }}>
+                    PLAYLISTS ({itunesPicker.selectedPls.size}/{itunesPicker.playlists.length} selected)
+                  </div>
+                  <div style={{ display:"flex", gap:8 }}>
+                    <button onClick={()=>setItunesPicker(p=>({...p,selectedPls:new Set(p.playlists.map(pl=>pl.name))}))}
+                      style={{ fontSize:9, fontFamily:"'DM Mono',monospace", background:"transparent", border:`1px solid ${C.border}`, color:C.muted, borderRadius:4, padding:"2px 8px", cursor:"pointer" }}>ALL</button>
+                    <button onClick={()=>setItunesPicker(p=>({...p,selectedPls:new Set()}))}
+                      style={{ fontSize:9, fontFamily:"'DM Mono',monospace", background:"transparent", border:`1px solid ${C.border}`, color:C.muted, borderRadius:4, padding:"2px 8px", cursor:"pointer" }}>NONE</button>
+                  </div>
+                </div>
+                {itunesPicker.playlists.length === 0 && (
+                  <div style={{ padding:"20px 0", textAlign:"center", fontSize:11, color:C.muted, fontFamily:"'DM Mono',monospace" }}>
+                    No regular playlists found in this library
+                  </div>
+                )}
+                {itunesPicker.playlists.map(pl => {
+                  const checked = itunesPicker.selectedPls.has(pl.name);
+                  return (
+                    <label key={pl.name} style={{ display:"flex", alignItems:"center", gap:10, padding:"8px 0", cursor:"pointer", borderBottom:`1px solid ${C.border}44` }}>
+                      <input type="checkbox" checked={checked}
+                        onChange={() => setItunesPicker(p => {
+                          const s = new Set(p.selectedPls);
+                          checked ? s.delete(pl.name) : s.add(pl.name);
+                          return {...p, selectedPls:s};
+                        })}
+                        style={{ accentColor:"#8B5CF6", flexShrink:0 }}/>
+                      <span style={{ flex:1, fontSize:13, color:checked?C.text:C.muted, fontFamily:"'DM Sans',sans-serif", whiteSpace:"nowrap", overflow:"hidden", textOverflow:"ellipsis" }}>{pl.name}</span>
+                      <span style={{ fontSize:10, color:C.muted, fontFamily:"'DM Mono',monospace", flexShrink:0 }}>{pl.trackIds.length}</span>
+                    </label>
+                  );
+                })}
+              </div>
+            )}
+
+            {/* Footer */}
+            <div style={{ padding:"16px 24px", borderTop:`1px solid ${C.border}`, display:"flex", gap:12, alignItems:"center", flexShrink:0 }}>
+              <div style={{ flex:1, fontSize:10, color:C.muted, fontFamily:"'DM Mono',monospace" }}>
+                {itunesPicker.importMode === "playlists"
+                  ? `${itunesPicker.playlists.filter(p=>itunesPicker.selectedPls.has(p.name)).reduce((s,p)=>s+p.trackIds.length,0)} tracks from selected playlists · each playlist becomes a crate`
+                  : `${itunesPicker.tracks.length} tracks + ${itunesPicker.playlists.length} playlists imported as crates`
+                }
+              </div>
+              <button onClick={()=>setItunesPicker(null)}
+                style={{ padding:"9px 16px", background:"transparent", border:`1px solid ${C.border}`, color:C.muted, fontFamily:"'DM Mono',monospace", fontSize:10, borderRadius:8, cursor:"pointer" }}>
+                Cancel
+              </button>
+              <button onClick={doItunesImport}
+                disabled={itunesPicker.importMode==="playlists" && itunesPicker.selectedPls.size===0}
+                style={{ padding:"9px 20px", background:`linear-gradient(135deg,#8B5CF622,#8B5CF611)`, border:`1px solid #8B5CF688`, color:"#8B5CF6", fontFamily:"'DM Mono',monospace", fontSize:11, letterSpacing:1, borderRadius:8, cursor:"pointer", fontWeight:500 }}>
+                IMPORT →
+              </button>
+            </div>
+          </div>
         </div>
       )}
 
@@ -1326,7 +1476,7 @@ export default function MusicLibrary() {
               ["Analyzed",  analyzedCount],
               ["Crates",    crates.length],
               ["Artists",   new Set(tracks.map(t=>t.artist).filter(Boolean)).size],
-            ].filter(([,v]) => v > 0 || _=>true).map(([l,v]) => (
+            ].map(([l,v]) => (
               <div key={l} style={{ display:"flex", justifyContent:"space-between", marginBottom:5 }}>
                 <span style={{ fontSize:10, color:C.muted, fontFamily:"'DM Mono',monospace" }}>{l}</span>
                 <span style={{ fontSize:10, color:G, fontFamily:"'DM Mono',monospace" }}>{v}</span>
@@ -1426,7 +1576,7 @@ export default function MusicLibrary() {
                         onMouseEnter={e=>{e.currentTarget.style.background="#8B5CF633";e.currentTarget.style.borderColor="#8B5CF6aa";}}
                         onMouseLeave={e=>{e.currentTarget.style.background="#8B5CF622";e.currentTarget.style.borderColor="#8B5CF666";}}>
                         ♪ Select Library.xml
-                        <input type="file" accept=".xml" style={{display:"none"}} onChange={e=>{ if(e.target.files[0]) importFromItunes(e.target.files[0]); e.target.value=""; setShowItunesHelper(false); }}/>
+                        <input type="file" accept=".xml" style={{display:"none"}} onChange={e=>{ if(e.target.files[0]) prepareItunesImport(e.target.files[0]); e.target.value=""; }}/>
                       </label>
                       <div style={{ fontSize:10, color:C.muted, fontFamily:"'DM Mono',monospace", marginTop:8, lineHeight:1.7, textAlign:"center" }}>
                         Navigate to Desktop → look for Library.xml<br/>
@@ -1459,14 +1609,21 @@ export default function MusicLibrary() {
               {view==="labels"  && <LabelView      tracks={filteredTracks} crates={crates} onAddToCrate={addToCrate} onSelect={t=>setSelected(t.id)} selected={selected} onPlay={null} onSendToDeck={sendToDeck} queueIds={queueIds} onToggleQueue={toggleQueue}/>}
               {view==="queue" && (() => {
                 const queuedTracks = [...queueIds].map(id => tracks.find(t=>t.id===id)).filter(Boolean);
+                const totalSec = queuedTracks.reduce((s, t) => s + (t.duration || 0), 0);
+                const totalMin = Math.floor(totalSec / 60);
+                const bpms = queuedTracks.map(t=>t.bpm).filter(Boolean);
+                const bpmRange2 = bpms.length ? `${Math.round(Math.min(...bpms))}–${Math.round(Math.max(...bpms))} BPM` : null;
                 return (
                   <div style={{ flex:1, overflow:"hidden", display:"flex", flexDirection:"column" }}>
                     <div style={{ padding:"12px 16px", borderBottom:`1px solid ${C.border}`, background:C.surface, flexShrink:0, display:"flex", alignItems:"center", gap:12 }}>
                       <span style={{ fontSize:20, color:"#22c55e" }}>◉</span>
                       <div style={{ flex:1 }}>
                         <div style={{ fontSize:18, fontWeight:600, color:C.text, fontFamily:"'DM Sans',sans-serif" }}>Session Queue</div>
-                        <div style={{ fontSize:10, color:C.muted, fontFamily:"'DM Mono',monospace", marginTop:2 }}>
-                          {queuedTracks.length} tracks queued · hover any track in the library and click <span style={{color:"#22c55e"}}>+ QUEUE</span> to add
+                        <div style={{ fontSize:10, color:C.muted, fontFamily:"'DM Mono',monospace", marginTop:2, display:"flex", gap:12 }}>
+                          <span>{queuedTracks.length} tracks</span>
+                          {totalMin > 0 && <span>{totalMin} min</span>}
+                          {bpmRange2 && <span style={{color:G}}>{bpmRange2}</span>}
+                          {queuedTracks.length === 0 && <span>hover any track and click <span style={{color:"#22c55e"}}>+ QUEUE</span> to add</span>}
                         </div>
                       </div>
                       {queueIds.size > 0 && (
@@ -1514,8 +1671,16 @@ export default function MusicLibrary() {
                       <span style={{ fontSize:22, color:G }}>◈</span>
                       <div style={{ flex:1 }}>
                         <div style={{ fontSize:18, fontWeight:600, color:C.text, fontFamily:"'DM Sans',sans-serif" }}>{crate?.name}</div>
-                        <div style={{ fontSize:10, color:C.muted, fontFamily:"'DM Mono',monospace", marginTop:2 }}>{crateTracks.length} tracks · hover a track below and click <span style={{color:G}}>+ CRATE</span> to add more</div>
+                        <div style={{ fontSize:10, color:C.muted, fontFamily:"'DM Mono',monospace", marginTop:2 }}>{crateTracks.length} tracks · hover a track and click <span style={{color:G}}>+ CRATE</span> to add</div>
                       </div>
+                      {crateTracks.length > 0 && (
+                        <button
+                          onClick={() => crateTracks.forEach(t => !queueIds.has(t.id) && addToQueue(t.id))}
+                          title="Add all crate tracks to session queue"
+                          style={{ fontSize:9, fontFamily:"'DM Mono',monospace", padding:"5px 11px", background:"#22c55e11", border:"1px solid #22c55e44", color:"#22c55e", borderRadius:6, cursor:"pointer", whiteSpace:"nowrap" }}>
+                          + QUEUE ALL
+                        </button>
+                      )}
                     </div>
                     {/* Crate tracks */}
                     <div style={{ flex:1, overflowY:"auto" }}>
@@ -1529,7 +1694,8 @@ export default function MusicLibrary() {
                           <div key={t.id} style={{ display:"flex", alignItems:"center" }}>
                             <div style={{ flex:1, minWidth:0 }}>
                               <TrackRow track={{...t,_rowNum:i+1}} selected={selected===t.id} onClick={tr=>setSelected(tr.id)}
-                                onAddToCrate={addToCrate} crates={crates} onPlay={null} onSendToDeck={sendToDeck}/>
+                                onAddToCrate={addToCrate} crates={crates} onPlay={null} onSendToDeck={sendToDeck}
+                                queueIds={queueIds} onToggleQueue={toggleQueue}/>
                             </div>
                             <button
                               onClick={()=>removeFromCrate(t.id, activeCrateId)}
