@@ -1000,6 +1000,8 @@ export default function MusicLibrary() {
   const [rbFileHandle,      setRbFileHandle]       = useState(null); // legacy XML file handle
   const [rbDirHandle,       setRbDirHandle]        = useState(null); // directory handle → reads master.db
   const [scanDirHandle,     setScanDirHandle]      = useState(null); // remembered music folder → skip picker on rescan
+  const [showFilterPanel,   setShowFilterPanel]    = useState(false);
+  const filterPanelRef = useRef(null);
   const searchRef = useRef(null);
 
   useEffect(() => {
@@ -1008,6 +1010,13 @@ export default function MusicLibrary() {
     document.addEventListener("mousedown", close);
     return () => document.removeEventListener("mousedown", close);
   }, [showItunesHelper]);
+
+  useEffect(() => {
+    if (!showFilterPanel) return;
+    const close = (e) => { if (filterPanelRef.current && !filterPanelRef.current.contains(e.target)) setShowFilterPanel(false); };
+    document.addEventListener("mousedown", close);
+    return () => document.removeEventListener("mousedown", close);
+  }, [showFilterPanel]);
 
   // Keyboard shortcuts: "/" = focus search, Escape = clear search
   useEffect(() => {
@@ -1643,21 +1652,48 @@ export default function MusicLibrary() {
   const filteredTracks = useMemo(() => {
     let ts = tracks;
     if (sourceFilter) ts = ts.filter(t => t.source === sourceFilter);
-    if (search.trim()) {
-      const q = search.toLowerCase();
+
+    // ── Parse inline filter tokens from search bar ──────────────
+    // Supported: bpm:128  bpm:120-130  key:8B  energy:peak  label:defected
+    let q = search.trim();
+    let inlineBpm = null;    // [min, max] or null
+    let inlineKey = null;
+    let inlineEnergy = null;
+
+    q = q.replace(/bpm:([\d]+)(?:-([\d]+))?/gi, (_, a, b) => {
+      const lo = parseInt(a), hi = b ? parseInt(b) : parseInt(a);
+      inlineBpm = [Math.min(lo,hi) - (b ? 0 : 2), Math.max(lo,hi) + (b ? 0 : 2)];
+      return "";
+    });
+    q = q.replace(/key:([0-9]{1,2}[AB])/gi, (_, k) => { inlineKey = k.toUpperCase(); return ""; });
+    q = q.replace(/energy:(ambient|warm.?up|build|peak.?hour|hard)/gi, (_, e) => {
+      const map = { ambient:"Ambient", warmup:"Warm-Up", "warm-up":"Warm-Up", build:"Build", peakhour:"Peak Hour", "peak-hour":"Peak Hour", hard:"Hard" };
+      inlineEnergy = map[e.toLowerCase().replace(/\s/g,"")] || null;
+      return "";
+    });
+    q = q.trim();
+
+    // Text search on remaining query
+    if (q) {
+      const lq = q.toLowerCase();
       ts = ts.filter(t =>
-        (t.title||"").toLowerCase().includes(q) ||
-        (t.artist||"").toLowerCase().includes(q) ||
-        (t.genre||"").toLowerCase().includes(q) ||
-        (t.album||"").toLowerCase().includes(q)
+        (t.title||"").toLowerCase().includes(lq) ||
+        (t.artist||"").toLowerCase().includes(lq) ||
+        (t.genre||"").toLowerCase().includes(lq) ||
+        (t.album||"").toLowerCase().includes(lq) ||
+        (t.label||"").toLowerCase().includes(lq)
       );
     }
-    if (energyFilter) ts = ts.filter(t => t.energy?.label === energyFilter);
-    if (keyFilter) ts = ts.filter(t => CAMELOT[t.key] === keyFilter || t.key === keyFilter);
-    ts = ts.filter(t => {
-      if (!t.bpm) return true;
-      return t.bpm >= bpmRange[0] && t.bpm <= bpmRange[1];
-    });
+
+    // Inline filters (from search bar) override panel filters if both present
+    const activeEnergy = inlineEnergy || energyFilter;
+    const activeKey    = inlineKey    || keyFilter;
+    const activeBpm    = inlineBpm    || (bpmRange[0] > 60 || bpmRange[1] < 200 ? bpmRange : null);
+
+    if (activeEnergy) ts = ts.filter(t => t.energy?.label === activeEnergy);
+    if (activeKey)    ts = ts.filter(t => CAMELOT[t.key] === activeKey || t.key === activeKey);
+    if (activeBpm)    ts = ts.filter(t => !t.bpm || (t.bpm >= activeBpm[0] && t.bpm <= activeBpm[1]));
+
     return ts;
   }, [tracks, search, energyFilter, keyFilter, bpmRange, sourceFilter]);
 
@@ -1715,29 +1751,82 @@ export default function MusicLibrary() {
             ref={searchRef}
             value={search} onChange={e=>setSearch(e.target.value)}
             onKeyDown={e=>{ if(e.key==="Escape"){ setSearch(""); e.currentTarget.blur(); } }}
-            placeholder="Search titles, artists, genres… ( / )"
+            placeholder="Search… or filter: bpm:128  key:8B  energy:peak  ( / )"
             style={{ width:"100%", background:C.raised, border:`1px solid ${search?G+66:C.border}`, color:C.text, borderRadius:8, padding:"9px 12px 9px 32px", fontSize:12, fontFamily:"'DM Sans',sans-serif", outline:"none", transition:"border-color .15s" }}
           />
         </div>
 
-        {/* BPM filter */}
-        <BPMRangeFilter min={60} max={200} value={bpmRange} onChange={setBpmRange}/>
+        {/* Expandable FILTER button */}
+        {(() => {
+          const hasFilter = energyFilter || keyFilter || bpmRange[0] > 60 || bpmRange[1] < 200;
+          return (
+            <div style={{ position:"relative", flexShrink:0 }} ref={filterPanelRef}>
+              <button
+                onClick={()=>setShowFilterPanel(v=>!v)}
+                style={{ padding:"7px 13px", background:hasFilter?`${G}18`:"transparent", border:`1px solid ${hasFilter?G+"55":C.border}`, color:hasFilter?G:C.subtle, fontFamily:"'DM Mono',monospace", fontSize:10, letterSpacing:1.5, borderRadius:8, cursor:"pointer", display:"flex", alignItems:"center", gap:6, transition:"all .15s", whiteSpace:"nowrap" }}>
+                <span style={{ fontSize:12 }}>⊞</span> FILTER {hasFilter && <span style={{ background:G, color:"#000", borderRadius:10, padding:"0 5px", fontSize:8 }}>{[energyFilter,keyFilter,bpmRange[0]>60||bpmRange[1]<200?"BPM":null].filter(Boolean).length}</span>}
+              </button>
 
-        {/* Energy filter */}
-        <div style={{ display:"flex", gap:4 }}>
-          {ENERGY_ORDER.map(e => (
-            <button key={e} onClick={()=>setEnergyFilter(energyFilter===e?null:e)}
-              style={{ padding:"4px 8px", fontSize:8, fontFamily:"'DM Mono',monospace", background:energyFilter===e?ENERGY_COLOR[e]+"22":"transparent", border:`1px solid ${energyFilter===e?ENERGY_COLOR[e]+"66":C.border}`, color:energyFilter===e?ENERGY_COLOR[e]:C.muted, borderRadius:4, cursor:"pointer", letterSpacing:.5, transition:"all .15s" }}>
-              {e.split(" ")[0].toUpperCase()}
-            </button>
-          ))}
-        </div>
+              {showFilterPanel && (
+                <div style={{ position:"absolute", top:"calc(100% + 8px)", right:0, width:280, background:C.raised, border:`1px solid ${C.border}`, borderRadius:12, padding:16, zIndex:300, boxShadow:"0 16px 48px rgba(0,0,0,.8)", display:"flex", flexDirection:"column", gap:14 }}>
 
-        {/* Clear filters */}
-        {(search || energyFilter || keyFilter || bpmRange[0] > 60 || bpmRange[1] < 200) && (
-          <button onClick={()=>{ setSearch(""); setEnergyFilter(null); setKeyFilter(null); setBpmRange([60,200]); }}
+                  {/* Energy */}
+                  <div>
+                    <div style={{ fontSize:9, fontFamily:"'DM Mono',monospace", color:C.muted, letterSpacing:1.5, marginBottom:6 }}>ENERGY</div>
+                    <div style={{ display:"flex", flexWrap:"wrap", gap:5 }}>
+                      {ENERGY_ORDER.map(e => {
+                        const ec = ENERGY_COLOR[e] || C.muted;
+                        const active = energyFilter === e;
+                        return (
+                          <button key={e} onClick={()=>setEnergyFilter(active?null:e)}
+                            style={{ padding:"5px 10px", fontSize:10, fontFamily:"'DM Mono',monospace", background:active?ec+"22":"transparent", border:`1px solid ${active?ec+"88":C.border}`, color:active?ec:C.subtle, borderRadius:6, cursor:"pointer", letterSpacing:.5, transition:"all .12s" }}>
+                            {e}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+
+                  {/* BPM */}
+                  <div>
+                    <div style={{ fontSize:9, fontFamily:"'DM Mono',monospace", color:C.muted, letterSpacing:1.5, marginBottom:6 }}>BPM RANGE &nbsp;<span style={{color:G}}>{bpmRange[0]}–{bpmRange[1]}</span></div>
+                    <BPMRangeFilter min={60} max={200} value={bpmRange} onChange={setBpmRange}/>
+                  </div>
+
+                  {/* Key */}
+                  <div>
+                    <div style={{ fontSize:9, fontFamily:"'DM Mono',monospace", color:C.muted, letterSpacing:1.5, marginBottom:6 }}>KEY (CAMELOT)</div>
+                    <div style={{ display:"flex", flexWrap:"wrap", gap:4 }}>
+                      {["1A","2A","3A","4A","5A","6A","7A","8A","9A","10A","11A","12A","1B","2B","3B","4B","5B","6B","7B","8B","9B","10B","11B","12B"].map(k => {
+                        const active = keyFilter === k;
+                        return (
+                          <button key={k} onClick={()=>setKeyFilter(active?null:k)}
+                            style={{ padding:"3px 7px", fontSize:9, fontFamily:"'DM Mono',monospace", background:active?`${G}22`:"transparent", border:`1px solid ${active?G+"66":C.border}`, color:active?G:C.muted, borderRadius:5, cursor:"pointer", transition:"all .12s" }}>
+                            {k}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+
+                  {/* Clear */}
+                  {hasFilter && (
+                    <button onClick={()=>{ setEnergyFilter(null); setKeyFilter(null); setBpmRange([60,200]); }}
+                      style={{ padding:"6px", fontSize:9, fontFamily:"'DM Mono',monospace", background:"transparent", border:`1px solid #ef444433`, color:"#ef4444aa", borderRadius:6, cursor:"pointer", letterSpacing:.5 }}>
+                      ✕ CLEAR ALL FILTERS
+                    </button>
+                  )}
+                </div>
+              )}
+            </div>
+          );
+        })()}
+
+        {/* Clear search */}
+        {search && (
+          <button onClick={()=>setSearch("")}
             style={{ padding:"4px 9px", fontSize:9, fontFamily:"'DM Mono',monospace", background:"transparent", border:`1px solid #ef444433`, color:"#ef4444aa", borderRadius:5, cursor:"pointer", whiteSpace:"nowrap", letterSpacing:.5 }}>
-            ✕ CLEAR
+            ✕
           </button>
         )}
 
@@ -2141,7 +2230,7 @@ export default function MusicLibrary() {
             </div>
 
             {cratesExpanded && (
-              <div>
+              <div style={{ maxHeight:220, overflowY:"auto" }}>
                 {/* New crate inline input */}
                 {showNewCrateInput && (
                   <div style={{ padding:"4px 12px 8px" }}>
