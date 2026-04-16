@@ -682,6 +682,13 @@ export default function MusicLibrary() {
   const [bpmRange, setBpmRange] = useState([60, 180]);
   const [energyFilter, setEnergyFilter] = useState(null);
   const [keyFilter,    setKeyFilter]    = useState(null);
+  const [showItunesHelper, setShowItunesHelper] = useState(false);
+  useEffect(() => {
+    if (!showItunesHelper) return;
+    const close = (e) => { if (!e.target.closest("[data-itunes-helper]")) setShowItunesHelper(false); };
+    document.addEventListener("mousedown", close);
+    return () => document.removeEventListener("mousedown", close);
+  }, [showItunesHelper]);
 
   // ── Init DB + worker ────────────────────────────────────────
   useEffect(() => {
@@ -748,10 +755,12 @@ export default function MusicLibrary() {
   }, []);
 
   // ── Scan folder ─────────────────────────────────────────────
-  const scanFolder = async () => {
-    let dirHandle;
-    try { dirHandle = await window.showDirectoryPicker({ mode:"read" }); }
-    catch { return; }
+  const scanFolder = async (preHandle = null) => {
+    let dirHandle = preHandle;
+    if (!dirHandle) {
+      try { dirHandle = await window.showDirectoryPicker({ mode:"read" }); }
+      catch { return; }
+    }
 
     setScanning(true);
     setScanProg({ found:0, analyzed:0, total:0 });
@@ -798,7 +807,14 @@ export default function MusicLibrary() {
     processQueue();
   };
 
-  // ── iTunes import ────────────────────────────────────────────
+  // ── iTunes / Apple Music guided scan ─────────────────────────
+  const itunesScan = async () => {
+    setShowItunesHelper(false);
+    // Just reuse scanFolder — user navigates to their iTunes Media / Music folder
+    await scanFolder();
+  };
+
+  // ── iTunes XML import (advanced / power users) ────────────────
   const importFromItunes = async (file) => {
     if (!file) return;
     setScanning(true);
@@ -983,10 +999,36 @@ export default function MusicLibrary() {
               </div>
             )}
           </div>
-          <label title="Import from iTunes / Apple Music XML library" style={{ padding:"9px 14px", background:"#8B5CF615", border:"1px solid #8B5CF655", color:"#8B5CF6", fontFamily:"'DM Mono',monospace", fontSize:10, letterSpacing:1.5, borderRadius:8, cursor:"pointer", display:"flex", alignItems:"center", gap:6, transition:"all .2s", whiteSpace:"nowrap" }}>
-            ♪ iTunes
-            <input type="file" accept=".xml" style={{display:"none"}} onChange={e=>{ if(e.target.files[0]) importFromItunes(e.target.files[0]); e.target.value=""; }}/>
-          </label>
+          <div data-itunes-helper style={{ position:"relative" }}>
+            <button onClick={()=>setShowItunesHelper(v=>!v)}
+              style={{ padding:"9px 14px", background:"#8B5CF615", border:`1px solid ${showItunesHelper?"#8B5CF688":"#8B5CF655"}`, color:"#8B5CF6", fontFamily:"'DM Mono',monospace", fontSize:10, letterSpacing:1.5, borderRadius:8, cursor:"pointer", display:"flex", alignItems:"center", gap:6, transition:"all .2s", whiteSpace:"nowrap" }}>
+              ♪ iTunes
+            </button>
+            {showItunesHelper && (
+              <div data-itunes-helper style={{ position:"absolute", top:"calc(100% + 8px)", right:0, width:300, background:C.raised, border:`1px solid #8B5CF644`, borderRadius:10, padding:16, zIndex:200, boxShadow:"0 12px 40px rgba(0,0,0,.7)" }}>
+                <div style={{ fontSize:12, fontWeight:600, color:C.text, fontFamily:"'DM Sans',sans-serif", marginBottom:6 }}>Scan iTunes / Apple Music</div>
+                <div style={{ fontSize:11, color:C.subtle, lineHeight:1.7, marginBottom:12 }}>
+                  Click below, then navigate to your iTunes music folder:
+                </div>
+                <div style={{ background:C.bg, borderRadius:7, padding:"10px 12px", marginBottom:12, fontSize:10, fontFamily:"'DM Mono',monospace", color:C.muted, lineHeight:2 }}>
+                  <div style={{color:G}}>📁 Music</div>
+                  <div style={{paddingLeft:14}}>📁 iTunes <span style={{color:C.muted}}>→</span> <span style={{color:G}}>iTunes Media</span> <span style={{color:C.muted}}>→ Music</span></div>
+                  <div style={{paddingLeft:14, color:C.muted}}>or: Apple Music <span style={{color:G}}>→ Media → Music</span></div>
+                </div>
+                <button onClick={itunesScan}
+                  style={{ width:"100%", padding:"10px", background:"#8B5CF622", border:"1px solid #8B5CF655", color:"#8B5CF6", fontFamily:"'DM Mono',monospace", fontSize:11, letterSpacing:1, borderRadius:7, cursor:"pointer", marginBottom:8 }}>
+                  ⊕ Open Folder Picker
+                </button>
+                <div style={{ borderTop:`1px solid ${C.border}`, paddingTop:8, marginTop:4 }}>
+                  <div style={{ fontSize:9, color:C.muted, marginBottom:6, fontFamily:"'DM Mono',monospace", letterSpacing:.5 }}>ADVANCED — export XML from iTunes first:</div>
+                  <label style={{ fontSize:10, color:C.muted, fontFamily:"'DM Mono',monospace", cursor:"pointer", display:"flex", alignItems:"center", gap:6 }}>
+                    ↗ File → Library → Export Library...
+                    <input type="file" accept=".xml" style={{display:"none"}} onChange={e=>{ if(e.target.files[0]) importFromItunes(e.target.files[0]); e.target.value=""; setShowItunesHelper(false); }}/>
+                  </label>
+                </div>
+              </div>
+            )}
+          </div>
           <button onClick={scanFolder} disabled={scanning}
             style={{ padding:"9px 16px", background:scanning?"transparent":`${G}22`, border:`1px solid ${G}55`, color:scanning?C.muted:G, fontFamily:"'DM Mono',monospace", fontSize:10, letterSpacing:1.5, borderRadius:8, cursor:scanning?"not-allowed":"pointer", display:"flex", alignItems:"center", gap:8, transition:"all .2s" }}>
             {scanning
@@ -1092,13 +1134,37 @@ export default function MusicLibrary() {
                   style={{ padding:"14px 36px", background:`linear-gradient(135deg,${G}22,${G}11)`, border:`1px solid ${G}55`, color:G, fontFamily:"'DM Mono',monospace", fontSize:12, letterSpacing:2, borderRadius:10, cursor:"pointer", boxShadow:`0 0 32px ${G}18`, transition:"all .2s" }}>
                   ⊕ SCAN MUSIC FOLDER
                 </button>
-                <label title="Import your iTunes or Apple Music library (XML file)" style={{ padding:"14px 28px", background:"#8B5CF611", border:"1px solid #8B5CF644", color:"#8B5CF6", fontFamily:"'DM Mono',monospace", fontSize:12, letterSpacing:2, borderRadius:10, cursor:"pointer", display:"flex", alignItems:"center", gap:8, transition:"all .2s" }}>
-                  ♪ IMPORT iTunes / Apple Music
-                  <input type="file" accept=".xml" style={{display:"none"}} onChange={e=>{ if(e.target.files[0]) importFromItunes(e.target.files[0]); e.target.value=""; }}/>
-                </label>
+                <button onClick={()=>setShowItunesHelper(v=>!v)}
+                  style={{ padding:"14px 28px", background:"#8B5CF611", border:`1px solid ${showItunesHelper?"#8B5CF677":"#8B5CF644"}`, color:"#8B5CF6", fontFamily:"'DM Mono',monospace", fontSize:12, letterSpacing:2, borderRadius:10, cursor:"pointer", display:"flex", alignItems:"center", gap:8, transition:"all .2s" }}>
+                  ♪ iTunes / Apple Music
+                </button>
               </div>
+              {showItunesHelper && (
+                <div style={{ background:C.raised, border:"1px solid #8B5CF633", borderRadius:12, padding:20, maxWidth:380, width:"100%" }}>
+                  <div style={{ fontSize:14, fontWeight:600, color:C.text, marginBottom:6 }}>How to scan your iTunes library</div>
+                  <div style={{ fontSize:12, color:C.subtle, lineHeight:1.7, marginBottom:14 }}>
+                    Click the button below, then navigate to your music folder:
+                  </div>
+                  <div style={{ background:C.bg, borderRadius:8, padding:"12px 16px", marginBottom:14, fontSize:11, fontFamily:"'DM Mono',monospace", color:C.muted, lineHeight:2.2 }}>
+                    <div><span style={{color:G}}>📁 Music</span></div>
+                    <div style={{paddingLeft:20}}>📁 iTunes → <span style={{color:G}}>iTunes Media → Music</span></div>
+                    <div style={{paddingLeft:20, fontSize:10}}>or: Apple Music → <span style={{color:G}}>Media → Music</span></div>
+                  </div>
+                  <button onClick={itunesScan}
+                    style={{ width:"100%", padding:"12px", background:"#8B5CF622", border:"1px solid #8B5CF655", color:"#8B5CF6", fontFamily:"'DM Mono',monospace", fontSize:12, letterSpacing:1.5, borderRadius:8, cursor:"pointer", marginBottom:10 }}>
+                    ⊕ Open Folder Picker
+                  </button>
+                  <div style={{ fontSize:10, color:C.muted, fontFamily:"'DM Mono',monospace", textAlign:"center" }}>
+                    Want playlists imported too?{" "}
+                    <label style={{ color:"#8B5CF6", cursor:"pointer", textDecoration:"underline" }}>
+                      Export XML from iTunes first
+                      <input type="file" accept=".xml" style={{display:"none"}} onChange={e=>{ if(e.target.files[0]) importFromItunes(e.target.files[0]); e.target.value=""; setShowItunesHelper(false); }}/>
+                    </label>
+                  </div>
+                </div>
+              )}
               <div style={{ fontSize:10, color:C.muted, fontFamily:"'DM Mono',monospace", letterSpacing:1, textAlign:"center" }}>
-                iTunes: File → Library → Export Library to get your XML · Scan Folder works with any music folder
+                Works with Chrome or Edge · Your files never leave your computer
               </div>
             </div>
           )}
