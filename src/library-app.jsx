@@ -611,9 +611,9 @@ function TrackListView({ tracks, crates, onAddToCrate, onSelect, selected, onPla
             queueIds={queueIds} onToggleQueue={onToggleQueue}/>
         ))}
         {tracks.length === 0 && (
-          <div style={{ display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"center", height:"100%", gap:12, color:C.muted, fontFamily:"'DM Mono',monospace", fontSize:11 }}>
-            <div style={{ fontSize:32, opacity:.2 }}>♫</div>
-            No tracks found
+          <div style={{ display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"center", height:"100%", gap:16, fontFamily:"'DM Mono',monospace" }}>
+            <div style={{ fontSize:40, opacity:.15 }}>♫</div>
+            <div style={{ fontSize:11, color:C.muted }}>No tracks found</div>
           </div>
         )}
       </div>
@@ -1204,7 +1204,7 @@ export default function MusicLibrary() {
     try {
       [fileHandle] = await window.showOpenFilePicker({
         types: [{ description: "Rekordbox XML", accept: { "text/xml": [".xml"] } }],
-        startIn: "music",
+        startIn: "desktop",
         multiple: false,
       });
     } catch { return; } // user cancelled
@@ -2112,8 +2112,39 @@ export default function MusicLibrary() {
             </div>
           )}
 
+          {/* ── SOURCE EMPTY STATE — when a source filter is active but has no tracks yet ── */}
+          {tracks.length > 0 && sourceFilter && filteredTracks.length === 0 && !scanning && (() => {
+            const isItunes = sourceFilter === "itunes";
+            const isRb = sourceFilter === "rekordbox";
+            const color = isItunes ? "#8B5CF6" : G;
+            const icon = isItunes ? "🎵" : "🎛️";
+            const label = isItunes ? "Apple Music" : "Rekordbox";
+            const onConnect = isItunes ? ()=>autoImportItunes() : ()=>importRekordbox();
+            const hint = isItunes
+              ? <>Select your <span style={{color:G}}>Library.xml</span> file.<br/>Apple Music auto-generates it — just enable:<br/><span style={{color}}>Music → Settings → Advanced → Share iTunes Library XML</span><br/>Then find it at <span style={{color:G}}>~/Music/Music/Library.xml</span></>
+              : <>Select your <span style={{color:G}}>rekordbox.xml</span> file.<br/>Export it once from Rekordbox: <span style={{color}}>File → Export Collection in xml format</span><br/>BPM, key, and all your playlists come with it ⚡</>;
+            return (
+              <div style={{ flex:1, display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"center", padding:40 }}>
+                <div style={{ width:"100%", maxWidth:480, background:C.surface, border:`1px solid ${color}22`, borderRadius:20, padding:"44px 40px", display:"flex", flexDirection:"column", alignItems:"center", gap:24, boxShadow:`0 24px 64px rgba(0,0,0,.5)` }}>
+                  <div style={{ width:64, height:64, borderRadius:18, background:`${color}14`, border:`1px solid ${color}33`, display:"flex", alignItems:"center", justifyContent:"center", fontSize:30 }}>{icon}</div>
+                  <div style={{ textAlign:"center" }}>
+                    <div style={{ fontSize:22, fontWeight:600, color:C.text, fontFamily:"'DM Sans',sans-serif", marginBottom:8 }}>{label} not connected</div>
+                    <div style={{ fontSize:11, color:C.muted, fontFamily:"'DM Mono',monospace", lineHeight:1.9 }}>{hint}</div>
+                  </div>
+                  <button onClick={onConnect}
+                    style={{ width:"100%", padding:"14px 24px", background:`${color}18`, border:`1px solid ${color}66`, color, fontFamily:"'DM Mono',monospace", fontSize:12, letterSpacing:1.5, borderRadius:10, cursor:"pointer", display:"flex", alignItems:"center", justifyContent:"center", gap:10, transition:"all .2s" }}
+                    onMouseEnter={e=>{ e.currentTarget.style.background=`${color}28`; }}
+                    onMouseLeave={e=>{ e.currentTarget.style.background=`${color}18`; }}>
+                    {icon} CONNECT {label.toUpperCase()}
+                  </button>
+                  <button onClick={()=>setSourceFilter(null)} style={{ fontSize:9, fontFamily:"'DM Mono',monospace", background:"transparent", border:"none", color:C.muted, cursor:"pointer", letterSpacing:1 }}>← back to all tracks</button>
+                </div>
+              </div>
+            );
+          })()}
+
           {/* Views */}
-          {tracks.length > 0 && (
+          {tracks.length > 0 && !(sourceFilter && filteredTracks.length === 0) && (
             <div style={{ flex:1, overflow:"hidden", display:"flex", flexDirection:"column" }}>
               {view==="tracks"  && <TrackListView  tracks={filteredTracks} crates={crates} onAddToCrate={addToCrate} onSelect={t=>setSelected(t.id)} selected={selected} onPlay={null} onSendToDeck={sendToDeck} queueIds={queueIds} onToggleQueue={toggleQueue}/>}
               {view==="artists" && <ArtistView     tracks={filteredTracks} crates={crates} onAddToCrate={addToCrate} onSelect={t=>setSelected(t.id)} selected={selected} onPlay={null} onSendToDeck={sendToDeck} queueIds={queueIds} onToggleQueue={toggleQueue}/>}
