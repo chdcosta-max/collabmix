@@ -1115,10 +1115,12 @@ export default function MusicLibrary() {
     }
   }, []);
 
-  // ── Import files from <input type="file"> ───────────────────
+  // ── Import files from <input type="file" webkitdirectory> ───
   const handleImport = async (e) => {
-    const files = Array.from(e.target.files || []);
-    e.target.value = ""; // reset so same files can be re-added
+    // Filter to audio files only (webkitdirectory passes everything in the folder)
+    const AUDIO_EXTS = /\.(mp3|wav|flac|aac|m4a|ogg|aiff?|wma|opus|alac)$/i;
+    const files = Array.from(e.target.files || []).filter(f => AUDIO_EXTS.test(f.name));
+    e.target.value = ""; // reset so same folder can be re-imported later
     if (!files.length) return;
 
     setScanning(true);
@@ -1131,7 +1133,9 @@ export default function MusicLibrary() {
       const file = files[i];
       setScanProg(p => ({ ...p, found: i + 1 }));
 
-      const id = `f_${btoa(file.name + file.size).replace(/[^a-zA-Z0-9]/g, "")}`;
+      // Use webkitRelativePath for a stable unique ID across folders
+      const pathKey = file.webkitRelativePath || (file.name + file.size);
+      const id = `f_${btoa(unescape(encodeURIComponent(pathKey))).replace(/[^a-zA-Z0-9]/g, "")}`;
       if (existing.has(id)) continue;
 
       let tags = {};
@@ -1143,7 +1147,7 @@ export default function MusicLibrary() {
       const track = {
         id,
         filename: file.name,
-        path: file.name,
+        path: file.webkitRelativePath || file.name,
         title:  tags.title  || file.name.replace(/\.[^.]+$/, ""),
         artist: tags.artist || "",
         album:  tags.album  || "",
@@ -1803,7 +1807,7 @@ export default function MusicLibrary() {
               ? <><span style={{ width:10, height:10, border:`1.5px solid ${G}44`, borderTop:`1.5px solid ${G}`, borderRadius:"50%", animation:"spin 1s linear infinite", display:"inline-block" }}/> {scanProg.found > 0 ? `${scanProg.found} / ${scanProg.total} imported…` : "IMPORTING…"}</>
               : <><span style={{ fontSize:14, lineHeight:1 }}>＋</span> ADD MUSIC</>
             }
-            <input type="file" accept="audio/*" multiple onChange={handleImport} style={{ display:"none" }} disabled={scanning} />
+            <input type="file" accept="audio/*" multiple webkitdirectory="" onChange={handleImport} style={{ display:"none" }} disabled={scanning} />
           </label>
           {tracks.length>0 && analyzedCount<tracks.length && (
             <button onClick={reanalyzeAll} style={{ padding:"9px 12px", background:"transparent", border:`1px solid ${C.border}`, color:C.muted, fontFamily:"'DM Mono',monospace", fontSize:9, letterSpacing:1, borderRadius:8, cursor:"pointer" }}>⟳ ANALYZE</button>
@@ -2117,7 +2121,7 @@ export default function MusicLibrary() {
                 ? <><span style={{ width:8, height:8, border:`1.5px solid ${G}44`, borderTop:`1.5px solid ${G}`, borderRadius:"50%", animation:"spin 1s linear infinite", display:"inline-block" }}/> {scanProg.found > 0 ? `${scanProg.found} / ${scanProg.total} IMPORTED` : "IMPORTING..."}</>
                 : <><span style={{ fontSize:14 }}>＋</span> ADD MUSIC</>
               }
-              <input type="file" accept="audio/*" multiple onChange={handleImport} style={{ display:"none" }} disabled={scanning} />
+              <input type="file" accept="audio/*" multiple webkitdirectory="" onChange={handleImport} style={{ display:"none" }} disabled={scanning} />
             </label>
           </div>
 
@@ -2283,7 +2287,7 @@ export default function MusicLibrary() {
                 {/* Primary CTA */}
                 <label style={{ width:"100%", padding:"16px 24px", background:`linear-gradient(135deg,${G}28,${G}14)`, border:`1px solid ${G}66`, color:G, fontFamily:"'DM Mono',monospace", fontSize:13, letterSpacing:2, borderRadius:12, cursor:"pointer", boxShadow:`0 0 40px ${G}18`, transition:"all .2s", display:"flex", alignItems:"center", justifyContent:"center", gap:10, boxSizing:"border-box" }}>
                   <span style={{ fontSize:16 }}>🎵</span> IMPORT MY MUSIC
-                  <input type="file" accept="audio/*" multiple onChange={handleImport} style={{ display:"none" }} />
+                  <input type="file" accept="audio/*" multiple webkitdirectory="" onChange={handleImport} style={{ display:"none" }} />
                 </label>
 
                 {/* Feature pills */}
