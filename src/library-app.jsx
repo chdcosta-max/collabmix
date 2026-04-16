@@ -140,6 +140,31 @@ function parseID3(buffer) {
     if (!fid.match(/^[A-Z0-9]{4}$/)) break;
     const fsz = ver>=4 ? ((bytes[off+4]&0x7F)<<21)|((bytes[off+5]&0x7F)<<14)|((bytes[off+6]&0x7F)<<7)|(bytes[off+7]&0x7F) : view.getUint32(off+4);
     if (fmap[fid] && fsz>1) tags[fmap[fid]] = rStr(off+10, fsz);
+
+    // Extract embedded album art (APIC frame)
+    if (fid === "APIC" && fsz > 4 && !tags._artworkBlob) {
+      try {
+        const enc = bytes[off+10];
+        // Find end of MIME type (null byte after encoding byte)
+        let mimeEnd = off+11;
+        while (mimeEnd < off+10+fsz && bytes[mimeEnd] !== 0) mimeEnd++;
+        const mime = new TextDecoder().decode(bytes.slice(off+11, mimeEnd)) || "image/jpeg";
+        // Skip picture type byte, then skip description (null-terminated, respecting encoding)
+        let dataStart = mimeEnd + 2; // +1 for null, +1 for pic type byte
+        const step = (enc === 1 || enc === 2) ? 2 : 1;
+        // Skip description string (null-terminated)
+        while (dataStart + step <= off+10+fsz) {
+          if (step === 2 && bytes[dataStart] === 0 && bytes[dataStart+1] === 0) { dataStart += 2; break; }
+          if (step === 1 && bytes[dataStart] === 0) { dataStart += 1; break; }
+          dataStart += step;
+        }
+        const imgData = bytes.slice(dataStart, off+10+fsz);
+        if (imgData.length > 100) {
+          tags._artworkBlob = new Blob([imgData], { type: mime.includes("png") ? "image/png" : "image/jpeg" });
+        }
+      } catch {}
+    }
+
     off += 10+fsz; if (fsz===0) break;
   }
   return tags;
@@ -171,15 +196,22 @@ async function fetchArtwork(artist, title) {
   const key = `${artist}|${title}`;
   if (artworkCache.has(key)) return artworkCache.get(key);
   artworkCache.set(key, null); // mark in-flight to avoid duplicate requests
-  try {
-    const term = encodeURIComponent(`${artist} ${title}`.trim().slice(0, 100));
-    const r = await fetch(`https://itunes.apple.com/search?term=${term}&media=music&entity=song&limit=1`);
-    if (!r.ok) return null;
-    const data = await r.json();
-    const url = data.results?.[0]?.artworkUrl100?.replace("100x100bb", "300x300bb") || null;
-    artworkCache.set(key, url);
-    return url;
-  } catch { return null; }
+
+  const trySearch = async (term) => {
+    try {
+      const r = await fetch(`https://itunes.apple.com/search?term=${encodeURIComponent(term.trim().slice(0,100))}&media=music&entity=song&limit=1`);
+      if (!r.ok) return null;
+      const data = await r.json();
+      return data.results?.[0]?.artworkUrl100?.replace("100x100bb","300x300bb") || null;
+    } catch { return null; }
+  };
+
+  // Try "artist title" first, then just "artist" as a fallback for DJ edits/remixes
+  let url = null;
+  if (artist && title) url = await trySearch(`${artist} ${title}`);
+  if (!url && artist)  url = await trySearch(artist);
+  artworkCache.set(key, url);
+  return url;
 }
 
 // ── sql.js lazy loader for Rekordbox SQLite ──────────────────
@@ -1149,9 +1181,15 @@ export default function MusicLibrary() {
 
       let tags = {};
       try {
-        const sl = await file.slice(0, 131072).arrayBuffer();
+        const sl = await file.slice(0, 262144).arrayBuffer(); // 256KB — enough for large embedded artwork
         tags = parseID3(sl);
       } catch {}
+
+      // Cache embedded artwork immediately so TrackRow shows it without an API call
+      const artKey = `${tags.artist||""}|${tags.title || file.name.replace(/\.[^.]+$/,"")}`;
+      if (tags._artworkBlob && !artworkCache.has(artKey)) {
+        artworkCache.set(artKey, URL.createObjectURL(tags._artworkBlob));
+      }
 
       const track = {
         id,
@@ -1234,9 +1272,15 @@ export default function MusicLibrary() {
 
         let tags = {};
         try {
-          const sl = await (await handle.getFile()).slice(0, 131072).arrayBuffer();
+          const sl = await (await handle.getFile()).slice(0, 262144).arrayBuffer();
           tags = parseID3(sl);
         } catch {}
+
+        // Cache embedded artwork immediately
+        const artKey = `${tags.artist||""}|${tags.title || name.replace(/\.[^.]+$/,"")}`;
+        if (tags._artworkBlob && !artworkCache.has(artKey)) {
+          artworkCache.set(artKey, URL.createObjectURL(tags._artworkBlob));
+        }
 
         const track = {
           id, filename: name, path,
