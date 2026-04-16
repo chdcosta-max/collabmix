@@ -1255,18 +1255,36 @@ export default function MusicLibrary() {
       const perm = await dirHandle.queryPermission({ mode: "read" });
       if (perm !== "granted") await dirHandle.requestPermission({ mode: "read" });
 
-      // Try master.db (rb6) then rekordbox.db (rb5)
-      let dbFileHandle;
-      for (const name of ["master.db", "rekordbox.db"]) {
-        try { dbFileHandle = await dirHandle.getFileHandle(name); break; }
-        catch {}
+      // Search for master.db across common known sub-paths so the user can
+      // pick ~/Music, ~/Music/PioneerDJ, or the exact rekordbox6 folder
+      const searchPaths = [
+        [],                                          // picked folder itself
+        ["PioneerDJ"],                               // ~/Music/PioneerDJ/
+        ["rekordbox6"],
+        ["Pioneer", "rekordbox6"],
+        ["rekordbox"],
+        ["Application Support", "Pioneer", "rekordbox6"],
+      ];
+
+      let dbFileHandle = null;
+      outer: for (const parts of searchPaths) {
+        let cur = dirHandle;
+        try {
+          for (const p of parts) cur = await cur.getDirectoryHandle(p);
+          for (const name of ["master.db", "rekordbox.db"]) {
+            try { dbFileHandle = await cur.getFileHandle(name); break outer; }
+            catch {}
+          }
+        } catch {}
       }
+
       if (!dbFileHandle) {
         alert(
-          "Rekordbox database not found in the selected folder.\n\n" +
-          "Please select the folder that contains master.db.\n" +
-          "In the picker press ⌘⇧G and paste:\n" +
-          "~/Library/Application Support/Pioneer/rekordbox6"
+          "Rekordbox database not found.\n\n" +
+          "Try selecting one of these folders in the picker:\n" +
+          "• ~/Music/PioneerDJ\n" +
+          "• ~/Library/Application Support/Pioneer/rekordbox6\n\n" +
+          "To reach the Library folder, press ⌘⇧G in the picker and paste the path."
         );
         return;
       }
@@ -2232,7 +2250,7 @@ export default function MusicLibrary() {
             const onConnect = isItunes ? ()=>autoImportItunes() : ()=>importRekordbox();
             const hint = isItunes
               ? <><strong style={{color:C.text}}>One-time setup:</strong> Open Apple Music → Settings → Advanced<br/>→ turn on <span style={{color}}>"Share iTunes Library XML"</span><br/><br/>Then click Connect below → navigate to <span style={{color:G}}>Music → Music</span> folder<br/>→ select <span style={{color:G}}>Library.xml</span> — Apple keeps it updated automatically</>
-              : <><strong style={{color:C.text}}>No export needed.</strong> We read your Rekordbox database directly.<br/><br/>Click Connect → a folder picker opens<br/>→ press <span style={{color}}>⌘⇧G</span> and paste this path:<br/><span style={{color:G,fontFamily:"'DM Mono',monospace",fontSize:9}}>~/Library/Application Support/Pioneer/rekordbox6</span><br/>→ click Open — all BPM, key &amp; playlists load automatically ⚡</>;
+              : <><strong style={{color:C.text}}>No export needed.</strong> We read your Rekordbox database directly.<br/><br/>Click Connect below → a folder picker opens in your Music folder<br/>→ double-click <span style={{color}}>PioneerDJ</span> → click <span style={{color}}>Select</span><br/>All BPM, key &amp; playlists load automatically ⚡<br/><br/><span style={{color:C.muted,fontSize:9}}>Don't see PioneerDJ? Press ⌘⇧G and paste:<br/>~/Library/Application Support/Pioneer/rekordbox6</span></>;
             return (
               <div style={{ flex:1, display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"center", padding:40 }}>
                 <div style={{ width:"100%", maxWidth:480, background:C.surface, border:`1px solid ${color}22`, borderRadius:20, padding:"44px 40px", display:"flex", flexDirection:"column", alignItems:"center", gap:24, boxShadow:`0 24px 64px rgba(0,0,0,.5)` }}>
@@ -2248,7 +2266,7 @@ export default function MusicLibrary() {
                     {icon} CONNECT {label.toUpperCase()}
                   </button>
                   <div style={{ fontSize:9, color:C.muted, fontFamily:"'DM Mono',monospace", textAlign:"center", opacity:.7 }}>
-                    {isItunes ? "File picker opens in ~/Music — navigate to Music folder → Library.xml" : "In the folder picker: press ⌘⇧G → paste path → click Open"}
+                    {isItunes ? "Picker opens in ~/Music → go into Music folder → select Library.xml" : "Picker opens in ~/Music → double-click PioneerDJ → click Select"}
                   </div>
                   <button onClick={()=>setSourceFilter(null)} style={{ fontSize:9, fontFamily:"'DM Mono',monospace", background:"transparent", border:"none", color:C.muted, cursor:"pointer", letterSpacing:1 }}>← back to all tracks</button>
                 </div>
