@@ -490,16 +490,16 @@ function Deck({ id, ch, ctx:ac, color, local, remote, onChange, midi:mt, bpmResu
   const sy=(setter,field)=>(v)=>{setter(v);onChange?.(field,v);};
   const cur=prog*dur;
 
-  const D="#0e0e1c", BD="1px solid #2a2a40";
+  const D="#06060e", BD="1px solid #ffffff0d";
   return (
-    <div style={{background:D, border:`2px solid ${play?color+"88":"#2a2a44"}`, borderRadius:10, overflow:"hidden", display:"flex", flexDirection:"column", boxShadow:play?`0 0 28px ${color}22`:`0 2px 16px #00000066`, transition:"all .3s"}}>
+    <div style={{background:D, border:`1px solid ${play?color+"44":"#ffffff0d"}`, borderRadius:12, overflow:"hidden", display:"flex", flexDirection:"column", boxShadow:play?`0 0 40px ${color}18, 0 4px 30px #000b`:`0 4px 24px #000b`, transition:"all .3s"}}>
 
       {/* ── HEADER: badge | track | bpm ── */}
       <div style={{display:"flex", alignItems:"stretch", minHeight:54, borderBottom:BD}}>
-        <div style={{width:52, flexShrink:0, background:color+"22", borderRight:`3px solid ${color}`, display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"center", gap:3}}>
-          <span style={{fontFamily:"'Barlow Condensed',sans-serif", fontWeight:900, fontSize:26, color, lineHeight:1, textShadow:`0 0 12px ${color}88`}}>{id}</span>
-          <span style={{fontSize:7, color:color+"99", fontFamily:"monospace", letterSpacing:1}}>{local?"YOU":"PRTNR"}</span>
-          {play&&<div style={{width:5,height:5,borderRadius:"50%",background:color,boxShadow:`0 0 8px ${color}`,animation:"blink 1s infinite"}}/>}
+        <div style={{width:52, flexShrink:0, background:`linear-gradient(180deg,${color}15,${color}08)`, borderRight:`1px solid ${color}33`, display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"center", gap:3}}>
+          <span style={{fontFamily:"'Barlow Condensed',sans-serif", fontWeight:900, fontSize:26, color, lineHeight:1, textShadow:`0 0 16px ${color}aa`}}>{id}</span>
+          <span style={{fontSize:7, color:color+"77", fontFamily:"'Barlow Condensed',sans-serif", fontWeight:700, letterSpacing:2}}>{local?"YOU":"PRTNR"}</span>
+          {play&&<div style={{width:5,height:5,borderRadius:"50%",background:color,boxShadow:`0 0 10px ${color}`,animation:"blink 1s infinite"}}/>}
         </div>
 
         {local?(
@@ -557,7 +557,7 @@ function Deck({ id, ch, ctx:ac, color, local, remote, onChange, midi:mt, bpmResu
       </div>
 
       {/* ── LCD TIME ── */}
-      <div style={{display:"flex", alignItems:"center", justifyContent:"space-between", padding:"10px 16px", background:"#080810", borderBottom:BD}}>
+      <div style={{display:"flex", alignItems:"center", justifyContent:"space-between", padding:"10px 16px", background:"#020208", borderBottom:BD}}>
         <div>
           <div style={{fontFamily:"monospace", fontWeight:800, fontSize:26, color, letterSpacing:3, lineHeight:1, textShadow:`0 0 18px ${color}66`}}>{fmt(cur)}</div>
           <div style={{fontSize:7, color:"#505070", fontFamily:"monospace", letterSpacing:2, marginTop:3}}>ELAPSED</div>
@@ -575,12 +575,12 @@ function Deck({ id, ch, ctx:ac, color, local, remote, onChange, midi:mt, bpmResu
       {/* ── TRANSPORT ── */}
       {local?(
         <div style={{display:"flex", alignItems:"center", gap:6, padding:"10px 14px", borderBottom:BD}}>
-          <button onClick={cue} disabled={!buf} style={{height:34,padding:"0 12px",background:"#16162a",border:"1px solid #252535",color:"#7070a0",borderRadius:5,cursor:buf?"pointer":"default",fontFamily:"monospace",fontSize:9,letterSpacing:1,outline:"none",flexShrink:0}}>⏮ CUE</button>
-          <button onClick={()=>seek(Math.max(0,prog-.005))} disabled={!buf} style={{height:34,width:38,background:"#16162a",border:"1px solid #252535",color:"#7070a0",borderRadius:5,cursor:buf?"pointer":"default",fontFamily:"monospace",fontSize:13,outline:"none"}}>◂◂</button>
-          <button onClick={toggle} disabled={!buf} style={{flex:1,height:44,background:play?color+"1e":"#16162a",border:`2px solid ${play?color:color+"44"}`,color:play?color:color+"44",borderRadius:7,cursor:buf?"pointer":"default",fontSize:24,display:"flex",alignItems:"center",justifyContent:"center",boxShadow:play?`0 0 22px ${color}44`:"",outline:"none",transition:"all .15s"}}>
+          <button onClick={cue} disabled={!buf} style={{height:34,padding:"0 12px",background:"#0a0a14",border:"1px solid #ffffff0d",color:"#5a5a88",borderRadius:6,cursor:buf?"pointer":"default",fontFamily:"monospace",fontSize:9,letterSpacing:1,outline:"none",flexShrink:0}}>⏮ CUE</button>
+          <button onClick={()=>seek(Math.max(0,prog-.005))} disabled={!buf} style={{height:34,width:38,background:"#0a0a14",border:"1px solid #ffffff0d",color:"#5a5a88",borderRadius:6,cursor:buf?"pointer":"default",fontFamily:"monospace",fontSize:13,outline:"none"}}>◂◂</button>
+          <button onClick={toggle} disabled={!buf} style={{flex:1,height:44,background:play?color+"18":"#0a0a14",border:`1px solid ${play?color+"66":color+"22"}`,color:play?color:color+"55",borderRadius:8,cursor:buf?"pointer":"default",fontSize:24,display:"flex",alignItems:"center",justifyContent:"center",boxShadow:play?`0 0 30px ${color}33, inset 0 0 20px ${color}08`:"",outline:"none",transition:"all .15s"}}>
             {play?"⏸":"▶"}
           </button>
-          <button onClick={()=>seek(Math.min(1,prog+.005))} disabled={!buf} style={{height:34,width:38,background:"#16162a",border:"1px solid #252535",color:"#7070a0",borderRadius:5,cursor:buf?"pointer":"default",fontFamily:"monospace",fontSize:13,outline:"none"}}>▸▸</button>
+          <button onClick={()=>seek(Math.min(1,prog+.005))} disabled={!buf} style={{height:34,width:38,background:"#0a0a14",border:"1px solid #ffffff0d",color:"#5a5a88",borderRadius:6,cursor:buf?"pointer":"default",fontFamily:"monospace",fontSize:13,outline:"none"}}>▸▸</button>
         </div>
       ):(
         <div style={{height:64,display:"flex",alignItems:"center",justifyContent:"center",borderBottom:BD}}>
@@ -589,7 +589,7 @@ function Deck({ id, ch, ctx:ac, color, local, remote, onChange, midi:mt, bpmResu
       )}
 
       {/* ── EQ + VOL ── */}
-      <div style={{display:"flex",alignItems:"center",justifyContent:"space-around",padding:"12px 10px"}}>
+      <div style={{display:"flex",alignItems:"center",justifyContent:"space-around",padding:"12px 10px",background:"#020208"}}>
         <Knob v={hi}  set={local?sy(setHi,"eqHi"):()=>{}}  min={-12} max={12} ctr={0} label="HI"  color={color} size={44} off={!local}/>
         <Knob v={mid} set={local?sy(setMid,"eqMid"):()=>{}} min={-12} max={12} ctr={0} label="MID" color={color} size={44} off={!local}/>
         <Knob v={lo}  set={local?sy(setLo,"eqLo"):()=>{}}  min={-12} max={12} ctr={0} label="LO"  color={color} size={44} off={!local}/>
@@ -931,49 +931,55 @@ function Lobby({ onJoin, djName = null }) {
   };
 
   return (
-    <div style={{ minHeight:"100vh", background:"radial-gradient(ellipse at 50% 40%,#0e0e28,#060610 60%,#020208)", display:"flex", alignItems:"center", justifyContent:"center", fontFamily:"'Barlow',sans-serif" }}>
-      <link href="https://fonts.googleapis.com/css2?family=Barlow:wght@400;600;700&family=Barlow+Condensed:wght@600;700;800&display=swap" rel="stylesheet"/>
-      <div style={{ width:440, background:"#0a0a1a", border:"1px solid #1a1a30", borderRadius:18, padding:36, display:"flex", flexDirection:"column", gap:20 }}>
+    <div style={{ minHeight:"100vh", background:"#020208", display:"flex", alignItems:"center", justifyContent:"center", fontFamily:"'Barlow',sans-serif", position:"relative", overflow:"hidden" }}>
+      <style>{`@keyframes glow2{0%,100%{opacity:.4}50%{opacity:.9}}`}</style>
+      <link href="https://fonts.googleapis.com/css2?family=Barlow:wght@300;400;600;700&family=Barlow+Condensed:wght@600;700;800;900&display=swap" rel="stylesheet"/>
+      {/* Grid + glow matching landing */}
+      <div style={{ position:"absolute", inset:0, backgroundImage:"linear-gradient(#ffffff04 1px,transparent 1px),linear-gradient(90deg,#ffffff04 1px,transparent 1px)", backgroundSize:"60px 60px", pointerEvents:"none" }}/>
+      <div style={{ position:"absolute", top:"20%", left:"20%", width:400, height:400, borderRadius:"50%", background:"radial-gradient(circle,#00d4ff08,transparent 70%)", animation:"glow2 4s ease-in-out infinite", pointerEvents:"none" }}/>
+      <div style={{ position:"absolute", bottom:"20%", right:"20%", width:300, height:300, borderRadius:"50%", background:"radial-gradient(circle,#ff6b3508,transparent 70%)", animation:"glow2 5s ease-in-out 1.5s infinite", pointerEvents:"none" }}/>
+
+      <div style={{ position:"relative", zIndex:1, width:460, background:"#06060e", border:"1px solid #ffffff0d", borderRadius:16, padding:36, display:"flex", flexDirection:"column", gap:20, boxShadow:"0 24px 80px #000d, 0 0 60px #00d4ff04" }}>
 
         {/* Header */}
         <div style={{ textAlign:"center" }}>
-          <div style={{ fontFamily:"'Barlow Condensed',sans-serif", fontWeight:900, fontSize:30, letterSpacing:4, background:"linear-gradient(90deg,#00d4ff,#ff6b35)", WebkitBackgroundClip:"text", WebkitTextFillColor:"transparent" }}>COLLAB//MIX</div>
-          <div style={{ fontSize:7, fontFamily:"monospace", color:"#5a5a7a", letterSpacing:3, marginTop:4 }}>SET UP YOUR SESSION</div>
+          <div style={{ fontFamily:"'Barlow Condensed',sans-serif", fontWeight:900, fontSize:32, letterSpacing:4, background:"linear-gradient(90deg,#00d4ff,#ff6b35)", WebkitBackgroundClip:"text", WebkitTextFillColor:"transparent" }}>COLLAB//MIX</div>
+          <div style={{ fontSize:9, fontFamily:"monospace", color:"#333355", letterSpacing:3, marginTop:5 }}>SET UP YOUR SESSION</div>
         </div>
 
         {/* DJ Name */}
-        <div style={{ display:"flex", flexDirection:"column", gap:6 }}>
-          <label style={{ fontSize:8, fontFamily:"monospace", color:"#555", letterSpacing:2 }}>YOUR DJ NAME</label>
+        <div style={{ display:"flex", flexDirection:"column", gap:7 }}>
+          <label style={{ fontSize:8, fontFamily:"monospace", color:"#44446a", letterSpacing:2 }}>YOUR DJ NAME</label>
           <input
             value={name}
             onChange={e => setName(e.target.value)}
-            style={{ background:"#06060f", border:"1px solid #1a1a2e", color:"#e8e8f0", borderRadius:8, padding:"11px 14px", fontSize:14, fontFamily:"'Barlow Condensed',sans-serif", fontWeight:700, letterSpacing:1, outline:"none" }}
+            style={{ background:"#020208", border:"1px solid #ffffff11", color:"#e8e8f0", borderRadius:8, padding:"11px 14px", fontSize:15, fontFamily:"'Barlow Condensed',sans-serif", fontWeight:700, letterSpacing:1, outline:"none" }}
           />
         </div>
 
         {/* Room Code */}
-        <div style={{ background:"#07071a", border:"1px solid #1a1a30", borderRadius:12, padding:16, display:"flex", flexDirection:"column", gap:8 }}>
-          <div style={{ fontSize:8, fontFamily:"monospace", color:"#555", letterSpacing:2 }}>YOUR ROOM</div>
-          <div style={{ fontFamily:"'Barlow Condensed',sans-serif", fontWeight:900, fontSize:22, letterSpacing:3, color:"#e8e8f0" }}>{room}</div>
-          <div style={{ fontSize:9, fontFamily:"monospace", color:"#333", wordBreak:"break-all" }}>{inviteLink}</div>
+        <div style={{ background:"#020208", border:"1px solid #ffffff0a", borderRadius:12, padding:16, display:"flex", flexDirection:"column", gap:8 }}>
+          <div style={{ fontSize:8, fontFamily:"monospace", color:"#44446a", letterSpacing:2 }}>YOUR ROOM CODE</div>
+          <div style={{ fontFamily:"'Barlow Condensed',sans-serif", fontWeight:900, fontSize:24, letterSpacing:3, background:"linear-gradient(90deg,#e8e8f0,#aaaacc)", WebkitBackgroundClip:"text", WebkitTextFillColor:"transparent" }}>{room.toUpperCase()}</div>
+          <div style={{ fontSize:8, fontFamily:"monospace", color:"#333355", wordBreak:"break-all" }}>{inviteLink}</div>
           <button
             onClick={copyLink}
-            style={{ background: copied ? "linear-gradient(135deg,#22c55e22,#22c55e11)" : "linear-gradient(135deg,#00d4ff22,#00d4ff11)", border: copied ? "1px solid #22c55e55" : "1px solid #00d4ff33", color: copied ? "#22c55e" : "#00d4ff", fontFamily:"'Barlow Condensed',sans-serif", fontWeight:800, fontSize:11, letterSpacing:2, padding:"9px 16px", borderRadius:8, cursor:"pointer", transition:"all .3s", textAlign:"center" }}
+            style={{ background: copied ? "#22c55e11" : "#00d4ff0a", border: copied ? "1px solid #22c55e33" : "1px solid #00d4ff22", color: copied ? "#22c55e" : "#00d4ff", fontFamily:"'Barlow Condensed',sans-serif", fontWeight:800, fontSize:11, letterSpacing:2, padding:"10px 16px", borderRadius:8, cursor:"pointer", transition:"all .3s", textAlign:"center" }}
           >
             {copied ? "✓ LINK COPIED!" : "⎘ COPY INVITE LINK"}
           </button>
-          <div style={{ fontSize:8, fontFamily:"monospace", color:"#5a5a7a" }}>Send this link to your DJ partner — they'll join instantly.</div>
+          <div style={{ fontSize:8, fontFamily:"monospace", color:"#333355", lineHeight:1.6 }}>Send this link to your DJ partner — they'll join the same room instantly.</div>
         </div>
 
         {/* Join button */}
         <button
           onClick={() => onJoin({ url: SERVER_URL, room, name })}
-          style={{ background:"linear-gradient(135deg,#00d4ff,#0077cc)", border:"none", color:"#000", fontFamily:"'Barlow Condensed',sans-serif", fontWeight:900, fontSize:16, letterSpacing:3, padding:"15px", borderRadius:10, cursor:"pointer", boxShadow:"0 0 30px #00d4ff33" }}
+          style={{ background:"linear-gradient(135deg,#00d4ff,#0077cc)", border:"none", color:"#000", fontFamily:"'Barlow Condensed',sans-serif", fontWeight:900, fontSize:16, letterSpacing:3, padding:"16px", borderRadius:10, cursor:"pointer", boxShadow:"0 0 40px #00d4ff33", transition:"all .2s" }}
         >
           ▶ OPEN THE ROOM
         </button>
 
-        <div style={{ fontSize:7, fontFamily:"monospace", color:"#1e1e2e", textAlign:"center" }}>
+        <div style={{ fontSize:7, fontFamily:"monospace", color:"#222233", textAlign:"center", letterSpacing:1 }}>
           Works best in Chrome or Edge
         </div>
       </div>
@@ -1083,18 +1089,24 @@ export default function CollabMix({ initialPage = "landing", djName = null }) {
   if (page==="lobby")   return <Lobby onJoin={join} djName={djName}/>;
 
   return (
-    <div style={{ minHeight:"100vh", background:"#060610", fontFamily:"'Barlow',sans-serif", color:"#d0d0ee", display:"flex", flexDirection:"column" }}>
+    <div style={{ minHeight:"100vh", background:"#020208", fontFamily:"'Barlow',sans-serif", color:"#d0d0ee", display:"flex", flexDirection:"column", position:"relative" }}>
       <style>{`
         @keyframes blink{0%,100%{box-shadow:0 0 5px currentColor}50%{box-shadow:0 0 14px currentColor}}
         @keyframes pulse{0%,100%{opacity:1}50%{opacity:.4}}
         @keyframes wave{0%,100%{transform:scaleY(.3)}50%{transform:scaleY(1)}}
+        @keyframes glow{0%,100%{opacity:.4}50%{opacity:.8}}
         *{box-sizing:border-box}
-        ::-webkit-scrollbar{width:3px}::-webkit-scrollbar-track{background:#0a0a18}::-webkit-scrollbar-thumb{background:#1a1a2e;border-radius:2px}
+        ::-webkit-scrollbar{width:3px}::-webkit-scrollbar-track{background:#020208}::-webkit-scrollbar-thumb{background:#ffffff11;border-radius:2px}
       `}</style>
-      <link href="https://fonts.googleapis.com/css2?family=Barlow:wght@400;600;700&family=Barlow+Condensed:wght@600;700;800&display=swap" rel="stylesheet"/>
+      <link href="https://fonts.googleapis.com/css2?family=Barlow:wght@300;400;600;700&family=Barlow+Condensed:wght@600;700;800;900&display=swap" rel="stylesheet"/>
+
+      {/* Background grid + glow orbs — matches landing page */}
+      <div style={{ position:"fixed", inset:0, backgroundImage:"linear-gradient(#ffffff04 1px,transparent 1px),linear-gradient(90deg,#ffffff04 1px,transparent 1px)", backgroundSize:"60px 60px", pointerEvents:"none", zIndex:0 }}/>
+      <div style={{ position:"fixed", top:"15%", left:"3%", width:500, height:400, borderRadius:"50%", background:"radial-gradient(circle,#00d4ff06,transparent 70%)", animation:"glow 5s ease-in-out infinite", pointerEvents:"none", zIndex:0 }}/>
+      <div style={{ position:"fixed", bottom:"15%", right:"3%", width:400, height:400, borderRadius:"50%", background:"radial-gradient(circle,#ff6b3506,transparent 70%)", animation:"glow 6s ease-in-out 2s infinite", pointerEvents:"none", zIndex:0 }}/>
 
       {/* TOP BAR */}
-      <div style={{ background:"#06060f99", backdropFilter:"blur(12px)", borderBottom:"1px solid #0f0f1e", padding:"6px 14px", display:"flex", alignItems:"center", gap:10, flexShrink:0 }}>
+      <div style={{ position:"relative", zIndex:10, background:"#020208cc", backdropFilter:"blur(16px)", borderBottom:"1px solid #ffffff0d", padding:"8px 16px", display:"flex", alignItems:"center", gap:10, flexShrink:0 }}>
         <div onClick={()=>leave()} style={{ fontFamily:"'Barlow Condensed',sans-serif", fontWeight:800, fontSize:18, letterSpacing:3, background:"linear-gradient(90deg,#00d4ff,#ff6b35)", WebkitBackgroundClip:"text", WebkitTextFillColor:"transparent", cursor:"pointer" }}>COLLAB//MIX</div>
         <div style={{ flex:1, display:"flex", gap:10, alignItems:"center" }}>
           <div style={{ display:"flex", gap:5, alignItems:"center", fontSize:7, fontFamily:"monospace" }}>
@@ -1116,79 +1128,110 @@ export default function CollabMix({ initialPage = "landing", djName = null }) {
       </div>
 
       {/* MAIN LAYOUT */}
-      <div style={{ flex:1, display:"grid", gridTemplateColumns:"1fr 210px 1fr", gap:8, padding:"8px 10px", minHeight:0, overflow:"hidden" }}>
+      <div style={{ flex:1, display:"grid", gridTemplateColumns:"1fr 270px 1fr", gap:8, padding:"8px 12px", minHeight:0, overflow:"hidden", position:"relative", zIndex:1 }}>
 
         {/* ── YOUR DECKS ── */}
         <div style={{ display:"flex", flexDirection:"column", gap:6, minWidth:0, overflowY:"auto" }}>
-          <div style={{ display:"flex", gap:5, alignItems:"center", paddingLeft:2 }}>
-            <div style={{ width:6, height:6, borderRadius:"50%", background:"#00d4ff", boxShadow:"0 0 8px #00d4ff" }}/>
-            <span style={{ fontSize:7, fontFamily:"monospace", color:"#00d4ff", letterSpacing:2, fontWeight:700 }}>{session.name} (YOU)</span>
+          <div style={{ display:"flex", gap:6, alignItems:"center", paddingLeft:2, paddingBottom:2, borderBottom:"1px solid #ffffff08", paddingTop:2 }}>
+            <div style={{ width:6, height:6, borderRadius:"50%", background:"#00d4ff", boxShadow:"0 0 10px #00d4ff" }}/>
+            <span style={{ fontSize:8, fontFamily:"'Barlow Condensed',sans-serif", fontWeight:800, color:"#00d4ff", letterSpacing:3 }}>{session.name} (YOU)</span>
           </div>
           <Deck id="A" ch={eng.current?.A} ctx={eng.current?.ctx} color="#00d4ff" local onChange={dh("A")} midi={midiEvt} bpmResult={bpm.results["A"]} bpmAnalyze={bpm.analyze}/>
           <Deck id="B" ch={eng.current?.B} ctx={eng.current?.ctx} color="#3b82f6" local onChange={dh("B")} midi={midiEvt} bpmResult={bpm.results["B"]} bpmAnalyze={bpm.analyze}/>
         </div>
 
-        {/* ── CENTER MIXER (DJM-style) ── */}
-        <div style={{ display:"flex", flexDirection:"column", gap:0, background:"#0e0e1c", border:"2px solid #2a2a44", borderRadius:10, overflow:"hidden" }}>
+        {/* ── CENTER MIXER (Rekordbox / Beatport style) ── */}
+        <div style={{ display:"flex", flexDirection:"column", gap:0, background:"#06060e", border:"1px solid #ffffff0e", borderRadius:12, overflow:"hidden", boxShadow:"0 8px 60px #000c, 0 0 80px #00d4ff04" }}>
 
-          {/* Mixer header */}
-          <div style={{ padding:"8px 12px", borderBottom:"1px solid #1c1c28", display:"flex", alignItems:"center", justifyContent:"space-between" }}>
-            <span style={{ fontSize:8, fontFamily:"monospace", color:"#6060a0", letterSpacing:2 }}>DJM MIXER</span>
-            <VU an={eng.current?.masterAn} color="#22c55e" w={36}/>
-          </div>
-
-          {/* Channel labels */}
-          <div style={{ display:"flex", borderBottom:"1px solid #1c1c28" }}>
-            {[["CH A","#00d4ff"],["CH B","#3b82f6"]].map(([l,c])=>(
-              <div key={l} style={{ flex:1, textAlign:"center", padding:"5px 4px", fontSize:7, fontFamily:"monospace", color:c, letterSpacing:2, borderRight:"1px solid #1c1c28" }}>{l}</div>
-            ))}
-          </div>
-
-          {/* Master vol + info */}
-          <div style={{ padding:"10px 12px 8px", borderBottom:"1px solid #1c1c28" }}>
-            <div style={{ fontSize:6, color:"#505070", fontFamily:"monospace", letterSpacing:2, marginBottom:5 }}>MASTER VOL</div>
-            <input type="range" min={0} max={1.2} step={.01} value={mvol} onChange={e=>setMvol(Number(e.target.value))} style={{ width:"100%", cursor:"pointer", accentColor:"#22c55e", height:18 }}/>
-            <div style={{ display:"flex", justifyContent:"space-between", fontSize:6, fontFamily:"monospace", marginTop:5 }}>
-              <span style={{ color:"#505070" }}>0</span>
-              <span style={{ color:"#22c55e" }}>{(mvol*100).toFixed(0)}%</span>
-              <span style={{ color:"#505070" }}>120</span>
+          {/* ── MIXER HEADER ── */}
+          <div style={{ padding:"10px 14px", borderBottom:"1px solid #ffffff0a", display:"flex", alignItems:"center", justifyContent:"space-between", background:"linear-gradient(180deg,#020208,#06060e)" }}>
+            <div>
+              <div style={{ fontFamily:"'Barlow Condensed',sans-serif", fontWeight:900, fontSize:14, letterSpacing:3, background:"linear-gradient(90deg,#00d4ff,#ff6b35)", WebkitBackgroundClip:"text", WebkitTextFillColor:"transparent" }}>DJM MIXER</div>
+              <div style={{ fontSize:6, fontFamily:"monospace", color:"#333344", letterSpacing:2, marginTop:1 }}>COLLAB//MIX · LIVE</div>
+            </div>
+            <div style={{ display:"flex", flexDirection:"column", alignItems:"flex-end", gap:3 }}>
+              <VU an={eng.current?.masterAn} color="#22c55e" w={44}/>
+              <div style={{ fontSize:6, fontFamily:"monospace", color:"#22c55e44", letterSpacing:1 }}>MASTER</div>
             </div>
           </div>
 
-          {/* Crossfader section */}
-          <div style={{ padding:"10px 12px", borderBottom:"1px solid #1c1c28" }}>
-            <div style={{ display:"flex", justifyContent:"space-between", fontSize:7, fontFamily:"monospace", marginBottom:8 }}>
-              <span style={{ color:"#00d4ff", fontWeight:700 }}>A {(xg(xf).a*100).toFixed(0)}%</span>
-              <span style={{ fontSize:6, color:"#505070", letterSpacing:2 }}>CROSSFADER</span>
-              <span style={{ color:"#ff6b35", fontWeight:700 }}>{(xg(xf).b*100).toFixed(0)}% B</span>
+          {/* ── CHANNEL STRIP HEADERS ── */}
+          <div style={{ display:"grid", gridTemplateColumns:"1fr 1px 1fr", borderBottom:"1px solid #ffffff0a" }}>
+            <div style={{ textAlign:"center", padding:"7px 6px", background:"#00d4ff07" }}>
+              <div style={{ fontFamily:"'Barlow Condensed',sans-serif", fontWeight:900, fontSize:11, color:"#00d4ff", letterSpacing:3 }}>CH A</div>
+              <div style={{ fontSize:6, fontFamily:"monospace", color:"#00d4ff44", letterSpacing:1, marginTop:1 }}>{session.name}</div>
             </div>
-            <div style={{ position:"relative", height:32, display:"flex", alignItems:"center" }}>
-              <div style={{ width:"100%", height:6, borderRadius:3, background:"#161622", border:"1px solid #222230", overflow:"hidden" }}>
-                <div style={{ height:"100%", width:`${xf*100}%`, background:`linear-gradient(90deg,#00d4ff66,#3b82f644)` }}/>
-              </div>
-              <input type="range" min={0} max={1} step={.005} value={xf} onChange={e=>setXfLocal(Number(e.target.value))} style={{ position:"absolute", width:"100%", opacity:0, cursor:"pointer", height:32 }}/>
-              <div style={{ position:"absolute", left:`calc(${xf*100}% - 12px)`, width:24, height:26, background:"linear-gradient(180deg,#2a2a40,#14141e)", border:"1px solid #3a3a54", borderRadius:4, boxShadow:"0 2px 8px #000a", pointerEvents:"none", display:"flex", alignItems:"center", justifyContent:"center" }}>
-                <div style={{ width:2, height:14, background:"#9090b8", borderRadius:1 }}/>
-              </div>
+            <div style={{ background:"#ffffff08" }}/>
+            <div style={{ textAlign:"center", padding:"7px 6px", background:"#3b82f607" }}>
+              <div style={{ fontFamily:"'Barlow Condensed',sans-serif", fontWeight:900, fontSize:11, color:"#3b82f6", letterSpacing:3 }}>CH B</div>
+              <div style={{ fontSize:6, fontFamily:"monospace", color:"#3b82f644", letterSpacing:1, marginTop:1 }}>{sync.partner||"PARTNER"}</div>
             </div>
-            <button onClick={()=>setXfLocal(.5)} style={{ ...sBtn("#223"), fontSize:7, height:20, width:"100%", justifyContent:"center", marginTop:6 }}>CENTER</button>
           </div>
 
-          {/* Session info */}
-          <div style={{ padding:"8px 12px", borderBottom:"1px solid #1c1c28" }}>
-            {[["ROOM",session.room],["PARTNER",sync.partner||"—"],["PING",sync.ping?`${sync.ping}ms`:"—"],["AUDIO",rtc.state==="connected"?"● LIVE":"OFF"]].map(([l,v])=>(
-              <div key={l} style={{ display:"flex", justifyContent:"space-between", padding:"3px 0", borderBottom:"1px solid #111118" }}>
-                <span style={{ fontSize:7, color:"#6060a0", fontFamily:"monospace" }}>{l}</span>
-                <span style={{ fontSize:7, color:l==="AUDIO"&&rtc.state==="connected"?"#22c55e":"#8080b8", fontFamily:"monospace", maxWidth:100, overflow:"hidden", textOverflow:"ellipsis" }}>{v}</span>
+          {/* ── MASTER VOL ── */}
+          <div style={{ padding:"10px 14px 8px", borderBottom:"1px solid #ffffff0a" }}>
+            <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:6 }}>
+              <span style={{ fontSize:7, fontFamily:"'Barlow Condensed',sans-serif", fontWeight:700, color:"#44446a", letterSpacing:2 }}>MASTER VOL</span>
+              <span style={{ fontSize:9, fontFamily:"monospace", fontWeight:700, color:"#22c55e" }}>{(mvol*100).toFixed(0)}%</span>
+            </div>
+            <div style={{ position:"relative", height:28, display:"flex", alignItems:"center" }}>
+              <div style={{ width:"100%", height:5, borderRadius:3, background:"#0a0a14", border:"1px solid #ffffff08", overflow:"hidden" }}>
+                <div style={{ height:"100%", width:`${(mvol/1.2)*100}%`, background:"linear-gradient(90deg,#1a4a2a,#22c55e)" }}/>
               </div>
-            ))}
+              <input type="range" min={0} max={1.2} step={.01} value={mvol} onChange={e=>setMvol(Number(e.target.value))} style={{ position:"absolute", width:"100%", opacity:0, cursor:"pointer", height:28 }}/>
+              <div style={{ position:"absolute", left:`calc(${(mvol/1.2)*100}% - 8px)`, width:16, height:22, background:"linear-gradient(180deg,#2a3a2a,#0d1a0d)", border:"1px solid #22c55e55", borderRadius:3, boxShadow:"0 2px 6px #000a", pointerEvents:"none" }}/>
+            </div>
           </div>
 
-          {/* Tool panels */}
+          {/* ── CROSSFADER ── */}
+          <div style={{ padding:"12px 14px 10px", borderBottom:"1px solid #ffffff0a", background:"#020208" }}>
+            <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:8 }}>
+              <div style={{ textAlign:"left" }}>
+                <div style={{ fontSize:10, fontFamily:"'Barlow Condensed',sans-serif", fontWeight:800, color:"#00d4ff", letterSpacing:1 }}>A</div>
+                <div style={{ fontSize:8, fontFamily:"monospace", color:"#00d4ff99" }}>{(xg(xf).a*100).toFixed(0)}%</div>
+              </div>
+              <div style={{ fontSize:7, fontFamily:"'Barlow Condensed',sans-serif", fontWeight:700, color:"#333355", letterSpacing:2 }}>CROSSFADER</div>
+              <div style={{ textAlign:"right" }}>
+                <div style={{ fontSize:10, fontFamily:"'Barlow Condensed',sans-serif", fontWeight:800, color:"#3b82f6", letterSpacing:1 }}>B</div>
+                <div style={{ fontSize:8, fontFamily:"monospace", color:"#3b82f699" }}>{(xg(xf).b*100).toFixed(0)}%</div>
+              </div>
+            </div>
+            {/* Fader track */}
+            <div style={{ position:"relative", height:36, display:"flex", alignItems:"center" }}>
+              <div style={{ width:"100%", height:8, borderRadius:4, background:"#0a0a14", border:"1px solid #ffffff08", overflow:"hidden" }}>
+                <div style={{ height:"100%", width:`${xf*100}%`, background:`linear-gradient(90deg,#00d4ff33,#3b82f622)` }}/>
+              </div>
+              <input type="range" min={0} max={1} step={.005} value={xf} onChange={e=>setXfLocal(Number(e.target.value))} style={{ position:"absolute", width:"100%", opacity:0, cursor:"pointer", height:36 }}/>
+              {/* Fader cap */}
+              <div style={{ position:"absolute", left:`calc(${xf*100}% - 14px)`, width:28, height:30, background:"linear-gradient(180deg,#1e1e30,#0d0d18)", border:"1px solid #ffffff18", borderRadius:5, boxShadow:"0 2px 10px #000b, inset 0 1px 0 #ffffff0a", pointerEvents:"none", display:"flex", alignItems:"center", justifyContent:"center" }}>
+                <div style={{ width:2, height:16, background:"#7070a0", borderRadius:1 }}/>
+              </div>
+            </div>
+            {/* A ——————————————————————— B track labels */}
+            <div style={{ display:"flex", justifyContent:"space-between", marginTop:4 }}>
+              <div style={{ width:40, height:2, background:"linear-gradient(90deg,#00d4ff44,transparent)", borderRadius:1 }}/>
+              <button onClick={()=>setXfLocal(.5)} style={{ fontSize:7, height:18, padding:"0 10px", background:"transparent", border:"1px solid #ffffff11", color:"#44446a", borderRadius:4, cursor:"pointer", fontFamily:"monospace", letterSpacing:1 }}>CENTER</button>
+              <div style={{ width:40, height:2, background:"linear-gradient(90deg,transparent,#3b82f644)", borderRadius:1 }}/>
+            </div>
+          </div>
+
+          {/* ── SESSION STATUS ── */}
+          <div style={{ padding:"8px 14px", borderBottom:"1px solid #ffffff0a" }}>
+            <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:"3px 8px" }}>
+              {[["ROOM",session.room.toUpperCase(),"#00d4ff"],["PARTNER",sync.partner||"WAITING","#ff6b35"],["PING",sync.ping?`${sync.ping}ms`:"—","#22c55e"],["AUDIO",rtc.state==="connected"?"● LIVE":"OFFLINE",rtc.state==="connected"?"#22c55e":"#444466"]].map(([l,v,c])=>(
+                <div key={l} style={{ display:"flex", justifyContent:"space-between", alignItems:"center", padding:"3px 6px", background:"#ffffff04", borderRadius:4, border:"1px solid #ffffff06" }}>
+                  <span style={{ fontSize:6, color:"#44446a", fontFamily:"monospace", letterSpacing:1 }}>{l}</span>
+                  <span style={{ fontSize:6, color:c, fontFamily:"monospace", fontWeight:700, maxWidth:70, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{v}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          {/* ── TOOL PANELS ── */}
           <div style={{ flex:1, display:"flex", flexDirection:"column", overflow:"hidden" }}>
-            <div style={{ display:"flex", borderBottom:"1px solid #1c1c28", flexShrink:0 }}>
+            <div style={{ display:"flex", borderBottom:"1px solid #ffffff0a", flexShrink:0, background:"#020208" }}>
               {PANELS.map(([pid,l])=>(
-                <button key={pid} onClick={()=>setPanel(pid)} style={{ flex:1, padding:"6px 2px", fontSize:6, fontFamily:"monospace", background:panel===pid?"#12121e":"transparent", color:panel===pid?"#00d4ff":"#505070", border:"none", borderBottom:`2px solid ${panel===pid?"#00d4ff":"transparent"}`, cursor:"pointer", outline:"none" }}>{l}</button>
+                <button key={pid} onClick={()=>setPanel(pid)} style={{ flex:1, padding:"7px 2px", fontSize:6, fontFamily:"monospace", background:"transparent", color:panel===pid?"#00d4ff":"#44446a", border:"none", borderBottom:`2px solid ${panel===pid?"#00d4ff":"transparent"}`, cursor:"pointer", outline:"none", letterSpacing:.5, transition:"color .15s" }}>{l}</button>
               ))}
             </div>
             <div style={{ flex:1, overflow:"auto" }}>
@@ -1203,9 +1246,9 @@ export default function CollabMix({ initialPage = "landing", djName = null }) {
 
         {/* ── PARTNER DECKS ── */}
         <div style={{ display:"flex", flexDirection:"column", gap:6, minWidth:0, overflowY:"auto" }}>
-          <div style={{ display:"flex", gap:5, alignItems:"center", paddingLeft:2 }}>
-            <div style={{ width:6, height:6, borderRadius:"50%", background:sync.partner?"#ff6b35":"#222", boxShadow:sync.partner?"0 0 8px #ff6b35":"none", transition:"all .3s" }}/>
-            <span style={{ fontSize:7, fontFamily:"monospace", color:sync.partner?"#ff6b35":"#5a5a7a", letterSpacing:2, fontWeight:700 }}>{sync.partner||"WAITING FOR PARTNER..."}</span>
+          <div style={{ display:"flex", gap:6, alignItems:"center", paddingLeft:2, paddingBottom:2, borderBottom:"1px solid #ffffff08", paddingTop:2 }}>
+            <div style={{ width:6, height:6, borderRadius:"50%", background:sync.partner?"#ff6b35":"#222233", boxShadow:sync.partner?"0 0 10px #ff6b35":"none", transition:"all .3s" }}/>
+            <span style={{ fontSize:8, fontFamily:"'Barlow Condensed',sans-serif", fontWeight:800, color:sync.partner?"#ff6b35":"#333355", letterSpacing:3 }}>{sync.partner||"WAITING FOR PARTNER..."}</span>
           </div>
           <Deck id="A" ch={null} ctx={null} color="#ff6b35" remote={pA} bpmResult={null} bpmAnalyze={null}/>
           <Deck id="B" ch={null} ctx={null} color="#f59e0b" remote={pB} bpmResult={null} bpmAnalyze={null}/>
