@@ -182,6 +182,85 @@ async function fetchArtwork(artist, title) {
   } catch { return null; }
 }
 
+// ── sql.js lazy loader for Rekordbox SQLite ──────────────────
+let sqlJsInstance = null;
+async function getSqlJs() {
+  if (sqlJsInstance) return sqlJsInstance;
+  return new Promise((resolve, reject) => {
+    const load = () =>
+      window.initSqlJs({ locateFile: f => `https://cdnjs.cloudflare.com/ajax/libs/sql.js/1.10.2/${f}` })
+        .then(sql => { sqlJsInstance = sql; resolve(sql); })
+        .catch(reject);
+    if (window.initSqlJs) { load(); return; }
+    const s = document.createElement("script");
+    s.src = "https://cdnjs.cloudflare.com/ajax/libs/sql.js/1.10.2/sql-wasm.js";
+    s.onload = load;
+    s.onerror = () => reject(new Error("Failed to load sql.js"));
+    document.head.appendChild(s);
+  });
+}
+
+// Rekordbox 6 numeric key → Camelot notation
+const RB_KEY_MAP = {
+  1:"8B",2:"3B",3:"10B",4:"5B",5:"12B",6:"7B",
+  7:"2B",8:"9B",9:"4B",10:"11B",11:"6B",12:"1B",
+  13:"5A",14:"12A",15:"7A",16:"2A",17:"9A",18:"4A",
+  19:"11A",20:"6A",21:"1A",22:"8A",23:"3A",24:"10A",
+};
+
+async function parseRekordboxDB(arrayBuffer) {
+  const SQL = await getSqlJs();
+  const db = new SQL.Database(new Uint8Array(arrayBuffer));
+  let tracks = [], playlists = [];
+  try {
+    // Tracks
+    const tr = db.exec(
+      "SELECT ID,Title,ArtistName,AlbumName,GenreName,BPM,Key,FolderPath,FileNameL,Duration,Year,Label " +
+      "FROM Track WHERE Title IS NOT NULL AND Title!='' ORDER BY ArtistName,Title"
+    );
+    if (tr.length > 0) {
+      const { columns, values } = tr[0];
+      const ci = n => columns.indexOf(n);
+      for (const row of values) {
+        const bpmRaw = row[ci("BPM")];
+        const keyIdx = row[ci("Key")];
+        tracks.push({
+          id: `rb_${row[ci("ID")]}`,
+          title:  row[ci("Title")]     || "",
+          artist: row[ci("ArtistName")]|| "",
+          album:  row[ci("AlbumName")] || "",
+          genre:  row[ci("GenreName")] || "",
+          label:  row[ci("Label")]     || "",
+          bpm:    bpmRaw ? Math.round(parseFloat(bpmRaw)*10)/10 : null,
+          key:    RB_KEY_MAP[keyIdx] || null,
+          duration: row[ci("Duration")] ? parseInt(row[ci("Duration")]) : null,
+          year:   row[ci("Year")] ? String(row[ci("Year")]) : null,
+          loc:    (row[ci("FolderPath")]||"") + (row[ci("FileNameL")]||""),
+          source: "rekordbox",
+          addedAt: Date.now(),
+        });
+      }
+    }
+    // Playlists (Attribute=0 = playlist, Attribute=1 = folder)
+    const pr = db.exec("SELECT ID,Title FROM Playlist WHERE Attribute=0 ORDER BY Title");
+    const plMap = new Map();
+    if (pr.length > 0) {
+      for (const [id, title] of pr[0].values)
+        plMap.set(id, { id:`rb_pl_${id}`, name:title, trackIds:[] });
+    }
+    // Playlist songs
+    const sr = db.exec("SELECT PlaylistID,TrackID FROM PlaylistSong ORDER BY PlaylistID,TrackNo");
+    if (sr.length > 0) {
+      for (const [plId, trackId] of sr[0].values) {
+        const pl = plMap.get(plId);
+        if (pl) pl.trackIds.push(`rb_${trackId}`);
+      }
+    }
+    playlists = Array.from(plMap.values()).filter(p => p.trackIds.length > 0);
+  } finally { db.close(); }
+  return { tracks, playlists };
+}
+
 // ── iTunes XML parser ─────────────────────────────────────────
 function parseiTunesXML(xmlText) {
   const parser = new DOMParser();
@@ -918,7 +997,8 @@ export default function MusicLibrary() {
   const [itunesPicker,      setItunesPicker]       = useState(null); // { tracks, playlists, selectedPls, importMode }
   const [itunesDirHandle,   setItunesDirHandle]    = useState(null); // remembered file handle for re-sync
   const [rbPicker,          setRbPicker]           = useState(null); // { tracks, playlists, selectedPls, importMode }
-  const [rbFileHandle,      setRbFileHandle]       = useState(null); // remembered file handle for re-sync
+  const [rbFileHandle,      setRbFileHandle]       = useState(null); // legacy XML file handle
+  const [rbDirHandle,       setRbDirHandle]        = useState(null); // directory handle → reads master.db
   const searchRef = useRef(null);
 
   useEffect(() => {
@@ -950,16 +1030,18 @@ export default function MusicLibrary() {
   useEffect(() => {
     openDB().then(async db => {
       dbRef.current = db;
-      const [ts, cs, qs, savedItunes, savedRb] = await Promise.all([
+      const [ts, cs, qs, savedItunes, savedRb, savedRbDir] = await Promise.all([
         dbGetAll(db,"tracks"), dbGetAll(db,"crates"), dbGetAll(db,"queue"),
         dbGet(db,"handles","itunes_file"),
         dbGet(db,"handles","rb_file"),
+        dbGet(db,"handles","rb_dir"),
       ]);
       setTracks(ts.sort((a,b)=>b.addedAt-a.addedAt));
       setCrates(cs);
       setQueueIds(new Set(qs.map(q=>q.trackId)));
       if (savedItunes?.handle) setItunesDirHandle(savedItunes.handle);
       if (savedRb?.handle) setRbFileHandle(savedRb.handle);
+      if (savedRbDir?.handle) setRbDirHandle(savedRbDir.handle);
     });
 
     const w = makeWorker();
@@ -1167,24 +1249,41 @@ export default function MusicLibrary() {
     }
   };
 
-  // ── Rekordbox: load from a file handle ───────────────────────
-  const loadRekordboxFile = async (fileHandle) => {
+  // ── Rekordbox: read master.db from a directory handle ────────
+  const loadRekordboxDir = async (dirHandle) => {
     try {
-      const perm = await fileHandle.queryPermission({ mode: "read" });
-      if (perm !== "granted") await fileHandle.requestPermission({ mode: "read" });
-      const file = await fileHandle.getFile();
-      const text = await file.text();
-      const { tracks: rbTracks, playlists: rbPlaylists } = parseRekordboxXML(text);
+      const perm = await dirHandle.queryPermission({ mode: "read" });
+      if (perm !== "granted") await dirHandle.requestPermission({ mode: "read" });
 
-      if (!rbTracks.length) {
-        alert("No tracks found. Make sure this is a Rekordbox XML file (File → Export Collection in xml format).");
+      // Try master.db (rb6) then rekordbox.db (rb5)
+      let dbFileHandle;
+      for (const name of ["master.db", "rekordbox.db"]) {
+        try { dbFileHandle = await dirHandle.getFileHandle(name); break; }
+        catch {}
+      }
+      if (!dbFileHandle) {
+        alert(
+          "Rekordbox database not found in the selected folder.\n\n" +
+          "Please select the folder that contains master.db.\n" +
+          "In the picker press ⌘⇧G and paste:\n" +
+          "~/Library/Application Support/Pioneer/rekordbox6"
+        );
         return;
       }
 
-      // Save handle for auto re-sync
+      const file = await dbFileHandle.getFile();
+      const buf  = await file.arrayBuffer();
+      const { tracks: rbTracks, playlists: rbPlaylists } = await parseRekordboxDB(buf);
+
+      if (!rbTracks.length) {
+        alert("No tracks found in the Rekordbox database. Make sure Rekordbox has tracks imported.");
+        return;
+      }
+
+      // Save directory handle for future auto-sync
       if (dbRef.current) {
-        await dbPut(dbRef.current, "handles", { id: "rb_file", handle: fileHandle });
-        setRbFileHandle(fileHandle);
+        await dbPut(dbRef.current, "handles", { id: "rb_dir", handle: dirHandle });
+        setRbDirHandle(dirHandle);
       }
 
       setRbPicker({
@@ -1194,34 +1293,43 @@ export default function MusicLibrary() {
         importMode:  "all",
       });
     } catch(e) {
-      console.error("Rekordbox parse error", e);
-      alert("Could not read that XML file. Please select a valid Rekordbox XML export.");
+      console.error("Rekordbox DB read error", e);
+      alert("Could not read the Rekordbox database. " + (e.message || ""));
     }
   };
 
-  // ── Rekordbox: open XML file picker ──────────────────────────
+  // ── Rekordbox: open directory picker → reads master.db ───────
   const importRekordbox = async () => {
-    let fileHandle;
+    let dirHandle;
     try {
-      [fileHandle] = await window.showOpenFilePicker({
-        id: "rekordbox-xml",
-        types: [{ description: "Rekordbox XML", accept: { "text/xml": [".xml"] } }],
-        startIn: "desktop",
-        multiple: false,
-      });
+      dirHandle = await window.showDirectoryPicker({ id: "rekordbox-db6", mode: "read" });
     } catch { return; } // user cancelled
-    await loadRekordboxFile(fileHandle);
+    await loadRekordboxDir(dirHandle);
   };
 
-  // ── Re-sync Rekordbox using remembered file handle ────────────
+  // ── Re-sync Rekordbox using saved directory handle ────────────
   const resyncRekordbox = async () => {
-    if (!rbFileHandle) return;
-    try {
-      await loadRekordboxFile(rbFileHandle);
-    } catch(e) {
-      console.warn("Rekordbox re-sync failed, resetting handle", e);
-      setRbFileHandle(null);
-      if (dbRef.current) await dbDelete(dbRef.current, "handles", "rb_file");
+    const handle = rbDirHandle || (rbFileHandle ? null : null);
+    if (rbDirHandle) {
+      try { await loadRekordboxDir(rbDirHandle); }
+      catch(e) {
+        console.warn("Rekordbox re-sync failed", e);
+        setRbDirHandle(null);
+        if (dbRef.current) await dbDelete(dbRef.current, "handles", "rb_dir");
+      }
+    } else if (rbFileHandle) {
+      // Legacy XML fallback
+      try {
+        const perm = await rbFileHandle.queryPermission({ mode: "read" });
+        if (perm !== "granted") await rbFileHandle.requestPermission({ mode: "read" });
+        const file = await rbFileHandle.getFile();
+        const text = await file.text();
+        const { tracks: rbTracks, playlists: rbPlaylists } = parseRekordboxXML(text);
+        if (rbTracks.length) setRbPicker({ tracks:rbTracks, playlists:rbPlaylists, selectedPls:new Set(rbPlaylists.map(p=>p.name)), importMode:"all" });
+      } catch(e) {
+        setRbFileHandle(null);
+        if (dbRef.current) await dbDelete(dbRef.current, "handles", "rb_file");
+      }
     }
   };
 
@@ -1841,7 +1949,7 @@ export default function MusicLibrary() {
                   { src:"itunes",    icon:"🎵", label:"Apple Music", count:itunesCount,  color:"#8B5CF6",
                     onImport:()=>autoImportItunes(),   onSync:()=>resyncItunes(),    synced:!!itunesDirHandle },
                   { src:"rekordbox", icon:"🎛️", label:"Rekordbox",   count:rbCount,      color:G,
-                    onImport:()=>importRekordbox(),    onSync:()=>resyncRekordbox(), synced:!!rbFileHandle },
+                    onImport:()=>importRekordbox(),    onSync:()=>resyncRekordbox(), synced:!!(rbDirHandle||rbFileHandle) },
                 ].map(({ src, icon, label, count, color, onImport, onSync, synced }) => {
                   const active = sourceFilter === src;
                   return (
@@ -2123,8 +2231,8 @@ export default function MusicLibrary() {
             const label = isItunes ? "Apple Music" : "Rekordbox";
             const onConnect = isItunes ? ()=>autoImportItunes() : ()=>importRekordbox();
             const hint = isItunes
-              ? <><strong style={{color:C.text}}>Step 1 (one time):</strong> Open Apple Music → Settings → Advanced<br/>→ turn on <span style={{color}}>"Share iTunes Library XML"</span><br/><br/><strong style={{color:C.text}}>Step 2:</strong> Click Connect, navigate to <span style={{color:G}}>Music → Music</span> folder,<br/>and select <span style={{color:G}}>Library.xml</span></>
-              : <><strong style={{color:C.text}}>Step 1 (one time):</strong> In Rekordbox → File → Export Collection in xml format<br/>Save it to your <span style={{color:G}}>Desktop</span> as <span style={{color:G}}>rekordbox.xml</span><br/><br/><strong style={{color:C.text}}>Step 2:</strong> Click Connect → the file picker opens on your Desktop<br/>→ select <span style={{color:G}}>rekordbox.xml</span> — all BPM, key &amp; playlists come with it ⚡</>;
+              ? <><strong style={{color:C.text}}>One-time setup:</strong> Open Apple Music → Settings → Advanced<br/>→ turn on <span style={{color}}>"Share iTunes Library XML"</span><br/><br/>Then click Connect below → navigate to <span style={{color:G}}>Music → Music</span> folder<br/>→ select <span style={{color:G}}>Library.xml</span> — Apple keeps it updated automatically</>
+              : <><strong style={{color:C.text}}>No export needed.</strong> We read your Rekordbox database directly.<br/><br/>Click Connect → a folder picker opens<br/>→ press <span style={{color}}>⌘⇧G</span> and paste this path:<br/><span style={{color:G,fontFamily:"'DM Mono',monospace",fontSize:9}}>~/Library/Application Support/Pioneer/rekordbox6</span><br/>→ click Open — all BPM, key &amp; playlists load automatically ⚡</>;
             return (
               <div style={{ flex:1, display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"center", padding:40 }}>
                 <div style={{ width:"100%", maxWidth:480, background:C.surface, border:`1px solid ${color}22`, borderRadius:20, padding:"44px 40px", display:"flex", flexDirection:"column", alignItems:"center", gap:24, boxShadow:`0 24px 64px rgba(0,0,0,.5)` }}>
@@ -2140,7 +2248,7 @@ export default function MusicLibrary() {
                     {icon} CONNECT {label.toUpperCase()}
                   </button>
                   <div style={{ fontSize:9, color:C.muted, fontFamily:"'DM Mono',monospace", textAlign:"center", opacity:.7 }}>
-                    {isItunes ? "File picker opens in ~/Music — navigate to Music folder" : "File picker opens on your Desktop — select rekordbox.xml"}
+                    {isItunes ? "File picker opens in ~/Music — navigate to Music folder → Library.xml" : "In the folder picker: press ⌘⇧G → paste path → click Open"}
                   </div>
                   <button onClick={()=>setSourceFilter(null)} style={{ fontSize:9, fontFamily:"'DM Mono',monospace", background:"transparent", border:"none", color:C.muted, cursor:"pointer", letterSpacing:1 }}>← back to all tracks</button>
                 </div>
