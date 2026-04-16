@@ -1030,11 +1030,12 @@ export default function MusicLibrary() {
   useEffect(() => {
     openDB().then(async db => {
       dbRef.current = db;
-      const [ts, cs, qs, savedItunes, savedRb, savedRbDir] = await Promise.all([
+      const [ts, cs, qs, savedItunes, savedRb, savedRbDir, savedScanDir] = await Promise.all([
         dbGetAll(db,"tracks"), dbGetAll(db,"crates"), dbGetAll(db,"queue"),
         dbGet(db,"handles","itunes_file"),
         dbGet(db,"handles","rb_file"),
         dbGet(db,"handles","rb_dir"),
+        dbGet(db,"handles","scan_dir"),
       ]);
       setTracks(ts.sort((a,b)=>b.addedAt-a.addedAt));
       setCrates(cs);
@@ -1042,6 +1043,17 @@ export default function MusicLibrary() {
       if (savedItunes?.handle) setItunesDirHandle(savedItunes.handle);
       if (savedRb?.handle) setRbFileHandle(savedRb.handle);
       if (savedRbDir?.handle) setRbDirHandle(savedRbDir.handle);
+      // Auto-rescan the previously chosen music folder to pick up new downloads.
+      // We pass `ts` explicitly so the scan knows which tracks already exist,
+      // avoiding duplicates before React state has had a chance to populate.
+      if (savedScanDir?.handle) {
+        try {
+          const perm = await savedScanDir.handle.queryPermission({ mode: "read" });
+          if (perm === "granted") {
+            setTimeout(() => scanFolder(savedScanDir.handle, ts), 500);
+          }
+        } catch {}
+      }
     });
 
     const w = makeWorker();
@@ -1099,10 +1111,12 @@ export default function MusicLibrary() {
   }, []);
 
   // ── Scan folder ─────────────────────────────────────────────
-  const scanFolder = async (preHandle = null) => {
+  // existingTracks can be passed explicitly (e.g. on auto-rescan at startup before React
+  // state is populated) — falls back to the current `tracks` state for manual scans.
+  const scanFolder = async (preHandle = null, existingTracks = null) => {
     let dirHandle = preHandle;
     if (!dirHandle) {
-      try { dirHandle = await window.showDirectoryPicker({ mode:"read", startIn:"music" }); }
+      try { dirHandle = await window.showDirectoryPicker({ mode:"read", startIn:"downloads" }); }
       catch { return; }
     }
 
@@ -1110,12 +1124,13 @@ export default function MusicLibrary() {
     setScanProg({ found:0, analyzed:0, total:0 });
 
     const db = dbRef.current;
-    const existing = new Set(tracks.map(t=>t.id));
+    const trackList = existingTracks ?? tracks;
+    const existing = new Set(trackList.map(t=>t.id));
     // Build a filename→track map for cloud tracks so we can link local files to them
     const cloudByFilename = {};
-    tracks.forEach(t => { if (t.cloudOnly && t.filename) cloudByFilename[t.filename] = t; });
+    trackList.forEach(t => { if (t.cloudOnly && t.filename) cloudByFilename[t.filename] = t; });
     const cloudByFilenameNoExt = {};
-    tracks.forEach(t => { if (t.cloudOnly && t.filename) cloudByFilenameNoExt[t.filename.replace(/\.[^.]+$/,"")] = t; });
+    trackList.forEach(t => { if (t.cloudOnly && t.filename) cloudByFilenameNoExt[t.filename.replace(/\.[^.]+$/,"")] = t; });
 
     let found = 0;
 
@@ -1175,6 +1190,8 @@ export default function MusicLibrary() {
       setScanProg(p => ({ ...p, total: found }));
       setScanning(false);
       processQueue();
+      // Save the folder handle so we can auto-rescan next visit
+      if (db) await dbPut(db, "handles", { id: "scan_dir", handle: dirHandle });
     }
   };
 
