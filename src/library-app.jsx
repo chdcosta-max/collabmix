@@ -211,6 +211,7 @@ function parseiTunesXML(xmlText) {
         playCount: t["Play Count"] || 0,
         analyzed: !!(t["BPM"] || keyRaw),
         energy: null,
+        cloudOnly: true,   // assume cloud until a local scan matches the file
         addedAt: Date.now(),
         source: "itunes",
       };
@@ -292,15 +293,20 @@ function TrackRow({ track, selected, onClick, onAddToCrate, crates, onPlay }) {
       {/* # / play */}
       <div style={{ textAlign:"center", color: hov ? G : C.muted, fontSize:10, fontFamily:"'DM Mono',monospace" }}>
         {hov
-          ? <span onClick={e=>{e.stopPropagation();onPlay&&onPlay(track);}} style={{fontSize:14,cursor:"pointer"}}>▶</span>
-          : <span>{track._rowNum||""}</span>
+          ? <span onClick={e=>{e.stopPropagation();onPlay&&onPlay(track);}} style={{fontSize:14,cursor:"pointer"}}>{track.cloudOnly?"☁":"▶"}</span>
+          : track.cloudOnly
+            ? <span title="Cloud only — not downloaded" style={{fontSize:11,color:"#60a5fa",opacity:.7}}>☁</span>
+            : <span>{track._rowNum||""}</span>
         }
       </div>
 
       {/* Title + artist */}
       <div style={{ minWidth:0 }}>
-        <div style={{ fontSize:13, fontWeight:500, color:C.text, whiteSpace:"nowrap", overflow:"hidden", textOverflow:"ellipsis", fontFamily:"'DM Sans',sans-serif" }}>
-          {track.title || track.filename}
+        <div style={{ display:"flex", alignItems:"center", gap:5 }}>
+          <div style={{ fontSize:13, fontWeight:500, color: track.cloudOnly ? C.subtle : C.text, whiteSpace:"nowrap", overflow:"hidden", textOverflow:"ellipsis", fontFamily:"'DM Sans',sans-serif" }}>
+            {track.title || track.filename}
+          </div>
+          {track.cloudOnly && <span title="Stored in iCloud — open Apple Music to download" style={{fontSize:9,color:"#60a5fa",background:"#60a5fa15",border:"1px solid #60a5fa33",borderRadius:3,padding:"1px 4px",flexShrink:0,fontFamily:"'DM Mono',monospace",letterSpacing:.5}}>CLOUD</span>}
         </div>
         <div style={{ fontSize:10, color:C.subtle, whiteSpace:"nowrap", overflow:"hidden", textOverflow:"ellipsis", fontFamily:"'DM Sans',sans-serif", marginTop:1 }}>
           {[track.artist, track.album].filter(Boolean).join(" · ") || "Unknown Artist"}
@@ -788,11 +794,31 @@ export default function MusicLibrary() {
 
     const db = dbRef.current;
     const existing = new Set(tracks.map(t=>t.id));
+    // Build a filename→track map for cloud tracks so we can link local files to them
+    const cloudByFilename = {};
+    tracks.forEach(t => { if (t.cloudOnly && t.filename) cloudByFilename[t.filename] = t; });
+    const cloudByFilenameNoExt = {};
+    tracks.forEach(t => { if (t.cloudOnly && t.filename) cloudByFilenameNoExt[t.filename.replace(/\.[^.]+$/,"")] = t; });
+
     let found = 0;
 
     for await (const { name, handle, path } of scanDir(dirHandle)) {
       found++;
       setScanProg(p => ({ ...p, found }));
+      const nameNoExt = name.replace(/\.[^.]+$/,"");
+
+      // Check if a cloud-imported iTunes track matches this file
+      const cloudMatch = cloudByFilename[name] || cloudByFilenameNoExt[nameNoExt];
+      if (cloudMatch) {
+        // Link the local file handle to the existing cloud track
+        const updated = { ...cloudMatch, cloudOnly: false };
+        setTracks(prev => prev.map(t => t.id === cloudMatch.id ? updated : t));
+        await dbPut(db, "tracks",  updated);
+        await dbPut(db, "handles", { id: cloudMatch.id, handle });
+        if (!cloudMatch.analyzed) queueRef.current.push({ id: cloudMatch.id });
+        continue;
+      }
+
       const id = `h_${btoa(path).replace(/[^a-zA-Z0-9]/g,"")}`;
       if (existing.has(id)) continue;
 
@@ -815,6 +841,7 @@ export default function MusicLibrary() {
         duration: null,
         energy:   null,
         analyzed: false,
+        cloudOnly: false,
         addedAt:  Date.now(),
       };
 
@@ -952,6 +979,7 @@ export default function MusicLibrary() {
   }, [tracks, search, energyFilter, keyFilter, bpmRange]);
 
   const analyzedCount = tracks.filter(t=>t.analyzed).length;
+  const cloudCount    = tracks.filter(t=>t.cloudOnly).length;
   const analyzing = queueRef.current.length > 0 || activeRef.current;
 
   // ── NAV VIEWS ────────────────────────────────────────────────
@@ -1029,26 +1057,36 @@ export default function MusicLibrary() {
               ♪ iTunes
             </button>
             {showItunesHelper && (
-              <div data-itunes-helper style={{ position:"absolute", top:"calc(100% + 8px)", right:0, width:300, background:C.raised, border:`1px solid #8B5CF644`, borderRadius:10, padding:16, zIndex:200, boxShadow:"0 12px 40px rgba(0,0,0,.7)" }}>
-                <div style={{ fontSize:12, fontWeight:600, color:C.text, fontFamily:"'DM Sans',sans-serif", marginBottom:6 }}>Scan iTunes / Apple Music</div>
-                <div style={{ fontSize:11, color:C.subtle, lineHeight:1.7, marginBottom:12 }}>
-                  Click below, then navigate to your iTunes music folder:
+              <div data-itunes-helper style={{ position:"absolute", top:"calc(100% + 8px)", right:0, width:320, background:C.raised, border:`1px solid #8B5CF644`, borderRadius:12, padding:18, zIndex:200, boxShadow:"0 16px 48px rgba(0,0,0,.8)" }}>
+                <div style={{ fontSize:13, fontWeight:600, color:C.text, fontFamily:"'DM Sans',sans-serif", marginBottom:4 }}>Import from iTunes / Apple Music</div>
+                <div style={{ fontSize:11, color:"#60a5fa", marginBottom:14, fontFamily:"'DM Sans',sans-serif", lineHeight:1.5 }}>
+                  ☁ Most of your library is in iCloud — to see ALL your tracks (cloud + local), import via XML.
                 </div>
-                <div style={{ background:C.bg, borderRadius:7, padding:"10px 12px", marginBottom:12, fontSize:10, fontFamily:"'DM Mono',monospace", color:C.muted, lineHeight:2 }}>
-                  <div style={{color:G}}>📁 Music</div>
-                  <div style={{paddingLeft:14}}>📁 iTunes <span style={{color:C.muted}}>→</span> <span style={{color:G}}>iTunes Media</span> <span style={{color:C.muted}}>→ Music</span></div>
-                  <div style={{paddingLeft:14, color:C.muted}}>or: Apple Music <span style={{color:G}}>→ Media → Music</span></div>
-                </div>
-                <button onClick={itunesScan}
-                  style={{ width:"100%", padding:"10px", background:"#8B5CF622", border:"1px solid #8B5CF655", color:"#8B5CF6", fontFamily:"'DM Mono',monospace", fontSize:11, letterSpacing:1, borderRadius:7, cursor:"pointer", marginBottom:8 }}>
-                  ⊕ Open Folder Picker
-                </button>
-                <div style={{ borderTop:`1px solid ${C.border}`, paddingTop:8, marginTop:4 }}>
-                  <div style={{ fontSize:9, color:C.muted, marginBottom:6, fontFamily:"'DM Mono',monospace", letterSpacing:.5 }}>ADVANCED — export XML from iTunes first:</div>
-                  <label style={{ fontSize:10, color:C.muted, fontFamily:"'DM Mono',monospace", cursor:"pointer", display:"flex", alignItems:"center", gap:6 }}>
-                    ↗ File → Library → Export Library...
+
+                {/* PRIMARY: XML import */}
+                <div style={{ background:C.bg, borderRadius:8, padding:12, marginBottom:10, border:`1px solid #8B5CF633` }}>
+                  <div style={{ fontSize:10, fontFamily:"'DM Mono',monospace", color:"#8B5CF6", letterSpacing:1, marginBottom:8 }}>STEP 1 — In Apple Music:</div>
+                  <div style={{ fontSize:11, color:C.text, fontFamily:"'DM Sans',sans-serif", lineHeight:1.8, marginBottom:10 }}>
+                    <span style={{color:G}}>File</span> → <span style={{color:G}}>Library</span> → <span style={{color:G}}>Export Library...</span><br/>
+                    Save the file to your Desktop.
+                  </div>
+                  <div style={{ fontSize:10, fontFamily:"'DM Mono',monospace", color:"#8B5CF6", letterSpacing:1, marginBottom:8 }}>STEP 2 — Select that file:</div>
+                  <label style={{ display:"flex", alignItems:"center", justifyContent:"center", gap:8, padding:"10px", background:"#8B5CF622", border:"1px solid #8B5CF655", color:"#8B5CF6", fontFamily:"'DM Mono',monospace", fontSize:11, letterSpacing:1, borderRadius:7, cursor:"pointer" }}>
+                    ♪ Select Library XML File
                     <input type="file" accept=".xml" style={{display:"none"}} onChange={e=>{ if(e.target.files[0]) importFromItunes(e.target.files[0]); e.target.value=""; setShowItunesHelper(false); }}/>
                   </label>
+                  <div style={{ fontSize:9, color:C.muted, fontFamily:"'DM Mono',monospace", marginTop:6, textAlign:"center" }}>
+                    Imports your FULL library including ☁ cloud tracks
+                  </div>
+                </div>
+
+                {/* SECONDARY: folder scan */}
+                <div style={{ borderTop:`1px solid ${C.border}`, paddingTop:10 }}>
+                  <div style={{ fontSize:10, color:C.muted, marginBottom:8, fontFamily:"'DM Mono',monospace" }}>OR — scan downloaded music only:</div>
+                  <button onClick={itunesScan}
+                    style={{ width:"100%", padding:"8px", background:"transparent", border:`1px solid ${C.border}`, color:C.muted, fontFamily:"'DM Mono',monospace", fontSize:10, letterSpacing:1, borderRadius:7, cursor:"pointer" }}>
+                    ⊕ Scan Local Music Folder
+                  </button>
                 </div>
               </div>
             )}
@@ -1098,10 +1136,11 @@ export default function MusicLibrary() {
           <div style={{ padding:"16px 18px", borderTop:`1px solid ${C.border}` }}>
             {[
               ["Tracks",    tracks.length],
+              ["☁ Cloud",   cloudCount],
               ["Analyzed",  analyzedCount],
               ["Crates",    crates.length],
               ["Artists",   new Set(tracks.map(t=>t.artist).filter(Boolean)).size],
-            ].map(([l,v]) => (
+            ].filter(([,v]) => v > 0 || _=>true).map(([l,v]) => (
               <div key={l} style={{ display:"flex", justifyContent:"space-between", marginBottom:5 }}>
                 <span style={{ fontSize:10, color:C.muted, fontFamily:"'DM Mono',monospace" }}>{l}</span>
                 <span style={{ fontSize:10, color:G, fontFamily:"'DM Mono',monospace" }}>{v}</span>
@@ -1164,26 +1203,36 @@ export default function MusicLibrary() {
                 </button>
               </div>
               {showItunesHelper && (
-                <div style={{ background:C.raised, border:"1px solid #8B5CF633", borderRadius:12, padding:20, maxWidth:380, width:"100%" }}>
-                  <div style={{ fontSize:14, fontWeight:600, color:C.text, marginBottom:6 }}>How to scan your iTunes library</div>
-                  <div style={{ fontSize:12, color:C.subtle, lineHeight:1.7, marginBottom:14 }}>
-                    Click the button below, then navigate to your music folder:
+                <div style={{ background:C.raised, border:"1px solid #8B5CF633", borderRadius:14, padding:24, maxWidth:420, width:"100%" }}>
+                  <div style={{ fontSize:16, fontWeight:600, color:C.text, marginBottom:6 }}>Get your full iTunes library</div>
+                  <div style={{ fontSize:12, color:"#60a5fa", marginBottom:18, lineHeight:1.6 }}>
+                    ☁ If most of your music is in iCloud, a folder scan will only find downloaded tracks.<br/>
+                    The XML method imports <strong>everything</strong> — cloud or not.
                   </div>
-                  <div style={{ background:C.bg, borderRadius:8, padding:"12px 16px", marginBottom:14, fontSize:11, fontFamily:"'DM Mono',monospace", color:C.muted, lineHeight:2.2 }}>
-                    <div><span style={{color:G}}>📁 Music</span></div>
-                    <div style={{paddingLeft:20}}>📁 iTunes → <span style={{color:G}}>iTunes Media → Music</span></div>
-                    <div style={{paddingLeft:20, fontSize:10}}>or: Apple Music → <span style={{color:G}}>Media → Music</span></div>
-                  </div>
-                  <button onClick={itunesScan}
-                    style={{ width:"100%", padding:"12px", background:"#8B5CF622", border:"1px solid #8B5CF655", color:"#8B5CF6", fontFamily:"'DM Mono',monospace", fontSize:12, letterSpacing:1.5, borderRadius:8, cursor:"pointer", marginBottom:10 }}>
-                    ⊕ Open Folder Picker
-                  </button>
-                  <div style={{ fontSize:10, color:C.muted, fontFamily:"'DM Mono',monospace", textAlign:"center" }}>
-                    Want playlists imported too?{" "}
-                    <label style={{ color:"#8B5CF6", cursor:"pointer", textDecoration:"underline" }}>
-                      Export XML from iTunes first
+
+                  <div style={{ background:C.bg, borderRadius:10, padding:"14px 16px", marginBottom:16, border:`1px solid #8B5CF633` }}>
+                    <div style={{ fontSize:11, fontFamily:"'DM Mono',monospace", color:"#8B5CF6", letterSpacing:1, marginBottom:10 }}>STEP 1 — In Apple Music on your Mac:</div>
+                    <div style={{ fontSize:13, color:C.text, lineHeight:2, marginBottom:14 }}>
+                      <span style={{background:`${G}18`,color:G,padding:"2px 6px",borderRadius:4,fontFamily:"'DM Mono',monospace",fontSize:11}}>File</span>
+                      {"  →  "}
+                      <span style={{background:`${G}18`,color:G,padding:"2px 6px",borderRadius:4,fontFamily:"'DM Mono',monospace",fontSize:11}}>Library</span>
+                      {"  →  "}
+                      <span style={{background:`${G}18`,color:G,padding:"2px 6px",borderRadius:4,fontFamily:"'DM Mono',monospace",fontSize:11}}>Export Library...</span>
+                      <br/>
+                      <span style={{fontSize:11,color:C.muted}}>Save it somewhere easy to find, like your Desktop.</span>
+                    </div>
+                    <div style={{ fontSize:11, fontFamily:"'DM Mono',monospace", color:"#8B5CF6", letterSpacing:1, marginBottom:10 }}>STEP 2 — Select that file here:</div>
+                    <label style={{ display:"flex", alignItems:"center", justifyContent:"center", gap:8, padding:"12px 20px", background:"#8B5CF622", border:"1px solid #8B5CF666", color:"#8B5CF6", fontFamily:"'DM Mono',monospace", fontSize:12, letterSpacing:1.5, borderRadius:8, cursor:"pointer", transition:"all .2s" }}>
+                      ♪ Select iTunes Library XML
                       <input type="file" accept=".xml" style={{display:"none"}} onChange={e=>{ if(e.target.files[0]) importFromItunes(e.target.files[0]); e.target.value=""; setShowItunesHelper(false); }}/>
                     </label>
+                  </div>
+
+                  <div style={{ textAlign:"center" }}>
+                    <span style={{ fontSize:10, color:C.muted, fontFamily:"'DM Mono',monospace" }}>Only have local files? </span>
+                    <button onClick={itunesScan} style={{ fontSize:10, color:C.subtle, fontFamily:"'DM Mono',monospace", background:"none", border:"none", cursor:"pointer", textDecoration:"underline" }}>
+                      Scan a local folder instead
+                    </button>
                   </div>
                 </div>
               )}
