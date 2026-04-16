@@ -1108,6 +1108,7 @@ export default function MusicLibrary() {
     if (!fileHandle) {
       try {
         [fileHandle] = await window.showOpenFilePicker({
+          id: "itunes-library",
           types: [{ description: "iTunes / Apple Music Library XML", accept: { "text/xml": [".xml"] } }],
           startIn: "music",
           multiple: false,
@@ -1203,6 +1204,7 @@ export default function MusicLibrary() {
     let fileHandle;
     try {
       [fileHandle] = await window.showOpenFilePicker({
+        id: "rekordbox-xml",
         types: [{ description: "Rekordbox XML", accept: { "text/xml": [".xml"] } }],
         startIn: "desktop",
         multiple: false,
@@ -2121,8 +2123,8 @@ export default function MusicLibrary() {
             const label = isItunes ? "Apple Music" : "Rekordbox";
             const onConnect = isItunes ? ()=>autoImportItunes() : ()=>importRekordbox();
             const hint = isItunes
-              ? <>Select your <span style={{color:G}}>Library.xml</span> file.<br/>Apple Music auto-generates it — just enable:<br/><span style={{color}}>Music → Settings → Advanced → Share iTunes Library XML</span><br/>Then find it at <span style={{color:G}}>~/Music/Music/Library.xml</span></>
-              : <>Select your <span style={{color:G}}>rekordbox.xml</span> file.<br/>Export it once from Rekordbox: <span style={{color}}>File → Export Collection in xml format</span><br/>BPM, key, and all your playlists come with it ⚡</>;
+              ? <><strong style={{color:C.text}}>Step 1 (one time):</strong> Open Apple Music → Settings → Advanced<br/>→ turn on <span style={{color}}>"Share iTunes Library XML"</span><br/><br/><strong style={{color:C.text}}>Step 2:</strong> Click Connect, navigate to <span style={{color:G}}>Music → Music</span> folder,<br/>and select <span style={{color:G}}>Library.xml</span></>
+              : <><strong style={{color:C.text}}>Step 1 (one time):</strong> In Rekordbox → File → Export Collection in xml format<br/>Save it to your <span style={{color:G}}>Desktop</span> as <span style={{color:G}}>rekordbox.xml</span><br/><br/><strong style={{color:C.text}}>Step 2:</strong> Click Connect → the file picker opens on your Desktop<br/>→ select <span style={{color:G}}>rekordbox.xml</span> — all BPM, key &amp; playlists come with it ⚡</>;
             return (
               <div style={{ flex:1, display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"center", padding:40 }}>
                 <div style={{ width:"100%", maxWidth:480, background:C.surface, border:`1px solid ${color}22`, borderRadius:20, padding:"44px 40px", display:"flex", flexDirection:"column", alignItems:"center", gap:24, boxShadow:`0 24px 64px rgba(0,0,0,.5)` }}>
@@ -2137,6 +2139,9 @@ export default function MusicLibrary() {
                     onMouseLeave={e=>{ e.currentTarget.style.background=`${color}18`; }}>
                     {icon} CONNECT {label.toUpperCase()}
                   </button>
+                  <div style={{ fontSize:9, color:C.muted, fontFamily:"'DM Mono',monospace", textAlign:"center", opacity:.7 }}>
+                    {isItunes ? "File picker opens in ~/Music — navigate to Music folder" : "File picker opens on your Desktop — select rekordbox.xml"}
+                  </div>
                   <button onClick={()=>setSourceFilter(null)} style={{ fontSize:9, fontFamily:"'DM Mono',monospace", background:"transparent", border:"none", color:C.muted, cursor:"pointer", letterSpacing:1 }}>← back to all tracks</button>
                 </div>
               </div>
