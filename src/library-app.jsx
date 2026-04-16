@@ -165,6 +165,23 @@ function makeWorker() {
   return new Worker(URL.createObjectURL(new Blob([WORKER_SRC], { type:"application/javascript" })));
 }
 
+// ── Artwork cache + fetcher (iTunes Search API — no key needed) ──
+const artworkCache = new Map(); // "artist|title" → url string | null
+async function fetchArtwork(artist, title) {
+  const key = `${artist}|${title}`;
+  if (artworkCache.has(key)) return artworkCache.get(key);
+  artworkCache.set(key, null); // mark in-flight to avoid duplicate requests
+  try {
+    const term = encodeURIComponent(`${artist} ${title}`.trim().slice(0, 100));
+    const r = await fetch(`https://itunes.apple.com/search?term=${term}&media=music&entity=song&limit=1`);
+    if (!r.ok) return null;
+    const data = await r.json();
+    const url = data.results?.[0]?.artworkUrl100?.replace("100x100bb", "300x300bb") || null;
+    artworkCache.set(key, url);
+    return url;
+  } catch { return null; }
+}
+
 // ── iTunes XML parser ─────────────────────────────────────────
 function parseiTunesXML(xmlText) {
   const parser = new DOMParser();
@@ -172,21 +189,24 @@ function parseiTunesXML(xmlText) {
   const root = doc.querySelector("plist > dict");
   if (!root) return { tracks: [], playlists: [] };
 
+  // Strip comma/space artifacts from auto-generated XML values (e.g. ", value,")
+  const clean = (t) => t ? t.replace(/^[,\s]+/, "").replace(/[,\s]+$/, "") : t;
+
   function parseDict(dictEl) {
     const obj = {};
     const kids = Array.from(dictEl.children);
     for (let i = 0; i < kids.length - 1; i += 2) {
-      const key = kids[i]?.textContent;
+      const key = clean(kids[i]?.textContent);
       const val = kids[i+1];
       if (!key || !val) continue;
       const t = val.tagName;
-      if (t==="string")  obj[key] = val.textContent;
-      else if (t==="integer") obj[key] = parseInt(val.textContent, 10);
-      else if (t==="real")    obj[key] = parseFloat(val.textContent);
+      if (t==="string")  obj[key] = clean(val.textContent);
+      else if (t==="integer") obj[key] = parseInt(clean(val.textContent), 10);
+      else if (t==="real")    obj[key] = parseFloat(clean(val.textContent));
       else if (t==="true")    obj[key] = true;
       else if (t==="false")   obj[key] = false;
       else if (t==="dict")    obj[key] = parseDict(val);
-      else if (t==="array")   obj[key] = Array.from(val.children).map(el => el.tagName==="dict" ? parseDict(el) : el.textContent);
+      else if (t==="array")   obj[key] = Array.from(val.children).map(el => el.tagName==="dict" ? parseDict(el) : clean(el.textContent));
     }
     return obj;
   }
@@ -198,7 +218,8 @@ function parseiTunesXML(xmlText) {
   const tracks = Object.values(tracksDict)
     .filter(t => t["Location"] && !t["Podcast"] && t["Track Type"] !== "URL")
     .map(t => {
-      const loc = decodeURIComponent((t["Location"] || "").replace(/^file:\/\//, ""));
+      const rawLoc = (t["Location"] || "").replace(/^file:\/\/,?\s*/, "file://");
+      const loc = decodeURIComponent(rawLoc.replace(/^file:\/\/+/, "/"));
       const filename = loc.split("/").pop();
       const keyRaw = t["Initial Key"] || "";
       return {
@@ -380,6 +401,7 @@ function Pill({ label, color, small }) {
 function TrackRow({ track, selected, onClick, onAddToCrate, crates, onPlay, onSendToDeck, queueIds, onToggleQueue }) {
   const [hov, setHov] = useState(false);
   const [showCrateMenu, setShowCrateMenu] = useState(false);
+  const [artworkUrl, setArtworkUrl] = useState(() => artworkCache.get(`${track.artist}|${track.title}`) || null);
   const camelot = CAMELOT[track.key] || (track.key?.match(/^\d+[AB]$/) ? track.key : null);
   const eColor = ENERGY_COLOR[track.energy?.label] || C.muted;
   const isMinor = camelot?.endsWith("A");
@@ -388,6 +410,16 @@ function TrackRow({ track, selected, onClick, onAddToCrate, crates, onPlay, onSe
   const initial = (track.artist || track.title || "?")[0].toUpperCase();
   const srcBadge = SOURCE_BADGE[track.source];
   const inQ = queueIds?.has(track.id);
+
+  // Fetch artwork lazily
+  useEffect(() => {
+    if (artworkUrl) return; // already have it
+    let cancelled = false;
+    fetchArtwork(track.artist || "", track.title || "").then(url => {
+      if (!cancelled && url) setArtworkUrl(url);
+    });
+    return () => { cancelled = true; };
+  }, [track.artist, track.title]);
 
   return (
     <div
@@ -419,18 +451,21 @@ function TrackRow({ track, selected, onClick, onAddToCrate, crates, onPlay, onSe
         }
       </div>
 
-      {/* Artwork avatar */}
+      {/* Artwork avatar — real art when available, gradient fallback */}
       <div style={{
         width:34, height:34, borderRadius:6, flexShrink:0,
-        background:`linear-gradient(135deg,${ac},${ac2})`,
+        background: artworkUrl ? "#000" : `linear-gradient(135deg,${ac},${ac2})`,
         display:"flex", alignItems:"center", justifyContent:"center",
         fontSize:13, fontWeight:700, color:"#fff", fontFamily:"'DM Sans',sans-serif",
         boxShadow:`0 2px 8px ${ac}44`, userSelect:"none",
         position:"relative", overflow:"hidden",
       }}>
-        {initial}
+        {artworkUrl
+          ? <img src={artworkUrl} alt="" style={{ width:"100%", height:"100%", objectFit:"cover", display:"block" }} onError={()=>setArtworkUrl(null)}/>
+          : initial
+        }
         {srcBadge && (
-          <div style={{ position:"absolute", bottom:0, right:0, background:"rgba(0,0,0,.6)", fontSize:6, fontFamily:"'DM Mono',monospace", color:"#fff", padding:"1px 3px", lineHeight:1.4, letterSpacing:.5, borderRadius:"4px 0 0 0" }}>{srcBadge}</div>
+          <div style={{ position:"absolute", bottom:0, right:0, background:"rgba(0,0,0,.7)", fontSize:6, fontFamily:"'DM Mono',monospace", color:"#fff", padding:"1px 3px", lineHeight:1.4, letterSpacing:.5, borderRadius:"4px 0 0 0" }}>{srcBadge}</div>
         )}
       </div>
 
@@ -881,8 +916,9 @@ export default function MusicLibrary() {
   const [newCrateName,      setNewCrateName]        = useState("");
   const [queueIds,          setQueueIds]            = useState(() => new Set());
   const [itunesPicker,      setItunesPicker]       = useState(null); // { tracks, playlists, selectedPls, importMode }
-  const [itunesDirHandle,   setItunesDirHandle]    = useState(null); // remembered dir handle for re-sync
+  const [itunesDirHandle,   setItunesDirHandle]    = useState(null); // remembered file handle for re-sync
   const [rbPicker,          setRbPicker]           = useState(null); // { tracks, playlists, selectedPls, importMode }
+  const [rbFileHandle,      setRbFileHandle]       = useState(null); // remembered file handle for re-sync
   const searchRef = useRef(null);
 
   useEffect(() => {
@@ -914,14 +950,16 @@ export default function MusicLibrary() {
   useEffect(() => {
     openDB().then(async db => {
       dbRef.current = db;
-      const [ts, cs, qs, savedDir] = await Promise.all([
+      const [ts, cs, qs, savedItunes, savedRb] = await Promise.all([
         dbGetAll(db,"tracks"), dbGetAll(db,"crates"), dbGetAll(db,"queue"),
-        dbGet(db,"handles","itunes_dir"),
+        dbGet(db,"handles","itunes_file"),
+        dbGet(db,"handles","rb_file"),
       ]);
       setTracks(ts.sort((a,b)=>b.addedAt-a.addedAt));
       setCrates(cs);
       setQueueIds(new Set(qs.map(q=>q.trackId)));
-      if (savedDir?.handle) setItunesDirHandle(savedDir.handle);
+      if (savedItunes?.handle) setItunesDirHandle(savedItunes.handle);
+      if (savedRb?.handle) setRbFileHandle(savedRb.handle);
     });
 
     const w = makeWorker();
@@ -1061,55 +1099,60 @@ export default function MusicLibrary() {
   // ── iTunes / Apple Music guided scan ─────────────────────────
   const itunesScan = async () => {
     setShowItunesHelper(false);
-    // Just reuse scanFolder — user navigates to their iTunes Media / Music folder
     await scanFolder();
   };
 
-  // ── iTunes: auto-find Library.xml inside a picked folder ───────
+  // ── iTunes: pick Library.xml file directly ────────────────────
   const autoImportItunes = async (preHandle = null) => {
-    let dirHandle = preHandle;
-    if (!dirHandle) {
+    let fileHandle = preHandle;
+    if (!fileHandle) {
       try {
-        dirHandle = await window.showDirectoryPicker({ mode: "read", startIn: "music" });
+        [fileHandle] = await window.showOpenFilePicker({
+          types: [{ description: "iTunes / Apple Music Library XML", accept: { "text/xml": [".xml"] } }],
+          startIn: "music",
+          multiple: false,
+        });
       } catch { return; } // user cancelled
     }
 
-    // Try to find Library.xml in the picked directory or one level up
-    let xmlFile = null;
-    const tryFind = async (dh) => {
-      try { const fh = await dh.getFileHandle("Library.xml"); return await fh.getFile(); } catch {}
-      // Also try inside a "Music" subfolder
-      for (const name of ["Music","iTunes","Apple Music"]) {
-        try { const sub = await dh.getDirectoryHandle(name); const fh = await sub.getFileHandle("Library.xml"); return await fh.getFile(); } catch {}
+    try {
+      const perm = await fileHandle.queryPermission({ mode: "read" });
+      if (perm !== "granted") await fileHandle.requestPermission({ mode: "read" });
+      const file = await fileHandle.getFile();
+      const text = await file.text();
+      const { tracks: itTracks, playlists: itPlaylists } = parseiTunesXML(text);
+
+      if (!itTracks.length) {
+        alert(
+          "No tracks found in this file.\n\n" +
+          "Make sure you selected your Library.xml from Apple Music.\n\n" +
+          "One-time setup: Open Apple Music → Settings → Advanced\n" +
+          "→ Enable \"Share iTunes Library XML with other applications\"\n" +
+          "The file appears automatically at ~/Music/Music/Library.xml"
+        );
+        return;
       }
-      return null;
-    };
 
-    xmlFile = await tryFind(dirHandle);
+      // Save file handle for auto re-sync
+      if (dbRef.current) {
+        await dbPut(dbRef.current, "handles", { id: "itunes_file", handle: fileHandle });
+        setItunesDirHandle(fileHandle);
+      }
 
-    if (!xmlFile) {
-      // No Library.xml found — show instructions
-      alert(
-        "Library.xml not found in that folder.\n\n" +
-        "One-time setup needed:\n" +
-        "1. Open Apple Music\n" +
-        "2. Go to Music → Settings → Advanced\n" +
-        "3. Turn on \"Share iTunes Library XML with other applications\"\n" +
-        "4. Quit & reopen Apple Music, then try again — the file will appear in your Music folder automatically."
-      );
-      return;
+      setShowItunesHelper(false);
+      setItunesPicker({
+        tracks:      itTracks,
+        playlists:   itPlaylists,
+        selectedPls: new Set(itPlaylists.map(p => p.name)),
+        importMode:  "all",
+      });
+    } catch(e) {
+      console.error("iTunes parse error", e);
+      alert("Could not read that file. Please select a valid Library.xml from Apple Music.");
     }
-
-    // Save the directory handle for future re-syncs
-    if (dbRef.current) {
-      await dbPut(dbRef.current, "handles", { id: "itunes_dir", handle: dirHandle });
-      setItunesDirHandle(dirHandle);
-    }
-
-    await prepareItunesImport(xmlFile);
   };
 
-  // ── Re-sync using remembered handle ────────────────────────────
+  // ── Re-sync iTunes using remembered file handle ───────────────
   const resyncItunes = async () => {
     if (!itunesDirHandle) return;
     try {
@@ -1117,13 +1160,45 @@ export default function MusicLibrary() {
       if (perm !== "granted") await itunesDirHandle.requestPermission({ mode: "read" });
       await autoImportItunes(itunesDirHandle);
     } catch(e) {
-      console.warn("Re-sync failed, resetting handle", e);
+      console.warn("iTunes re-sync failed, resetting handle", e);
       setItunesDirHandle(null);
-      if (dbRef.current) await dbDelete(dbRef.current, "handles", "itunes_dir");
+      if (dbRef.current) await dbDelete(dbRef.current, "handles", "itunes_file");
     }
   };
 
-  // ── Rekordbox: open XML file picker → show playlist picker ──────
+  // ── Rekordbox: load from a file handle ───────────────────────
+  const loadRekordboxFile = async (fileHandle) => {
+    try {
+      const perm = await fileHandle.queryPermission({ mode: "read" });
+      if (perm !== "granted") await fileHandle.requestPermission({ mode: "read" });
+      const file = await fileHandle.getFile();
+      const text = await file.text();
+      const { tracks: rbTracks, playlists: rbPlaylists } = parseRekordboxXML(text);
+
+      if (!rbTracks.length) {
+        alert("No tracks found. Make sure this is a Rekordbox XML file (File → Export Collection in xml format).");
+        return;
+      }
+
+      // Save handle for auto re-sync
+      if (dbRef.current) {
+        await dbPut(dbRef.current, "handles", { id: "rb_file", handle: fileHandle });
+        setRbFileHandle(fileHandle);
+      }
+
+      setRbPicker({
+        tracks:      rbTracks,
+        playlists:   rbPlaylists,
+        selectedPls: new Set(rbPlaylists.map(p => p.name)),
+        importMode:  "all",
+      });
+    } catch(e) {
+      console.error("Rekordbox parse error", e);
+      alert("Could not read that XML file. Please select a valid Rekordbox XML export.");
+    }
+  };
+
+  // ── Rekordbox: open XML file picker ──────────────────────────
   const importRekordbox = async () => {
     let fileHandle;
     try {
@@ -1133,31 +1208,18 @@ export default function MusicLibrary() {
         multiple: false,
       });
     } catch { return; } // user cancelled
+    await loadRekordboxFile(fileHandle);
+  };
 
+  // ── Re-sync Rekordbox using remembered file handle ────────────
+  const resyncRekordbox = async () => {
+    if (!rbFileHandle) return;
     try {
-      const file = await fileHandle.getFile();
-      const text = await file.text();
-      const { tracks: rbTracks, playlists: rbPlaylists } = parseRekordboxXML(text);
-
-      if (!rbTracks.length) {
-        alert(
-          "No tracks found in this file.\n\n" +
-          "Make sure you export from Rekordbox:\n" +
-          "  File → Export Collection in xml format\n\n" +
-          "Then select that exported .xml file here."
-        );
-        return;
-      }
-
-      setRbPicker({
-        tracks:     rbTracks,
-        playlists:  rbPlaylists,
-        selectedPls: new Set(rbPlaylists.map(p => p.name)),
-        importMode: "all",
-      });
+      await loadRekordboxFile(rbFileHandle);
     } catch(e) {
-      console.error("Rekordbox parse error", e);
-      alert("Could not read that XML file.\n\nMake sure it was exported from Rekordbox via File → Export Collection in xml format.");
+      console.warn("Rekordbox re-sync failed, resetting handle", e);
+      setRbFileHandle(null);
+      if (dbRef.current) await dbDelete(dbRef.current, "handles", "rb_file");
     }
   };
 
@@ -1501,11 +1563,12 @@ export default function MusicLibrary() {
                 {/* Primary action */}
                 <button onClick={()=>{ setShowItunesHelper(false); autoImportItunes(); }}
                   style={{ width:"100%", padding:"11px", background:"#8B5CF622", border:"1px solid #8B5CF666", color:"#8B5CF6", fontFamily:"'DM Mono',monospace", fontSize:11, letterSpacing:1, borderRadius:8, cursor:"pointer", marginBottom:10, display:"flex", alignItems:"center", justifyContent:"center", gap:8 }}>
-                  ♪ Auto-Import Music Folder
+                  ♪ Select Library.xml
                 </button>
                 <div style={{ fontSize:9, color:C.muted, fontFamily:"'DM Mono',monospace", marginBottom:12, lineHeight:1.7 }}>
-                  Pick your <span style={{color:G}}>~/Music/Music</span> folder — Library.xml is found automatically.<br/>
-                  First time? Enable in Apple Music: <span style={{color:"#8B5CF6"}}>Settings → Advanced → Share iTunes Library XML</span>
+                  Select your <span style={{color:G}}>Library.xml</span> file — Apple Music maintains it automatically.<br/>
+                  First time? Enable in Apple Music: <span style={{color:"#8B5CF6"}}>Settings → Advanced → Share iTunes Library XML</span><br/>
+                  File lives at: <span style={{color:G}}>~/Music/Music/Library.xml</span>
                 </div>
 
                 {/* Divider + fallback */}
@@ -1772,13 +1835,12 @@ export default function MusicLibrary() {
               const rbCount = tracks.filter(t=>t.source==="rekordbox").length;
               return (
               <div style={{ display:"flex", flexDirection:"column", gap:3 }}>
-                {/* Apple Music */}
                 {[
-                  { src:"itunes", icon:"🎵", label:"Apple Music", count:itunesCount, color:"#8B5CF6",
-                    onImport:()=>autoImportItunes() },
-                  { src:"rekordbox", icon:"🎛️", label:"Rekordbox", count:rbCount, color:G,
-                    onImport:()=>importRekordbox() },
-                ].map(({ src, icon, label, count, color, onImport }) => {
+                  { src:"itunes",    icon:"🎵", label:"Apple Music", count:itunesCount,  color:"#8B5CF6",
+                    onImport:()=>autoImportItunes(),   onSync:()=>resyncItunes(),    synced:!!itunesDirHandle },
+                  { src:"rekordbox", icon:"🎛️", label:"Rekordbox",   count:rbCount,      color:G,
+                    onImport:()=>importRekordbox(),    onSync:()=>resyncRekordbox(), synced:!!rbFileHandle },
+                ].map(({ src, icon, label, count, color, onImport, onSync, synced }) => {
                   const active = sourceFilter === src;
                   return (
                     <div key={src} style={{ display:"flex", gap:2 }}>
@@ -1792,15 +1854,16 @@ export default function MusicLibrary() {
                         <span style={{ fontSize:12 }}>{icon}</span>
                         <span style={{ flex:1 }}>{label}</span>
                         {count > 0 && <span style={{ fontSize:9, fontFamily:"'DM Mono',monospace", color:active?color:C.muted }}>{count}</span>}
+                        {synced && count === 0 && <span style={{ fontSize:7, color:color, fontFamily:"'DM Mono',monospace", opacity:.7 }}>●</span>}
                       </button>
-                      {/* Import button (right, +) */}
+                      {/* Sync button if connected, Import (+) if not */}
                       <button
-                        onClick={onImport}
-                        title={`Import from ${label}`}
-                        style={{ padding:"7px 8px", background:"transparent", border:`1px solid ${C.border}`, color:C.muted, fontSize:12, borderRadius:7, cursor:"pointer", flexShrink:0, lineHeight:1, transition:"all .15s" }}
+                        onClick={synced ? onSync : onImport}
+                        title={synced ? `Re-sync ${label}` : `Connect ${label}`}
+                        style={{ padding:"7px 8px", background:"transparent", border:`1px solid ${C.border}`, color:C.muted, fontSize:synced?10:12, fontFamily:"'DM Mono',monospace", borderRadius:7, cursor:"pointer", flexShrink:0, lineHeight:1, transition:"all .15s" }}
                         onMouseEnter={e=>{ e.currentTarget.style.borderColor=color+"55"; e.currentTarget.style.color=color; }}
                         onMouseLeave={e=>{ e.currentTarget.style.borderColor=C.border; e.currentTarget.style.color=C.muted; }}
-                      >+</button>
+                      >{synced ? "↻" : "+"}</button>
                     </div>
                   );
                 })}
