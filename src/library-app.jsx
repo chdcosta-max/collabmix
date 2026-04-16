@@ -2180,7 +2180,7 @@ export default function MusicLibrary() {
         <div style={{ flex:1, overflow:"hidden", display:"flex", flexDirection:"column" }}>
 
           {/* ── EMPTY STATE / ONBOARDING ── */}
-          {tracks.length === 0 && !scanning && !sourceFilter && (
+          {tracks.length === 0 && !scanning && (
             <div style={{ flex:1, display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"center", padding:40 }}>
               {/* Card */}
               <div style={{ width:"100%", maxWidth:560, background:C.surface, border:`1px solid ${C.border}`, borderRadius:20, padding:"48px 40px", display:"flex", flexDirection:"column", alignItems:"center", gap:28, boxShadow:`0 32px 80px rgba(0,0,0,.5), 0 0 0 1px ${G}08` }}>
@@ -2194,7 +2194,7 @@ export default function MusicLibrary() {
                 <div style={{ textAlign:"center" }}>
                   <div style={{ fontFamily:"'Cormorant Garamond',serif", fontSize:30, fontWeight:700, color:C.text, marginBottom:8, lineHeight:1.2 }}>Find your music</div>
                   <div style={{ fontSize:13, color:C.subtle, lineHeight:1.8, maxWidth:380 }}>
-                    Point it at any folder — your Music library, a hard drive, a USB stick. Tracks appear instantly, BPM and key are detected in the background.
+                    Point it at any folder — your Downloads, Music library, a USB drive, or an external hard drive. Tracks appear instantly, BPM and key detected automatically.
                   </div>
                 </div>
 
