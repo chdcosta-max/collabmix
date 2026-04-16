@@ -2162,7 +2162,7 @@ export default function MusicLibrary() {
         <div style={{ flex:1, overflow:"hidden", display:"flex", flexDirection:"column" }}>
 
           {/* ── EMPTY STATE / ONBOARDING ── */}
-          {tracks.length === 0 && !scanning && (
+          {tracks.length === 0 && !scanning && !sourceFilter && (
             <div style={{ flex:1, display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"center", padding:40 }}>
               {/* Card */}
               <div style={{ width:"100%", maxWidth:560, background:C.surface, border:`1px solid ${C.border}`, borderRadius:20, padding:"48px 40px", display:"flex", flexDirection:"column", alignItems:"center", gap:28, boxShadow:`0 32px 80px rgba(0,0,0,.5), 0 0 0 1px ${G}08` }}>
@@ -2222,8 +2222,8 @@ export default function MusicLibrary() {
             </div>
           )}
 
-          {/* ── SOURCE EMPTY STATE — when a source filter is active but has no tracks yet ── */}
-          {tracks.length > 0 && sourceFilter && filteredTracks.length === 0 && !scanning && (() => {
+          {/* ── SOURCE EMPTY STATE — when a source filter is active but has no tracks for that source ── */}
+          {sourceFilter && filteredTracks.length === 0 && !scanning && (() => {
             const isItunes = sourceFilter === "itunes";
             const isRb = sourceFilter === "rekordbox";
             const color = isItunes ? "#8B5CF6" : G;
@@ -2257,7 +2257,7 @@ export default function MusicLibrary() {
           })()}
 
           {/* Views */}
-          {tracks.length > 0 && !(sourceFilter && filteredTracks.length === 0) && (
+          {tracks.length > 0 && !(sourceFilter && filteredTracks.length === 0 && !scanning) && (
             <div style={{ flex:1, overflow:"hidden", display:"flex", flexDirection:"column" }}>
               {view==="tracks"  && <TrackListView  tracks={filteredTracks} crates={crates} onAddToCrate={addToCrate} onSelect={t=>setSelected(t.id)} selected={selected} onPlay={null} onSendToDeck={sendToDeck} queueIds={queueIds} onToggleQueue={toggleQueue}/>}
               {view==="artists" && <ArtistView     tracks={filteredTracks} crates={crates} onAddToCrate={addToCrate} onSelect={t=>setSelected(t.id)} selected={selected} onPlay={null} onSendToDeck={sendToDeck} queueIds={queueIds} onToggleQueue={toggleQueue}/>}
