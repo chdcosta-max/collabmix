@@ -767,6 +767,7 @@ export default function MusicLibrary() {
   const [newCrateName,      setNewCrateName]        = useState("");
   const [queueIds,          setQueueIds]            = useState(() => new Set());
   const [itunesPicker,      setItunesPicker]       = useState(null); // { tracks, playlists, selectedPls, importMode }
+  const [itunesDirHandle,   setItunesDirHandle]    = useState(null); // remembered dir handle for re-sync
   const searchRef = useRef(null);
 
   useEffect(() => {
@@ -796,13 +797,16 @@ export default function MusicLibrary() {
 
   // ── Init DB + worker ────────────────────────────────────────
   useEffect(() => {
-    openDB().then(db => {
+    openDB().then(async db => {
       dbRef.current = db;
-      return Promise.all([dbGetAll(db,"tracks"), dbGetAll(db,"crates"), dbGetAll(db,"queue")]);
-    }).then(([ts,cs,qs]) => {
+      const [ts, cs, qs, savedDir] = await Promise.all([
+        dbGetAll(db,"tracks"), dbGetAll(db,"crates"), dbGetAll(db,"queue"),
+        dbGet(db,"handles","itunes_dir"),
+      ]);
       setTracks(ts.sort((a,b)=>b.addedAt-a.addedAt));
       setCrates(cs);
       setQueueIds(new Set(qs.map(q=>q.trackId)));
+      if (savedDir?.handle) setItunesDirHandle(savedDir.handle);
     });
 
     const w = makeWorker();
@@ -941,13 +945,74 @@ export default function MusicLibrary() {
     await scanFolder();
   };
 
-  // ── iTunes XML: parse first, then show playlist picker ─────────
+  // ── iTunes: auto-find Library.xml inside a picked folder ───────
+  const autoImportItunes = async (preHandle = null) => {
+    let dirHandle = preHandle;
+    if (!dirHandle) {
+      try {
+        dirHandle = await window.showDirectoryPicker({ mode: "read", startIn: "music" });
+      } catch { return; } // user cancelled
+    }
+
+    // Try to find Library.xml in the picked directory or one level up
+    let xmlFile = null;
+    const tryFind = async (dh) => {
+      try { const fh = await dh.getFileHandle("Library.xml"); return await fh.getFile(); } catch {}
+      // Also try inside a "Music" subfolder
+      for (const name of ["Music","iTunes","Apple Music"]) {
+        try { const sub = await dh.getDirectoryHandle(name); const fh = await sub.getFileHandle("Library.xml"); return await fh.getFile(); } catch {}
+      }
+      return null;
+    };
+
+    xmlFile = await tryFind(dirHandle);
+
+    if (!xmlFile) {
+      // No Library.xml found — show instructions
+      alert(
+        "Library.xml not found in that folder.\n\n" +
+        "One-time setup needed:\n" +
+        "1. Open Apple Music\n" +
+        "2. Go to Music → Settings → Advanced\n" +
+        "3. Turn on \"Share iTunes Library XML with other applications\"\n" +
+        "4. Quit & reopen Apple Music, then try again — the file will appear in your Music folder automatically."
+      );
+      return;
+    }
+
+    // Save the directory handle for future re-syncs
+    if (dbRef.current) {
+      await dbPut(dbRef.current, "handles", { id: "itunes_dir", handle: dirHandle });
+      setItunesDirHandle(dirHandle);
+    }
+
+    await prepareItunesImport(xmlFile);
+  };
+
+  // ── Re-sync using remembered handle ────────────────────────────
+  const resyncItunes = async () => {
+    if (!itunesDirHandle) return;
+    try {
+      const perm = await itunesDirHandle.queryPermission({ mode: "read" });
+      if (perm !== "granted") await itunesDirHandle.requestPermission({ mode: "read" });
+      await autoImportItunes(itunesDirHandle);
+    } catch(e) {
+      console.warn("Re-sync failed, resetting handle", e);
+      setItunesDirHandle(null);
+      if (dbRef.current) await dbDelete(dbRef.current, "handles", "itunes_dir");
+    }
+  };
+
+  // ── iTunes XML: parse → show playlist picker ───────────────────
   const prepareItunesImport = async (file) => {
     if (!file) return;
     try {
       const text = await file.text();
       const { tracks: itTracks, playlists: itPlaylists } = parseiTunesXML(text);
-      if (!itTracks.length) { alert("No tracks found in this iTunes library file. Make sure you exported Library.xml from File → Library → Export Library."); return; }
+      if (!itTracks.length) {
+        alert("Library.xml found but no tracks inside.\n\nMake sure Apple Music has tracks and that you enabled:\nMusic → Settings → Advanced → Share iTunes Library XML.");
+        return;
+      }
       setShowItunesHelper(false);
       setItunesPicker({
         tracks: itTracks,
@@ -957,7 +1022,7 @@ export default function MusicLibrary() {
       });
     } catch(e) {
       console.error("iTunes parse error", e);
-      alert("Error reading the file. Make sure you selected a Library.xml file exported from Apple Music (File → Library → Export Library...).");
+      alert("Error reading Library.xml. The file may be corrupted — try exporting it again from Apple Music.");
     }
   };
 
@@ -1191,56 +1256,52 @@ export default function MusicLibrary() {
             )}
           </div>
           <div data-itunes-helper style={{ position:"relative" }}>
-            <button onClick={()=>setShowItunesHelper(v=>!v)}
-              style={{ padding:"9px 14px", background:"#8B5CF615", border:`1px solid ${showItunesHelper?"#8B5CF688":"#8B5CF655"}`, color:"#8B5CF6", fontFamily:"'DM Mono',monospace", fontSize:10, letterSpacing:1.5, borderRadius:8, cursor:"pointer", display:"flex", alignItems:"center", gap:6, transition:"all .2s", whiteSpace:"nowrap" }}>
-              ♪ iTunes
-            </button>
+            {/* Re-sync button if we have a remembered handle */}
+            {itunesDirHandle ? (
+              <div style={{ display:"flex", gap:6 }}>
+                <button onClick={resyncItunes}
+                  style={{ padding:"9px 14px", background:"#22c55e15", border:"1px solid #22c55e55", color:"#22c55e", fontFamily:"'DM Mono',monospace", fontSize:10, letterSpacing:1.5, borderRadius:8, cursor:"pointer", whiteSpace:"nowrap" }}>
+                  ↻ SYNC LIBRARY
+                </button>
+                <button onClick={()=>setShowItunesHelper(v=>!v)}
+                  style={{ padding:"9px 10px", background:"#8B5CF615", border:`1px solid #8B5CF633`, color:"#8B5CF6", fontFamily:"'DM Mono',monospace", fontSize:10, borderRadius:8, cursor:"pointer" }}>
+                  ▾
+                </button>
+              </div>
+            ) : (
+              <button onClick={()=>setShowItunesHelper(v=>!v)}
+                style={{ padding:"9px 14px", background:"#8B5CF615", border:`1px solid ${showItunesHelper?"#8B5CF688":"#8B5CF655"}`, color:"#8B5CF6", fontFamily:"'DM Mono',monospace", fontSize:10, letterSpacing:1.5, borderRadius:8, cursor:"pointer", display:"flex", alignItems:"center", gap:6, transition:"all .2s", whiteSpace:"nowrap" }}>
+                ♪ iTunes
+              </button>
+            )}
             {showItunesHelper && (
-              <div data-itunes-helper style={{ position:"absolute", top:"calc(100% + 8px)", right:0, width:360, background:C.raised, border:`1px solid #8B5CF644`, borderRadius:12, padding:18, zIndex:200, boxShadow:"0 16px 48px rgba(0,0,0,.8)" }}>
-                <div style={{ fontSize:13, fontWeight:600, color:C.text, fontFamily:"'DM Sans',sans-serif", marginBottom:12 }}>Import Apple Music Library</div>
+              <div data-itunes-helper style={{ position:"absolute", top:"calc(100% + 8px)", right:0, width:320, background:C.raised, border:`1px solid #8B5CF644`, borderRadius:12, padding:16, zIndex:200, boxShadow:"0 16px 48px rgba(0,0,0,.8)" }}>
+                <div style={{ fontSize:12, fontWeight:600, color:C.text, fontFamily:"'DM Sans',sans-serif", marginBottom:10 }}>Apple Music Import</div>
 
-                {/* Step 1 */}
-                <div style={{ display:"flex", gap:10, marginBottom:12 }}>
-                  <div style={{ width:22, height:22, borderRadius:"50%", background:"#8B5CF622", border:"1px solid #8B5CF655", color:"#8B5CF6", display:"flex", alignItems:"center", justifyContent:"center", fontSize:11, fontFamily:"'DM Mono',monospace", flexShrink:0 }}>1</div>
-                  <div>
-                    <div style={{ fontSize:11, fontWeight:600, color:C.text, fontFamily:"'DM Sans',sans-serif", marginBottom:4 }}>Export from Apple Music first</div>
-                    <div style={{ fontSize:10, color:C.subtle, fontFamily:"'DM Sans',sans-serif", lineHeight:1.7 }}>
-                      Open Apple Music on your Mac, then:<br/>
-                      <span style={{color:G,fontFamily:"'DM Mono',monospace",fontSize:10}}>File</span>
-                      {" → "}
-                      <span style={{color:G,fontFamily:"'DM Mono',monospace",fontSize:10}}>Library</span>
-                      {" → "}
-                      <span style={{color:G,fontFamily:"'DM Mono',monospace",fontSize:10}}>Export Library...</span>
-                    </div>
-                    <div style={{ marginTop:6, padding:"6px 10px", background:"#f59e0b11", border:"1px solid #f59e0b33", borderRadius:6, fontSize:10, color:"#f59e0b", fontFamily:"'DM Sans',sans-serif", lineHeight:1.5 }}>
-                      💡 Save the file to your <strong>Desktop</strong>. It will be named <strong>Library.xml</strong> — NOT the "Music Library" file already in your Music folder.
-                    </div>
-                  </div>
+                {/* Primary action */}
+                <button onClick={()=>{ setShowItunesHelper(false); autoImportItunes(); }}
+                  style={{ width:"100%", padding:"11px", background:"#8B5CF622", border:"1px solid #8B5CF666", color:"#8B5CF6", fontFamily:"'DM Mono',monospace", fontSize:11, letterSpacing:1, borderRadius:8, cursor:"pointer", marginBottom:10, display:"flex", alignItems:"center", justifyContent:"center", gap:8 }}>
+                  ♪ Auto-Import Music Folder
+                </button>
+                <div style={{ fontSize:9, color:C.muted, fontFamily:"'DM Mono',monospace", marginBottom:12, lineHeight:1.7 }}>
+                  Pick your <span style={{color:G}}>~/Music/Music</span> folder — Library.xml is found automatically.<br/>
+                  First time? Enable in Apple Music: <span style={{color:"#8B5CF6"}}>Settings → Advanced → Share iTunes Library XML</span>
                 </div>
 
-                {/* Step 2 */}
-                <div style={{ display:"flex", gap:10, marginBottom:14 }}>
-                  <div style={{ width:22, height:22, borderRadius:"50%", background:"#8B5CF622", border:"1px solid #8B5CF655", color:"#8B5CF6", display:"flex", alignItems:"center", justifyContent:"center", fontSize:11, fontFamily:"'DM Mono',monospace", flexShrink:0 }}>2</div>
-                  <div style={{ flex:1 }}>
-                    <div style={{ fontSize:11, fontWeight:600, color:C.text, fontFamily:"'DM Sans',sans-serif", marginBottom:8 }}>Then select the Library.xml file here</div>
-                    <label style={{ display:"flex", alignItems:"center", justifyContent:"center", gap:8, padding:"11px", background:"#8B5CF622", border:"1px solid #8B5CF666", color:"#8B5CF6", fontFamily:"'DM Mono',monospace", fontSize:11, letterSpacing:1, borderRadius:7, cursor:"pointer" }}>
-                      ♪ Select Library.xml
-                      <input type="file" accept=".xml" style={{display:"none"}} onChange={e=>{ if(e.target.files[0]) prepareItunesImport(e.target.files[0]); e.target.value=""; }}/>
-                    </label>
-                    <div style={{ fontSize:9, color:C.muted, fontFamily:"'DM Mono',monospace", marginTop:5, textAlign:"center" }}>
-                      Navigate to Desktop → select Library.xml · Imports ☁ cloud + downloaded tracks
-                    </div>
-                  </div>
-                </div>
-
-                {/* Folder scan fallback */}
+                {/* Divider + fallback */}
                 <div style={{ borderTop:`1px solid ${C.border}`, paddingTop:10, display:"flex", alignItems:"center", justifyContent:"space-between" }}>
-                  <span style={{ fontSize:9, color:C.muted, fontFamily:"'DM Mono',monospace" }}>Only want downloaded files?</span>
-                  <button onClick={itunesScan}
+                  <span style={{ fontSize:9, color:C.muted, fontFamily:"'DM Mono',monospace" }}>Local files only?</span>
+                  <button onClick={()=>{ setShowItunesHelper(false); itunesScan(); }}
                     style={{ padding:"4px 10px", background:"transparent", border:`1px solid ${C.border}`, color:C.muted, fontFamily:"'DM Mono',monospace", fontSize:9, letterSpacing:1, borderRadius:5, cursor:"pointer" }}>
-                    ⊕ Scan folder instead
+                    ⊕ Scan folder
                   </button>
                 </div>
+                {itunesDirHandle && (
+                  <button onClick={()=>{ setItunesDirHandle(null); if(dbRef.current) dbDelete(dbRef.current,"handles","itunes_dir"); setShowItunesHelper(false); }}
+                    style={{ marginTop:8, width:"100%", padding:"5px", background:"transparent", border:"none", color:"#ef444455", fontFamily:"'DM Mono',monospace", fontSize:9, cursor:"pointer", textAlign:"center" }}>
+                    ✕ Forget saved folder
+                  </button>
+                )}
               </div>
             )}
           </div>
@@ -1533,66 +1594,16 @@ export default function MusicLibrary() {
                   style={{ padding:"14px 36px", background:`linear-gradient(135deg,${G}22,${G}11)`, border:`1px solid ${G}55`, color:G, fontFamily:"'DM Mono',monospace", fontSize:12, letterSpacing:2, borderRadius:10, cursor:"pointer", boxShadow:`0 0 32px ${G}18`, transition:"all .2s" }}>
                   ⊕ SCAN MUSIC FOLDER
                 </button>
-                <button onClick={()=>setShowItunesHelper(v=>!v)}
-                  style={{ padding:"14px 28px", background:"#8B5CF611", border:`1px solid ${showItunesHelper?"#8B5CF677":"#8B5CF644"}`, color:"#8B5CF6", fontFamily:"'DM Mono',monospace", fontSize:12, letterSpacing:2, borderRadius:10, cursor:"pointer", display:"flex", alignItems:"center", gap:8, transition:"all .2s" }}>
+                <button onClick={()=>{ autoImportItunes(); }}
+                  style={{ padding:"14px 28px", background:"#8B5CF611", border:`1px solid #8B5CF644`, color:"#8B5CF6", fontFamily:"'DM Mono',monospace", fontSize:12, letterSpacing:2, borderRadius:10, cursor:"pointer", display:"flex", alignItems:"center", gap:8, transition:"all .2s" }}>
                   ♪ iTunes / Apple Music
                 </button>
               </div>
-              {showItunesHelper && (
-                <div style={{ background:C.raised, border:"1px solid #8B5CF633", borderRadius:14, padding:24, maxWidth:480, width:"100%" }}>
-                  <div style={{ fontSize:18, fontWeight:600, color:C.text, marginBottom:6, fontFamily:"'DM Sans',sans-serif" }}>Import your Apple Music library</div>
-                  <div style={{ fontSize:12, color:"#60a5fa", marginBottom:20, lineHeight:1.6 }}>
-                    Since most of your music is in iCloud, you need to export a file from Apple Music — this gives you access to <strong>every</strong> track, whether it's downloaded or not.
-                  </div>
-
-                  {/* Step 1 */}
-                  <div style={{ display:"flex", gap:14, marginBottom:16 }}>
-                    <div style={{ width:28, height:28, borderRadius:"50%", background:"#8B5CF622", border:"2px solid #8B5CF666", color:"#8B5CF6", display:"flex", alignItems:"center", justifyContent:"center", fontSize:13, fontFamily:"'DM Mono',monospace", fontWeight:600, flexShrink:0 }}>1</div>
-                    <div>
-                      <div style={{ fontSize:14, fontWeight:600, color:C.text, fontFamily:"'DM Sans',sans-serif", marginBottom:6 }}>Open Apple Music and export your library</div>
-                      <div style={{ fontSize:12, color:C.subtle, fontFamily:"'DM Sans',sans-serif", lineHeight:1.8, marginBottom:10 }}>
-                        In the Apple Music menu bar:<br/>
-                        <span style={{background:`${G}18`,color:G,padding:"2px 8px",borderRadius:4,fontFamily:"'DM Mono',monospace",fontSize:11,marginRight:4}}>File</span>
-                        →
-                        <span style={{background:`${G}18`,color:G,padding:"2px 8px",borderRadius:4,fontFamily:"'DM Mono',monospace",fontSize:11,margin:"0 4px"}}>Library</span>
-                        →
-                        <span style={{background:`${G}18`,color:G,padding:"2px 8px",borderRadius:4,fontFamily:"'DM Mono',monospace",fontSize:11,marginLeft:4}}>Export Library...</span>
-                        <br/>
-                        <span style={{fontSize:11,color:C.muted}}>When it asks where to save — choose your Desktop.</span>
-                      </div>
-                      <div style={{ padding:"8px 12px", background:"#f59e0b0d", border:"1px solid #f59e0b33", borderRadius:8, fontSize:11, color:"#f59e0b", lineHeight:1.6 }}>
-                        ⚠️ <strong>Important:</strong> The file this creates is called <strong style={{fontFamily:"'DM Mono',monospace"}}>Library.xml</strong>.<br/>
-                        It is <em>not</em> the same as "Music Library" which is already in your Music folder and cannot be used here.
-                      </div>
-                    </div>
-                  </div>
-
-                  {/* Step 2 */}
-                  <div style={{ display:"flex", gap:14, marginBottom:20 }}>
-                    <div style={{ width:28, height:28, borderRadius:"50%", background:"#8B5CF622", border:"2px solid #8B5CF666", color:"#8B5CF6", display:"flex", alignItems:"center", justifyContent:"center", fontSize:13, fontFamily:"'DM Mono',monospace", fontWeight:600, flexShrink:0 }}>2</div>
-                    <div style={{ flex:1 }}>
-                      <div style={{ fontSize:14, fontWeight:600, color:C.text, fontFamily:"'DM Sans',sans-serif", marginBottom:8 }}>Select Library.xml here</div>
-                      <label style={{ display:"flex", alignItems:"center", justifyContent:"center", gap:10, padding:"14px 20px", background:"#8B5CF622", border:"2px solid #8B5CF666", color:"#8B5CF6", fontFamily:"'DM Mono',monospace", fontSize:13, letterSpacing:1, borderRadius:10, cursor:"pointer", transition:"all .2s" }}
-                        onMouseEnter={e=>{e.currentTarget.style.background="#8B5CF633";e.currentTarget.style.borderColor="#8B5CF6aa";}}
-                        onMouseLeave={e=>{e.currentTarget.style.background="#8B5CF622";e.currentTarget.style.borderColor="#8B5CF666";}}>
-                        ♪ Select Library.xml
-                        <input type="file" accept=".xml" style={{display:"none"}} onChange={e=>{ if(e.target.files[0]) prepareItunesImport(e.target.files[0]); e.target.value=""; }}/>
-                      </label>
-                      <div style={{ fontSize:10, color:C.muted, fontFamily:"'DM Mono',monospace", marginTop:8, lineHeight:1.7, textAlign:"center" }}>
-                        Navigate to Desktop → look for Library.xml<br/>
-                        Imports ALL tracks including ☁ cloud-only
-                      </div>
-                    </div>
-                  </div>
-
-                  <div style={{ borderTop:`1px solid ${C.border}`, paddingTop:14, display:"flex", alignItems:"center", justifyContent:"space-between" }}>
-                    <span style={{ fontSize:10, color:C.muted, fontFamily:"'DM Mono',monospace" }}>Only have downloaded files?</span>
-                    <button onClick={itunesScan} style={{ fontSize:10, color:C.subtle, fontFamily:"'DM Mono',monospace", background:"none", border:"none", cursor:"pointer", textDecoration:"underline" }}>
-                      Scan a local folder instead
-                    </button>
-                  </div>
-                </div>
-              )}
+              {/* iTunes auto-import hint */}
+              <div style={{ fontSize:10, color:C.muted, fontFamily:"'DM Mono',monospace", textAlign:"center", lineHeight:1.8 }}>
+                First time with iTunes? Enable in Apple Music:<br/>
+                <span style={{color:"#8B5CF6"}}>Settings → Advanced → Share iTunes Library XML</span>
+              </div>
               <div style={{ fontSize:10, color:C.muted, fontFamily:"'DM Mono',monospace", letterSpacing:1, textAlign:"center" }}>
                 Works with Chrome or Edge · Your files never leave your computer
               </div>
