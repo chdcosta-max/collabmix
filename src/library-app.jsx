@@ -1086,11 +1086,15 @@ export default function MusicLibrary() {
     const handleRec = await dbGet(db,"handles",id);
     if (!handleRec) { activeRef.current=false; processQueue(); return; }
     try {
-      const perm = await handleRec.handle.queryPermission({ mode:"read" });
-      if (perm !== "granted") {
-        await handleRec.handle.requestPermission({ mode:"read" });
+      // Support both FileSystemFileHandle (.handle) and plain File objects (.file)
+      let file;
+      if (handleRec.file) {
+        file = handleRec.file;
+      } else {
+        const perm = await handleRec.handle.queryPermission({ mode:"read" });
+        if (perm !== "granted") await handleRec.handle.requestPermission({ mode:"read" });
+        file = await handleRec.handle.getFile();
       }
-      const file = await handleRec.handle.getFile();
       if (!audioCtxRef.current) audioCtxRef.current = new (window.AudioContext||window.webkitAudioContext)();
       const ab = await file.arrayBuffer();
       const buf = await audioCtxRef.current.decodeAudioData(ab);
@@ -1110,6 +1114,64 @@ export default function MusicLibrary() {
       processQueue();
     }
   }, []);
+
+  // ── Import files from <input type="file"> ───────────────────
+  const handleImport = async (e) => {
+    const files = Array.from(e.target.files || []);
+    e.target.value = ""; // reset so same files can be re-added
+    if (!files.length) return;
+
+    setScanning(true);
+    setScanProg({ found: 0, analyzed: 0, total: files.length });
+
+    const db = dbRef.current;
+    const existing = new Set(tracks.map(t => t.id));
+
+    for (let i = 0; i < files.length; i++) {
+      const file = files[i];
+      setScanProg(p => ({ ...p, found: i + 1 }));
+
+      const id = `f_${btoa(file.name + file.size).replace(/[^a-zA-Z0-9]/g, "")}`;
+      if (existing.has(id)) continue;
+
+      let tags = {};
+      try {
+        const sl = await file.slice(0, 131072).arrayBuffer();
+        tags = parseID3(sl);
+      } catch {}
+
+      const track = {
+        id,
+        filename: file.name,
+        path: file.name,
+        title:  tags.title  || file.name.replace(/\.[^.]+$/, ""),
+        artist: tags.artist || "",
+        album:  tags.album  || "",
+        genre:  tags.genre  || "",
+        label:  tags.label  || "",
+        year:   tags.year   || "",
+        bpm:    tags.bpm    ? parseFloat(tags.bpm) : null,
+        key:    tags.key    || null,
+        duration: null,
+        energy:   null,
+        analyzed: false,
+        cloudOnly: false,
+        source: "local",
+        addedAt: Date.now(),
+      };
+
+      setTracks(prev => [track, ...prev]);
+      if (db) {
+        await dbPut(db, "tracks", track);
+        // Store the File object directly — no FileSystemFileHandle needed
+        await dbPut(db, "handles", { id, file });
+      }
+      queueRef.current.push({ id });
+    }
+
+    setScanning(false);
+    processQueue();
+  };
 
   // ── Scan folder ─────────────────────────────────────────────
   // existingTracks can be passed explicitly (e.g. on auto-rescan at startup before React
@@ -1736,13 +1798,13 @@ export default function MusicLibrary() {
               </div>
             )}
           </div>
-          <button onClick={()=>scanFolder()} disabled={scanning}
-            style={{ padding:"9px 16px", background:scanning?"transparent":`${G}22`, border:`1px solid ${G}55`, color:scanning?G:G, fontFamily:"'DM Mono',monospace", fontSize:10, letterSpacing:1.5, borderRadius:8, cursor:scanning?"not-allowed":"pointer", display:"flex", alignItems:"center", gap:8, transition:"all .2s" }}>
+          <label style={{ padding:"9px 16px", background:scanning?"transparent":`${G}22`, border:`1px solid ${G}55`, color:G, fontFamily:"'DM Mono',monospace", fontSize:10, letterSpacing:1.5, borderRadius:8, cursor:scanning?"not-allowed":"pointer", display:"flex", alignItems:"center", gap:8, transition:"all .2s" }}>
             {scanning
-              ? <><span style={{ width:10, height:10, border:`1.5px solid ${G}44`, borderTop:`1.5px solid ${G}`, borderRadius:"50%", animation:"spin 1s linear infinite", display:"inline-block" }}/> {scanProg.found > 0 ? `${scanProg.found} found…` : "SCANNING…"}</>
+              ? <><span style={{ width:10, height:10, border:`1.5px solid ${G}44`, borderTop:`1.5px solid ${G}`, borderRadius:"50%", animation:"spin 1s linear infinite", display:"inline-block" }}/> {scanProg.found > 0 ? `${scanProg.found} / ${scanProg.total} imported…` : "IMPORTING…"}</>
               : <><span style={{ fontSize:14, lineHeight:1 }}>＋</span> ADD MUSIC</>
             }
-          </button>
+            <input type="file" accept="audio/*" multiple onChange={handleImport} style={{ display:"none" }} disabled={scanning} />
+          </label>
           {tracks.length>0 && analyzedCount<tracks.length && (
             <button onClick={reanalyzeAll} style={{ padding:"9px 12px", background:"transparent", border:`1px solid ${C.border}`, color:C.muted, fontFamily:"'DM Mono',monospace", fontSize:9, letterSpacing:1, borderRadius:8, cursor:"pointer" }}>⟳ ANALYZE</button>
           )}
@@ -2050,13 +2112,13 @@ export default function MusicLibrary() {
 
           {/* ── ADD MUSIC button ── */}
           <div style={{ padding:"10px 12px 4px", borderTop:`1px solid ${C.border}` }}>
-            <button onClick={()=>scanFolder()} disabled={scanning}
-              style={{ width:"100%", padding:"9px 12px", background:scanning?`${G}08`:`${G}12`, border:`1px solid ${G}${scanning?"22":"44"}`, color:scanning?C.muted:G, fontFamily:"'DM Mono',monospace", fontSize:10, letterSpacing:1.5, borderRadius:8, cursor:scanning?"not-allowed":"pointer", display:"flex", alignItems:"center", justifyContent:"center", gap:7, transition:"all .2s" }}>
+            <label style={{ width:"100%", padding:"9px 12px", background:scanning?`${G}08`:`${G}12`, border:`1px solid ${G}${scanning?"22":"44"}`, color:scanning?C.muted:G, fontFamily:"'DM Mono',monospace", fontSize:10, letterSpacing:1.5, borderRadius:8, cursor:scanning?"not-allowed":"pointer", display:"flex", alignItems:"center", justifyContent:"center", gap:7, transition:"all .2s", boxSizing:"border-box" }}>
               {scanning
-                ? <><span style={{ width:8, height:8, border:`1.5px solid ${G}44`, borderTop:`1.5px solid ${G}`, borderRadius:"50%", animation:"spin 1s linear infinite", display:"inline-block" }}/> SCANNING...</>
+                ? <><span style={{ width:8, height:8, border:`1.5px solid ${G}44`, borderTop:`1.5px solid ${G}`, borderRadius:"50%", animation:"spin 1s linear infinite", display:"inline-block" }}/> {scanProg.found > 0 ? `${scanProg.found} / ${scanProg.total} IMPORTED` : "IMPORTING..."}</>
                 : <><span style={{ fontSize:14 }}>＋</span> ADD MUSIC</>
               }
-            </button>
+              <input type="file" accept="audio/*" multiple onChange={handleImport} style={{ display:"none" }} disabled={scanning} />
+            </label>
           </div>
 
           {/* ── DJ CRATES section ── */}
@@ -2212,17 +2274,17 @@ export default function MusicLibrary() {
 
                 {/* Headline */}
                 <div style={{ textAlign:"center" }}>
-                  <div style={{ fontFamily:"'Cormorant Garamond',serif", fontSize:30, fontWeight:700, color:C.text, marginBottom:8, lineHeight:1.2 }}>Find your music</div>
+                  <div style={{ fontFamily:"'Cormorant Garamond',serif", fontSize:30, fontWeight:700, color:C.text, marginBottom:8, lineHeight:1.2 }}>Import your music</div>
                   <div style={{ fontSize:13, color:C.subtle, lineHeight:1.8, maxWidth:380 }}>
-                    Point it at any folder — your Downloads, Music library, a USB drive, or an external hard drive. Tracks appear instantly, BPM and key detected automatically.
+                    Click the button and select your tracks — mp3, wav, flac, aac all supported. BPM and key are detected automatically.
                   </div>
                 </div>
 
                 {/* Primary CTA */}
-                <button onClick={()=>scanFolder()}
-                  style={{ width:"100%", padding:"16px 24px", background:`linear-gradient(135deg,${G}28,${G}14)`, border:`1px solid ${G}66`, color:G, fontFamily:"'DM Mono',monospace", fontSize:13, letterSpacing:2, borderRadius:12, cursor:"pointer", boxShadow:`0 0 40px ${G}18`, transition:"all .2s", display:"flex", alignItems:"center", justifyContent:"center", gap:10 }}>
-                  <span style={{ fontSize:16 }}>📂</span> FIND MY MUSIC
-                </button>
+                <label style={{ width:"100%", padding:"16px 24px", background:`linear-gradient(135deg,${G}28,${G}14)`, border:`1px solid ${G}66`, color:G, fontFamily:"'DM Mono',monospace", fontSize:13, letterSpacing:2, borderRadius:12, cursor:"pointer", boxShadow:`0 0 40px ${G}18`, transition:"all .2s", display:"flex", alignItems:"center", justifyContent:"center", gap:10, boxSizing:"border-box" }}>
+                  <span style={{ fontSize:16 }}>🎵</span> IMPORT MY MUSIC
+                  <input type="file" accept="audio/*" multiple onChange={handleImport} style={{ display:"none" }} />
+                </label>
 
                 {/* Feature pills */}
                 <div style={{ display:"flex", gap:8, flexWrap:"wrap", justifyContent:"center" }}>
