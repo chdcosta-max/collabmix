@@ -343,6 +343,20 @@ function openAppleMusic(artist, title) {
   setTimeout(() => { try { document.body.removeChild(a); } catch {} }, 200);
 }
 
+// ── Colour-hash for artwork avatars ──────────────────────────
+const AVATAR_COLORS = [
+  ["#8B5CF6","#6D28D9"], ["#C8A96E","#A07840"], ["#00d4ff","#0099bb"],
+  ["#22c55e","#16a34a"], ["#f59e0b","#d97706"], ["#ef4444","#dc2626"],
+  ["#ec4899","#db2777"], ["#14b8a6","#0d9488"],
+];
+function avatarColor(str="") {
+  let h = 0;
+  for (let i=0;i<str.length;i++) h = (h<<5)-h+str.charCodeAt(i);
+  return AVATAR_COLORS[Math.abs(h)%AVATAR_COLORS.length];
+}
+
+const SOURCE_BADGE = { rekordbox:"RB", itunes:"iTu", local:"" };
+
 // ── Pill component ────────────────────────────────────────────
 function Pill({ label, color, small }) {
   return (
@@ -366,10 +380,14 @@ function Pill({ label, color, small }) {
 function TrackRow({ track, selected, onClick, onAddToCrate, crates, onPlay, onSendToDeck, queueIds, onToggleQueue }) {
   const [hov, setHov] = useState(false);
   const [showCrateMenu, setShowCrateMenu] = useState(false);
-  const camelot = CAMELOT[track.key];
+  const camelot = CAMELOT[track.key] || (track.key?.match(/^\d+[AB]$/) ? track.key : null);
   const eColor = ENERGY_COLOR[track.energy?.label] || C.muted;
   const isMinor = camelot?.endsWith("A");
   const keyColor = isMinor ? "#8B6EAF" : G;
+  const [ac, ac2] = avatarColor(track.artist || track.title || "");
+  const initial = (track.artist || track.title || "?")[0].toUpperCase();
+  const srcBadge = SOURCE_BADGE[track.source];
+  const inQ = queueIds?.has(track.id);
 
   return (
     <div
@@ -378,12 +396,12 @@ function TrackRow({ track, selected, onClick, onAddToCrate, crates, onPlay, onSe
       onClick={() => onClick(track)}
       style={{
         display:"grid",
-        gridTemplateColumns:"32px 1fr 80px 60px 100px 56px 80px",
+        gridTemplateColumns:"28px 36px 1fr 90px 56px 80px 52px 96px",
         gap:8,
         alignItems:"center",
-        padding:"8px 14px",
-        background: selected ? `${G}0a` : hov ? `${C.raised}cc` : "transparent",
-        borderBottom: `1px solid ${C.border}55`,
+        padding:"6px 14px",
+        background: selected ? `${G}0e` : hov ? `${C.raised}ee` : "transparent",
+        borderBottom: `1px solid ${C.border}44`,
         cursor:"pointer",
         transition:"background .1s",
         position:"relative",
@@ -393,12 +411,27 @@ function TrackRow({ track, selected, onClick, onAddToCrate, crates, onPlay, onSe
       <div style={{ textAlign:"center", color: hov ? G : C.muted, fontSize:10, fontFamily:"'DM Mono',monospace" }}>
         {hov
           ? track.cloudOnly
-            ? <span onClick={e=>{e.stopPropagation();openAppleMusic(track.artist,track.title);}} title="Open in Apple Music to download" style={{fontSize:14,cursor:"pointer",color:"#60a5fa"}}>⬇</span>
-            : <span onClick={e=>{e.stopPropagation();onPlay&&onPlay(track);}} style={{fontSize:14,cursor:"pointer"}}>▶</span>
+            ? <span onClick={e=>{e.stopPropagation();openAppleMusic(track.artist,track.title);}} title="Open in Apple Music to download" style={{fontSize:15,cursor:"pointer",color:"#60a5fa"}}>⬇</span>
+            : <span onClick={e=>{e.stopPropagation();onPlay&&onPlay(track);}} style={{fontSize:15,cursor:"pointer",color:G}}>▶</span>
           : track.cloudOnly
-            ? <span title="Cloud only — not downloaded" style={{fontSize:11,color:"#60a5fa",opacity:.7}}>☁</span>
-            : <span>{track._rowNum||""}</span>
+            ? <span title="Cloud only" style={{fontSize:10,color:"#60a5fa",opacity:.7}}>☁</span>
+            : <span style={{opacity:.4}}>{track._rowNum||""}</span>
         }
+      </div>
+
+      {/* Artwork avatar */}
+      <div style={{
+        width:34, height:34, borderRadius:6, flexShrink:0,
+        background:`linear-gradient(135deg,${ac},${ac2})`,
+        display:"flex", alignItems:"center", justifyContent:"center",
+        fontSize:13, fontWeight:700, color:"#fff", fontFamily:"'DM Sans',sans-serif",
+        boxShadow:`0 2px 8px ${ac}44`, userSelect:"none",
+        position:"relative", overflow:"hidden",
+      }}>
+        {initial}
+        {srcBadge && (
+          <div style={{ position:"absolute", bottom:0, right:0, background:"rgba(0,0,0,.6)", fontSize:6, fontFamily:"'DM Mono',monospace", color:"#fff", padding:"1px 3px", lineHeight:1.4, letterSpacing:.5, borderRadius:"4px 0 0 0" }}>{srcBadge}</div>
+        )}
       </div>
 
       {/* Title + artist */}
@@ -407,23 +440,25 @@ function TrackRow({ track, selected, onClick, onAddToCrate, crates, onPlay, onSe
           <div style={{ fontSize:13, fontWeight:500, color: track.cloudOnly ? C.subtle : C.text, whiteSpace:"nowrap", overflow:"hidden", textOverflow:"ellipsis", fontFamily:"'DM Sans',sans-serif" }}>
             {track.title || track.filename}
           </div>
-          {track.cloudOnly && <span onClick={e=>{e.stopPropagation();openAppleMusic(track.artist,track.title);}} title="Click to open in Apple Music and download" style={{fontSize:9,color:"#60a5fa",background:"#60a5fa15",border:"1px solid #60a5fa33",borderRadius:3,padding:"1px 4px",flexShrink:0,fontFamily:"'DM Mono',monospace",letterSpacing:.5,cursor:"pointer"}}>☁ CLOUD</span>}
+          {track.cloudOnly && <span onClick={e=>{e.stopPropagation();openAppleMusic(track.artist,track.title);}} title="Click to open in Apple Music and download" style={{fontSize:8,color:"#60a5fa",background:"#60a5fa15",border:"1px solid #60a5fa33",borderRadius:3,padding:"1px 4px",flexShrink:0,fontFamily:"'DM Mono',monospace",cursor:"pointer"}}>☁</span>}
+          {inQ && <span style={{fontSize:8,color:"#22c55e",background:"#22c55e15",border:"1px solid #22c55e33",borderRadius:3,padding:"1px 4px",flexShrink:0,fontFamily:"'DM Mono',monospace"}}>Q</span>}
         </div>
         <div style={{ fontSize:10, color:C.subtle, whiteSpace:"nowrap", overflow:"hidden", textOverflow:"ellipsis", fontFamily:"'DM Sans',sans-serif", marginTop:1 }}>
-          {[track.artist, track.album].filter(Boolean).join(" · ") || "Unknown Artist"}
+          {track.artist || "Unknown Artist"}
+          {track.genre ? <span style={{color:C.muted}}> · {track.genre}</span> : null}
         </div>
       </div>
 
       {/* BPM */}
       <div style={{ textAlign:"right" }}>
-        <div style={{ fontSize:14, fontFamily:"'DM Mono',monospace", color:track.bpm?G:C.muted, fontWeight:600 }}>{fmtBPM(track.bpm)}</div>
-        {!track.analyzed && <div style={{ fontSize:8, color:C.muted, fontFamily:"'DM Mono',monospace" }}>analyzing</div>}
+        <div style={{ fontSize:13, fontFamily:"'DM Mono',monospace", color:track.bpm?G:C.muted, fontWeight:600 }}>{fmtBPM(track.bpm)}</div>
+        {!track.analyzed && <div style={{ fontSize:7, color:C.muted, fontFamily:"'DM Mono',monospace", letterSpacing:.5 }}>analyzing</div>}
       </div>
 
       {/* Key (Camelot) */}
       <div style={{ textAlign:"center" }}>
         {camelot
-          ? <div style={{ fontSize:12, fontFamily:"'DM Mono',monospace", color:keyColor, background:keyColor+"18", borderRadius:4, padding:"2px 6px", display:"inline-block", fontWeight:600 }}>{camelot}</div>
+          ? <div style={{ fontSize:11, fontFamily:"'DM Mono',monospace", color:keyColor, background:keyColor+"18", borderRadius:4, padding:"2px 6px", display:"inline-block", fontWeight:700 }}>{camelot}</div>
           : <span style={{ color:C.muted, fontSize:11 }}>—</span>
         }
       </div>
@@ -441,46 +476,42 @@ function TrackRow({ track, selected, onClick, onAddToCrate, crates, onPlay, onSe
         {fmt(track.duration)}
       </div>
 
-      {/* Actions */}
-      <div style={{ display:"flex", gap:4, justifyContent:"flex-end", opacity: hov ? 1 : 0, transition:"opacity .1s" }}>
-        {onToggleQueue && (() => {
-          const inQ = queueIds?.has(track.id);
-          return (
-            <button
-              onClick={e=>{ e.stopPropagation(); onToggleQueue(track.id); }}
-              title={inQ ? "Remove from session queue" : "Add to session queue"}
-              style={{ fontSize:9, fontFamily:"'DM Mono',monospace", padding:"3px 7px", background:inQ?"#22c55e18":"transparent", border:`1px solid ${inQ?"#22c55e55":C.border}`, color:inQ?"#22c55e":C.muted, borderRadius:4, cursor:"pointer", whiteSpace:"nowrap", transition:"all .15s" }}
-            >{inQ ? "✓ QUEUED" : "+ QUEUE"}</button>
-          );
-        })()}
-        {track.cloudOnly && (
+      {/* Actions (always show deck buttons, queue on hover) */}
+      <div style={{ display:"flex", gap:3, justifyContent:"flex-end", alignItems:"center" }}>
+        {onToggleQueue && (
+          <button
+            onClick={e=>{ e.stopPropagation(); onToggleQueue(track.id); }}
+            title={inQ ? "Remove from queue" : "Add to queue"}
+            style={{ fontSize:9, fontFamily:"'DM Mono',monospace", padding:"3px 6px", background:inQ?"#22c55e18":"transparent", border:`1px solid ${inQ?"#22c55e44":C.border}`, color:inQ?"#22c55e":C.muted, borderRadius:4, cursor:"pointer", opacity: hov||inQ ? 1 : 0, transition:"all .15s" }}
+          >{inQ ? "✓" : "+"}</button>
+        )}
+        {track.cloudOnly ? (
           <button
             onClick={e=>{ e.stopPropagation(); openAppleMusic(track.artist, track.title); }}
-            title="Open in Apple Music to download this track"
-            style={{ fontSize:9, fontFamily:"'DM Mono',monospace", padding:"3px 7px", background:"#60a5fa14", border:"1px solid #60a5fa44", color:"#60a5fa", borderRadius:4, cursor:"pointer", whiteSpace:"nowrap" }}
-          >⬇ MUSIC</button>
-        )}
-        {!track.cloudOnly && onSendToDeck && (
-          <>
+            style={{ fontSize:9, fontFamily:"'DM Mono',monospace", padding:"3px 6px", background:"#60a5fa14", border:"1px solid #60a5fa44", color:"#60a5fa", borderRadius:4, cursor:"pointer", opacity: hov ? 1 : 0.4, transition:"opacity .15s" }}
+          >⬇</button>
+        ) : onSendToDeck ? (
+          <div style={{ display:"flex", gap:2 }}>
             <button
               onClick={e=>{ e.stopPropagation(); onSendToDeck(track,"A"); }}
-              title="Send to Deck A in the mixer"
-              style={{ fontSize:9, fontFamily:"'DM Mono',monospace", padding:"3px 7px", background:"#C8A96E14", border:"1px solid #C8A96E44", color:"#C8A96E", borderRadius:4, cursor:"pointer", whiteSpace:"nowrap" }}
-            >→ A</button>
+              title="Load to Deck A"
+              style={{ fontSize:9, fontFamily:"'DM Mono',monospace", padding:"3px 7px", background:`${G}18`, border:`1px solid ${G}44`, color:G, borderRadius:4, cursor:"pointer", fontWeight:600, opacity: hov ? 1 : 0.5, transition:"all .15s" }}
+            >A</button>
             <button
               onClick={e=>{ e.stopPropagation(); onSendToDeck(track,"B"); }}
-              title="Send to Deck B in the mixer"
-              style={{ fontSize:9, fontFamily:"'DM Mono',monospace", padding:"3px 7px", background:"#00d4ff14", border:"1px solid #00d4ff44", color:"#00d4ff", borderRadius:4, cursor:"pointer", whiteSpace:"nowrap" }}
-            >→ B</button>
-          </>
-        )}
+              title="Load to Deck B"
+              style={{ fontSize:9, fontFamily:"'DM Mono',monospace", padding:"3px 7px", background:"#00d4ff18", border:"1px solid #00d4ff44", color:"#00d4ff", borderRadius:4, cursor:"pointer", fontWeight:600, opacity: hov ? 1 : 0.5, transition:"all .15s" }}
+            >B</button>
+          </div>
+        ) : null}
         <div style={{ position:"relative" }}>
           <button
             onClick={e=>{ e.stopPropagation(); setShowCrateMenu(v=>!v); }}
-            style={{ fontSize:9, fontFamily:"'DM Mono',monospace", padding:"3px 7px", background:`${G}14`, border:`1px solid ${G}33`, color:G, borderRadius:4, cursor:"pointer" }}
-          >+ CRATE</button>
+            style={{ fontSize:11, padding:"2px 6px", background:"transparent", border:`1px solid ${C.border}`, color:C.muted, borderRadius:4, cursor:"pointer", opacity: hov ? 1 : 0, transition:"opacity .15s" }}
+          >⋮</button>
           {showCrateMenu && (
             <div style={{ position:"absolute", right:0, top:"100%", zIndex:100, background:C.raised, border:`1px solid ${C.border}`, borderRadius:8, padding:6, minWidth:160, boxShadow:"0 8px 24px rgba(0,0,0,.6)" }}>
+              <div style={{ fontSize:9, color:C.muted, fontFamily:"'DM Mono',monospace", padding:"2px 8px 6px", letterSpacing:1 }}>ADD TO CRATE</div>
               {crates.length === 0
                 ? <div style={{ fontSize:10, color:C.muted, padding:"4px 8px", fontFamily:"'DM Mono',monospace" }}>No crates yet</div>
                 : crates.map(cr => (
@@ -502,7 +533,7 @@ function TrackRow({ track, selected, onClick, onAddToCrate, crates, onPlay, onSe
 // ── Column header ─────────────────────────────────────────────
 function ColHeader({ cols, sortBy, sortDir, onSort }) {
   return (
-    <div style={{ display:"grid", gridTemplateColumns:"32px 1fr 80px 60px 100px 56px 80px", gap:8, padding:"7px 14px", borderBottom:`1px solid ${C.border}`, background:C.surface, flexShrink:0 }}>
+    <div style={{ display:"grid", gridTemplateColumns:"28px 36px 1fr 90px 56px 80px 52px 96px", gap:8, padding:"7px 14px", borderBottom:`1px solid ${C.border}`, background:C.surface, flexShrink:0 }}>
       {cols.map(([label, key]) => (
         <div key={label} onClick={() => onSort(key)}
           style={{ fontSize:9, fontFamily:"'DM Mono',monospace", color:sortBy===key?G:C.muted, letterSpacing:1.5, cursor:key?"pointer":"default", userSelect:"none", textAlign: label==="BPM"||label==="TIME" ? "right" : label==="KEY" ? "center" : "left" }}>
@@ -533,7 +564,7 @@ function TrackListView({ tracks, crates, onAddToCrate, onSelect, selected, onPla
     else { setSortBy(key); setSortDir(1); }
   };
 
-  const COLS = [["#",null],["TITLE","title"],["BPM","bpm"],["KEY","key"],["ENERGY","energy"],["TIME","duration"],["",null]];
+  const COLS = [["#",null],["",null],["TITLE / ARTIST","title"],["BPM","bpm"],["KEY","key"],["ENERGY","energy"],["TIME","duration"],["",null]];
 
   return (
     <div style={{ display:"flex", flexDirection:"column", height:"100%", overflow:"hidden" }}>
@@ -835,6 +866,7 @@ export default function MusicLibrary() {
   const [tracks,   setTracks]   = useState([]);
   const [crates,   setCrates]   = useState([]);
   const [view,     setView]     = useState("tracks");
+  const [sourceFilter, setSourceFilter] = useState(null); // "itunes" | "rekordbox" | null
   const [scanning, setScanning] = useState(false);
   const [scanProg, setScanProg] = useState({ found:0, analyzed:0, total:0 });
   const [selected, setSelected] = useState(null);
@@ -1334,6 +1366,7 @@ export default function MusicLibrary() {
   // ── Filtered tracks ─────────────────────────────────────────
   const filteredTracks = useMemo(() => {
     let ts = tracks;
+    if (sourceFilter) ts = ts.filter(t => t.source === sourceFilter);
     if (search.trim()) {
       const q = search.toLowerCase();
       ts = ts.filter(t =>
@@ -1344,13 +1377,13 @@ export default function MusicLibrary() {
       );
     }
     if (energyFilter) ts = ts.filter(t => t.energy?.label === energyFilter);
-    if (keyFilter) ts = ts.filter(t => CAMELOT[t.key] === keyFilter);
+    if (keyFilter) ts = ts.filter(t => CAMELOT[t.key] === keyFilter || t.key === keyFilter);
     ts = ts.filter(t => {
       if (!t.bpm) return true;
       return t.bpm >= bpmRange[0] && t.bpm <= bpmRange[1];
     });
     return ts;
-  }, [tracks, search, energyFilter, keyFilter, bpmRange]);
+  }, [tracks, search, energyFilter, keyFilter, bpmRange, sourceFilter]);
 
   const analyzedCount = tracks.filter(t=>t.analyzed).length;
   const cloudCount    = tracks.filter(t=>t.cloudOnly).length;
@@ -1446,7 +1479,7 @@ export default function MusicLibrary() {
             {/* Re-sync button if we have a remembered handle */}
             {itunesDirHandle ? (
               <div style={{ display:"flex", gap:6 }}>
-                <button onClick={resyncItunes}
+                <button onClick={()=>resyncItunes()}
                   style={{ padding:"9px 14px", background:"#22c55e15", border:"1px solid #22c55e55", color:"#22c55e", fontFamily:"'DM Mono',monospace", fontSize:10, letterSpacing:1.5, borderRadius:8, cursor:"pointer", whiteSpace:"nowrap" }}>
                   ↻ SYNC LIBRARY
                 </button>
@@ -1492,7 +1525,7 @@ export default function MusicLibrary() {
               </div>
             )}
           </div>
-          <button onClick={scanFolder} disabled={scanning}
+          <button onClick={()=>scanFolder()} disabled={scanning}
             style={{ padding:"9px 16px", background:scanning?"transparent":`${G}22`, border:`1px solid ${G}55`, color:scanning?G:G, fontFamily:"'DM Mono',monospace", fontSize:10, letterSpacing:1.5, borderRadius:8, cursor:scanning?"not-allowed":"pointer", display:"flex", alignItems:"center", gap:8, transition:"all .2s" }}>
             {scanning
               ? <><span style={{ width:10, height:10, border:`1.5px solid ${G}44`, borderTop:`1.5px solid ${G}`, borderRadius:"50%", animation:"spin 1s linear infinite", display:"inline-block" }}/> {scanProg.found > 0 ? `${scanProg.found} found…` : "SCANNING…"}</>
@@ -1730,40 +1763,55 @@ export default function MusicLibrary() {
 
           {/* ── SOURCES section ── */}
           <div style={{ padding:"0 12px 8px" }}>
-            <div style={{ fontSize:9, fontFamily:"'DM Mono',monospace", color:C.muted, letterSpacing:1.5, marginBottom:6, paddingLeft:4 }}>SOURCES</div>
-            <div style={{ display:"flex", flexDirection:"column", gap:3 }}>
-              {/* Apple Music */}
-              <button onClick={autoImportItunes}
-                style={{ padding:"7px 10px", textAlign:"left", background:"transparent", border:`1px solid ${C.border}`, color:C.subtle, fontFamily:"'DM Sans',sans-serif", fontSize:11, borderRadius:7, cursor:"pointer", display:"flex", alignItems:"center", gap:7, transition:"all .15s" }}
-                onMouseEnter={e=>{ e.currentTarget.style.borderColor="#8B5CF666"; e.currentTarget.style.color="#8B5CF6"; }}
-                onMouseLeave={e=>{ e.currentTarget.style.borderColor=C.border; e.currentTarget.style.color=C.subtle; }}
-              >
-                <span style={{ fontSize:13 }}>🎵</span>
-                <span style={{ flex:1 }}>Apple Music</span>
-                {tracks.filter(t=>t.source==="itunes").length > 0 &&
-                  <span style={{ fontSize:9, fontFamily:"'DM Mono',monospace", color:C.muted }}>{tracks.filter(t=>t.source==="itunes").length}</span>
-                }
-              </button>
-              {/* Rekordbox */}
-              <button onClick={importRekordbox}
-                style={{ padding:"7px 10px", textAlign:"left", background:"transparent", border:`1px solid ${C.border}`, color:C.subtle, fontFamily:"'DM Sans',sans-serif", fontSize:11, borderRadius:7, cursor:"pointer", display:"flex", alignItems:"center", gap:7, transition:"all .15s" }}
-                onMouseEnter={e=>{ e.currentTarget.style.borderColor=`${G}66`; e.currentTarget.style.color=G; }}
-                onMouseLeave={e=>{ e.currentTarget.style.borderColor=C.border; e.currentTarget.style.color=C.subtle; }}
-              >
-                <span style={{ fontSize:13 }}>🎛️</span>
-                <span style={{ flex:1 }}>Rekordbox</span>
-                {tracks.filter(t=>t.source==="rekordbox").length > 0 &&
-                  <span style={{ fontSize:9, fontFamily:"'DM Mono',monospace", color:C.muted }}>{tracks.filter(t=>t.source==="rekordbox").length}</span>
-                }
-              </button>
-              {/* Tidal — coming soon */}
-              <button disabled
-                style={{ padding:"7px 10px", textAlign:"left", background:"transparent", border:`1px solid ${C.border}44`, color:`${C.muted}88`, fontFamily:"'DM Sans',sans-serif", fontSize:11, borderRadius:7, cursor:"default", display:"flex", alignItems:"center", gap:7, opacity:.55 }}>
-                <span style={{ fontSize:13 }}>🌊</span>
-                <span style={{ flex:1 }}>Tidal</span>
-                <span style={{ fontSize:8, fontFamily:"'DM Mono',monospace", background:C.raised, color:C.muted, padding:"1px 5px", borderRadius:3, border:`1px solid ${C.border}` }}>SOON</span>
-              </button>
+            <div style={{ fontSize:9, fontFamily:"'DM Mono',monospace", color:C.muted, letterSpacing:1.5, marginBottom:6, paddingLeft:4, display:"flex", justifyContent:"space-between", alignItems:"center" }}>
+              <span>SOURCES</span>
+              {sourceFilter && <button onClick={()=>setSourceFilter(null)} style={{ background:"none", border:"none", color:C.muted, cursor:"pointer", fontSize:9, fontFamily:"'DM Mono',monospace", padding:0 }}>× all</button>}
             </div>
+            {(() => {
+              const itunesCount = tracks.filter(t=>t.source==="itunes").length;
+              const rbCount = tracks.filter(t=>t.source==="rekordbox").length;
+              return (
+              <div style={{ display:"flex", flexDirection:"column", gap:3 }}>
+                {/* Apple Music */}
+                {[
+                  { src:"itunes", icon:"🎵", label:"Apple Music", count:itunesCount, color:"#8B5CF6",
+                    onImport:()=>autoImportItunes() },
+                  { src:"rekordbox", icon:"🎛️", label:"Rekordbox", count:rbCount, color:G,
+                    onImport:()=>importRekordbox() },
+                ].map(({ src, icon, label, count, color, onImport }) => {
+                  const active = sourceFilter === src;
+                  return (
+                    <div key={src} style={{ display:"flex", gap:2 }}>
+                      {/* Filter button (left) */}
+                      <button
+                        onClick={()=>{ setSourceFilter(active ? null : src); setActiveCrateId(null); setView("tracks"); }}
+                        style={{ flex:1, padding:"7px 8px", textAlign:"left", background:active?`${color}14`:"transparent", border:`1px solid ${active?color+"55":C.border}`, color:active?color:C.subtle, fontFamily:"'DM Sans',sans-serif", fontSize:11, borderRadius:7, cursor:"pointer", display:"flex", alignItems:"center", gap:6, transition:"all .15s" }}
+                        onMouseEnter={e=>{ if(!active){e.currentTarget.style.borderColor=color+"44";e.currentTarget.style.color=color;} }}
+                        onMouseLeave={e=>{ if(!active){e.currentTarget.style.borderColor=C.border;e.currentTarget.style.color=C.subtle;} }}
+                      >
+                        <span style={{ fontSize:12 }}>{icon}</span>
+                        <span style={{ flex:1 }}>{label}</span>
+                        {count > 0 && <span style={{ fontSize:9, fontFamily:"'DM Mono',monospace", color:active?color:C.muted }}>{count}</span>}
+                      </button>
+                      {/* Import button (right, +) */}
+                      <button
+                        onClick={onImport}
+                        title={`Import from ${label}`}
+                        style={{ padding:"7px 8px", background:"transparent", border:`1px solid ${C.border}`, color:C.muted, fontSize:12, borderRadius:7, cursor:"pointer", flexShrink:0, lineHeight:1, transition:"all .15s" }}
+                        onMouseEnter={e=>{ e.currentTarget.style.borderColor=color+"55"; e.currentTarget.style.color=color; }}
+                        onMouseLeave={e=>{ e.currentTarget.style.borderColor=C.border; e.currentTarget.style.color=C.muted; }}
+                      >+</button>
+                    </div>
+                  );
+                })}
+                {/* Tidal — coming soon */}
+                <button disabled style={{ padding:"7px 10px", textAlign:"left", background:"transparent", border:`1px solid ${C.border}44`, color:`${C.muted}66`, fontFamily:"'DM Sans',sans-serif", fontSize:11, borderRadius:7, cursor:"default", display:"flex", alignItems:"center", gap:6, opacity:.5 }}>
+                  <span style={{ fontSize:12 }}>🌊</span>
+                  <span style={{ flex:1 }}>Tidal</span>
+                  <span style={{ fontSize:7, fontFamily:"'DM Mono',monospace", background:C.raised, color:C.muted, padding:"1px 4px", borderRadius:3, border:`1px solid ${C.border}`, letterSpacing:.5 }}>SOON</span>
+                </button>
+              </div>
+            );})()}
           </div>
 
           <div style={{ height:1, background:C.border, margin:"4px 0 8px" }}/>
@@ -1791,7 +1839,7 @@ export default function MusicLibrary() {
 
           {/* ── ADD MUSIC button ── */}
           <div style={{ padding:"10px 12px 4px", borderTop:`1px solid ${C.border}` }}>
-            <button onClick={scanFolder} disabled={scanning}
+            <button onClick={()=>scanFolder()} disabled={scanning}
               style={{ width:"100%", padding:"9px 12px", background:scanning?`${G}08`:`${G}12`, border:`1px solid ${G}${scanning?"22":"44"}`, color:scanning?C.muted:G, fontFamily:"'DM Mono',monospace", fontSize:10, letterSpacing:1.5, borderRadius:8, cursor:scanning?"not-allowed":"pointer", display:"flex", alignItems:"center", justifyContent:"center", gap:7, transition:"all .2s" }}>
               {scanning
                 ? <><span style={{ width:8, height:8, border:`1.5px solid ${G}44`, borderTop:`1.5px solid ${G}`, borderRadius:"50%", animation:"spin 1s linear infinite", display:"inline-block" }}/> SCANNING...</>
@@ -1874,6 +1922,30 @@ export default function MusicLibrary() {
 
           <div style={{ flex:1 }}/>
 
+          {/* ── SESSION panel (Beatport-inspired) ── */}
+          <div style={{ borderTop:`1px solid ${C.border}`, padding:"10px 12px 8px" }}>
+            <div style={{ fontSize:9, fontFamily:"'DM Mono',monospace", color:C.muted, letterSpacing:1.5, marginBottom:8, paddingLeft:2 }}>SESSION</div>
+            {/* Active DJ (you) */}
+            <div style={{ display:"flex", alignItems:"center", gap:8, marginBottom:6 }}>
+              <div style={{ width:28, height:28, borderRadius:"50%", background:`linear-gradient(135deg,${G},${G}88)`, display:"flex", alignItems:"center", justifyContent:"center", fontSize:11, fontWeight:700, color:"#000", flexShrink:0 }}>C</div>
+              <div style={{ flex:1, minWidth:0 }}>
+                <div style={{ fontSize:11, color:C.text, fontFamily:"'DM Sans',sans-serif", fontWeight:500 }}>You (Host)</div>
+                <div style={{ fontSize:9, color:"#22c55e", fontFamily:"'DM Mono',monospace", display:"flex", alignItems:"center", gap:3 }}>
+                  <span style={{ width:5, height:5, borderRadius:"50%", background:"#22c55e", display:"inline-block" }}/>
+                  Live
+                </div>
+              </div>
+              <div style={{ fontSize:9, fontFamily:"'DM Mono',monospace", color:C.muted }}>{tracks.length} tracks</div>
+            </div>
+            {/* B2B invite */}
+            <button
+              title="B2B collaboration coming soon"
+              style={{ width:"100%", padding:"7px 10px", background:"transparent", border:`1px dashed ${C.border}`, color:C.muted, fontFamily:"'DM Mono',monospace", fontSize:9, letterSpacing:1, borderRadius:7, cursor:"default", display:"flex", alignItems:"center", justifyContent:"center", gap:6, opacity:.6 }}>
+              <span style={{ fontSize:11 }}>＋</span> INVITE DJ
+              <span style={{ fontSize:7, background:C.raised, border:`1px solid ${C.border}`, color:C.muted, padding:"1px 4px", borderRadius:3 }}>SOON</span>
+            </button>
+          </div>
+
           {/* Stats block */}
           <div style={{ padding:"16px 18px", borderTop:`1px solid ${C.border}` }}>
             {[
@@ -1936,7 +2008,7 @@ export default function MusicLibrary() {
                 </div>
 
                 {/* Primary CTA */}
-                <button onClick={scanFolder}
+                <button onClick={()=>scanFolder()}
                   style={{ width:"100%", padding:"16px 24px", background:`linear-gradient(135deg,${G}28,${G}14)`, border:`1px solid ${G}66`, color:G, fontFamily:"'DM Mono',monospace", fontSize:13, letterSpacing:2, borderRadius:12, cursor:"pointer", boxShadow:`0 0 40px ${G}18`, transition:"all .2s", display:"flex", alignItems:"center", justifyContent:"center", gap:10 }}>
                   <span style={{ fontSize:16 }}>📂</span> FIND MY MUSIC
                 </button>
