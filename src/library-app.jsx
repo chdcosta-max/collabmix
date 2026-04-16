@@ -40,6 +40,7 @@ const CAMELOT = {
   "Am":"8A","Em":"9A","Bm":"10A","F#m":"11A","C#m":"12A","G#m":"1A",
   "D#m":"2A","A#m":"3A","Fm":"4A","Cm":"5A","Gm":"6A","Dm":"7A",
 };
+const CAMELOT_TO_KEY = Object.fromEntries(Object.entries(CAMELOT).map(([k,v])=>[v,k]));
 
 // ── IndexedDB helpers ─────────────────────────────────────────
 function openDB() {
@@ -229,6 +230,87 @@ function parseiTunesXML(xmlText) {
       name: p["Name"],
       trackIds: (p["Playlist Items"] || []).map(item => `itunes_${item["Track ID"]}`),
     }));
+
+  return { tracks, playlists };
+}
+
+// ── Parse Rekordbox XML ───────────────────────────────────────
+function parseRekordboxXML(xmlText) {
+  const parser = new DOMParser();
+  const doc = parser.parseFromString(xmlText, "text/xml");
+
+  // Check it's actually a Rekordbox XML
+  if (!doc.querySelector("DJ_PLAYLISTS")) return { tracks: [], playlists: [] };
+
+  const trackEls = doc.querySelectorAll("COLLECTION > TRACK");
+  const tracks = [];
+  const trackById = {}; // TrackID → track object
+
+  for (const el of trackEls) {
+    const location = el.getAttribute("Location") || "";
+    // Rekordbox location: "file://localhost/path/..." or "file:///path/..."
+    const filePath = decodeURIComponent(
+      location.replace(/^file:\/\/localhost/, "").replace(/^file:\/\//, "")
+    );
+    const filename = filePath.split("/").pop() || "";
+    const trackId  = el.getAttribute("TrackID") || "";
+
+    const bpmStr   = el.getAttribute("AverageBpm");
+    const bpm      = bpmStr ? parseFloat(bpmStr) : null;
+    const totalTime = el.getAttribute("TotalTime");
+    const duration  = totalTime ? parseFloat(totalTime) : null;
+    const tonality  = el.getAttribute("Tonality") || "";
+    // Convert Camelot → musical key (e.g. "9B" → "G") so our key filter works
+    const key = CAMELOT_TO_KEY[tonality] || tonality || null;
+
+    const track = {
+      id:         `rb_${trackId}`,
+      rbTrackId:  trackId,
+      itunesId:   null,
+      title:      el.getAttribute("Name")   || filename.replace(/\.[^.]+$/, ""),
+      artist:     el.getAttribute("Artist") || "",
+      album:      el.getAttribute("Album")  || "",
+      genre:      el.getAttribute("Genre")  || "",
+      label:      el.getAttribute("Label")  || "",
+      year:       el.getAttribute("Year")   || "",
+      bpm,
+      key,
+      duration,
+      energy:     null,
+      analyzed:   !!(bpm || key),   // Rekordbox pre-analyzed — no need to re-analyze
+      cloudOnly:  false,
+      filename:   filename.replace(/\.[^.]+$/, ""),
+      path:       filePath,
+      source:     "rekordbox",
+      playCount:  parseInt(el.getAttribute("PlayCount") || "0", 10) || 0,
+      addedAt:    Date.now(),
+    };
+
+    tracks.push(track);
+    trackById[trackId] = track;
+  }
+
+  // Parse playlists recursively (TYPE="0" = folder, TYPE="1" = playlist)
+  const playlists = [];
+  const parseNode = (node, folderPath = "") => {
+    const type = node.getAttribute("Type");
+    const name = node.getAttribute("Name") || "";
+    if (type === "1") {
+      // Playlist node
+      const trackIds = Array.from(node.querySelectorAll(":scope > TRACK"))
+        .map(t => trackById[t.getAttribute("Key")]?.id)
+        .filter(Boolean);
+      if (trackIds.length > 0) {
+        playlists.push({ name: folderPath ? `${folderPath} / ${name}` : name, trackIds });
+      }
+    } else {
+      // Folder or root — recurse, passing folder name as prefix
+      const prefix = (name && name !== "ROOT") ? (folderPath ? `${folderPath} / ${name}` : name) : folderPath;
+      for (const child of node.querySelectorAll(":scope > NODE")) parseNode(child, prefix);
+    }
+  };
+  const rootNode = doc.querySelector("PLAYLISTS > NODE");
+  if (rootNode) parseNode(rootNode);
 
   return { tracks, playlists };
 }
@@ -768,6 +850,7 @@ export default function MusicLibrary() {
   const [queueIds,          setQueueIds]            = useState(() => new Set());
   const [itunesPicker,      setItunesPicker]       = useState(null); // { tracks, playlists, selectedPls, importMode }
   const [itunesDirHandle,   setItunesDirHandle]    = useState(null); // remembered dir handle for re-sync
+  const [rbPicker,          setRbPicker]           = useState(null); // { tracks, playlists, selectedPls, importMode }
   const searchRef = useRef(null);
 
   useEffect(() => {
@@ -884,58 +967,63 @@ export default function MusicLibrary() {
 
     let found = 0;
 
-    for await (const { name, handle, path } of scanDir(dirHandle)) {
-      found++;
-      setScanProg(p => ({ ...p, found }));
-      const nameNoExt = name.replace(/\.[^.]+$/,"");
+    try {
+      for await (const { name, handle, path } of scanDir(dirHandle)) {
+        found++;
+        setScanProg(p => ({ ...p, found }));
+        const nameNoExt = name.replace(/\.[^.]+$/,"");
 
-      // Check if a cloud-imported iTunes track matches this file
-      const cloudMatch = cloudByFilename[name] || cloudByFilenameNoExt[nameNoExt];
-      if (cloudMatch) {
-        // Link the local file handle to the existing cloud track
-        const updated = { ...cloudMatch, cloudOnly: false };
-        setTracks(prev => prev.map(t => t.id === cloudMatch.id ? updated : t));
-        await dbPut(db, "tracks",  updated);
-        await dbPut(db, "handles", { id: cloudMatch.id, handle });
-        if (!cloudMatch.analyzed) queueRef.current.push({ id: cloudMatch.id });
-        continue;
+        // Check if a cloud-imported iTunes track matches this file
+        const cloudMatch = cloudByFilename[name] || cloudByFilenameNoExt[nameNoExt];
+        if (cloudMatch) {
+          // Link the local file handle to the existing cloud track
+          const updated = { ...cloudMatch, cloudOnly: false };
+          setTracks(prev => prev.map(t => t.id === cloudMatch.id ? updated : t));
+          await dbPut(db, "tracks",  updated);
+          await dbPut(db, "handles", { id: cloudMatch.id, handle });
+          if (!cloudMatch.analyzed) queueRef.current.push({ id: cloudMatch.id });
+          continue;
+        }
+
+        const id = `h_${btoa(path).replace(/[^a-zA-Z0-9]/g,"")}`;
+        if (existing.has(id)) continue;
+
+        let tags = {};
+        try {
+          const sl = await (await handle.getFile()).slice(0, 131072).arrayBuffer();
+          tags = parseID3(sl);
+        } catch {}
+
+        const track = {
+          id, filename: name, path,
+          title:  tags.title  || name.replace(/\.[^.]+$/,""),
+          artist: tags.artist || "",
+          album:  tags.album  || "",
+          genre:  tags.genre  || "",
+          label:  tags.label  || "",
+          year:   tags.year   || "",
+          bpm:    tags.bpm    ? parseFloat(tags.bpm) : null,
+          key:    tags.key    || null,
+          duration: null,
+          energy:   null,
+          analyzed: false,
+          cloudOnly: false,
+          source: "local",
+          addedAt:  Date.now(),
+        };
+
+        setTracks(prev => [track, ...prev]);
+        await dbPut(db, "tracks",  track);
+        await dbPut(db, "handles", { id, handle });
+        queueRef.current.push({ id });
       }
-
-      const id = `h_${btoa(path).replace(/[^a-zA-Z0-9]/g,"")}`;
-      if (existing.has(id)) continue;
-
-      let tags = {};
-      try {
-        const sl = await (await handle.getFile()).slice(0, 131072).arrayBuffer();
-        tags = parseID3(sl);
-      } catch {}
-
-      const track = {
-        id, filename: name, path,
-        title:  tags.title  || name.replace(/\.[^.]+$/,""),
-        artist: tags.artist || "",
-        album:  tags.album  || "",
-        genre:  tags.genre  || "",
-        label:  tags.label  || "",
-        year:   tags.year   || "",
-        bpm:    tags.bpm    ? parseFloat(tags.bpm) : null,
-        key:    tags.key    || null,
-        duration: null,
-        energy:   null,
-        analyzed: false,
-        cloudOnly: false,
-        addedAt:  Date.now(),
-      };
-
-      setTracks(prev => [track, ...prev]);
-      await dbPut(db, "tracks",  track);
-      await dbPut(db, "handles", { id, handle });
-      queueRef.current.push({ id });
+    } catch(scanErr) {
+      console.error("Scan error:", scanErr);
+    } finally {
+      setScanProg(p => ({ ...p, total: found }));
+      setScanning(false);
+      processQueue();
     }
-
-    setScanProg(p => ({ ...p, total: found }));
-    setScanning(false);
-    processQueue();
   };
 
   // ── iTunes / Apple Music guided scan ─────────────────────────
@@ -1001,6 +1089,104 @@ export default function MusicLibrary() {
       setItunesDirHandle(null);
       if (dbRef.current) await dbDelete(dbRef.current, "handles", "itunes_dir");
     }
+  };
+
+  // ── Rekordbox: open XML file picker → show playlist picker ──────
+  const importRekordbox = async () => {
+    let fileHandle;
+    try {
+      [fileHandle] = await window.showOpenFilePicker({
+        types: [{ description: "Rekordbox XML", accept: { "text/xml": [".xml"] } }],
+        startIn: "music",
+        multiple: false,
+      });
+    } catch { return; } // user cancelled
+
+    try {
+      const file = await fileHandle.getFile();
+      const text = await file.text();
+      const { tracks: rbTracks, playlists: rbPlaylists } = parseRekordboxXML(text);
+
+      if (!rbTracks.length) {
+        alert(
+          "No tracks found in this file.\n\n" +
+          "Make sure you export from Rekordbox:\n" +
+          "  File → Export Collection in xml format\n\n" +
+          "Then select that exported .xml file here."
+        );
+        return;
+      }
+
+      setRbPicker({
+        tracks:     rbTracks,
+        playlists:  rbPlaylists,
+        selectedPls: new Set(rbPlaylists.map(p => p.name)),
+        importMode: "all",
+      });
+    } catch(e) {
+      console.error("Rekordbox parse error", e);
+      alert("Could not read that XML file.\n\nMake sure it was exported from Rekordbox via File → Export Collection in xml format.");
+    }
+  };
+
+  // ── Perform Rekordbox import after playlist selection ────────────
+  const doRekordboxImport = async () => {
+    if (!rbPicker) return;
+    const { tracks: rbTracks, playlists: rbPlaylists, selectedPls, importMode } = rbPicker;
+    setRbPicker(null);
+    setScanning(true);
+    setScanProg({ found: 0, analyzed: 0, total: 0 });
+
+    try {
+      let tracksToImport = rbTracks;
+      if (importMode === "playlists") {
+        const selectedTrackIds = new Set(
+          rbPlaylists.filter(p => selectedPls.has(p.name)).flatMap(p => p.trackIds)
+        );
+        tracksToImport = rbTracks.filter(t => selectedTrackIds.has(t.id));
+      }
+
+      const db = dbRef.current;
+      const existing = new Set(tracks.map(t => t.id));
+
+      let added = 0;
+      for (const t of tracksToImport) {
+        if (existing.has(t.id)) continue;
+        setTracks(prev => [t, ...prev]);
+        await dbPut(db, "tracks", t);
+        added++;
+        setScanProg(p => ({ ...p, found: added }));
+      }
+
+      // Create crates from playlists
+      const playlistsToProcess = importMode === "playlists"
+        ? rbPlaylists.filter(p => selectedPls.has(p.name))
+        : rbPlaylists;
+
+      for (const pl of playlistsToProcess) {
+        const existingCrate = crates.find(c => c.name === pl.name);
+        if (!existingCrate && pl.trackIds.length > 0) {
+          const validIds = pl.trackIds.filter(tid => tracksToImport.find(t => t.id === tid));
+          if (validIds.length > 0) {
+            const cr = {
+              id: `cr_${Date.now()}_${Math.random().toString(36).slice(2, 5)}`,
+              name: pl.name,
+              trackIds: validIds,
+              createdAt: Date.now(),
+            };
+            setCrates(p => [...p, cr]);
+            await dbPut(db, "crates", cr);
+          }
+        }
+      }
+
+      setScanProg({ found: added, analyzed: 0, total: tracksToImport.length });
+    } catch(e) {
+      console.error("Rekordbox import error", e);
+      alert("Import error. Please try again.");
+    }
+
+    setScanning(false);
   };
 
   // ── iTunes XML: parse → show playlist picker ───────────────────
@@ -1438,11 +1624,150 @@ export default function MusicLibrary() {
         </div>
       )}
 
+      {/* ── REKORDBOX PICKER MODAL ── */}
+      {rbPicker && (
+        <div style={{ position:"fixed", inset:0, background:"rgba(0,0,0,.75)", zIndex:500, display:"flex", alignItems:"center", justifyContent:"center", padding:24 }}
+          onClick={e=>{ if(e.target===e.currentTarget) setRbPicker(null); }}>
+          <div style={{ background:C.raised, border:`1px solid ${G}33`, borderRadius:16, width:"100%", maxWidth:560, maxHeight:"80vh", display:"flex", flexDirection:"column", boxShadow:"0 24px 64px rgba(0,0,0,.8)" }}>
+
+            {/* Header */}
+            <div style={{ padding:"20px 24px 16px", borderBottom:`1px solid ${C.border}`, display:"flex", alignItems:"center", gap:12, flexShrink:0 }}>
+              <span style={{ fontSize:22 }}>🎛️</span>
+              <div style={{ flex:1 }}>
+                <div style={{ fontSize:17, fontWeight:600, color:C.text, fontFamily:"'DM Sans',sans-serif" }}>Rekordbox Library</div>
+                <div style={{ fontSize:10, color:C.muted, fontFamily:"'DM Mono',monospace", marginTop:2 }}>
+                  {rbPicker.tracks.length} tracks · {rbPicker.playlists.length} playlists · BPM & key pre-analyzed ⚡
+                </div>
+              </div>
+              <button onClick={()=>setRbPicker(null)}
+                style={{ background:"none", border:"none", color:C.muted, cursor:"pointer", fontSize:18, lineHeight:1, padding:"0 4px" }}>✕</button>
+            </div>
+
+            {/* Import mode */}
+            <div style={{ padding:"16px 24px 12px", borderBottom:`1px solid ${C.border}`, flexShrink:0 }}>
+              <div style={{ fontSize:11, fontFamily:"'DM Mono',monospace", color:C.muted, letterSpacing:1, marginBottom:10 }}>WHAT TO IMPORT</div>
+              {[
+                ["all",       `All tracks (${rbPicker.tracks.length} total)`,    "Everything in your Rekordbox collection"],
+                ["playlists", "Selected playlists only",                           "Choose which playlists — other tracks are skipped"],
+              ].map(([mode, label, desc]) => (
+                <label key={mode} style={{ display:"flex", gap:10, marginBottom:10, cursor:"pointer", alignItems:"flex-start" }}>
+                  <input type="radio" checked={rbPicker.importMode===mode}
+                    onChange={() => setRbPicker(p => ({...p, importMode:mode}))}
+                    style={{ marginTop:3, accentColor:G, flexShrink:0 }}/>
+                  <div>
+                    <div style={{ fontSize:13, color:C.text, fontFamily:"'DM Sans',sans-serif", fontWeight:500 }}>{label}</div>
+                    <div style={{ fontSize:10, color:C.muted, fontFamily:"'DM Mono',monospace", marginTop:2 }}>{desc}</div>
+                  </div>
+                </label>
+              ))}
+            </div>
+
+            {/* Playlist list */}
+            {rbPicker.importMode === "playlists" && (
+              <div style={{ flex:1, overflowY:"auto", padding:"8px 24px" }}>
+                <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", padding:"8px 0", position:"sticky", top:0, background:C.raised }}>
+                  <div style={{ fontSize:10, fontFamily:"'DM Mono',monospace", color:C.muted, letterSpacing:1 }}>
+                    PLAYLISTS ({rbPicker.selectedPls.size}/{rbPicker.playlists.length} selected)
+                  </div>
+                  <div style={{ display:"flex", gap:8 }}>
+                    <button onClick={()=>setRbPicker(p=>({...p,selectedPls:new Set(p.playlists.map(pl=>pl.name))}))}
+                      style={{ fontSize:9, fontFamily:"'DM Mono',monospace", background:"transparent", border:`1px solid ${C.border}`, color:C.muted, borderRadius:4, padding:"2px 8px", cursor:"pointer" }}>ALL</button>
+                    <button onClick={()=>setRbPicker(p=>({...p,selectedPls:new Set()}))}
+                      style={{ fontSize:9, fontFamily:"'DM Mono',monospace", background:"transparent", border:`1px solid ${C.border}`, color:C.muted, borderRadius:4, padding:"2px 8px", cursor:"pointer" }}>NONE</button>
+                  </div>
+                </div>
+                {rbPicker.playlists.length === 0 && (
+                  <div style={{ padding:"20px 0", textAlign:"center", fontSize:11, color:C.muted, fontFamily:"'DM Mono',monospace" }}>
+                    No playlists found in this collection
+                  </div>
+                )}
+                {rbPicker.playlists.map(pl => {
+                  const checked = rbPicker.selectedPls.has(pl.name);
+                  return (
+                    <label key={pl.name} style={{ display:"flex", alignItems:"center", gap:10, padding:"8px 0", cursor:"pointer", borderBottom:`1px solid ${C.border}44` }}>
+                      <input type="checkbox" checked={checked}
+                        onChange={() => setRbPicker(p => {
+                          const s = new Set(p.selectedPls);
+                          checked ? s.delete(pl.name) : s.add(pl.name);
+                          return {...p, selectedPls:s};
+                        })}
+                        style={{ accentColor:G, flexShrink:0 }}/>
+                      <span style={{ flex:1, fontSize:13, color:checked?C.text:C.muted, fontFamily:"'DM Sans',sans-serif", whiteSpace:"nowrap", overflow:"hidden", textOverflow:"ellipsis" }}>{pl.name}</span>
+                      <span style={{ fontSize:10, color:C.muted, fontFamily:"'DM Mono',monospace", flexShrink:0 }}>{pl.trackIds.length}</span>
+                    </label>
+                  );
+                })}
+              </div>
+            )}
+
+            {/* Footer */}
+            <div style={{ padding:"16px 24px", borderTop:`1px solid ${C.border}`, display:"flex", gap:12, alignItems:"center", flexShrink:0 }}>
+              <div style={{ flex:1, fontSize:10, color:C.muted, fontFamily:"'DM Mono',monospace" }}>
+                {rbPicker.importMode === "playlists"
+                  ? `${rbPicker.playlists.filter(p=>rbPicker.selectedPls.has(p.name)).reduce((s,p)=>s+p.trackIds.length,0)} tracks from selected playlists · each playlist becomes a crate`
+                  : `${rbPicker.tracks.length} tracks + ${rbPicker.playlists.length} playlists → DJ crates`
+                }
+              </div>
+              <button onClick={()=>setRbPicker(null)}
+                style={{ padding:"9px 16px", background:"transparent", border:`1px solid ${C.border}`, color:C.muted, fontFamily:"'DM Mono',monospace", fontSize:10, borderRadius:8, cursor:"pointer" }}>
+                Cancel
+              </button>
+              <button onClick={doRekordboxImport}
+                disabled={rbPicker.importMode==="playlists" && rbPicker.selectedPls.size===0}
+                style={{ padding:"9px 20px", background:`linear-gradient(135deg,${G}22,${G}11)`, border:`1px solid ${G}88`, color:G, fontFamily:"'DM Mono',monospace", fontSize:11, letterSpacing:1, borderRadius:8, cursor:"pointer", fontWeight:500 }}>
+                IMPORT →
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* ── BODY ── */}
       <div style={{ flex:1, display:"flex", overflow:"hidden" }}>
 
         {/* ── LEFT NAV ── */}
         <div style={{ width:200, flexShrink:0, background:C.surface, borderRight:`1px solid ${C.border}`, display:"flex", flexDirection:"column", padding:"12px 0" }}>
+
+          {/* ── SOURCES section ── */}
+          <div style={{ padding:"0 12px 8px" }}>
+            <div style={{ fontSize:9, fontFamily:"'DM Mono',monospace", color:C.muted, letterSpacing:1.5, marginBottom:6, paddingLeft:4 }}>SOURCES</div>
+            <div style={{ display:"flex", flexDirection:"column", gap:3 }}>
+              {/* Apple Music */}
+              <button onClick={autoImportItunes}
+                style={{ padding:"7px 10px", textAlign:"left", background:"transparent", border:`1px solid ${C.border}`, color:C.subtle, fontFamily:"'DM Sans',sans-serif", fontSize:11, borderRadius:7, cursor:"pointer", display:"flex", alignItems:"center", gap:7, transition:"all .15s" }}
+                onMouseEnter={e=>{ e.currentTarget.style.borderColor="#8B5CF666"; e.currentTarget.style.color="#8B5CF6"; }}
+                onMouseLeave={e=>{ e.currentTarget.style.borderColor=C.border; e.currentTarget.style.color=C.subtle; }}
+              >
+                <span style={{ fontSize:13 }}>🎵</span>
+                <span style={{ flex:1 }}>Apple Music</span>
+                {tracks.filter(t=>t.source==="itunes").length > 0 &&
+                  <span style={{ fontSize:9, fontFamily:"'DM Mono',monospace", color:C.muted }}>{tracks.filter(t=>t.source==="itunes").length}</span>
+                }
+              </button>
+              {/* Rekordbox */}
+              <button onClick={importRekordbox}
+                style={{ padding:"7px 10px", textAlign:"left", background:"transparent", border:`1px solid ${C.border}`, color:C.subtle, fontFamily:"'DM Sans',sans-serif", fontSize:11, borderRadius:7, cursor:"pointer", display:"flex", alignItems:"center", gap:7, transition:"all .15s" }}
+                onMouseEnter={e=>{ e.currentTarget.style.borderColor=`${G}66`; e.currentTarget.style.color=G; }}
+                onMouseLeave={e=>{ e.currentTarget.style.borderColor=C.border; e.currentTarget.style.color=C.subtle; }}
+              >
+                <span style={{ fontSize:13 }}>🎛️</span>
+                <span style={{ flex:1 }}>Rekordbox</span>
+                {tracks.filter(t=>t.source==="rekordbox").length > 0 &&
+                  <span style={{ fontSize:9, fontFamily:"'DM Mono',monospace", color:C.muted }}>{tracks.filter(t=>t.source==="rekordbox").length}</span>
+                }
+              </button>
+              {/* Tidal — coming soon */}
+              <button disabled
+                style={{ padding:"7px 10px", textAlign:"left", background:"transparent", border:`1px solid ${C.border}44`, color:`${C.muted}88`, fontFamily:"'DM Sans',sans-serif", fontSize:11, borderRadius:7, cursor:"default", display:"flex", alignItems:"center", gap:7, opacity:.55 }}>
+                <span style={{ fontSize:13 }}>🌊</span>
+                <span style={{ flex:1 }}>Tidal</span>
+                <span style={{ fontSize:8, fontFamily:"'DM Mono',monospace", background:C.raised, color:C.muted, padding:"1px 5px", borderRadius:3, border:`1px solid ${C.border}` }}>SOON</span>
+              </button>
+            </div>
+          </div>
+
+          <div style={{ height:1, background:C.border, margin:"4px 0 8px" }}/>
+
           {VIEWS.map(([id,label]) => (
             <button key={id} onClick={()=>selectView(id)}
               style={{ padding:"11px 18px", textAlign:"left", background:"transparent", border:"none", borderLeft:`3px solid ${view===id&&!activeCrateId?G:"transparent"}`, color:view===id&&!activeCrateId?G:C.subtle, fontFamily:"'DM Sans',sans-serif", fontSize:13, fontWeight:view===id&&!activeCrateId?500:400, cursor:"pointer", letterSpacing:.3, transition:"all .15s" }}
