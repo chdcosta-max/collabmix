@@ -704,9 +704,9 @@ function TrackRow({ track, selected, onClick, onAddToCrate, crates, onPlay, onSe
           >⋮</button>
           {showCrateMenu && (
             <div style={{ position:"absolute", right:0, top:"100%", zIndex:100, background:C.raised, border:`1px solid ${C.border}`, borderRadius:8, padding:6, minWidth:160, boxShadow:"0 8px 24px rgba(0,0,0,.6)" }}>
-              <div style={{ fontSize:9, color:C.muted, fontFamily:"'DM Mono',monospace", padding:"2px 8px 6px", letterSpacing:1 }}>ADD TO CRATE</div>
+              <div style={{ fontSize:9, color:C.muted, fontFamily:"'DM Mono',monospace", padding:"2px 8px 6px", letterSpacing:1 }}>ADD TO PLAYLIST</div>
               {crates.length === 0
-                ? <div style={{ fontSize:10, color:C.muted, padding:"4px 8px", fontFamily:"'DM Mono',monospace" }}>No crates yet</div>
+                ? <div style={{ fontSize:10, color:C.muted, padding:"4px 8px", fontFamily:"'DM Mono',monospace" }}>No playlists yet</div>
                 : crates.map(cr => (
                   <div key={cr.id} onClick={e=>{e.stopPropagation();onAddToCrate(track.id,cr.id);setShowCrateMenu(false);}}
                     style={{ fontSize:11, color:C.text, padding:"5px 8px", borderRadius:4, cursor:"pointer", fontFamily:"'DM Sans',sans-serif" }}
@@ -963,10 +963,10 @@ function CratesView({ tracks, crates, onCreateCrate, onDeleteCrate, onRemoveFrom
       {/* Crate list */}
       <div style={{ width:220, flexShrink:0, display:"flex", flexDirection:"column", borderRight:`1px solid ${C.border}`, background:C.bg }}>
         <div style={{ padding:"10px 12px", borderBottom:`1px solid ${C.border}` }}>
-          <div style={{ fontSize:9, fontFamily:"'DM Mono',monospace", color:C.muted, letterSpacing:2, marginBottom:8 }}>CRATES ({crates.length})</div>
+          <div style={{ fontSize:9, fontFamily:"'DM Mono',monospace", color:C.muted, letterSpacing:2, marginBottom:8 }}>PLAYLISTS ({crates.length})</div>
           <div style={{ display:"flex", gap:6 }}>
             <input value={newName} onChange={e=>setNewName(e.target.value)} onKeyDown={e=>e.key==="Enter"&&create()}
-              placeholder="New crate name..." maxLength={30}
+              placeholder="New playlist name..." maxLength={30}
               style={{ flex:1, background:C.raised, border:`1px solid ${C.border}`, color:C.text, borderRadius:6, padding:"6px 9px", fontSize:10, fontFamily:"'DM Sans',sans-serif", outline:"none" }}/>
             <button onClick={create} style={{ padding:"6px 10px", background:`${G}18`, border:`1px solid ${G}33`, color:G, borderRadius:6, cursor:"pointer", fontFamily:"'DM Mono',monospace", fontSize:10 }}>+</button>
           </div>
@@ -988,7 +988,7 @@ function CratesView({ tracks, crates, onCreateCrate, onDeleteCrate, onRemoveFrom
                 style={{ background:"none", border:"none", color:C.muted, cursor:"pointer", fontSize:12, opacity:.5, padding:0, lineHeight:1 }}>✕</button>
             </div>
           ))}
-          {crates.length===0&&<div style={{ padding:"20px 14px", fontSize:10, color:C.muted, fontFamily:"'DM Mono',monospace", lineHeight:2 }}>Create a crate to<br/>organize your tracks</div>}
+          {crates.length===0&&<div style={{ padding:"20px 14px", fontSize:10, color:C.muted, fontFamily:"'DM Mono',monospace", lineHeight:2 }}>Create a playlist to<br/>organize your tracks</div>}
         </div>
       </div>
 
@@ -1068,6 +1068,8 @@ export default function MusicLibrary() {
   const [energyFilter, setEnergyFilter] = useState(null);
   const [keyFilter,    setKeyFilter]    = useState(null);
   const [showItunesHelper,  setShowItunesHelper]  = useState(false);
+  const [showAddMusicMenu,  setShowAddMusicMenu]  = useState(false);
+  const addMusicMenuRef = useRef(null);
   const [cratesExpanded,    setCratesExpanded]     = useState(true);
   const [activeCrateId,     setActiveCrateId]      = useState(null);
   const [showNewCrateInput, setShowNewCrateInput]  = useState(false);
@@ -1096,6 +1098,13 @@ export default function MusicLibrary() {
     document.addEventListener("mousedown", close);
     return () => document.removeEventListener("mousedown", close);
   }, [showFilterPanel]);
+
+  useEffect(() => {
+    if (!showAddMusicMenu) return;
+    const close = (e) => { if (addMusicMenuRef.current && !addMusicMenuRef.current.contains(e.target)) setShowAddMusicMenu(false); };
+    document.addEventListener("mousedown", close);
+    return () => document.removeEventListener("mousedown", close);
+  }, [showAddMusicMenu]);
 
   // Keyboard shortcuts: "/" = focus search, Escape = clear search
   useEffect(() => {
@@ -1814,9 +1823,8 @@ export default function MusicLibrary() {
   const VIEWS = [
     ["tracks",  "♫ ALL TRACKS"],
     ["artists", "👤 ARTISTS"],
-    ["energy",  "⚡ ENERGY"],
+    ["labels",  "🏷 RECORD LABEL"],
     ["genres",  "◎ GENRE"],
-    ["labels",  "🏷 LABEL"],
   ];
 
   return (
@@ -1942,64 +1950,71 @@ export default function MusicLibrary() {
               </div>
             )}
           </div>
-          <div data-itunes-helper style={{ position:"relative" }}>
-            {/* Re-sync button if we have a remembered handle */}
-            {itunesDirHandle ? (
-              <div style={{ display:"flex", gap:6 }}>
-                <button onClick={()=>resyncItunes()}
-                  style={{ padding:"9px 14px", background:"#22c55e15", border:"1px solid #22c55e55", color:"#22c55e", fontFamily:"'DM Mono',monospace", fontSize:10, letterSpacing:1.5, borderRadius:8, cursor:"pointer", whiteSpace:"nowrap" }}>
-                  ↻ SYNC LIBRARY
-                </button>
-                <button onClick={()=>setShowItunesHelper(v=>!v)}
-                  style={{ padding:"9px 10px", background:"#8B5CF615", border:`1px solid #8B5CF633`, color:"#8B5CF6", fontFamily:"'DM Mono',monospace", fontSize:10, borderRadius:8, cursor:"pointer" }}>
-                  ▾
-                </button>
+
+          {/* ── ADD MUSIC dropdown ── */}
+          <div style={{ position:"relative", flexShrink:0 }} ref={addMusicMenuRef}>
+            {scanning ? (
+              <div style={{ padding:"9px 16px", background:"transparent", border:`1px solid ${G}33`, color:C.muted, fontFamily:"'DM Mono',monospace", fontSize:10, letterSpacing:1.5, borderRadius:8, display:"flex", alignItems:"center", gap:8 }}>
+                <span style={{ width:10, height:10, border:`1.5px solid ${G}44`, borderTop:`1.5px solid ${G}`, borderRadius:"50%", animation:"spin 1s linear infinite", display:"inline-block" }}/>
+                {scanProg.found > 0 ? `${scanProg.found} / ${scanProg.total} IMPORTED…` : "IMPORTING…"}
               </div>
             ) : (
-              <button onClick={()=>setShowItunesHelper(v=>!v)}
-                style={{ padding:"9px 14px", background:"#8B5CF615", border:`1px solid ${showItunesHelper?"#8B5CF688":"#8B5CF655"}`, color:"#8B5CF6", fontFamily:"'DM Mono',monospace", fontSize:10, letterSpacing:1.5, borderRadius:8, cursor:"pointer", display:"flex", alignItems:"center", gap:6, transition:"all .2s", whiteSpace:"nowrap" }}>
-                ♪ iTunes
+              <button
+                onClick={()=>setShowAddMusicMenu(v=>!v)}
+                style={{ padding:"9px 16px", background:showAddMusicMenu?`${G}28`:`${G}22`, border:`1px solid ${G}55`, color:G, fontFamily:"'DM Mono',monospace", fontSize:10, letterSpacing:1.5, borderRadius:8, cursor:"pointer", display:"flex", alignItems:"center", gap:8, transition:"all .2s" }}>
+                <span style={{ fontSize:14, lineHeight:1 }}>＋</span> ADD MUSIC <span style={{ fontSize:9, opacity:.7 }}>▾</span>
               </button>
             )}
-            {showItunesHelper && (
-              <div data-itunes-helper style={{ position:"absolute", top:"calc(100% + 8px)", right:0, width:320, background:C.raised, border:`1px solid #8B5CF644`, borderRadius:12, padding:16, zIndex:200, boxShadow:"0 16px 48px rgba(0,0,0,.8)" }}>
-                <div style={{ fontSize:12, fontWeight:600, color:C.text, fontFamily:"'DM Sans',sans-serif", marginBottom:10 }}>Apple Music Import</div>
 
-                {/* Primary action */}
-                <button onClick={()=>{ setShowItunesHelper(false); autoImportItunes(); }}
-                  style={{ width:"100%", padding:"11px", background:"#8B5CF622", border:"1px solid #8B5CF666", color:"#8B5CF6", fontFamily:"'DM Mono',monospace", fontSize:11, letterSpacing:1, borderRadius:8, cursor:"pointer", marginBottom:10, display:"flex", alignItems:"center", justifyContent:"center", gap:8 }}>
-                  ♪ Select Library.xml
+            {showAddMusicMenu && !scanning && (
+              <div style={{ position:"absolute", top:"calc(100% + 8px)", right:0, width:240, background:C.raised, border:`1px solid ${C.border}`, borderRadius:12, padding:8, zIndex:300, boxShadow:"0 16px 48px rgba(0,0,0,.8)", display:"flex", flexDirection:"column", gap:2 }}>
+                {/* From Folder */}
+                <label style={{ padding:"10px 14px", display:"flex", alignItems:"center", gap:10, cursor:"pointer", borderRadius:8, transition:"background .1s" }}
+                  onMouseEnter={e=>e.currentTarget.style.background=`${G}12`}
+                  onMouseLeave={e=>e.currentTarget.style.background="transparent"}>
+                  <span style={{ fontSize:16 }}>📁</span>
+                  <div>
+                    <div style={{ fontSize:12, color:C.text, fontFamily:"'DM Sans',sans-serif", fontWeight:500 }}>Import Folder</div>
+                    <div style={{ fontSize:9, color:C.muted, fontFamily:"'DM Mono',monospace" }}>mp3, wav, flac, aac & more</div>
+                  </div>
+                  <input type="file" accept="audio/*" multiple webkitdirectory="" onChange={e=>{ setShowAddMusicMenu(false); handleImport(e); }} style={{ display:"none" }} />
+                </label>
+
+                <div style={{ height:1, background:C.border, margin:"2px 8px" }}/>
+
+                {/* Apple Music */}
+                <button onClick={()=>{ setShowAddMusicMenu(false); autoImportItunes(); }}
+                  style={{ padding:"10px 14px", display:"flex", alignItems:"center", gap:10, cursor:"pointer", background:"transparent", border:"none", borderRadius:8, textAlign:"left", transition:"background .1s" }}
+                  onMouseEnter={e=>e.currentTarget.style.background="#8B5CF612"}
+                  onMouseLeave={e=>e.currentTarget.style.background="transparent"}>
+                  <span style={{ fontSize:16 }}>🎵</span>
+                  <div>
+                    <div style={{ fontSize:12, color:C.text, fontFamily:"'DM Sans',sans-serif", fontWeight:500 }}>
+                      Apple Music
+                      {itunesDirHandle && <span style={{ marginLeft:6, fontSize:8, color:"#22c55e", fontFamily:"'DM Mono',monospace", background:"#22c55e18", border:"1px solid #22c55e44", borderRadius:3, padding:"1px 4px" }}>connected</span>}
+                    </div>
+                    <div style={{ fontSize:9, color:C.muted, fontFamily:"'DM Mono',monospace" }}>{itunesDirHandle ? "Re-sync Library.xml" : "Import via Library.xml"}</div>
+                  </div>
                 </button>
-                <div style={{ fontSize:9, color:C.muted, fontFamily:"'DM Mono',monospace", marginBottom:12, lineHeight:1.7 }}>
-                  Select your <span style={{color:G}}>Library.xml</span> file — Apple Music maintains it automatically.<br/>
-                  First time? Enable in Apple Music: <span style={{color:"#8B5CF6"}}>Settings → Advanced → Share iTunes Library XML</span><br/>
-                  File lives at: <span style={{color:G}}>~/Music/Music/Library.xml</span>
-                </div>
 
-                {/* Divider + fallback */}
-                <div style={{ borderTop:`1px solid ${C.border}`, paddingTop:10, display:"flex", alignItems:"center", justifyContent:"space-between" }}>
-                  <span style={{ fontSize:9, color:C.muted, fontFamily:"'DM Mono',monospace" }}>Local files only?</span>
-                  <button onClick={()=>{ setShowItunesHelper(false); itunesScan(); }}
-                    style={{ padding:"4px 10px", background:"transparent", border:`1px solid ${C.border}`, color:C.muted, fontFamily:"'DM Mono',monospace", fontSize:9, letterSpacing:1, borderRadius:5, cursor:"pointer" }}>
-                    ⊕ Scan folder
-                  </button>
-                </div>
-                {itunesDirHandle && (
-                  <button onClick={()=>{ setItunesDirHandle(null); if(dbRef.current) dbDelete(dbRef.current,"handles","itunes_dir"); setShowItunesHelper(false); }}
-                    style={{ marginTop:8, width:"100%", padding:"5px", background:"transparent", border:"none", color:"#ef444455", fontFamily:"'DM Mono',monospace", fontSize:9, cursor:"pointer", textAlign:"center" }}>
-                    ✕ Forget saved folder
-                  </button>
-                )}
+                {/* Rekordbox */}
+                <button onClick={()=>{ setShowAddMusicMenu(false); rbDirHandle||rbFileHandle ? resyncRekordbox() : importRekordbox(); }}
+                  style={{ padding:"10px 14px", display:"flex", alignItems:"center", gap:10, cursor:"pointer", background:"transparent", border:"none", borderRadius:8, textAlign:"left", transition:"background .1s" }}
+                  onMouseEnter={e=>e.currentTarget.style.background=`${G}10`}
+                  onMouseLeave={e=>e.currentTarget.style.background="transparent"}>
+                  <span style={{ fontSize:16 }}>🎛️</span>
+                  <div>
+                    <div style={{ fontSize:12, color:C.text, fontFamily:"'DM Sans',sans-serif", fontWeight:500 }}>
+                      Rekordbox
+                      {(rbDirHandle||rbFileHandle) && <span style={{ marginLeft:6, fontSize:8, color:"#22c55e", fontFamily:"'DM Mono',monospace", background:"#22c55e18", border:"1px solid #22c55e44", borderRadius:3, padding:"1px 4px" }}>connected</span>}
+                    </div>
+                    <div style={{ fontSize:9, color:C.muted, fontFamily:"'DM Mono',monospace" }}>{rbDirHandle||rbFileHandle ? "Re-sync database" : "Import database directly"}</div>
+                  </div>
+                </button>
               </div>
             )}
           </div>
-          <label style={{ padding:"9px 16px", background:scanning?"transparent":`${G}22`, border:`1px solid ${G}55`, color:G, fontFamily:"'DM Mono',monospace", fontSize:10, letterSpacing:1.5, borderRadius:8, cursor:scanning?"not-allowed":"pointer", display:"flex", alignItems:"center", gap:8, transition:"all .2s" }}>
-            {scanning
-              ? <><span style={{ width:10, height:10, border:`1.5px solid ${G}44`, borderTop:`1.5px solid ${G}`, borderRadius:"50%", animation:"spin 1s linear infinite", display:"inline-block" }}/> {scanProg.found > 0 ? `${scanProg.found} / ${scanProg.total} imported…` : "IMPORTING…"}</>
-              : <><span style={{ fontSize:14, lineHeight:1 }}>＋</span> ADD MUSIC</>
-            }
-            <input type="file" accept="audio/*" multiple webkitdirectory="" onChange={handleImport} style={{ display:"none" }} disabled={scanning} />
-          </label>
+
           {tracks.length>0 && analyzedCount<tracks.length && (
             <button onClick={reanalyzeAll} style={{ padding:"9px 12px", background:"transparent", border:`1px solid ${C.border}`, color:C.muted, fontFamily:"'DM Mono',monospace", fontSize:9, letterSpacing:1, borderRadius:8, cursor:"pointer" }}>⟳ ANALYZE</button>
           )}
@@ -2206,7 +2221,7 @@ export default function MusicLibrary() {
               <div style={{ flex:1, fontSize:10, color:C.muted, fontFamily:"'DM Mono',monospace" }}>
                 {rbPicker.importMode === "playlists"
                   ? `${rbPicker.playlists.filter(p=>rbPicker.selectedPls.has(p.name)).reduce((s,p)=>s+p.trackIds.length,0)} tracks from selected playlists · each playlist becomes a crate`
-                  : `${rbPicker.tracks.length} tracks + ${rbPicker.playlists.length} playlists → DJ crates`
+                  : `${rbPicker.tracks.length} tracks + ${rbPicker.playlists.length} playlists → Playlists`
                 }
               </div>
               <button onClick={()=>setRbPicker(null)}
@@ -2229,60 +2244,6 @@ export default function MusicLibrary() {
         {/* ── LEFT NAV ── */}
         <div style={{ width:200, flexShrink:0, background:C.surface, borderRight:`1px solid ${C.border}`, display:"flex", flexDirection:"column", padding:"12px 0" }}>
 
-          {/* ── SOURCES section ── */}
-          <div style={{ padding:"0 12px 8px" }}>
-            <div style={{ fontSize:9, fontFamily:"'DM Mono',monospace", color:C.muted, letterSpacing:1.5, marginBottom:6, paddingLeft:4, display:"flex", justifyContent:"space-between", alignItems:"center" }}>
-              <span>SOURCES</span>
-              {sourceFilter && <button onClick={()=>setSourceFilter(null)} style={{ background:"none", border:"none", color:C.muted, cursor:"pointer", fontSize:9, fontFamily:"'DM Mono',monospace", padding:0 }}>× all</button>}
-            </div>
-            {(() => {
-              const itunesCount = tracks.filter(t=>t.source==="itunes").length;
-              const rbCount = tracks.filter(t=>t.source==="rekordbox").length;
-              return (
-              <div style={{ display:"flex", flexDirection:"column", gap:3 }}>
-                {[
-                  { src:"itunes",    icon:"🎵", label:"Apple Music", count:itunesCount,  color:"#8B5CF6",
-                    onImport:()=>autoImportItunes(),   onSync:()=>resyncItunes(),    synced:!!itunesDirHandle },
-                  { src:"rekordbox", icon:"🎛️", label:"Rekordbox",   count:rbCount,      color:G,
-                    onImport:()=>importRekordbox(),    onSync:()=>resyncRekordbox(), synced:!!(rbDirHandle||rbFileHandle) },
-                ].map(({ src, icon, label, count, color, onImport, onSync, synced }) => {
-                  const active = sourceFilter === src;
-                  return (
-                    <div key={src} style={{ display:"flex", gap:2 }}>
-                      {/* Filter button (left) */}
-                      <button
-                        onClick={()=>{ setSourceFilter(active ? null : src); setActiveCrateId(null); setView("tracks"); }}
-                        style={{ flex:1, padding:"7px 8px", textAlign:"left", background:active?`${color}14`:"transparent", border:`1px solid ${active?color+"55":C.border}`, color:active?color:C.subtle, fontFamily:"'DM Sans',sans-serif", fontSize:11, borderRadius:7, cursor:"pointer", display:"flex", alignItems:"center", gap:6, transition:"all .15s" }}
-                        onMouseEnter={e=>{ if(!active){e.currentTarget.style.borderColor=color+"44";e.currentTarget.style.color=color;} }}
-                        onMouseLeave={e=>{ if(!active){e.currentTarget.style.borderColor=C.border;e.currentTarget.style.color=C.subtle;} }}
-                      >
-                        <span style={{ fontSize:12 }}>{icon}</span>
-                        <span style={{ flex:1 }}>{label}</span>
-                        {count > 0 && <span style={{ fontSize:9, fontFamily:"'DM Mono',monospace", color:active?color:C.muted }}>{count}</span>}
-                        {synced && count === 0 && <span style={{ fontSize:7, color:color, fontFamily:"'DM Mono',monospace", opacity:.7 }}>●</span>}
-                      </button>
-                      {/* Sync button if connected, Import (+) if not */}
-                      <button
-                        onClick={synced ? onSync : onImport}
-                        title={synced ? `Re-sync ${label}` : `Connect ${label}`}
-                        style={{ padding:"7px 8px", background:"transparent", border:`1px solid ${C.border}`, color:C.muted, fontSize:synced?10:12, fontFamily:"'DM Mono',monospace", borderRadius:7, cursor:"pointer", flexShrink:0, lineHeight:1, transition:"all .15s" }}
-                        onMouseEnter={e=>{ e.currentTarget.style.borderColor=color+"55"; e.currentTarget.style.color=color; }}
-                        onMouseLeave={e=>{ e.currentTarget.style.borderColor=C.border; e.currentTarget.style.color=C.muted; }}
-                      >{synced ? "↻" : "+"}</button>
-                    </div>
-                  );
-                })}
-                {/* Tidal — coming soon */}
-                <button disabled style={{ padding:"7px 10px", textAlign:"left", background:"transparent", border:`1px solid ${C.border}44`, color:`${C.muted}66`, fontFamily:"'DM Sans',sans-serif", fontSize:11, borderRadius:7, cursor:"default", display:"flex", alignItems:"center", gap:6, opacity:.5 }}>
-                  <span style={{ fontSize:12 }}>🌊</span>
-                  <span style={{ flex:1 }}>Tidal</span>
-                  <span style={{ fontSize:7, fontFamily:"'DM Mono',monospace", background:C.raised, color:C.muted, padding:"1px 4px", borderRadius:3, border:`1px solid ${C.border}`, letterSpacing:.5 }}>SOON</span>
-                </button>
-              </div>
-            );})()}
-          </div>
-
-          <div style={{ height:1, background:C.border, margin:"4px 0 8px" }}/>
 
           {VIEWS.map(([id,label]) => (
             <button key={id} onClick={()=>selectView(id)}
@@ -2316,12 +2277,12 @@ export default function MusicLibrary() {
             </label>
           </div>
 
-          {/* ── DJ CRATES section ── */}
+          {/* ── PLAYLISTS section ── */}
           <div style={{ marginTop:6, borderTop:`1px solid ${C.border}` }}>
             {/* Header row */}
             <div style={{ display:"flex", alignItems:"center", padding:"10px 14px 6px", cursor:"pointer", userSelect:"none" }}>
               <div onClick={()=>setCratesExpanded(v=>!v)} style={{ display:"flex", alignItems:"center", gap:6, flex:1 }}>
-                <span style={{ fontSize:12, color:G, fontFamily:"'DM Mono',monospace", letterSpacing:.5 }}>◈ DJ CRATES</span>
+                <span style={{ fontSize:12, color:G, fontFamily:"'DM Mono',monospace", letterSpacing:.5 }}>◈ PLAYLISTS</span>
                 <span style={{ fontSize:10, color:C.muted }}>{cratesExpanded?"▾":"▸"}</span>
               </div>
               <button
@@ -2349,7 +2310,7 @@ export default function MusicLibrary() {
                         if(e.key==="Escape"){ setShowNewCrateInput(false); setNewCrateName(""); }
                       }}
                       onBlur={()=>{ if(!newCrateName.trim()){ setShowNewCrateInput(false); } }}
-                      placeholder="Crate name…"
+                      placeholder="Playlist name…"
                       maxLength={30}
                       style={{ width:"100%", background:C.raised, border:`1px solid ${G}44`, color:C.text, borderRadius:6, padding:"6px 9px", fontSize:11, fontFamily:"'DM Sans',sans-serif", outline:"none" }}
                     />
@@ -2381,7 +2342,7 @@ export default function MusicLibrary() {
                 })}
                 {crates.length===0 && !showNewCrateInput && (
                   <div style={{ padding:"6px 20px 10px", fontSize:10, color:C.muted, fontFamily:"'DM Mono',monospace", lineHeight:1.8, opacity:.7 }}>
-                    No crates yet.<br/>Click <span style={{color:G}}>+</span> to create one.
+                    No playlists yet.<br/>Click <span style={{color:G}}>+</span> to create one.
                   </div>
                 )}
               </div>
@@ -2420,7 +2381,7 @@ export default function MusicLibrary() {
               ["Tracks",    tracks.length],
               ["☁ Cloud",   cloudCount],
               ["Analyzed",  analyzedCount],
-              ["Crates",    crates.length],
+              ["Playlists", crates.length],
               ["Artists",   new Set(tracks.map(t=>t.artist).filter(Boolean)).size],
             ].map(([l,v]) => (
               <div key={l} style={{ display:"flex", justifyContent:"space-between", marginBottom:5 }}>
