@@ -346,15 +346,15 @@ function TrackRow({track, onLoadA, onLoadB, isRec, reasons, canLoad, previewTrac
     <div
       onMouseEnter={()=>setHov(true)}
       onMouseLeave={()=>setHov(false)}
-      style={{display:"grid",gridTemplateColumns:"28px 36px 1fr 70px 44px 70px 44px 64px",gap:6,alignItems:"center",padding:"5px 10px",background:isRec?"#22c55e07":hov?"#1C183099":"transparent",borderBottom:"1px solid #0a0a1488",transition:"background .1s",position:"relative"}}
+      style={{display:"grid",gridTemplateColumns:"28px 36px 1fr 70px 44px 70px 44px 64px",gap:6,alignItems:"center",padding:"5px 10px",background:isRec?"#22c55e07":hov?"#18182299":"transparent",borderBottom:"1px solid #14141e88",transition:"background .1s",position:"relative"}}
     >
       {/* + Quick-add to deck */}
       <div style={{position:"relative"}} ref={deckMenuRef}>
         <button onClick={e=>{e.stopPropagation();setShowDeckMenu(v=>!v);}}
           style={{width:22,height:22,borderRadius:5,background:showDeckMenu?`${G}22`:hov?`${G}12`:"transparent",border:`1px solid ${hov||showDeckMenu?G+"44":"transparent"}`,color:hov||showDeckMenu?G:"transparent",fontSize:14,lineHeight:1,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",transition:"all .15s",fontFamily:"'DM Mono',monospace"}}>＋</button>
         {showDeckMenu&&(
-          <div onClick={e=>e.stopPropagation()} style={{position:"absolute",left:0,top:"calc(100% + 4px)",zIndex:500,background:"#14101E",border:"1px solid #1C1830",borderRadius:10,padding:6,minWidth:130,boxShadow:"0 12px 32px rgba(0,0,0,.85)"}}>
-            <div style={{fontSize:8,color:"#3A3555",fontFamily:"'DM Mono',monospace",padding:"2px 8px 6px",letterSpacing:1.2}}>LOAD TO DECK</div>
+          <div onClick={e=>e.stopPropagation()} style={{position:"absolute",left:0,top:"calc(100% + 4px)",zIndex:500,background:"#111118",border:"1px solid #252535",borderRadius:10,padding:6,minWidth:130,boxShadow:"0 12px 32px rgba(0,0,0,.85)"}}>
+            <div style={{fontSize:8,color:"#666676",fontFamily:"'DM Mono',monospace",padding:"2px 8px 6px",letterSpacing:1.2}}>LOAD TO DECK</div>
             <div style={{display:"flex",gap:4,padding:"0 4px"}}>
               {onLoadA&&<button onClick={e=>{e.stopPropagation();onLoadA(track);setShowDeckMenu(false);}} style={{flex:1,padding:"7px 4px",background:`${G}18`,border:`1px solid ${G}44`,color:G,borderRadius:7,cursor:"pointer",fontFamily:"'DM Mono',monospace",fontSize:11,fontWeight:700}}>▶ A</button>}
               {onLoadB&&<button onClick={e=>{e.stopPropagation();onLoadB(track);setShowDeckMenu(false);}} style={{flex:1,padding:"7px 4px",background:"#00d4ff18",border:"1px solid #00d4ff44",color:"#00d4ff",borderRadius:7,cursor:"pointer",fontFamily:"'DM Mono',monospace",fontSize:11,fontWeight:700}}>▶ B</button>}
@@ -376,11 +376,11 @@ function TrackRow({track, onLoadA, onLoadB, isRec, reasons, canLoad, previewTrac
         <div style={{display:"flex",gap:5,alignItems:"center"}}>
           {isRec&&<div style={{width:4,height:4,borderRadius:"50%",background:"#22c55e",boxShadow:"0 0 4px #22c55e",flexShrink:0}}/>}
           {!track.analyzed&&!track.error&&<div style={{width:8,height:8,border:`1.5px solid ${G}33`,borderTop:`1.5px solid ${G}`,borderRadius:"50%",animation:"spin 1s linear infinite",flexShrink:0}}/>}
-          <div style={{fontSize:11,color:hov?"#EDE8DF":"#c0bcd8",whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis",fontFamily:"'DM Sans',sans-serif",fontWeight:400}}>{track.title||track.filename}</div>
+          <div style={{fontSize:11,color:hov?"#e8e8f0":"#b8b8cc",whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis",fontFamily:"'DM Sans',sans-serif",fontWeight:400}}>{track.title||track.filename}</div>
         </div>
-        <div style={{fontSize:9,color:"#5a556a",fontFamily:"'DM Sans',sans-serif",whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis",marginTop:1}}>
+        <div style={{fontSize:9,color:"#808090",fontFamily:"'DM Sans',sans-serif",whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis",marginTop:1}}>
           {track.artist||"Unknown Artist"}
-          {track.label&&<span style={{color:"#3A3555"}}> · <span style={{color:`${G}cc`,fontFamily:"'DM Mono',monospace",fontSize:8}}>{track.label}</span></span>}
+          {track.label&&<span style={{color:"#555565"}}> · <span style={{color:`${G}cc`,fontFamily:"'DM Mono',monospace",fontSize:8}}>{track.label}</span></span>}
         </div>
         {reasons?.length>0&&(<div style={{display:"flex",gap:3,marginTop:2}}>{reasons.map(r=><span key={r} style={{fontSize:7,fontFamily:"'DM Mono',monospace",color:"#22c55e",background:"#22c55e11",borderRadius:2,padding:"0 4px",letterSpacing:.5}}>{r}</span>)}</div>)}
       </div>
@@ -388,21 +388,21 @@ function TrackRow({track, onLoadA, onLoadB, isRec, reasons, canLoad, previewTrac
       {/* BPM */}
       <div style={{textAlign:"right"}}>
         <div style={{fontSize:11,fontFamily:"'DM Mono',monospace",color:track.bpm?G:"#2a2a3a",fontWeight:500}}>{track.bpm?track.bpm.toFixed(1):"--"}</div>
-        <div style={{fontSize:7,color:"#3A3555",fontFamily:"'DM Mono',monospace",letterSpacing:1}}>BPM</div>
+        <div style={{fontSize:7,color:"#555565",fontFamily:"'DM Mono',monospace",letterSpacing:1}}>BPM</div>
       </div>
 
       {/* Key */}
       <div style={{textAlign:"center"}}>
-        {camelot?(<><div style={{fontSize:9,fontFamily:"'DM Mono',monospace",color:keyColor,background:keyColor+"18",borderRadius:3,padding:"1px 4px",display:"inline-block"}}>{camelot}</div><div style={{fontSize:7,color:"#3A3555",fontFamily:"'DM Mono',monospace",marginTop:1}}>{track.key}</div></>):<div style={{fontSize:9,color:"#3A3555",fontFamily:"'DM Mono',monospace"}}>--</div>}
+        {camelot?(<><div style={{fontSize:9,fontFamily:"'DM Mono',monospace",color:keyColor,background:keyColor+"18",borderRadius:3,padding:"1px 4px",display:"inline-block"}}>{camelot}</div><div style={{fontSize:7,color:"#555565",fontFamily:"'DM Mono',monospace",marginTop:1}}>{track.key}</div></>):<div style={{fontSize:9,color:"#555565",fontFamily:"'DM Mono',monospace"}}>--</div>}
       </div>
 
       {/* Energy */}
       <div>
-        {track.energy?(<><div style={{height:3,background:"#0a0a18",borderRadius:2,marginBottom:3,overflow:"hidden"}}><div style={{height:"100%",width:`${track.energy.score}%`,background:eColor,borderRadius:2}}/></div><div style={{fontSize:7,fontFamily:"'DM Mono',monospace",color:eColor,letterSpacing:.5,whiteSpace:"nowrap"}}>{track.energy.label}</div></>):<div style={{fontSize:8,color:"#3A3555",fontFamily:"'DM Mono',monospace"}}>--</div>}
+        {track.energy?(<><div style={{height:3,background:"#0c0c18",borderRadius:2,marginBottom:3,overflow:"hidden"}}><div style={{height:"100%",width:`${track.energy.score}%`,background:eColor,borderRadius:2}}/></div><div style={{fontSize:7,fontFamily:"'DM Mono',monospace",color:eColor,letterSpacing:.5,whiteSpace:"nowrap"}}>{track.energy.label}</div></>):<div style={{fontSize:8,color:"#555565",fontFamily:"'DM Mono',monospace"}}>--</div>}
       </div>
 
       {/* Duration */}
-      <div style={{fontSize:9,fontFamily:"'DM Mono',monospace",color:"#5a556a",textAlign:"right"}}>{fmt(track.duration)}</div>
+      <div style={{fontSize:9,fontFamily:"'DM Mono',monospace",color:"#808090",textAlign:"right"}}>{fmt(track.duration)}</div>
 
       {/* A / B load buttons */}
       <div style={{display:"flex",gap:3,opacity:hov&&canLoad?1:0,transition:"opacity .1s"}}>
@@ -476,7 +476,7 @@ function LibraryPanel({lib, onLoad, playingTrack, previewTrackId, onPreview, cha
 
   const colHdr=(label,key)=>(
     <div onClick={()=>{if(sortBy===key)setSortDir(d=>-d);else{setSortBy(key);setSortDir(1);}}}
-      style={{fontFamily:"'DM Mono',monospace",fontSize:8,color:sortBy===key?G:"#3A3555",cursor:"pointer",letterSpacing:1,userSelect:"none",whiteSpace:"nowrap"}}>
+      style={{fontFamily:"'DM Mono',monospace",fontSize:8,color:sortBy===key?G:"#666676",cursor:"pointer",letterSpacing:1,userSelect:"none",whiteSpace:"nowrap"}}>
       {label}{sortBy===key?(sortDir===1?" ↑":" ↓"):""}
     </div>
   );
@@ -499,7 +499,7 @@ function LibraryPanel({lib, onLoad, playingTrack, previewTrackId, onPreview, cha
 
   const navItemStyle=(id,isQueue)=>({
     padding:"6px 12px",fontSize:10,fontFamily:"'DM Sans',sans-serif",
-    color:!activeCrateId&&view===id?(isQueue?"#22c55e":G):"#7A7090",
+    color:!activeCrateId&&view===id?(isQueue?"#22c55e":G):"#9090a0",
     background:!activeCrateId&&view===id?(isQueue?"#22c55e10":`${G}10`):"transparent",
     cursor:"pointer",
     borderLeft:`2px solid ${!activeCrateId&&view===id?(isQueue?"#22c55e":G):"transparent"}`,
@@ -510,23 +510,23 @@ function LibraryPanel({lib, onLoad, playingTrack, previewTrackId, onPreview, cha
     <div style={{display:"flex",height:"100%",overflow:"hidden"}}>
 
       {/* ── CHAT SIDEBAR ── */}
-      <div style={{width:175,flexShrink:0,display:"flex",flexDirection:"column",borderRight:`1px solid ${G}14`,background:"#06060f"}}>
-        <div style={{padding:"8px 10px 6px",borderBottom:`1px solid ${G}14`,flexShrink:0}}>
-          <div style={{fontFamily:"'DM Mono',monospace",fontSize:9,color:G,letterSpacing:2}}>CHAT</div>
+      <div style={{width:175,flexShrink:0,display:"flex",flexDirection:"column",borderRight:"1px solid #1e1e28",background:"#08080e"}}>
+        <div style={{padding:"8px 10px 6px",borderBottom:"1px solid #1e1e28",flexShrink:0}}>
+          <div style={{fontFamily:"'DM Mono',monospace",fontSize:9,color:"#888898",letterSpacing:2}}>CHAT</div>
         </div>
         <div style={{flex:1,overflowY:"auto",padding:"6px 8px",display:"flex",flexDirection:"column",gap:5}}>
           {chat.length===0
-            ?<span style={{fontSize:8,fontFamily:"'DM Mono',monospace",color:"#1C1830",fontStyle:"italic",marginTop:8}}>No messages yet</span>
+            ?<span style={{fontSize:8,fontFamily:"'DM Mono',monospace",color:"#333345",fontStyle:"italic",marginTop:8}}>No messages yet</span>
             :chat.map((m,i)=>(
               <div key={i} style={{fontSize:9,fontFamily:"'DM Mono',monospace"}}>
                 {m.type==="system"
-                  ?<span style={{color:"#3A3555",fontStyle:"italic",fontSize:8}}>— {m.msg} —</span>
+                  ?<span style={{color:"#555565",fontStyle:"italic",fontSize:8}}>— {m.msg} —</span>
                   :<>
                     <div style={{display:"flex",gap:4,alignItems:"baseline"}}>
                       <span style={{color:m.self||m.from===me?"#00d4ff":"#ff6b35",fontWeight:500,fontSize:9}}>{m.from}</span>
-                      <span style={{color:"#3A3555",fontSize:6}}>{m.time}</span>
+                      <span style={{color:"#555565",fontSize:6}}>{m.time}</span>
                     </div>
-                    <div style={{color:"#7A7090",marginTop:1,wordBreak:"break-word",lineHeight:1.4,fontSize:9}}>{m.msg}</div>
+                    <div style={{color:"#aaaabc",marginTop:1,wordBreak:"break-word",lineHeight:1.4,fontSize:9}}>{m.msg}</div>
                   </>
                 }
               </div>
@@ -534,17 +534,17 @@ function LibraryPanel({lib, onLoad, playingTrack, previewTrackId, onPreview, cha
           }
           <div ref={chatEndRef}/>
         </div>
-        <div style={{flexShrink:0,padding:"5px 6px",borderTop:`1px solid ${G}14`,display:"flex",gap:4}}>
+        <div style={{flexShrink:0,padding:"5px 6px",borderTop:"1px solid #1e1e28",display:"flex",gap:4}}>
           <input value={chatInput} onChange={e=>setChatInput(e.target.value)} onKeyDown={e=>e.key==="Enter"&&sendChat()} placeholder="Message..."
-            style={{flex:1,background:"#0E0C1A",border:`1px solid #1C1830`,color:"#EDE8DF",borderRadius:5,padding:"4px 7px",fontSize:9,fontFamily:"'DM Mono',monospace",outline:"none",minWidth:0}}/>
+            style={{flex:1,background:"#0c0c14",border:"1px solid #252535",color:"#d8d8e0",borderRadius:5,padding:"4px 7px",fontSize:9,fontFamily:"'DM Mono',monospace",outline:"none",minWidth:0}}/>
           <button onClick={sendChat} style={{height:26,padding:"0 8px",background:`${G}18`,border:`1px solid ${G}33`,color:G,borderRadius:5,cursor:"pointer",fontFamily:"'DM Mono',monospace",fontSize:11,flexShrink:0}}>→</button>
         </div>
       </div>
 
       {/* ── LIBRARY NAV SIDEBAR ── */}
-      <div style={{width:155,flexShrink:0,display:"flex",flexDirection:"column",borderRight:`1px solid ${G}14`,background:"#07070e"}}>
-        <div style={{padding:"8px 10px 6px",borderBottom:`1px solid ${G}14`,flexShrink:0}}>
-          <div style={{fontFamily:"'DM Mono',monospace",fontSize:9,color:G,letterSpacing:2}}>CURRENT LIBRARY</div>
+      <div style={{width:155,flexShrink:0,display:"flex",flexDirection:"column",borderRight:"1px solid #1e1e28",background:"#0a0a10"}}>
+        <div style={{padding:"8px 10px 6px",borderBottom:"1px solid #1e1e28",flexShrink:0}}>
+          <div style={{fontFamily:"'DM Mono',monospace",fontSize:9,color:"#888898",letterSpacing:2}}>CURRENT LIBRARY</div>
         </div>
         <div style={{flex:1,overflowY:"auto",padding:"4px 0"}}>
 
@@ -562,11 +562,11 @@ function LibraryPanel({lib, onLoad, playingTrack, previewTrackId, onPreview, cha
           ))}
 
           {/* Divider + PLAYLISTS collapsible */}
-          <div style={{height:1,background:"#1C1830",margin:"6px 8px 2px"}}/>
+          <div style={{height:1,background:"#1e1e28",margin:"6px 8px 2px"}}/>
           <div onClick={()=>setCratesExpanded(e=>!e)}
             style={{padding:"5px 12px 4px",display:"flex",justifyContent:"space-between",alignItems:"center",cursor:"pointer"}}>
-            <span style={{fontSize:8,fontFamily:"'DM Mono',monospace",color:"#3A3555",letterSpacing:1.5}}>PLAYLISTS</span>
-            <span style={{fontSize:9,color:"#3A3555"}}>{cratesExpanded?"▾":"▸"}</span>
+            <span style={{fontSize:8,fontFamily:"'DM Mono',monospace",color:"#666676",letterSpacing:1.5}}>PLAYLISTS</span>
+            <span style={{fontSize:9,color:"#666676"}}>{cratesExpanded?"▾":"▸"}</span>
           </div>
 
           {cratesExpanded&&(
@@ -574,13 +574,13 @@ function LibraryPanel({lib, onLoad, playingTrack, previewTrackId, onPreview, cha
               {(lib.crates||[]).map(cr=>(
                 <div key={cr.id} onClick={()=>{setActiveCrateId(cr.id);setView("tracks");}}
                   style={{padding:"5px 12px 5px 20px",fontSize:10,fontFamily:"'DM Sans',sans-serif",
-                    color:activeCrateId===cr.id?G:"#6A6080",
+                    color:activeCrateId===cr.id?G:"#9090a0",
                     background:activeCrateId===cr.id?`${G}10`:"transparent",
                     cursor:"pointer",
                     borderLeft:`2px solid ${activeCrateId===cr.id?G:"transparent"}`,
                     transition:"all .1s",display:"flex",justifyContent:"space-between",alignItems:"center"}}>
                   <span style={{overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",flex:1}}>{cr.name}</span>
-                  <span style={{fontSize:8,color:"#3A3555",fontFamily:"'DM Mono',monospace",flexShrink:0,marginLeft:4}}>{(cr.trackIds||[]).length}</span>
+                  <span style={{fontSize:8,color:"#555565",fontFamily:"'DM Mono',monospace",flexShrink:0,marginLeft:4}}>{(cr.trackIds||[]).length}</span>
                 </div>
               ))}
               {showNewCrateInput
@@ -594,7 +594,7 @@ function LibraryPanel({lib, onLoad, playingTrack, previewTrackId, onPreview, cha
                       style={{padding:"2px 6px",background:`${G}18`,border:`1px solid ${G}44`,color:G,borderRadius:4,cursor:"pointer",fontSize:10,fontFamily:"'DM Mono',monospace"}}>✓</button>
                   </div>
                 :<div onClick={()=>setShowNewCrateInput(true)}
-                    style={{padding:"4px 20px",fontSize:9,fontFamily:"'DM Mono',monospace",color:"#3A3555",cursor:"pointer",letterSpacing:.5}}>
+                    style={{padding:"4px 20px",fontSize:9,fontFamily:"'DM Mono',monospace",color:"#666676",cursor:"pointer",letterSpacing:.5}}>
                     + New Playlist
                   </div>
               }
@@ -603,7 +603,7 @@ function LibraryPanel({lib, onLoad, playingTrack, previewTrackId, onPreview, cha
         </div>
 
         {/* ADD TRACKS */}
-        <div style={{flexShrink:0,padding:"6px 8px",borderTop:`1px solid ${G}14`}}>
+        <div style={{flexShrink:0,padding:"6px 8px",borderTop:"1px solid #1e1e28"}}>
           <label style={{display:"flex",alignItems:"center",justifyContent:"center",padding:"4px",fontSize:8,fontFamily:"'DM Mono',monospace",background:`${G}11`,border:`1px solid ${G}33`,color:G,borderRadius:5,cursor:"pointer",letterSpacing:1}}>
             + ADD TRACKS
             <input ref={fileRef} type="file" accept="audio/*" multiple style={{display:"none"}} onChange={e=>lib.importFiles(e.target.files)}/>
@@ -615,34 +615,34 @@ function LibraryPanel({lib, onLoad, playingTrack, previewTrackId, onPreview, cha
       <div style={{flex:1,display:"flex",flexDirection:"column",overflow:"hidden",minWidth:0}}>
 
         {/* Header: search + SUGGEST + FILTER */}
-        <div style={{padding:"6px 10px",borderBottom:`1px solid #0a0a14`,flexShrink:0}}>
+        <div style={{padding:"6px 10px",borderBottom:"1px solid #181820",flexShrink:0}}>
           <div style={{display:"flex",gap:6,alignItems:"center"}}>
             <input value={filter} onChange={e=>setFilter(e.target.value)} placeholder="Search tracks..."
-              style={{flex:1,background:"#080710",border:`1px solid #1C1830`,color:"#d0d0e0",borderRadius:5,padding:"4px 9px",fontSize:9,fontFamily:"'DM Mono',monospace",outline:"none"}}/>
+              style={{flex:1,background:"#0c0c14",border:"1px solid #252535",color:"#d0d0e0",borderRadius:5,padding:"4px 9px",fontSize:9,fontFamily:"'DM Mono',monospace",outline:"none"}}/>
             <button onClick={()=>{setActiveCrateId(null);setView(v=>v==="suggest"?"tracks":"suggest");}}
               style={{padding:"3px 10px",fontSize:7,fontFamily:"'DM Mono',monospace",letterSpacing:1,
                 background:view==="suggest"?`${G}22`:"transparent",
-                color:view==="suggest"?G:"#4A4465",
-                border:`1px solid ${view==="suggest"?G+"44":"#1C1830"}`,
+                color:view==="suggest"?G:"#777788",
+                border:`1px solid ${view==="suggest"?G+"44":"#252535"}`,
                 borderRadius:4,cursor:"pointer",outline:"none",whiteSpace:"nowrap",flexShrink:0}}>
               SUGGEST{selfRecs.length>0?` (${selfRecs.length})`:""}</button>
             <button onClick={()=>setShowFilters(f=>!f)}
               style={{padding:"3px 10px",fontSize:7,fontFamily:"'DM Mono',monospace",letterSpacing:1,
                 background:hasActiveFilter||showFilters?`${G}22`:"transparent",
-                color:hasActiveFilter||showFilters?G:"#4A4465",
-                border:`1px solid ${hasActiveFilter||showFilters?G+"44":"#1C1830"}`,
+                color:hasActiveFilter||showFilters?G:"#777788",
+                border:`1px solid ${hasActiveFilter||showFilters?G+"44":"#252535"}`,
                 borderRadius:4,cursor:"pointer",outline:"none",whiteSpace:"nowrap",flexShrink:0}}>
               FILTER{hasActiveFilter?" ●":""}</button>
-            <span style={{fontSize:8,fontFamily:"'DM Mono',monospace",color:"#3A3555",flexShrink:0}}>{filtered.length}</span>
+            <span style={{fontSize:8,fontFamily:"'DM Mono',monospace",color:"#666676",flexShrink:0}}>{filtered.length}</span>
             {lib.importing&&<div style={{width:8,height:8,border:`1.5px solid ${G}33`,borderTop:`1.5px solid ${G}`,borderRadius:"50%",animation:"spin 1s linear infinite",flexShrink:0}}/>}
           </div>
 
           {/* Filter panel */}
           {showFilters&&(
-            <div style={{marginTop:8,padding:"10px 12px",background:"#06060f",borderRadius:6,border:`1px solid ${G}18`,display:"flex",flexDirection:"column",gap:10}}>
+            <div style={{marginTop:8,padding:"10px 12px",background:"#0c0c14",borderRadius:6,border:"1px solid #252535",display:"flex",flexDirection:"column",gap:10}}>
               {/* Energy pills */}
               <div>
-                <div style={{fontSize:7,fontFamily:"'DM Mono',monospace",color:"#3A3555",letterSpacing:1.5,marginBottom:5}}>ENERGY</div>
+                <div style={{fontSize:7,fontFamily:"'DM Mono',monospace",color:"#666676",letterSpacing:1.5,marginBottom:5}}>ENERGY</div>
                 <div style={{display:"flex",flexWrap:"wrap",gap:4}}>
                   {ENERGY_LABELS.map(e=>(
                     <button key={e} onClick={()=>setEnergyFilter(ef=>ef===e?null:e)}
@@ -656,7 +656,7 @@ function LibraryPanel({lib, onLoad, playingTrack, previewTrackId, onPreview, cha
               </div>
               {/* BPM range */}
               <div>
-                <div style={{display:"flex",justifyContent:"space-between",fontSize:7,fontFamily:"'DM Mono',monospace",color:"#3A3555",letterSpacing:1.5,marginBottom:4}}>
+                <div style={{display:"flex",justifyContent:"space-between",fontSize:7,fontFamily:"'DM Mono',monospace",color:"#666676",letterSpacing:1.5,marginBottom:4}}>
                   <span>BPM RANGE</span><span style={{color:G}}>{bpmRange[0]} – {bpmRange[1]}</span>
                 </div>
                 <input type="range" min={60} max={200} value={bpmRange[0]}
@@ -668,7 +668,7 @@ function LibraryPanel({lib, onLoad, playingTrack, previewTrackId, onPreview, cha
               </div>
               {/* Key/Camelot grid */}
               <div>
-                <div style={{fontSize:7,fontFamily:"'DM Mono',monospace",color:"#3A3555",letterSpacing:1.5,marginBottom:5}}>KEY (CAMELOT)</div>
+                <div style={{fontSize:7,fontFamily:"'DM Mono',monospace",color:"#666676",letterSpacing:1.5,marginBottom:5}}>KEY (CAMELOT)</div>
                 <div style={{display:"grid",gridTemplateColumns:"repeat(12,1fr)",gap:2}}>
                   {CAMELOT_KEYS.map(k=>(
                     <button key={k} onClick={()=>setKeyFilter(kf=>kf===k?null:k)}
@@ -682,7 +682,7 @@ function LibraryPanel({lib, onLoad, playingTrack, previewTrackId, onPreview, cha
               </div>
               {hasActiveFilter&&(
                 <button onClick={()=>{setEnergyFilter(null);setBpmRange([60,200]);setKeyFilter(null);}}
-                  style={{padding:"4px",fontSize:7,fontFamily:"'DM Mono',monospace",background:"transparent",border:`1px solid #1C1830`,color:"#3A3555",borderRadius:4,cursor:"pointer",letterSpacing:1}}>
+                  style={{padding:"4px",fontSize:7,fontFamily:"'DM Mono',monospace",background:"transparent",border:"1px solid #252535",color:"#666676",borderRadius:4,cursor:"pointer",letterSpacing:1}}>
                   RESET FILTERS</button>
               )}
             </div>
@@ -690,12 +690,12 @@ function LibraryPanel({lib, onLoad, playingTrack, previewTrackId, onPreview, cha
         </div>
 
         {/* Column headers */}
-        <div style={{display:"grid",gridTemplateColumns:"28px 36px 1fr 70px 44px 70px 44px 64px",gap:6,padding:"4px 10px",borderBottom:"1px solid #0a0a14",flexShrink:0}}>
+        <div style={{display:"grid",gridTemplateColumns:"28px 36px 1fr 70px 44px 70px 44px 64px",gap:6,padding:"4px 10px",borderBottom:"1px solid #181820",flexShrink:0}}>
           <div/><div/>
           {colHdr("TITLE / ARTIST","title")}
           {colHdr("BPM","bpm")}
-          <div style={{fontFamily:"'DM Mono',monospace",fontSize:8,color:"#3A3555",letterSpacing:1,textAlign:"center"}}>KEY</div>
-          <div style={{fontFamily:"'DM Mono',monospace",fontSize:8,color:"#3A3555",letterSpacing:1}}>ENERGY</div>
+          <div style={{fontFamily:"'DM Mono',monospace",fontSize:8,color:"#666676",letterSpacing:1,textAlign:"center"}}>KEY</div>
+          <div style={{fontFamily:"'DM Mono',monospace",fontSize:8,color:"#666676",letterSpacing:1}}>ENERGY</div>
           {colHdr("TIME","duration")}
           <div/>
         </div>
@@ -1015,10 +1015,9 @@ function Knob({ v, set, min=-12, max=12, ctr=0, label, color="#00d4ff", size=38,
   return (
     <div style={{display:"flex",flexDirection:"column",alignItems:"center",gap:2,userSelect:"none",opacity:off?.35:1}}>
       <div onMouseDown={md} onDoubleClick={()=>!off&&set(ctr)} style={{width:size,height:size,borderRadius:"50%",background:"#0a0a1c",border:`2px solid ${color}33`,cursor:off?"default":"ns-resize",position:"relative",boxShadow:v!==ctr?`0 0 8px ${color}22`:"none"}}>
-        <svg width={size} height={size} style={{position:"absolute"}}><circle cx={size/2} cy={size/2} r={size/2-3} fill="none" stroke="#151525" strokeWidth={2.5} strokeDasharray={`${2.36*(size/2-3)} 999`} transform={`rotate(135 ${size/2} ${size/2})`}/><circle cx={size/2} cy={size/2} r={size/2-3} fill="none" stroke={color} strokeWidth={2.5} strokeDasharray={`${pct*2.36*(size/2-3)} 999`} transform={`rotate(135 ${size/2} ${size/2})`} strokeLinecap="round"/></svg>
         <div style={{position:"absolute",width:3,height:3,borderRadius:"50%",background:color,top:"50%",left:"50%",transform:`translate(-50%,-50%) rotate(${-135+pct*270}deg) translateY(-${size*.26}px)`}}/>
       </div>
-      <span style={{fontSize:7,color:"#6a6888",fontFamily:"monospace",letterSpacing:1}}>{label}</span>
+      <span style={{fontSize:7,color:"#888898",fontFamily:"monospace",letterSpacing:1}}>{label}</span>
     </div>
   );
 }
@@ -1184,9 +1183,9 @@ function Deck({ id, ch, ctx:ac, color, local, remote, onChange, midi:mt, bpmResu
   const fmt=(s)=>`${String(Math.floor(Math.max(0,s)/60)).padStart(2,"0")}:${String(Math.floor(Math.max(0,s)%60)).padStart(2,"0")}`;
   const cur=prog*dur;
 
-  const D="#0f0e1e", BD="1px solid #1e1c2e";
+  const D="#0c0c14", BD="1px solid #1e1e28";
   return (
-    <div style={{background:D, border:`1px solid ${play?color+"44":"#1e1c2e"}`, borderRadius:10, overflow:"hidden", display:"flex", flexDirection:"column", boxShadow:play?`0 0 24px ${color}14`:`0 2px 12px rgba(0,0,0,.5)`, transition:"all .3s"}}>
+    <div style={{background:D, border:`1px solid ${play?color+"44":"#1e1e28"}`, borderRadius:10, overflow:"hidden", display:"flex", flexDirection:"column", boxShadow:play?`0 0 24px ${color}14`:`0 2px 12px rgba(0,0,0,.5)`, transition:"all .3s"}}>
 
       {/* ── HEADER: badge | track | bpm ── */}
       <div style={{display:"flex", alignItems:"stretch", minHeight:54, borderBottom:BD}}>
@@ -1205,14 +1204,14 @@ function Deck({ id, ch, ctx:ac, color, local, remote, onChange, midi:mt, bpmResu
             {buf?(
               <>
                 <div style={{fontSize:14, fontWeight:700, color:"#e0e0f2", fontFamily:"'Barlow',sans-serif", whiteSpace:"nowrap", overflow:"hidden", textOverflow:"ellipsis"}}>{name}</div>
-                <div style={{fontSize:8, color:"#5a5a78", fontFamily:"monospace", marginTop:3}}>{fmt(dur)} · {(buf.sampleRate/1000).toFixed(1)}kHz · {buf.numberOfChannels===2?"STEREO":"MONO"}</div>
+                <div style={{fontSize:8, color:"#808090", fontFamily:"monospace", marginTop:3}}>{fmt(dur)} · {(buf.sampleRate/1000).toFixed(1)}kHz · {buf.numberOfChannels===2?"STEREO":"MONO"}</div>
               </>
             ):(
               <div style={{display:"flex", alignItems:"center", gap:10}}>
                 <div style={{width:32, height:32, borderRadius:"50%", border:`1px solid ${dragOver?color:color+"33"}`, display:"flex", alignItems:"center", justifyContent:"center", color:dragOver?color:color+"44", fontSize:18, flexShrink:0}}>+</div>
                 <div>
-                  <div style={{fontSize:12, fontWeight:700, color:dragOver?color:"#5050aa", fontFamily:"'Barlow Condensed',sans-serif", letterSpacing:1}}>{dragOver?"DROP HERE":"LOAD TRACK"}</div>
-                  <div style={{fontSize:8, color:"#404060", marginTop:2, fontFamily:"monospace"}}>click or drag · mp3 wav flac aac</div>
+                  <div style={{fontSize:12, fontWeight:700, color:dragOver?color:"#666680", fontFamily:"'Barlow Condensed',sans-serif", letterSpacing:1}}>{dragOver?"DROP HERE":"LOAD TRACK"}</div>
+                  <div style={{fontSize:8, color:"#505060", marginTop:2, fontFamily:"monospace"}}>click or drag · mp3 wav flac aac</div>
                 </div>
               </div>
             )}
@@ -1222,10 +1221,10 @@ function Deck({ id, ch, ctx:ac, color, local, remote, onChange, midi:mt, bpmResu
             {name?(
               <>
                 <div style={{fontSize:14, fontWeight:700, color:color+"bb", fontFamily:"'Barlow',sans-serif", whiteSpace:"nowrap", overflow:"hidden", textOverflow:"ellipsis"}}>{name}</div>
-                <div style={{fontSize:8, color:"#6060a0", fontFamily:"monospace", marginTop:3}}>{fmt(dur)}</div>
+                <div style={{fontSize:8, color:"#808090", fontFamily:"monospace", marginTop:3}}>{fmt(dur)}</div>
               </>
             ):(
-              <div style={{fontSize:9, color:"#404060", fontFamily:"monospace", letterSpacing:2}}>WAITING FOR PARTNER</div>
+              <div style={{fontSize:9, color:"#555565", fontFamily:"monospace", letterSpacing:2}}>WAITING FOR PARTNER</div>
             )}
           </div>
         )}
@@ -1235,14 +1234,14 @@ function Deck({ id, ch, ctx:ac, color, local, remote, onChange, midi:mt, bpmResu
         {(()=>{const ck=deckKey?CAMELOT[deckKey]:null;const km=ck?.endsWith("A");return ck?(
           <div style={{flexShrink:0,padding:"0 10px",borderLeft:BD,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",gap:2,minWidth:52}}>
             <div style={{fontSize:13,fontFamily:"'DM Mono',monospace",fontWeight:700,color:km?"#9B7EC8":color,background:(km?"#9B7EC8":color)+"1a",borderRadius:4,padding:"2px 7px",letterSpacing:.5}}>{ck}</div>
-            <div style={{fontSize:6,color:"#7A7090",fontFamily:"monospace",letterSpacing:1}}>{deckKey}</div>
+            <div style={{fontSize:6,color:"#888898",fontFamily:"monospace",letterSpacing:1}}>{deckKey}</div>
           </div>
         ):null;})()}
         <div style={{flexShrink:0, padding:"0 10px", borderLeft:BD, display:"flex", flexDirection:"column", alignItems:"flex-end", justifyContent:"center", gap:4, minWidth:68}}>
           {bpmResult?.analyzing&&<div style={{fontSize:7,color:"#f59e0b",fontFamily:"monospace",animation:"pulse .8s infinite"}}>ANA...</div>}
           <div style={{textAlign:"right"}}>
             <div style={{fontSize:21, fontFamily:"monospace", fontWeight:800, color, lineHeight:1, letterSpacing:1}}>{bpmResult?.bpm?(bpmResult.bpm*rate).toFixed(1):"—"}</div>
-            <div style={{fontSize:9, color:"#7A7090", fontFamily:"monospace", letterSpacing:2}}>BPM</div>
+            <div style={{fontSize:9, color:"#888898", fontFamily:"monospace", letterSpacing:2}}>BPM</div>
           </div>
           <VU an={ch?.an} color={color}/>
         </div>
@@ -1258,7 +1257,7 @@ function Deck({ id, ch, ctx:ac, color, local, remote, onChange, midi:mt, bpmResu
       </div>
 
       {/* ── HOT CUES + LOOP CONTROLS ── */}
-      <div style={{display:"flex",gap:3,padding:"5px 10px",background:"#05050d",borderBottom:"1px solid #0a0a14",alignItems:"center"}}>
+      <div style={{display:"flex",gap:3,padding:"5px 10px",background:"#08080e",borderBottom:"1px solid #141420",alignItems:"center"}}>
           {/* Hot cue buttons */}
           {HOT_CUE_COLORS.map((c,i)=>(
             <button key={i}
@@ -1269,7 +1268,7 @@ function Deck({ id, ch, ctx:ac, color, local, remote, onChange, midi:mt, bpmResu
               {i+1}
             </button>
           ))}
-          <div style={{width:1,height:20,background:"#1C1830",margin:"0 2px",flexShrink:0}}/>
+          <div style={{width:1,height:20,background:"#252535",margin:"0 2px",flexShrink:0}}/>
           {/* Beat loop buttons: 1, 2, 4, 8, 16 beats */}
           {[[1,"1"],[2,"2"],[4,"4"],[8,"8"],[16,"16"]].map(([beats,label])=>(
             <button key={beats}
@@ -1307,37 +1306,31 @@ function Deck({ id, ch, ctx:ac, color, local, remote, onChange, midi:mt, bpmResu
       </div>
 
       {/* ── LCD TIME ── */}
-      <div style={{display:"flex", alignItems:"center", justifyContent:"space-between", padding:"6px 14px", background:"#08071a", borderBottom:BD}}>
+      <div style={{display:"flex", alignItems:"center", justifyContent:"space-between", padding:"6px 14px", background:"#08080e", borderBottom:BD}}>
         <div>
           <div style={{fontFamily:"monospace", fontWeight:800, fontSize:22, color, letterSpacing:3, lineHeight:1, textShadow:`0 0 18px ${color}66`}}>{fmt(cur)}</div>
-          <div style={{fontSize:8, color:"#5a5878", fontFamily:"monospace", letterSpacing:2, marginTop:2}}>ELAPSED</div>
+          <div style={{fontSize:8, color:"#666676", fontFamily:"monospace", letterSpacing:2, marginTop:2}}>ELAPSED</div>
         </div>
         <div style={{display:"flex", flexDirection:"column", alignItems:"center", gap:3}}>
           {play&&<div style={{width:6,height:6,borderRadius:"50%",background:color,boxShadow:`0 0 10px ${color}`,animation:"pulse .7s infinite"}}/>}
-          <div style={{fontSize:7, color:"#7A7090", fontFamily:"monospace"}}>{buf?`${(prog*100).toFixed(1)}%`:""}</div>
+          <div style={{fontSize:7, color:"#888898", fontFamily:"monospace"}}>{buf?`${(prog*100).toFixed(1)}%`:""}</div>
         </div>
         <div style={{textAlign:"right"}}>
-          <div style={{fontFamily:"monospace", fontWeight:800, fontSize:22, color:"#3A3555", letterSpacing:3, lineHeight:1}}>-{fmt(Math.max(0,dur-cur))}</div>
-          <div style={{fontSize:8, color:"#5a5878", fontFamily:"monospace", letterSpacing:2, marginTop:2}}>REMAIN</div>
+          <div style={{fontFamily:"monospace", fontWeight:800, fontSize:22, color:"#404050", letterSpacing:3, lineHeight:1}}>-{fmt(Math.max(0,dur-cur))}</div>
+          <div style={{fontSize:8, color:"#666676", fontFamily:"monospace", letterSpacing:2, marginTop:2}}>REMAIN</div>
         </div>
       </div>
 
       {/* ── TRANSPORT ── */}
-      {local?(
-        <div style={{display:"flex", alignItems:"center", gap:5, padding:"8px 12px", borderBottom:BD}}>
-          <button onClick={cue} disabled={!buf} style={{height:32,padding:"0 9px",background:"#141228",border:"1px solid #252340",color:"#6a6888",borderRadius:6,cursor:buf?"pointer":"default",fontFamily:"monospace",fontSize:8,letterSpacing:1,outline:"none",flexShrink:0}}>⏮</button>
-          <button onClick={()=>seek(Math.max(0,prog-.005))} disabled={!buf} style={{height:32,width:34,background:"#141228",border:"1px solid #252340",color:"#6a6888",borderRadius:6,cursor:buf?"pointer":"default",fontFamily:"monospace",fontSize:12,outline:"none"}}>◂◂</button>
-          <button onClick={toggle} disabled={!buf} style={{flex:1,height:42,background:play?color+"22":"#252527",border:`1px solid ${play?color+"88":color+"33"}`,color:play?color:color+"66",borderRadius:8,cursor:buf?"pointer":"default",fontSize:22,display:"flex",alignItems:"center",justifyContent:"center",boxShadow:play?`0 0 24px ${color}33`:"",outline:"none",transition:"all .15s"}}>
-            {play?"⏸":"▶"}
-          </button>
-          <button onClick={()=>seek(Math.min(1,prog+.005))} disabled={!buf} style={{height:32,width:34,background:"#141228",border:"1px solid #252340",color:"#6a6888",borderRadius:6,cursor:buf?"pointer":"default",fontFamily:"monospace",fontSize:12,outline:"none"}}>▸▸</button>
-          {onSync&&<button onClick={onSync} disabled={!buf||!bpmResult?.bpm} style={{height:32,padding:"0 8px",background:buf&&bpmResult?.bpm?"#22c55e14":"transparent",border:`1px solid ${buf&&bpmResult?.bpm?"#22c55e44":"#22c55e1a"}`,color:buf&&bpmResult?.bpm?"#22c55e":"#22c55e33",borderRadius:6,cursor:buf&&bpmResult?.bpm?"pointer":"default",fontFamily:"monospace",fontSize:8,letterSpacing:1,outline:"none",flexShrink:0}}>⟳ SYNC</button>}
-        </div>
-      ):(
-        <div style={{height:58,display:"flex",alignItems:"center",justifyContent:"center",borderBottom:BD}}>
-          <span style={{fontSize:9,fontFamily:"monospace",color:play?color+"77":"#1c1c2c",letterSpacing:3}}>{play?"● PLAYING":"■ STOPPED"}</span>
-        </div>
-      )}
+      <div style={{display:"flex", alignItems:"center", gap:5, padding:"8px 12px", borderBottom:BD}}>
+        <button onClick={local?cue:undefined} disabled={!local} style={{height:32,padding:"0 9px",background:"#111118",border:"1px solid #282835",color:local?"#888898":"#2e2e3e",borderRadius:6,cursor:local?"pointer":"default",fontFamily:"monospace",fontSize:8,letterSpacing:1,outline:"none",flexShrink:0}}>⏮</button>
+        <button onClick={local?()=>seek(Math.max(0,prog-.005)):undefined} disabled={!local} style={{height:32,width:34,background:"#111118",border:"1px solid #282835",color:local?"#888898":"#2e2e3e",borderRadius:6,cursor:local?"pointer":"default",fontFamily:"monospace",fontSize:12,outline:"none"}}>◂◂</button>
+        <button onClick={local?toggle:undefined} disabled={!local} style={{flex:1,height:42,background:play?color+"22":"#181820",border:`1px solid ${play?color+"88":color+"22"}`,color:play?color:color+"44",borderRadius:8,cursor:local?"pointer":"default",fontSize:22,display:"flex",alignItems:"center",justifyContent:"center",boxShadow:play?`0 0 24px ${color}33`:"",outline:"none",transition:"all .15s"}}>
+          {play?"⏸":"▶"}
+        </button>
+        <button onClick={local?()=>seek(Math.min(1,prog+.005)):undefined} disabled={!local} style={{height:32,width:34,background:"#111118",border:"1px solid #282835",color:local?"#888898":"#2e2e3e",borderRadius:6,cursor:local?"pointer":"default",fontFamily:"monospace",fontSize:12,outline:"none"}}>▸▸</button>
+        {onSync&&<button onClick={onSync} disabled={!buf||!bpmResult?.bpm} style={{height:32,padding:"0 8px",background:buf&&bpmResult?.bpm?"#22c55e14":"transparent",border:`1px solid ${buf&&bpmResult?.bpm?"#22c55e44":"#22c55e1a"}`,color:buf&&bpmResult?.bpm?"#22c55e":"#22c55e33",borderRadius:6,cursor:buf&&bpmResult?.bpm?"pointer":"default",fontFamily:"monospace",fontSize:8,letterSpacing:1,outline:"none",flexShrink:0}}>⟳ SYNC</button>}
+      </div>
 
       <div style={{display:"none"}} data-set-rate={id} ref={el=>{if(el)el._setRate=setRate;}}/>
     </div>
@@ -1355,10 +1348,10 @@ function VerticalFader({ val, set, color="#C8A96E", h=130 }) {
   return (
     <div style={{position:"relative", width:38, height:h, margin:"0 auto", flexShrink:0}}>
       {/* Track groove */}
-      <div style={{position:"absolute", left:"50%", top:4, height:trackH, transform:"translateX(-50%)", width:7, background:"#040410", border:"1px solid #1a1828", borderRadius:4, boxShadow:"inset 0 1px 4px rgba(0,0,0,.7)"}}>
+      <div style={{position:"absolute", left:"50%", top:4, height:trackH, transform:"translateX(-50%)", width:7, background:"#040408", border:"1px solid #1e1e28", borderRadius:4, boxShadow:"inset 0 1px 4px rgba(0,0,0,.7)"}}>
         {/* Tick marks */}
         {[0.25,0.5,0.67,0.75].map(t=>(
-          <div key={t} style={{position:"absolute", right:-4, top:`${(1-t)*100}%`, width:3, height:1, background:"#252340", borderRadius:1}}/>
+          <div key={t} style={{position:"absolute", right:-4, top:`${(1-t)*100}%`, width:3, height:1, background:"#2e2e40", borderRadius:1}}/>
         ))}
         {/* Level fill */}
         <div style={{position:"absolute", bottom:0, left:0, right:0, background:`linear-gradient(0deg,${color}88,${color}22)`, height:`${pct*100}%`, borderRadius:3, transition:"height .05s"}}/>
@@ -1372,8 +1365,8 @@ function VerticalFader({ val, set, color="#C8A96E", h=130 }) {
       <div style={{
         position:"absolute", left:"50%", transform:"translateX(-50%)",
         top:capTop+"px", width:34, height:22,
-        background:"linear-gradient(180deg,#2e2c46,#18162c)",
-        border:"1px solid #3c3a58", borderRadius:5,
+        background:"linear-gradient(180deg,#303040,#181820)",
+        border:"1px solid #3c3c50", borderRadius:5,
         boxShadow:"0 3px 10px rgba(0,0,0,.7), inset 0 1px 0 rgba(255,255,255,.08)",
         pointerEvents:"none", display:"flex", alignItems:"center", justifyContent:"center", gap:3
       }}>
@@ -2030,19 +2023,19 @@ export default function CollabMix({ initialPage = "landing", djName = null }) {
 
   const G = "#C8A96E"; // gold accent — matches App.jsx landing
   return (
-    <div style={{ height:"100vh", overflow:"hidden", background:"#0E0C1A", fontFamily:"'DM Sans',sans-serif", color:"#EDE8DF", display:"flex", flexDirection:"column" }}>
+    <div style={{ height:"100vh", overflow:"hidden", background:"#0a0a0f", fontFamily:"'DM Sans',sans-serif", color:"#d8d8e0", display:"flex", flexDirection:"column" }}>
       <style>{`
         @keyframes blink{0%,100%{box-shadow:0 0 5px currentColor}50%{box-shadow:0 0 14px currentColor}}
         @keyframes pulse{0%,100%{opacity:1}50%{opacity:.4}}
         @keyframes wave{0%,100%{transform:scaleY(.3)}50%{transform:scaleY(1)}}
         @keyframes spin{to{transform:rotate(360deg)}}
         *{box-sizing:border-box}
-        ::-webkit-scrollbar{width:3px}::-webkit-scrollbar-track{background:#080710}::-webkit-scrollbar-thumb{background:#1C1830;border-radius:2px}
+        ::-webkit-scrollbar{width:3px}::-webkit-scrollbar-track{background:#080808}::-webkit-scrollbar-thumb{background:#252530;border-radius:2px}
       `}</style>
       <link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:wght@600;700&family=DM+Sans:wght@300;400;500&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet"/>
 
       {/* TOP BAR — matches App.jsx nav */}
-      <div style={{ background:"#080710f2", backdropFilter:"blur(16px)", borderBottom:`1px solid ${G}14`, padding:"8px 18px", display:"flex", alignItems:"center", gap:12, flexShrink:0 }}>
+      <div style={{ background:"#08080cf0", backdropFilter:"blur(16px)", borderBottom:"1px solid #1c1c24", padding:"8px 18px", display:"flex", alignItems:"center", gap:12, flexShrink:0 }}>
         <div onClick={()=>leave()} style={{ display:"flex", alignItems:"center", gap:8, cursor:"pointer" }}>
           <div style={{ width:28, height:28, borderRadius:7, border:`1px solid ${G}38`, display:"flex", alignItems:"center", justifyContent:"center", background:`${G}08` }}>
             <span style={{ fontFamily:"'DM Mono',monospace", fontSize:9, color:G }}>{"//"}</span>
@@ -2053,7 +2046,7 @@ export default function CollabMix({ initialPage = "landing", djName = null }) {
           <div style={{ display:"flex", gap:5, alignItems:"center", fontSize:7, fontFamily:"'DM Mono',monospace" }}>
             <div style={{ width:5, height:5, borderRadius:"50%", background:SC[sync.status], boxShadow:sync.status==="connected"?`0 0 8px ${SC[sync.status]}`:""}}/>
             <span style={{ color:SC[sync.status], letterSpacing:1 }}>{sync.status.toUpperCase()}</span>
-            {sync.ping&&<span style={{ color:"#3A3555" }}>· {sync.ping}ms</span>}
+            {sync.ping&&<span style={{ color:"#555565" }}>· {sync.ping}ms</span>}
           </div>
           {sync.connErr && <span style={{ fontSize:7, fontFamily:"'DM Mono',monospace", color:"#ef4444", background:"#ef444411", border:"1px solid #ef444422", borderRadius:4, padding:"1px 7px" }}>{sync.connErr}</span>}
           {sync.partner&&<div style={{ fontSize:7, fontFamily:"'DM Mono',monospace", color:G, background:`${G}11`, border:`1px solid ${G}22`, borderRadius:5, padding:"2px 8px", letterSpacing:1 }}>⟺ {sync.partner}</div>}
@@ -2062,7 +2055,7 @@ export default function CollabMix({ initialPage = "landing", djName = null }) {
           {midi.active&&<div style={{ fontSize:7, fontFamily:"'DM Mono',monospace", color:G, background:`${G}0d`, border:`1px solid ${G}22`, borderRadius:5, padding:"2px 8px", letterSpacing:1 }}>⎍ MIDI</div>}
         </div>
         <div style={{ display:"flex", gap:8, alignItems:"center" }}>
-          <span style={{ fontSize:8, fontFamily:"'DM Mono',monospace", color:"#3A3555", letterSpacing:1 }}>{session.name}</span>
+          <span style={{ fontSize:8, fontFamily:"'DM Mono',monospace", color:"#888898", letterSpacing:1 }}>{session.name}</span>
           <ShareButton room={session.room}/>
           <button onClick={leave} style={{ height:24, padding:"0 10px", background:"transparent", border:"1px solid #ef444433", color:"#ef4444", borderRadius:6, cursor:"pointer", fontFamily:"'DM Mono',monospace", fontSize:7, letterSpacing:1 }}>✕ LEAVE</button>
         </div>
@@ -2075,8 +2068,8 @@ export default function CollabMix({ initialPage = "landing", djName = null }) {
       <div style={{ flexShrink:0, display:"grid", gridTemplateColumns:"1fr 260px 1fr", gap:8, padding:"8px 12px 0", height:"47vh", overflow:"hidden" }}>
 
         {/* ── DECK A (local) ── */}
-        <div style={{ display:"flex", flexDirection:"column", minWidth:0, minHeight:0, overflow:"hidden", background:"#08071a", border:"1px solid #1a1828", borderRadius:10 }}>
-          <div style={{ display:"flex", gap:6, alignItems:"center", padding:"5px 10px", borderBottom:"1px solid #1a1828", background:"#060614", flexShrink:0 }}>
+        <div style={{ display:"flex", flexDirection:"column", minWidth:0, minHeight:0, overflow:"hidden", background:"#0c0c12", border:"1px solid #1e1e28", borderRadius:10 }}>
+          <div style={{ display:"flex", gap:6, alignItems:"center", padding:"5px 10px", borderBottom:"1px solid #1e1e28", background:"#080810", flexShrink:0 }}>
             <div style={{ width:6, height:6, borderRadius:"50%", background:"#00d4ff", boxShadow:"0 0 8px #00d4ff" }}/>
             <span style={{ fontSize:10, fontFamily:"'DM Mono',monospace", fontWeight:600, color:"#00d4ff", letterSpacing:2 }}>DECK A</span>
             <span style={{ fontSize:8, fontFamily:"'DM Mono',monospace", color:"#00d4ff44", letterSpacing:1 }}>· {session.name}</span>
@@ -2087,17 +2080,17 @@ export default function CollabMix({ initialPage = "landing", djName = null }) {
         </div>
 
         {/* ── CENTER MIXER ── */}
-        <div style={{ display:"flex", flexDirection:"column", background:"#0d0c1e", border:"1px solid #1e1c2e", borderRadius:10, overflow:"hidden", minHeight:0, boxShadow:"0 8px 32px rgba(0,0,0,.7), inset 0 1px 0 #252336" }}>
+        <div style={{ display:"flex", flexDirection:"column", background:"#0e0e14", border:"1px solid #222230", borderRadius:10, overflow:"hidden", minHeight:0, boxShadow:"0 8px 32px rgba(0,0,0,.8), inset 0 1px 0 #2a2a38" }}>
 
           {/* HEADER */}
-          <div style={{ padding:"5px 10px", background:"#07071a", borderBottom:"1px solid #1a1828", display:"flex", alignItems:"center", justifyContent:"space-between", flexShrink:0 }}>
+          <div style={{ padding:"5px 10px", background:"#0a0a10", borderBottom:"1px solid #202028", display:"flex", alignItems:"center", justifyContent:"space-between", flexShrink:0 }}>
             <div>
-              <div style={{ fontFamily:"'Cormorant Garamond',serif", fontWeight:700, fontSize:13, color:"#ccc8de" }}>Collab<span style={{color:"#C8A96E"}}>//</span>Mix</div>
-              <div style={{ fontSize:6, fontFamily:"'DM Mono',monospace", color:"#4a4868", letterSpacing:2 }}>LIVE SESSION</div>
+              <div style={{ fontFamily:"'Cormorant Garamond',serif", fontWeight:700, fontSize:13, color:"#d8d8e0" }}>Collab<span style={{color:"#C8A96E"}}>//</span>Mix</div>
+              <div style={{ fontSize:6, fontFamily:"'DM Mono',monospace", color:"#555565", letterSpacing:2 }}>LIVE SESSION</div>
             </div>
             <div style={{ display:"flex", flexDirection:"column", alignItems:"flex-end", gap:2 }}>
               <VU an={eng.current?.masterAn} color="#C8A96E" w={52}/>
-              <div style={{ fontSize:6, fontFamily:"'DM Mono',monospace", color:"#4a4868", letterSpacing:1 }}>MASTER OUT</div>
+              <div style={{ fontSize:6, fontFamily:"'DM Mono',monospace", color:"#555565", letterSpacing:1 }}>MASTER OUT</div>
             </div>
           </div>
 
@@ -2105,13 +2098,13 @@ export default function CollabMix({ initialPage = "landing", djName = null }) {
           <div style={{ display:"grid", gridTemplateColumns:"1fr 78px 1fr", flex:1, minHeight:0, overflow:"hidden" }}>
 
             {/* ─── CH A STRIP ─── */}
-            <div style={{ display:"flex", flexDirection:"column", borderRight:"1px solid #1a1828", overflow:"hidden" }}>
-              <div style={{ padding:"4px 6px 3px", background:"#060614", borderBottom:"1px solid #1a1828", display:"flex", justifyContent:"space-between", alignItems:"center", flexShrink:0 }}>
+            <div style={{ display:"flex", flexDirection:"column", borderRight:"1px solid #202028", overflow:"hidden" }}>
+              <div style={{ padding:"4px 6px 3px", background:"#0a0a10", borderBottom:"1px solid #202028", display:"flex", justifyContent:"space-between", alignItems:"center", flexShrink:0 }}>
                 <span style={{ fontFamily:"'DM Mono',monospace", fontSize:11, color:"#00d4ff", fontWeight:700, letterSpacing:2 }}>A</span>
-                <span style={{ fontFamily:"'DM Mono',monospace", fontSize:6, color:"#00d4ff44" }}>VOL</span>
+                <span style={{ fontFamily:"'DM Mono',monospace", fontSize:6, color:"#00d4ff55" }}>VOL</span>
               </div>
               {/* Channel VU */}
-              <div style={{ padding:"3px 6px 2px", background:"#04040e", borderBottom:"1px solid #141222", flexShrink:0 }}>
+              <div style={{ padding:"3px 6px 2px", background:"#080810", borderBottom:"1px solid #181820", flexShrink:0 }}>
                 <VU an={eng.current?.A?.an} color="#00d4ff" w={60}/>
               </div>
               {/* GAIN → HI → MID → LO — vertical */}
@@ -2122,35 +2115,25 @@ export default function CollabMix({ initialPage = "landing", djName = null }) {
                 <Knob v={eqA.lo}  set={v=>updateEqA("lo",v)}  min={-12} max={12} ctr={0} label="LO"   color="#00d4ff" size={24}/>
               </div>
               {/* Channel fader */}
-              <div style={{ display:"flex", flexDirection:"column", alignItems:"center", padding:"4px 0 6px", borderTop:"1px solid #141222", flexShrink:0, gap:2 }}>
+              <div style={{ display:"flex", flexDirection:"column", alignItems:"center", padding:"4px 0 6px", borderTop:"1px solid #181820", flexShrink:0, gap:2 }}>
                 <VerticalFader val={eqA.vol} set={v=>updateEqA("vol",v)} color="#00d4ff" h={78}/>
-                <div style={{ fontSize:7, fontFamily:"'DM Mono',monospace", color:"#00d4ff55" }}>{(eqA.vol/1.5*100).toFixed(0)}%</div>
+                <div style={{ fontSize:7, fontFamily:"'DM Mono',monospace", color:"#00d4ff77" }}>{(eqA.vol/1.5*100).toFixed(0)}%</div>
               </div>
             </div>
 
             {/* ─── CENTER COLUMN ─── */}
-            <div style={{ display:"flex", flexDirection:"column", background:"#07071a", overflow:"hidden" }}>
-              {/* BPM displays */}
-              <div style={{ padding:"5px 6px 3px", borderBottom:"1px solid #1a1828", flexShrink:0 }}>
-                {[["A","#00d4ff",bpm.results.A?.bpm],["B","#ff6b35",bpm.results.B?.bpm]].map(([id,c,v])=>(
-                  <div key={id} style={{ display:"flex", justifyContent:"space-between", alignItems:"baseline", marginBottom:2 }}>
-                    <span style={{ fontSize:7, fontFamily:"'DM Mono',monospace", color:c+"55", letterSpacing:1 }}>{id}</span>
-                    <span style={{ fontSize:13, fontFamily:"'DM Mono',monospace", fontWeight:700, color:v?c:"#1e1c30", lineHeight:1 }}>{v?v.toFixed(1):"--.-"}</span>
-                  </div>
-                ))}
-                <div style={{ fontSize:6, fontFamily:"'DM Mono',monospace", color:"#3a3855", letterSpacing:2, textAlign:"center", marginTop:1 }}>BPM</div>
-              </div>
+            <div style={{ display:"flex", flexDirection:"column", background:"#0a0a12", overflow:"hidden" }}>
               {/* Master fader */}
               <div style={{ flex:1, display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"center", gap:3, minHeight:0 }}>
-                <div style={{ fontSize:7, fontFamily:"'DM Mono',monospace", color:"#C8A96E66", letterSpacing:2 }}>MASTER</div>
-                <VerticalFader val={mvol} set={setMvol} color="#C8A96E" h={78}/>
-                <div style={{ fontSize:7, fontFamily:"'DM Mono',monospace", color:"#C8A96E77" }}>{(mvol/1.2*100).toFixed(0)}%</div>
+                <div style={{ fontSize:7, fontFamily:"'DM Mono',monospace", color:"#C8A96E99", letterSpacing:2 }}>MASTER</div>
+                <VerticalFader val={mvol} set={setMvol} color="#C8A96E" h={120}/>
+                <div style={{ fontSize:7, fontFamily:"'DM Mono',monospace", color:"#C8A96E99" }}>{(mvol/1.2*100).toFixed(0)}%</div>
               </div>
               {/* Session info */}
-              <div style={{ padding:"5px 6px 4px", borderTop:"1px solid #1a1828", flexShrink:0 }}>
-                {[["ROOM",session.room,"#C8A96E"],["PING",sync.ping?`${sync.ping}ms`:"—","#5a7888"],["NET",rtc.state==="connected"?"LIVE":"OFF",rtc.state==="connected"?"#22c55e":"#3a3855"]].map(([l,v,c])=>(
+              <div style={{ padding:"5px 6px 4px", borderTop:"1px solid #202028", flexShrink:0 }}>
+                {[["ROOM",session.room,"#C8A96E"],["PING",sync.ping?`${sync.ping}ms`:"—","#7a9aaa"],["NET",rtc.state==="connected"?"LIVE":"OFF",rtc.state==="connected"?"#22c55e":"#444454"]].map(([l,v,c])=>(
                   <div key={l} style={{ display:"flex", justifyContent:"space-between", alignItems:"center", padding:"1px 0" }}>
-                    <span style={{ fontSize:6, fontFamily:"'DM Mono',monospace", color:"#4a4868", letterSpacing:1 }}>{l}</span>
+                    <span style={{ fontSize:6, fontFamily:"'DM Mono',monospace", color:"#555565", letterSpacing:1 }}>{l}</span>
                     <span style={{ fontSize:7, fontFamily:"'DM Mono',monospace", color:c, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap", maxWidth:42 }}>{v}</span>
                   </div>
                 ))}
@@ -2158,12 +2141,12 @@ export default function CollabMix({ initialPage = "landing", djName = null }) {
             </div>
 
             {/* ─── CH B STRIP (partner — read-only) ─── */}
-            <div style={{ display:"flex", flexDirection:"column", borderLeft:"1px solid #1a1828", overflow:"hidden" }}>
-              <div style={{ padding:"4px 6px 3px", background:"#060614", borderBottom:"1px solid #1a1828", display:"flex", justifyContent:"space-between", alignItems:"center", flexShrink:0 }}>
+            <div style={{ display:"flex", flexDirection:"column", borderLeft:"1px solid #202028", overflow:"hidden" }}>
+              <div style={{ padding:"4px 6px 3px", background:"#0a0a10", borderBottom:"1px solid #202028", display:"flex", justifyContent:"space-between", alignItems:"center", flexShrink:0 }}>
                 <span style={{ fontFamily:"'DM Mono',monospace", fontSize:11, color:"#ff6b35", fontWeight:700, letterSpacing:2 }}>B</span>
-                <span style={{ fontFamily:"'DM Mono',monospace", fontSize:6, color:"#ff6b3544" }}>VOL</span>
+                <span style={{ fontFamily:"'DM Mono',monospace", fontSize:6, color:"#ff6b3555" }}>VOL</span>
               </div>
-              <div style={{ padding:"3px 6px 2px", background:"#04040e", borderBottom:"1px solid #141222", flexShrink:0 }}>
+              <div style={{ padding:"3px 6px 2px", background:"#080810", borderBottom:"1px solid #181820", flexShrink:0 }}>
                 <VU an={null} color="#ff6b35" w={60}/>
               </div>
               {/* GAIN → HI → MID → LO — vertical, read-only */}
@@ -2174,17 +2157,17 @@ export default function CollabMix({ initialPage = "landing", djName = null }) {
                 <Knob v={pA?.eqLo||0}  set={()=>{}} min={-12} max={12} ctr={0} label="LO"   color="#ff6b35" size={24} off={true}/>
               </div>
               {/* Channel fader */}
-              <div style={{ display:"flex", flexDirection:"column", alignItems:"center", padding:"4px 0 6px", borderTop:"1px solid #141222", flexShrink:0, gap:2 }}>
+              <div style={{ display:"flex", flexDirection:"column", alignItems:"center", padding:"4px 0 6px", borderTop:"1px solid #181820", flexShrink:0, gap:2 }}>
                 <VerticalFader val={pA?.vol||1} set={()=>{}} color="#ff6b35" h={78}/>
-                <div style={{ fontSize:7, fontFamily:"'DM Mono',monospace", color:"#ff6b3555" }}>{((pA?.vol||1)/1.5*100).toFixed(0)}%</div>
+                <div style={{ fontSize:7, fontFamily:"'DM Mono',monospace", color:"#ff6b3577" }}>{((pA?.vol||1)/1.5*100).toFixed(0)}%</div>
               </div>
             </div>
           </div>
         </div>
 
         {/* ── DECK B (partner) ── */}
-        <div style={{ display:"flex", flexDirection:"column", minWidth:0, minHeight:0, overflow:"hidden", background:"#08071a", border:"1px solid #1a1828", borderRadius:10 }}>
-          <div style={{ display:"flex", gap:6, alignItems:"center", padding:"5px 10px", borderBottom:"1px solid #1a1828", background:"#060614", flexShrink:0 }}>
+        <div style={{ display:"flex", flexDirection:"column", minWidth:0, minHeight:0, overflow:"hidden", background:"#0c0c12", border:"1px solid #1e1e28", borderRadius:10 }}>
+          <div style={{ display:"flex", gap:6, alignItems:"center", padding:"5px 10px", borderBottom:"1px solid #1e1e28", background:"#080810", flexShrink:0 }}>
             <div style={{ width:6, height:6, borderRadius:"50%", background:sync.partner?"#ff6b35":"#1a1828", boxShadow:sync.partner?"0 0 8px #ff6b35":"none", transition:"all .3s" }}/>
             <span style={{ fontSize:10, fontFamily:"'DM Mono',monospace", fontWeight:600, color:sync.partner?"#ff6b35":"#3a3555", letterSpacing:2 }}>DECK B</span>
             {sync.partner&&<span style={{ fontSize:8, fontFamily:"'DM Mono',monospace", color:"#ff6b3544", letterSpacing:1 }}>· {sync.partner}</span>}
@@ -2193,13 +2176,13 @@ export default function CollabMix({ initialPage = "landing", djName = null }) {
             <Deck id="B" ch={null} ctx={null} color="#ff6b35" remote={pA} bpmResult={null} bpmAnalyze={null} eqHi={pA?.eqHi||0} eqMid={pA?.eqMid||0} eqLo={pA?.eqLo||0} chanVol={pA?.vol||1}/>
           </div>
           {/* ── PANELS (AUDIO / REC / MIDI) ── */}
-          <div style={{ flexShrink:0, borderTop:"1px solid #1a1828" }}>
-            <div style={{ display:"flex", background:"#06060f" }}>
+          <div style={{ flexShrink:0, borderTop:"1px solid #1e1e28" }}>
+            <div style={{ display:"flex", background:"#080810" }}>
               {PANELS.map(([pid,l])=>(
-                <button key={pid} onClick={()=>setPanel(pid)} style={{ flex:1, padding:"5px 2px", fontSize:8, fontFamily:"'DM Mono',monospace", background:"transparent", color:panel===pid?"#ff6b35":"#4a4868", border:"none", borderBottom:`2px solid ${panel===pid?"#ff6b35":"transparent"}`, cursor:"pointer", outline:"none", letterSpacing:.5 }}>{l}</button>
+                <button key={pid} onClick={()=>setPanel(p=>p===pid?null:pid)} style={{ flex:1, padding:"5px 2px", fontSize:8, fontFamily:"'DM Mono',monospace", background:"transparent", color:panel===pid?"#ff6b35":"#666676", border:"none", borderBottom:`2px solid ${panel===pid?"#ff6b35":"transparent"}`, cursor:"pointer", outline:"none", letterSpacing:.5 }}>{l}</button>
               ))}
             </div>
-            <div style={{ maxHeight:68, overflow:"auto", background:"#08071a" }}>
+            <div style={{ maxHeight:68, overflow:"auto", background:"#0c0c14" }}>
               {panel==="rtc"  && <RTCPanel rtc={rtc} partner={sync.partner} syncOk={sync.status==="connected"}/>}
               {panel==="rec"  && <RecPanel rec={rec} ready={ready}/>}
               {panel==="midi" && <MidiPanel midi={midi}/>}
@@ -2209,33 +2192,28 @@ export default function CollabMix({ initialPage = "landing", djName = null }) {
 
       </div>
 
-      {/* ── CROSSFADER ROW ── */}
-      <div style={{ flexShrink:0, padding:"6px 12px", background:"#07071a", borderTop:"1px solid #1a1828", borderBottom:"1px solid #1a1828", display:"flex", alignItems:"center", gap:10 }}>
-        <div style={{ display:"flex", flexDirection:"column", alignItems:"center", gap:1, flexShrink:0 }}>
-          <span style={{ fontSize:13, fontFamily:"'DM Mono',monospace", color:"#00d4ff", fontWeight:700, lineHeight:1 }}>A</span>
-          <span style={{ fontSize:6, fontFamily:"'DM Mono',monospace", color:"#00d4ff44" }}>{(xg(xf).a*100).toFixed(0)}%</span>
-        </div>
-        <div style={{ flex:1, position:"relative", height:26, display:"flex", alignItems:"center" }}>
-          <div style={{ width:"100%", height:7, borderRadius:4, background:"#040410", border:"1px solid #1a1828", boxShadow:"inset 0 1px 3px rgba(0,0,0,.6)" }}>
-            <div style={{ height:"100%", width:`${xf*100}%`, background:"linear-gradient(90deg,#00d4ff33,#ff6b3522)", borderRadius:4 }}/>
+      {/* ── CROSSFADER ROW — same grid as deck row, only center column has content ── */}
+      <div style={{ flexShrink:0, display:"grid", gridTemplateColumns:"1fr 260px 1fr", gap:8, padding:"4px 12px", background:"#070710", borderTop:"1px solid #181828", borderBottom:"1px solid #181828" }}>
+        <div/>{/* empty left */}
+        <div style={{ display:"flex", alignItems:"center", gap:8, padding:"4px 6px" }}>
+          <span style={{ fontSize:11, fontFamily:"'DM Mono',monospace", color:"#00d4ff99", fontWeight:700, lineHeight:1, flexShrink:0 }}>A</span>
+          <div style={{ flex:1, position:"relative", height:24, display:"flex", alignItems:"center" }}>
+            <div style={{ width:"100%", height:6, borderRadius:4, background:"#030310", border:"1px solid #181828", boxShadow:"inset 0 1px 3px rgba(0,0,0,.7)" }}>
+              <div style={{ height:"100%", width:`${xf*100}%`, background:"linear-gradient(90deg,#00d4ff44,#ff6b3533)", borderRadius:4 }}/>
+            </div>
+            <input type="range" min={0} max={1} step={.005} value={xf} onChange={e=>setXfLocal(Number(e.target.value))} style={{ position:"absolute", width:"100%", opacity:0, cursor:"pointer", height:24 }}/>
+            <div style={{ position:"absolute", left:`calc(${xf*100}% - 13px)`, width:26, height:20, background:"linear-gradient(180deg,#2c2a3e,#16142a)", border:"1px solid #38364e", borderRadius:4, boxShadow:"0 2px 8px rgba(0,0,0,.8), inset 0 1px 0 rgba(255,255,255,.06)", pointerEvents:"none", display:"flex", alignItems:"center", justifyContent:"center" }}>
+              <div style={{ width:2, height:10, background:"#C8A96E88", borderRadius:1 }}/>
+            </div>
           </div>
-          <input type="range" min={0} max={1} step={.005} value={xf} onChange={e=>setXfLocal(Number(e.target.value))} style={{ position:"absolute", width:"100%", opacity:0, cursor:"pointer", height:26 }}/>
-          <div style={{ position:"absolute", left:`calc(${xf*100}% - 15px)`, width:30, height:24, background:"linear-gradient(180deg,#2a2840,#141228)", border:"1px solid #3c3a58", borderRadius:5, boxShadow:"0 3px 10px rgba(0,0,0,.7), inset 0 1px 0 rgba(255,255,255,.07)", pointerEvents:"none", display:"flex", alignItems:"center", justifyContent:"center" }}>
-            <div style={{ width:2, height:12, background:"#C8A96E66", borderRadius:1 }}/>
-          </div>
+          <span style={{ fontSize:11, fontFamily:"'DM Mono',monospace", color:"#ff6b3599", fontWeight:700, lineHeight:1, flexShrink:0 }}>B</span>
+          <button onClick={()=>setXfLocal(.5)} style={{ fontSize:6, height:14, padding:"0 6px", background:"transparent", border:"1px solid #252535", color:"#555570", borderRadius:3, cursor:"pointer", fontFamily:"'DM Mono',monospace", letterSpacing:1, flexShrink:0 }}>CTR</button>
         </div>
-        <div style={{ display:"flex", flexDirection:"column", alignItems:"center", gap:3, flexShrink:0 }}>
-          <span style={{ fontSize:7, fontFamily:"'DM Mono',monospace", color:"#5a5878", letterSpacing:2 }}>CROSSFADER</span>
-          <button onClick={()=>setXfLocal(.5)} style={{ fontSize:6, height:14, padding:"0 8px", background:"transparent", border:"1px solid #1e1c30", color:"#5a5878", borderRadius:3, cursor:"pointer", fontFamily:"'DM Mono',monospace", letterSpacing:1 }}>CTR</button>
-        </div>
-        <div style={{ display:"flex", flexDirection:"column", alignItems:"center", gap:1, flexShrink:0 }}>
-          <span style={{ fontSize:13, fontFamily:"'DM Mono',monospace", color:"#ff6b35", fontWeight:700, lineHeight:1 }}>B</span>
-          <span style={{ fontSize:6, fontFamily:"'DM Mono',monospace", color:"#ff6b3544" }}>{(xg(xf).b*100).toFixed(0)}%</span>
-        </div>
+        <div/>{/* empty right */}
       </div>
 
       {/* ── EMBEDDED LIBRARY — fills remaining space below decks ── */}
-      <div style={{ flex:1, overflow:"hidden", borderTop:`1px solid ${G}14`, background:"#080710", minHeight:0 }}>
+      <div style={{ flex:1, overflow:"hidden", borderTop:"1px solid #1c1c24", background:"#080810", minHeight:0 }}>
         <LibraryPanel
           lib={lib}
           onLoad={handleLibLoad}
