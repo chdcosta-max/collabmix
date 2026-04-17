@@ -142,13 +142,31 @@ function parseID3(buffer){
   const ver=bytes[3];
   const size=((bytes[6]&0x7F)<<21)|((bytes[7]&0x7F)<<14)|((bytes[8]&0x7F)<<7)|(bytes[9]&0x7F);
   let off=10;const end=Math.min(off+size,buffer.byteLength);
-  const fmap={"TIT2":"title","TPE1":"artist","TBPM":"bpm","TKEY":"key","TCON":"genre","TALB":"album"};
+  const fmap={"TIT2":"title","TPE1":"artist","TBPM":"bpm","TKEY":"key","TCON":"genre","TALB":"album","TOPE":"originalArtist","TPUB":"label"};
   function rStr(o,len){const enc=bytes[o];const sl=bytes.slice(o+1,o+len);try{return enc===1||enc===2?new TextDecoder("utf-16").decode(sl).replace(/\0/g,"").trim():new TextDecoder("utf-8").decode(sl).replace(/\0/g,"").trim();}catch{return "";}}
   while(off+10<end){
     const fid=String.fromCharCode(bytes[off],bytes[off+1],bytes[off+2],bytes[off+3]);
     if(!fid.match(/^[A-Z0-9]{4}$/))break;
     const fsz=ver>=4?((bytes[off+4]&0x7F)<<21)|((bytes[off+5]&0x7F)<<14)|((bytes[off+6]&0x7F)<<7)|(bytes[off+7]&0x7F):view.getUint32(off+4);
     if(fmap[fid]&&fsz>1)tags[fmap[fid]]=rStr(off+10,fsz);
+    // Extract APIC (artwork) frame
+    if(fid==="APIC"&&fsz>20&&!tags.artwork){
+      try{
+        let p=off+11; // skip encoding byte
+        while(p<off+10+fsz&&bytes[p]!==0)p++; // skip mime type
+        p++; // skip null
+        p++; // skip picture type byte
+        while(p<off+10+fsz&&bytes[p]!==0)p++; // skip description
+        p++; // skip null
+        if(p<off+10+fsz){
+          const picBytes=bytes.slice(p,off+10+fsz);
+          // detect mime from header bytes
+          const mime=(picBytes[0]===0xFF&&picBytes[1]===0xD8)?"image/jpeg":(picBytes[0]===0x89&&picBytes[1]===0x50)?"image/png":"image/jpeg";
+          const b64=btoa(Array.from(picBytes.slice(0,Math.min(picBytes.length,200000))).map(b=>String.fromCharCode(b)).join(""));
+          tags.artwork=`data:${mime};base64,${b64}`;
+        }
+      }catch{}
+    }
     off+=10+fsz; if(fsz===0)break;
   }
   return tags;
@@ -273,7 +291,7 @@ function useLibrary(){
       const id=`t_${Date.now()}_${Math.random().toString(36).slice(2,6)}`;
       let tags={};
       try{const sl=file.slice(0,262144);tags=parseID3(await sl.arrayBuffer());}catch{}
-      const track={id,filename:file.name.replace(/\.[^.]+$/,""),title:tags.title||file.name.replace(/\.[^.]+$/,""),artist:tags.artist||"",album:tags.album||"",genre:tags.genre||"",bpm:tags.bpm?parseFloat(tags.bpm):null,key:tags.key||null,duration:null,energy:null,analyzed:false,error:false,addedAt:Date.now()};
+      const track={id,filename:file.name.replace(/\.[^.]+$/,""),title:tags.title||file.name.replace(/\.[^.]+$/,""),artist:tags.artist||"",album:tags.album||"",genre:tags.genre||"",label:tags.label||"",bpm:tags.bpm?parseFloat(tags.bpm):null,key:tags.key||null,duration:null,energy:null,analyzed:false,error:false,addedAt:Date.now(),artwork:tags.artwork||null};
       fileMap.current[id]=file;
       setLibrary(prev=>{if(prev.find(t=>t.filename===track.filename))return prev;return [...prev,track];});
       queueRef.current.push({id,file,skipBPM:!!track.bpm,skipKey:!!track.key});
@@ -311,7 +329,7 @@ function useLibrary(){
     }catch{}
   },[]);
 
-  return{library,queue,crates,importing,importFiles,getFile,clear,reload};
+  return{library,queue,crates,importing,importFiles,getFile,clear,reload,setLibrary,fileMap};
 }
 
 // ── Library Panel UI ──────────────────────────────────────────
@@ -320,9 +338,10 @@ function useLibrary(){
 const SES_AVATAR_COLORS=[["#8B5CF6","#6D28D9"],["#C8A96E","#A07840"],["#00d4ff","#0099bb"],["#22c55e","#16a34a"],["#f59e0b","#d97706"],["#ef4444","#dc2626"],["#ec4899","#db2777"],["#14b8a6","#0d9488"]];
 function sesAvatarColor(str=""){let h=0;for(let i=0;i<str.length;i++)h=(h<<5)-h+str.charCodeAt(i);return SES_AVATAR_COLORS[Math.abs(h)%SES_AVATAR_COLORS.length];}
 
-function TrackRow({track, onLoadA, onLoadB, isRec, reasons, canLoad, previewTrackId, onPreview}){
+function TrackRow({track, onLoadA, onLoadB, isRec, reasons, canLoad, previewTrackId, onPreview, onDelete, onDragStart}){
   const [hov,setHov]=useState(false);
   const [showDeckMenu,setShowDeckMenu]=useState(false);
+  const [ctxMenu,setCtxMenu]=useState(null); // {x,y}
   const deckMenuRef=useRef(null);
   const G="#C8A96E";
   const eColor=ENERGY_COLOR[track.energy?.label]||"#555562";
@@ -342,12 +361,39 @@ function TrackRow({track, onLoadA, onLoadB, isRec, reasons, canLoad, previewTrac
     return()=>document.removeEventListener("mousedown",close);
   },[showDeckMenu]);
 
+  // Close context menu on click outside
+  useEffect(()=>{
+    if(!ctxMenu)return;
+    const close=()=>setCtxMenu(null);
+    document.addEventListener("mousedown",close);
+    return()=>document.removeEventListener("mousedown",close);
+  },[ctxMenu]);
+
   return(
     <div
       onMouseEnter={()=>setHov(true)}
       onMouseLeave={()=>setHov(false)}
-      style={{display:"grid",gridTemplateColumns:"28px 36px 1fr 70px 44px 70px 44px 64px",gap:6,alignItems:"center",padding:"5px 10px",background:isRec?"#22c55e07":hov?"#18182299":"transparent",borderBottom:"1px solid #14141e88",transition:"background .1s",position:"relative"}}
+      draggable={true}
+      onDragStart={e=>{
+        e.dataTransfer.setData("application/json",JSON.stringify({trackId:track.id,title:track.title,artist:track.artist}));
+        e.dataTransfer.effectAllowed="copy";
+        if(onDragStart)onDragStart(track);
+      }}
+      onContextMenu={e=>{e.preventDefault();setCtxMenu({x:e.clientX,y:e.clientY});}}
+      style={{display:"grid",gridTemplateColumns:"28px 36px 1fr 70px 44px 70px 44px 64px",gap:6,alignItems:"center",padding:"5px 10px",background:isRec?"#22c55e07":hov?"#18182299":"transparent",borderBottom:"1px solid #14141e88",transition:"background .1s",position:"relative",cursor:"grab"}}
     >
+      {/* Context menu */}
+      {ctxMenu&&(
+        <div onMouseDown={e=>e.stopPropagation()} style={{position:"fixed",left:ctxMenu.x,top:ctxMenu.y,zIndex:9999,background:"#111118",border:"1px solid #252535",borderRadius:8,padding:"4px 0",minWidth:160,boxShadow:"0 12px 32px rgba(0,0,0,.9)"}}>
+          <div style={{padding:"2px 14px 6px",fontSize:7,fontFamily:"'DM Mono',monospace",color:"#555562",letterSpacing:1.2}}>{track.title?.substring(0,24)||track.filename}</div>
+          <div style={{height:1,background:"#1e1e28",margin:"0 0 4px"}}/>
+          {onLoadA&&<div onClick={()=>{onLoadA(track);setCtxMenu(null);}} style={{padding:"7px 14px",fontSize:10,fontFamily:"'DM Sans',sans-serif",color:"#00d4ff",cursor:"pointer",background:"transparent"}} onMouseEnter={e=>e.currentTarget.style.background="#00d4ff0e"} onMouseLeave={e=>e.currentTarget.style.background="transparent"}>▶ Load to Deck A</div>}
+          {onLoadB&&<div onClick={()=>{onLoadB(track);setCtxMenu(null);}} style={{padding:"7px 14px",fontSize:10,fontFamily:"'DM Sans',sans-serif",color:"#ff6b35",cursor:"pointer",background:"transparent"}} onMouseEnter={e=>e.currentTarget.style.background="#ff6b350e"} onMouseLeave={e=>e.currentTarget.style.background="transparent"}>▶ Load to Deck B</div>}
+          {onPreview&&<div onClick={()=>{onPreview(track);setCtxMenu(null);}} style={{padding:"7px 14px",fontSize:10,fontFamily:"'DM Sans',sans-serif",color:"#888898",cursor:"pointer",background:"transparent"}} onMouseEnter={e=>e.currentTarget.style.background="#18182299"} onMouseLeave={e=>e.currentTarget.style.background="transparent"}>{isPreviewing?"⏸ Stop Preview":"▶ Preview"}</div>}
+          <div style={{height:1,background:"#1e1e28",margin:"4px 0"}}/>
+          {onDelete&&<div onClick={()=>{onDelete(track.id);setCtxMenu(null);}} style={{padding:"7px 14px",fontSize:10,fontFamily:"'DM Sans',sans-serif",color:"#ef4444",cursor:"pointer",background:"transparent"}} onMouseEnter={e=>e.currentTarget.style.background="#ef444410"} onMouseLeave={e=>e.currentTarget.style.background="transparent"}>🗑 Remove from Library</div>}
+        </div>
+      )}
       {/* + Quick-add to deck */}
       <div style={{position:"relative"}} ref={deckMenuRef}>
         <button onClick={e=>{e.stopPropagation();setShowDeckMenu(v=>!v);}}
@@ -365,10 +411,10 @@ function TrackRow({track, onLoadA, onLoadB, isRec, reasons, canLoad, previewTrac
 
       {/* Artwork — click to preview */}
       <div onClick={e=>{e.stopPropagation();if(onPreview)onPreview(track);}} title={isPreviewing?"Stop preview":"Preview"}
-        style={{width:32,height:32,borderRadius:5,flexShrink:0,background:`linear-gradient(135deg,${ac},${ac2})`,display:"flex",alignItems:"center",justifyContent:"center",fontSize:12,fontWeight:700,color:"#fff",fontFamily:"'DM Sans',sans-serif",userSelect:"none",position:"relative",overflow:"hidden",cursor:"pointer",outline:isPreviewing?`2px solid ${G}`:"none",transition:"outline .1s"}}>
-        {initial}
-        {isPreviewing&&<div style={{position:"absolute",inset:0,background:"rgba(0,0,0,.55)",display:"flex",alignItems:"center",justifyContent:"center"}}><span style={{fontSize:11}}>⏸</span></div>}
-        {!isPreviewing&&hov&&<div style={{position:"absolute",inset:0,background:"rgba(0,0,0,.4)",display:"flex",alignItems:"center",justifyContent:"center"}}><span style={{fontSize:10,color:"#fff"}}>▶</span></div>}
+        style={{width:32,height:32,borderRadius:5,flexShrink:0,background:track.artwork?`#000`:`linear-gradient(135deg,${ac},${ac2})`,display:"flex",alignItems:"center",justifyContent:"center",fontSize:12,fontWeight:700,color:"#fff",fontFamily:"'DM Sans',sans-serif",userSelect:"none",position:"relative",overflow:"hidden",cursor:"pointer",outline:isPreviewing?`2px solid ${G}`:"none",transition:"outline .1s"}}>
+        {track.artwork?<img src={track.artwork} alt="" style={{width:"100%",height:"100%",objectFit:"cover",position:"absolute",inset:0}}/>:<span style={{position:"relative",zIndex:1}}>{initial}</span>}
+        {isPreviewing&&<div style={{position:"absolute",inset:0,background:"rgba(0,0,0,.6)",display:"flex",alignItems:"center",justifyContent:"center",zIndex:2}}><span style={{fontSize:11}}>⏸</span></div>}
+        {!isPreviewing&&hov&&<div style={{position:"absolute",inset:0,background:"rgba(0,0,0,.45)",display:"flex",alignItems:"center",justifyContent:"center",zIndex:2}}><span style={{fontSize:10,color:"#fff"}}>▶</span></div>}
       </div>
 
       {/* Title + artist + label */}
@@ -413,11 +459,12 @@ function TrackRow({track, onLoadA, onLoadB, isRec, reasons, canLoad, previewTrac
   );
 }
 
-function LibraryPanel({lib, onLoad, playingTrack, previewTrackId, onPreview, chat, onSendChat, me}){
+function LibraryPanel({lib, onLoad, playingTrack, previewTrackId, onPreview, onDelete, chat, onSendChat, me}){
   const [filter,setFilter]=useState("");
   const [sortBy,setSortBy]=useState("addedAt");
   const [sortDir,setSortDir]=useState(-1);
-  const [view,setView]=useState("tracks"); // "tracks"|"artists"|"labels"|"energy"|"queue"|"suggest"
+  const [view,setView]=useState("tracks"); // "tracks"|"artists"|"labels"|"energy"|"queue"
+  const [drillValue,setDrillValue]=useState(null); // e.g. selected artist/label/energy
   const [activeCrateId,setActiveCrateId]=useState(null);
   const [cratesExpanded,setCratesExpanded]=useState(true);
   const [showNewCrateInput,setShowNewCrateInput]=useState(false);
@@ -427,9 +474,14 @@ function LibraryPanel({lib, onLoad, playingTrack, previewTrackId, onPreview, cha
   const [bpmRange,setBpmRange]=useState([60,200]);
   const [keyFilter,setKeyFilter]=useState(null);
   const [showFilters,setShowFilters]=useState(false);
+  const [showImportModal,setShowImportModal]=useState(false);
+  const [importTab,setImportTab]=useState("local"); // "local"|"itunes"|"rekordbox"
+  const [dragOverCrate,setDragOverCrate]=useState(null);
   const chatEndRef=useRef(null);
   const fileRef=useRef(null);
   const newCrateRef=useRef(null);
+  const itunesRef=useRef(null);
+  const rekordboxRef=useRef(null);
   const G="#C8A96E";
 
   useEffect(()=>chatEndRef.current?.scrollIntoView({behavior:"smooth"}),[chat]);
@@ -442,12 +494,23 @@ function LibraryPanel({lib, onLoad, playingTrack, previewTrackId, onPreview, cha
   const selfRecs=playingTrack&&allTracks.length>0?recommendTracks(playingTrack,allTracks):[];
   const recIds=new Set(selfRecs.map(r=>r.id));
 
-  // Base tracks by view/crate
+  // Unique values for drill-down views
+  const uniqueArtists=[...new Set(allTracks.map(t=>t.artist).filter(Boolean))].sort();
+  const uniqueLabels=[...new Set(allTracks.map(t=>t.label).filter(Boolean))].sort();
+  const ENERGY_ORDER=["Ambient","Warm-Up","Build","Peak Hour","Hard"];
+  const uniqueEnergies=ENERGY_ORDER.filter(e=>allTracks.some(t=>t.energy?.label===e));
+
+  // Base tracks by view/crate/drill
   let baseTracks;
   if(activeCrate) baseTracks=(activeCrate.trackIds||[]).map(id=>allTracks.find(t=>t.id===id)).filter(Boolean);
   else if(view==="queue") baseTracks=queuedTracks;
-  else if(view==="suggest") baseTracks=selfRecs;
+  else if(view==="artists"&&drillValue) baseTracks=allTracks.filter(t=>t.artist===drillValue);
+  else if(view==="labels"&&drillValue) baseTracks=allTracks.filter(t=>t.label===drillValue);
+  else if(view==="energy"&&drillValue) baseTracks=allTracks.filter(t=>t.energy?.label===drillValue);
   else baseTracks=allTracks;
+
+  // Are we in a drill-down list view (no tracks, show values to pick from)?
+  const isDrillList=(view==="artists"||view==="labels"||view==="energy")&&!drillValue&&!activeCrateId;
 
   const ENERGY_LABELS=["Ambient","Warm-Up","Build","Peak Hour","Hard"];
   const CAMELOT_KEYS=["1A","2A","3A","4A","5A","6A","7A","8A","9A","10A","11A","12A",
@@ -465,12 +528,9 @@ function LibraryPanel({lib, onLoad, playingTrack, previewTrackId, onPreview, cha
       return true;
     })
     .sort((a,b)=>{
-      let key=sortBy;
-      if(!activeCrate&&view==="energy")key="energy";
-      if(!activeCrate&&view==="artists")key="artist";
-      if(!activeCrate&&view==="labels")key="label";
-      const va=key==="energy"?(a.energy?.score??-1):(a[key]??0);
-      const vb=key==="energy"?(b.energy?.score??-1):(b[key]??0);
+      const key=sortBy;
+      const va=key==="energyScore"?(a.energy?.score??-1):key==="key"?(CAMELOT[a.key]||a.key||""):(a[key]??0);
+      const vb=key==="energyScore"?(b.energy?.score??-1):key==="key"?(CAMELOT[b.key]||b.key||""):(b[key]??0);
       return(typeof va==="string"?va.localeCompare(vb):(va-vb))*sortDir;
     });
 
@@ -510,7 +570,7 @@ function LibraryPanel({lib, onLoad, playingTrack, previewTrackId, onPreview, cha
     <div style={{display:"flex",height:"100%",overflow:"hidden"}}>
 
       {/* ── CHAT SIDEBAR ── */}
-      <div style={{width:175,flexShrink:0,display:"flex",flexDirection:"column",borderRight:"1px solid #1e1e28",background:"#08080e"}}>
+      <div style={{width:240,flexShrink:0,display:"flex",flexDirection:"column",borderRight:"1px solid #1e1e28",background:"#08080e"}}>
         <div style={{padding:"8px 10px 6px",borderBottom:"1px solid #1e1e28",flexShrink:0}}>
           <div style={{fontFamily:"'DM Mono',monospace",fontSize:9,color:"#888898",letterSpacing:2}}>CHAT</div>
         </div>
@@ -550,7 +610,7 @@ function LibraryPanel({lib, onLoad, playingTrack, previewTrackId, onPreview, cha
 
           {/* Main nav items */}
           {NAV.map(([id,label,count])=>(
-            <div key={id} onClick={()=>{setActiveCrateId(null);setView(id);}} style={navItemStyle(id,id==="queue")}>
+            <div key={id} onClick={()=>{setActiveCrateId(null);setView(id);setDrillValue(null);}} style={navItemStyle(id,id==="queue")}>
               <span>{label}</span>
               {count!=null&&(
                 <span style={{fontSize:8,fontFamily:"'DM Mono',monospace",
@@ -570,15 +630,28 @@ function LibraryPanel({lib, onLoad, playingTrack, previewTrackId, onPreview, cha
           </div>
 
           {cratesExpanded&&(
-            <div style={{maxHeight:160,overflowY:"auto"}}>
+            <div style={{maxHeight:200,overflowY:"auto"}}>
               {(lib.crates||[]).map(cr=>(
-                <div key={cr.id} onClick={()=>{setActiveCrateId(cr.id);setView("tracks");}}
+                <div key={cr.id}
+                  onClick={()=>{setActiveCrateId(cr.id);setView("tracks");setDrillValue(null);}}
+                  onContextMenu={e=>{e.preventDefault();if(window.confirm(`Delete playlist "${cr.name}"?`)){cmDbDelete("crates",cr.id).then(()=>lib.reload?.());}}}
+                  onDragOver={e=>{e.preventDefault();setDragOverCrate(cr.id);}}
+                  onDragLeave={()=>setDragOverCrate(null)}
+                  onDrop={async e=>{
+                    e.preventDefault();setDragOverCrate(null);
+                    try{const d=JSON.parse(e.dataTransfer.getData("application/json"));
+                      if(!d.trackId)return;
+                      const updated={...cr,trackIds:[...new Set([...(cr.trackIds||[]),d.trackId])]};
+                      await cmDbPut("crates",updated);lib.reload?.();
+                    }catch{}
+                  }}
                   style={{padding:"5px 12px 5px 20px",fontSize:10,fontFamily:"'DM Sans',sans-serif",
-                    color:activeCrateId===cr.id?G:"#888898",
-                    background:activeCrateId===cr.id?`${G}10`:"transparent",
+                    color:activeCrateId===cr.id?G:dragOverCrate===cr.id?"#d8d8e2":"#888898",
+                    background:activeCrateId===cr.id?`${G}10`:dragOverCrate===cr.id?`${G}18`:"transparent",
                     cursor:"pointer",
-                    borderLeft:`2px solid ${activeCrateId===cr.id?G:"transparent"}`,
-                    transition:"all .1s",display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+                    borderLeft:`2px solid ${activeCrateId===cr.id?G:dragOverCrate===cr.id?G+"88":"transparent"}`,
+                    transition:"all .1s",display:"flex",justifyContent:"space-between",alignItems:"center",
+                    outline:dragOverCrate===cr.id?`1px dashed ${G}44`:"none"}}>
                   <span style={{overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",flex:1}}>{cr.name}</span>
                   <span style={{fontSize:9,color:"#555562",fontFamily:"'DM Mono',monospace",flexShrink:0,marginLeft:4}}>{(cr.trackIds||[]).length}</span>
                 </div>
@@ -603,29 +676,74 @@ function LibraryPanel({lib, onLoad, playingTrack, previewTrackId, onPreview, cha
         </div>
 
         {/* ADD TRACKS */}
-        <div style={{flexShrink:0,padding:"6px 8px",borderTop:"1px solid #1e1e28"}}>
-          <label style={{display:"flex",alignItems:"center",justifyContent:"center",padding:"5px",fontSize:9,fontFamily:"'DM Mono',monospace",background:`${G}0e`,border:`1px solid ${G}2a`,color:G,borderRadius:5,cursor:"pointer",letterSpacing:.5}}>
-            + ADD TRACKS
-            <input ref={fileRef} type="file" accept="audio/*" multiple style={{display:"none"}} onChange={e=>lib.importFiles(e.target.files)}/>
-          </label>
+        <div style={{flexShrink:0,padding:"6px 8px",borderTop:"1px solid #1e1e28",display:"flex",flexDirection:"column",gap:4}}>
+          <button onClick={()=>setShowImportModal(true)}
+            style={{display:"flex",alignItems:"center",justifyContent:"center",padding:"6px",fontSize:9,fontFamily:"'DM Mono',monospace",background:`${G}0e`,border:`1px solid ${G}2a`,color:G,borderRadius:5,cursor:"pointer",letterSpacing:.5,width:"100%"}}>
+            + ADD MUSIC
+          </button>
+          <input ref={fileRef} type="file" accept="audio/*" multiple style={{display:"none"}} onChange={e=>{lib.importFiles(e.target.files);setShowImportModal(false);}}/>
+          <input ref={itunesRef} type="file" accept=".xml" style={{display:"none"}} onChange={e=>{
+            const f=e.target.files?.[0]; if(!f)return;
+            const reader=new FileReader();
+            reader.onload=async ev=>{
+              try{
+                const parser=new DOMParser();
+                const xml=parser.parseFromString(ev.target.result,"text/xml");
+                const dicts=xml.querySelectorAll("dict > dict > dict");
+                const tracks=[];
+                dicts.forEach(d=>{
+                  const keys=[...d.querySelectorAll("key")];
+                  const vals=[...d.children];
+                  const get=k=>{const i=keys.findIndex(el=>el.textContent===k);return i>=0?vals[i*2+1]?.textContent:null;};
+                  const loc=get("Location");if(!loc)return;
+                  const id=`itunes_${Date.now()}_${Math.random().toString(36).slice(2,5)}`;
+                  tracks.push({id,filename:loc.split("/").pop().replace(/\.[^.]+$/,""),title:get("Name")||"",artist:get("Artist")||"",album:get("Album")||"",genre:get("Genre")||"",label:"",bpm:get("BPM")?parseFloat(get("BPM")):null,key:get("Key Signature")||null,duration:get("Total Time")?parseInt(get("Total Time"))/1000:null,energy:null,analyzed:true,error:false,addedAt:Date.now(),artwork:null,itunesLoc:loc});
+                });
+                if(tracks.length){lib.setLibrary?.(prev=>[...prev,...tracks.filter(t=>!prev.find(p=>p.title===t.title&&p.artist===t.artist))]);alert(`Imported ${tracks.length} tracks from iTunes library. Note: to play them, load a track and re-select the file when prompted.`);}
+              }catch{alert("Could not parse iTunes XML — please check the file.");}
+            };
+            reader.readAsText(f);
+          }}/>
+          <input ref={rekordboxRef} type="file" accept=".xml" style={{display:"none"}} onChange={e=>{
+            const f=e.target.files?.[0]; if(!f)return;
+            const reader=new FileReader();
+            reader.onload=async ev=>{
+              try{
+                const parser=new DOMParser();
+                const xml=parser.parseFromString(ev.target.result,"text/xml");
+                const tels=xml.querySelectorAll("TRACK[Artist]");
+                const tracks=[];
+                tels.forEach(t=>{
+                  const id=`rbx_${Date.now()}_${Math.random().toString(36).slice(2,5)}`;
+                  tracks.push({id,filename:(t.getAttribute("Location")||"").split("/").pop().replace(/\.[^.]+$/,""),title:t.getAttribute("Name")||"",artist:t.getAttribute("Artist")||"",album:t.getAttribute("Album")||"",genre:t.getAttribute("Genre")||"",label:t.getAttribute("Label")||"",bpm:t.getAttribute("AverageBpm")?parseFloat(t.getAttribute("AverageBpm")):null,key:t.getAttribute("Tonality")||null,duration:t.getAttribute("TotalTime")?parseFloat(t.getAttribute("TotalTime")):null,energy:null,analyzed:true,error:false,addedAt:Date.now(),artwork:null});
+                });
+                if(tracks.length){lib.setLibrary?.(prev=>[...prev,...tracks.filter(t=>!prev.find(p=>p.title===t.title&&p.artist===t.artist))]);alert(`Imported ${tracks.length} tracks from Rekordbox. Note: to play them, re-select the files when prompted.`);}
+              }catch{alert("Could not parse Rekordbox XML — please check the file.");}
+            };
+            reader.readAsText(f);
+          }}/>
         </div>
       </div>
 
-      {/* ── TRACK LIST ── */}
+      {/* ── TRACK LIST + SUGGEST PANEL ── */}
+      <div style={{flex:1,display:"flex",overflow:"hidden",minWidth:0}}>
+
+      {/* Main track list column */}
       <div style={{flex:1,display:"flex",flexDirection:"column",overflow:"hidden",minWidth:0}}>
 
-        {/* Header: search + SUGGEST + FILTER */}
+        {/* Header: breadcrumb + search + FILTER */}
         <div style={{padding:"6px 10px",borderBottom:"1px solid #181820",flexShrink:0}}>
+          {/* Breadcrumb for drill views */}
+          {drillValue&&(
+            <div style={{display:"flex",alignItems:"center",gap:6,marginBottom:5}}>
+              <button onClick={()=>setDrillValue(null)} style={{fontSize:8,fontFamily:"'DM Mono',monospace",color:G,background:"transparent",border:`1px solid ${G}33`,borderRadius:4,padding:"2px 7px",cursor:"pointer",letterSpacing:.5}}>← {view==="artists"?"Artists":view==="labels"?"Labels":"Energy"}</button>
+              <span style={{fontSize:9,fontFamily:"'DM Sans',sans-serif",color:"#d8d8e2",fontWeight:500}}>{drillValue}</span>
+              <span style={{fontSize:8,fontFamily:"'DM Mono',monospace",color:"#555562"}}>({filtered.length})</span>
+            </div>
+          )}
           <div style={{display:"flex",gap:6,alignItems:"center"}}>
-            <input value={filter} onChange={e=>setFilter(e.target.value)} placeholder="Search tracks..."
+            <input value={filter} onChange={e=>setFilter(e.target.value)} placeholder={drillValue?`Search in ${drillValue}...`:"Search tracks..."}
               style={{flex:1,background:"#0c0c14",border:"1px solid #252535",color:"#d0d0e0",borderRadius:5,padding:"4px 9px",fontSize:9,fontFamily:"'DM Mono',monospace",outline:"none"}}/>
-            <button onClick={()=>{setActiveCrateId(null);setView(v=>v==="suggest"?"tracks":"suggest");}}
-              style={{padding:"3px 10px",fontSize:7,fontFamily:"'DM Mono',monospace",letterSpacing:1,
-                background:view==="suggest"?`${G}22`:"transparent",
-                color:view==="suggest"?G:"#888898",
-                border:`1px solid ${view==="suggest"?G+"44":"#252535"}`,
-                borderRadius:4,cursor:"pointer",outline:"none",whiteSpace:"nowrap",flexShrink:0}}>
-              SUGGEST{selfRecs.length>0?` (${selfRecs.length})`:""}</button>
             <button onClick={()=>setShowFilters(f=>!f)}
               style={{padding:"3px 10px",fontSize:7,fontFamily:"'DM Mono',monospace",letterSpacing:1,
                 background:hasActiveFilter||showFilters?`${G}22`:"transparent",
@@ -633,7 +751,7 @@ function LibraryPanel({lib, onLoad, playingTrack, previewTrackId, onPreview, cha
                 border:`1px solid ${hasActiveFilter||showFilters?G+"44":"#252535"}`,
                 borderRadius:4,cursor:"pointer",outline:"none",whiteSpace:"nowrap",flexShrink:0}}>
               FILTER{hasActiveFilter?" ●":""}</button>
-            <span style={{fontSize:9,fontFamily:"'DM Mono',monospace",color:"#555562",flexShrink:0}}>{filtered.length}</span>
+            {!isDrillList&&<span style={{fontSize:9,fontFamily:"'DM Mono',monospace",color:"#555562",flexShrink:0}}>{filtered.length}</span>}
             {lib.importing&&<div style={{width:8,height:8,border:`1.5px solid ${G}33`,borderTop:`1.5px solid ${G}`,borderRadius:"50%",animation:"spin 1s linear infinite",flexShrink:0}}/>}
           </div>
 
@@ -694,37 +812,174 @@ function LibraryPanel({lib, onLoad, playingTrack, previewTrackId, onPreview, cha
           <div/><div/>
           {colHdr("TITLE / ARTIST","title")}
           {colHdr("BPM","bpm")}
-          <div style={{fontFamily:"'DM Mono',monospace",fontSize:9,color:"#555562",letterSpacing:.5,textAlign:"center"}}>KEY</div>
-          <div style={{fontFamily:"'DM Mono',monospace",fontSize:9,color:"#555562",letterSpacing:.5}}>ENERGY</div>
+          {colHdr("KEY","key")}
+          {colHdr("ENERGY","energyScore")}
           {colHdr("TIME","duration")}
           <div/>
         </div>
 
-        {/* Track rows */}
-        <div style={{flex:1,overflowY:"auto",padding:"2px 0"}} onDragOver={e=>e.preventDefault()} onDrop={e=>{e.preventDefault();lib.importFiles([...e.dataTransfer.files]);}}>
-          {filtered.length===0?(
-            <div onClick={()=>fileRef.current?.click()} style={{display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",height:"100%",gap:12,cursor:"pointer",padding:20,border:`2px dashed #C8A96E18`,borderRadius:8,margin:8}}>
-              <div style={{fontSize:28,opacity:.15}}>♫</div>
-              <div style={{fontFamily:"'DM Mono',monospace",fontSize:9,color:"#555562",textAlign:"center",letterSpacing:1,lineHeight:2}}>{allTracks.length===0?"DROP TRACKS HERE\nOR CLICK TO ADD\n\nMP3 WAV FLAC AAC":"NO TRACKS MATCH"}</div>
+        {/* Drill-down list OR track rows */}
+        {isDrillList?(
+          /* Artist / Label / Energy drill-down selector */
+          <div style={{flex:1,overflowY:"auto",padding:"4px 0"}}>
+            {(view==="artists"?uniqueArtists:view==="labels"?uniqueLabels:uniqueEnergies).map(val=>{
+              const count=allTracks.filter(t=>view==="artists"?t.artist===val:view==="labels"?t.label===val:t.energy?.label===val).length;
+              const eCol=view==="energy"?ENERGY_COLOR[val]:null;
+              return(
+                <div key={val} onClick={()=>setDrillValue(val)}
+                  style={{display:"flex",alignItems:"center",gap:10,padding:"10px 14px",borderBottom:"1px solid #14141e",cursor:"pointer",background:"transparent",transition:"background .1s"}}
+                  onMouseEnter={e=>e.currentTarget.style.background="#181822"}
+                  onMouseLeave={e=>e.currentTarget.style.background="transparent"}>
+                  {eCol&&<div style={{width:8,height:8,borderRadius:"50%",background:eCol,flexShrink:0,boxShadow:`0 0 6px ${eCol}`}}/>}
+                  <div style={{flex:1,minWidth:0}}>
+                    <div style={{fontSize:11,fontFamily:"'DM Sans',sans-serif",color:"#d8d8e2",fontWeight:500,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{val||"Unknown"}</div>
+                    <div style={{fontSize:8,fontFamily:"'DM Mono',monospace",color:"#555562",marginTop:1}}>{count} {count===1?"track":"tracks"}</div>
+                  </div>
+                  <span style={{fontSize:10,color:"#555562",flexShrink:0}}>›</span>
+                </div>
+              );
+            })}
+            {(view==="artists"?uniqueArtists:view==="labels"?uniqueLabels:uniqueEnergies).length===0&&(
+              <div style={{padding:24,textAlign:"center",fontSize:9,fontFamily:"'DM Mono',monospace",color:"#555562"}}>
+                {view==="artists"?"No artists found":view==="labels"?"No labels — import tracks with label tags":"Analyze tracks to see energy levels"}
+              </div>
+            )}
+          </div>
+        ):(
+          <div style={{flex:1,overflowY:"auto",padding:"2px 0"}} onDragOver={e=>e.preventDefault()} onDrop={e=>{e.preventDefault();lib.importFiles([...e.dataTransfer.files]);}}>
+            {filtered.length===0?(
+              <div onClick={()=>setShowImportModal(true)} style={{display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",height:"100%",gap:12,cursor:"pointer",padding:20,border:`2px dashed #C8A96E18`,borderRadius:8,margin:8}}>
+                <div style={{fontSize:28,opacity:.15}}>♫</div>
+                <div style={{fontFamily:"'DM Mono',monospace",fontSize:9,color:"#555562",textAlign:"center",letterSpacing:1,lineHeight:2}}>{allTracks.length===0?"DROP TRACKS HERE\nOR CLICK TO ADD\n\nMP3 · WAV · FLAC · AAC":"NO TRACKS MATCH"}</div>
+              </div>
+            ):filtered.map(track=>{
+              const recData=selfRecs.find(r=>r.id===track.id);
+              return(
+                <TrackRow
+                  key={track.id}
+                  track={track}
+                  onLoadA={()=>onLoad(track,"A")}
+                  onLoadB={()=>onLoad(track,"B")}
+                  isRec={recIds.has(track.id)}
+                  reasons={recData?.reasons}
+                  canLoad={true}
+                  previewTrackId={previewTrackId}
+                  onPreview={onPreview}
+                  onDelete={onDelete}
+                />
+              );
+            })}
+          </div>
+        )}
+      </div>{/* end main track list column */}
+
+      {/* ── ALWAYS-ON SUGGEST PANEL ── */}
+      <div style={{width:220,flexShrink:0,display:"flex",flexDirection:"column",borderLeft:"1px solid #1e1e28",background:"#09090f",overflow:"hidden"}}>
+        <div style={{padding:"6px 10px 5px",borderBottom:"1px solid #1e1e28",flexShrink:0,display:"flex",alignItems:"center",justifyContent:"space-between"}}>
+          <div style={{fontSize:9,fontFamily:"'DM Mono',monospace",color:`${G}cc`,letterSpacing:1.5}}>SUGGESTIONS</div>
+          {selfRecs.length>0&&<span style={{fontSize:8,fontFamily:"'DM Mono',monospace",color:"#555562"}}>{selfRecs.length}</span>}
+        </div>
+        <div style={{flex:1,overflowY:"auto",padding:"2px 0"}}>
+          {selfRecs.length===0?(
+            <div style={{padding:16,fontSize:8,fontFamily:"'DM Mono',monospace",color:"#555562",textAlign:"center",lineHeight:1.8,marginTop:8}}>
+              Load a track to<br/>see mix suggestions<br/><br/>
+              <span style={{color:"#333340"}}>Matches by key,<br/>BPM &amp; energy</span>
             </div>
-          ):filtered.map(track=>{
-            const recData=selfRecs.find(r=>r.id===track.id);
+          ):selfRecs.map(track=>{
             return(
-              <TrackRow
-                key={track.id}
-                track={track}
-                onLoadA={()=>onLoad(track,"A")}
-                onLoadB={()=>onLoad(track,"B")}
-                isRec={recIds.has(track.id)}
-                reasons={recData?.reasons}
-                canLoad={true}
-                previewTrackId={previewTrackId}
-                onPreview={onPreview}
-              />
+              <div key={track.id}
+                draggable
+                onDragStart={e=>{e.dataTransfer.setData("application/json",JSON.stringify({trackId:track.id,title:track.title,artist:track.artist}));e.dataTransfer.effectAllowed="copy";}}
+                style={{padding:"7px 10px",borderBottom:"1px solid #12121c",cursor:"grab"}}
+                onMouseEnter={e=>e.currentTarget.style.background="#151520"}
+                onMouseLeave={e=>e.currentTarget.style.background="transparent"}>
+                <div style={{display:"flex",gap:7,alignItems:"center"}}>
+                  {/* mini artwork */}
+                  {(()=>{const[ac,ac2]=sesAvatarColor(track.artist||track.title||"");const init=(track.artist||track.title||"?")[0].toUpperCase();return(
+                    <div style={{width:26,height:26,borderRadius:4,flexShrink:0,background:track.artwork?`#000`:`linear-gradient(135deg,${ac},${ac2})`,display:"flex",alignItems:"center",justifyContent:"center",fontSize:10,fontWeight:700,color:"#fff",position:"relative",overflow:"hidden"}}>
+                      {track.artwork?<img src={track.artwork} alt="" style={{width:"100%",height:"100%",objectFit:"cover",position:"absolute",inset:0}}/>:<span>{init}</span>}
+                    </div>
+                  );})()}
+                  <div style={{flex:1,minWidth:0}}>
+                    <div style={{fontSize:9,color:"#d8d8e2",fontFamily:"'DM Sans',sans-serif",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",fontWeight:500}}>{track.title||track.filename}</div>
+                    <div style={{fontSize:8,color:"#888898",fontFamily:"'DM Sans',sans-serif",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{track.artist}</div>
+                  </div>
+                </div>
+                {/* reasons */}
+                {track.reasons?.length>0&&<div style={{display:"flex",gap:2,flexWrap:"wrap",marginTop:4}}>{track.reasons.map(r=><span key={r} style={{fontSize:6,fontFamily:"'DM Mono',monospace",color:"#22c55e",background:"#22c55e10",borderRadius:2,padding:"0 4px",letterSpacing:.4}}>{r}</span>)}</div>}
+                {/* load buttons */}
+                <div style={{display:"flex",gap:3,marginTop:5}}>
+                  <button onClick={()=>onLoad(track,"A")} style={{flex:1,padding:"3px 0",fontSize:8,fontFamily:"'DM Mono',monospace",background:`${G}12`,border:`1px solid ${G}2a`,color:G,borderRadius:3,cursor:"pointer"}}>→ A</button>
+                  <button onClick={()=>onLoad(track,"B")} style={{flex:1,padding:"3px 0",fontSize:8,fontFamily:"'DM Mono',monospace",background:"#00d4ff10",border:"1px solid #00d4ff28",color:"#00d4ff",borderRadius:3,cursor:"pointer"}}>→ B</button>
+                </div>
+              </div>
             );
           })}
         </div>
       </div>
+
+      </div>{/* end track list + suggest row */}
+
+      {/* ── IMPORT MODAL ── */}
+      {showImportModal&&(
+        <div onClick={e=>{if(e.target===e.currentTarget)setShowImportModal(false);}} style={{position:"fixed",inset:0,background:"rgba(0,0,0,.8)",zIndex:9998,display:"flex",alignItems:"center",justifyContent:"center",backdropFilter:"blur(8px)"}}>
+          <div style={{width:480,background:"#0E0C1A",border:"1px solid #252535",borderRadius:14,padding:28,display:"flex",flexDirection:"column",gap:18,boxShadow:"0 40px 80px rgba(0,0,0,.8)"}}>
+            <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+              <div style={{fontFamily:"'DM Mono',monospace",fontSize:13,color:G,letterSpacing:1}}>ADD MUSIC</div>
+              <button onClick={()=>setShowImportModal(false)} style={{background:"transparent",border:"none",color:"#555562",fontSize:16,cursor:"pointer",padding:"2px 6px"}}>✕</button>
+            </div>
+            {/* Tab selector */}
+            <div style={{display:"flex",gap:0,borderRadius:7,overflow:"hidden",border:"1px solid #252535"}}>
+              {[["local","📁 Local Files"],["itunes","🎵 iTunes"],["rekordbox","🎛 Rekordbox"]].map(([tab,label])=>(
+                <button key={tab} onClick={()=>setImportTab(tab)} style={{flex:1,padding:"8px 4px",fontSize:9,fontFamily:"'DM Mono',monospace",background:importTab===tab?`${G}18`:"transparent",color:importTab===tab?G:"#555562",border:"none",borderRight:tab!=="rekordbox"?"1px solid #252535":"none",cursor:"pointer",letterSpacing:.5}}>{label}</button>
+              ))}
+            </div>
+
+            {importTab==="local"&&(
+              <div style={{display:"flex",flexDirection:"column",gap:12}}>
+                <div style={{fontSize:10,fontFamily:"'DM Sans',sans-serif",color:"#888898",lineHeight:1.6}}>Select individual audio files or hold <span style={{color:G,fontFamily:"'DM Mono',monospace"}}>⌘/Ctrl</span> to select multiple files at once.</div>
+                <div onClick={()=>fileRef.current?.click()} style={{border:`2px dashed ${G}33`,borderRadius:8,padding:24,textAlign:"center",cursor:"pointer",display:"flex",flexDirection:"column",gap:8}} onMouseEnter={e=>e.currentTarget.style.borderColor=G+"66"} onMouseLeave={e=>e.currentTarget.style.borderColor=G+"33"}>
+                  <div style={{fontSize:24,opacity:.4}}>♫</div>
+                  <div style={{fontSize:10,fontFamily:"'DM Mono',monospace",color:G,letterSpacing:.5}}>CLICK TO BROWSE</div>
+                  <div style={{fontSize:9,fontFamily:"'DM Sans',sans-serif",color:"#555562"}}>MP3 · WAV · FLAC · AAC · OGG · M4A</div>
+                </div>
+                <div style={{fontSize:9,fontFamily:"'DM Sans',sans-serif",color:"#555562",textAlign:"center"}}>You can also drag &amp; drop files directly into the track list</div>
+              </div>
+            )}
+
+            {importTab==="itunes"&&(
+              <div style={{display:"flex",flexDirection:"column",gap:14}}>
+                <div style={{fontSize:10,fontFamily:"'DM Sans',sans-serif",color:"#888898",lineHeight:1.7}}>Export your iTunes/Apple Music library XML and import it here to see all your tracks, BPM, keys and artwork.</div>
+                <div style={{background:"#0c0c14",border:"1px solid #1e1e28",borderRadius:8,padding:14,display:"flex",flexDirection:"column",gap:6}}>
+                  <div style={{fontSize:9,fontFamily:"'DM Mono',monospace",color:G,letterSpacing:.5,marginBottom:4}}>HOW TO EXPORT FROM ITUNES / MUSIC APP</div>
+                  {["1. Open iTunes or Apple Music on your Mac","2. Go to File → Library → Export Library…","3. Save the file as iTunes Music Library.xml","4. Click the button below to select it"].map((s,i)=>(
+                    <div key={i} style={{fontSize:9,fontFamily:"'DM Sans',sans-serif",color:"#888898",display:"flex",gap:8,alignItems:"flex-start"}}>
+                      <span style={{color:G,fontFamily:"'DM Mono',monospace",fontSize:8,flexShrink:0,marginTop:1}}>{i+1}.</span>{s.slice(3)}
+                    </div>
+                  ))}
+                </div>
+                <button onClick={()=>itunesRef.current?.click()} style={{padding:"10px",fontSize:10,fontFamily:"'DM Mono',monospace",background:`${G}18`,border:`1px solid ${G}44`,color:G,borderRadius:7,cursor:"pointer",letterSpacing:.5}}>SELECT ITUNES XML FILE</button>
+              </div>
+            )}
+
+            {importTab==="rekordbox"&&(
+              <div style={{display:"flex",flexDirection:"column",gap:14}}>
+                <div style={{fontSize:10,fontFamily:"'DM Sans',sans-serif",color:"#888898",lineHeight:1.7}}>Export your Rekordbox collection as XML and import it here to sync your tracks, cue points and playlists.</div>
+                <div style={{background:"#0c0c14",border:"1px solid #1e1e28",borderRadius:8,padding:14,display:"flex",flexDirection:"column",gap:6}}>
+                  <div style={{fontSize:9,fontFamily:"'DM Mono',monospace",color:G,letterSpacing:.5,marginBottom:4}}>HOW TO EXPORT FROM REKORDBOX</div>
+                  {["1. Open Rekordbox on your computer","2. Go to File → Export Collection in xml format","3. Choose a save location and click Export","4. Click the button below to select the exported XML"].map((s,i)=>(
+                    <div key={i} style={{fontSize:9,fontFamily:"'DM Sans',sans-serif",color:"#888898",display:"flex",gap:8,alignItems:"flex-start"}}>
+                      <span style={{color:"#ff6b35",fontFamily:"'DM Mono',monospace",fontSize:8,flexShrink:0,marginTop:1}}>{i+1}.</span>{s.slice(3)}
+                    </div>
+                  ))}
+                </div>
+                <button onClick={()=>rekordboxRef.current?.click()} style={{padding:"10px",fontSize:10,fontFamily:"'DM Mono',monospace",background:"#ff6b3518",border:"1px solid #ff6b3544",color:"#ff6b35",borderRadius:7,cursor:"pointer",letterSpacing:.5}}>SELECT REKORDBOX XML FILE</button>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
     </div>
   );
 }
@@ -1258,17 +1513,17 @@ function Deck({ id, ch, ctx:ac, color, local, remote, onChange, midi:mt, bpmResu
 
       {/* ── HOT CUES + LOOP CONTROLS ── */}
       <div style={{display:"flex",gap:3,padding:"5px 10px",background:"#08080e",borderBottom:"1px solid #141420",alignItems:"center"}}>
-          {/* Hot cue buttons */}
+          {/* Hot cue buttons 1-4 */}
           {HOT_CUE_COLORS.map((c,i)=>(
             <button key={i}
               onClick={()=>{if(!buf)return;if(hotCues[i]!==null){seek(hotCues[i]);}else{setHotCues(p=>{const n=[...p];n[i]=prog;return n;});}}}
               onContextMenu={e=>{e.preventDefault();if(buf)setHotCues(p=>{const n=[...p];n[i]=null;return n;});}}
               title={hotCues[i]!==null?"Click:recall  Right-click:clear":"Click to set cue"}
-              style={{width:30,height:24,background:hotCues[i]!==null?`${c}22`:"#08080e",border:`1px solid ${hotCues[i]!==null?c+"55":c+"1a"}`,color:hotCues[i]!==null?c:c+"44",borderRadius:5,cursor:"pointer",fontFamily:"'DM Mono',monospace",fontSize:9,fontWeight:500,transition:"all .1s",flexShrink:0}}>
+              style={{width:36,height:28,background:hotCues[i]!==null?`${c}30`:"#0e0e18",border:`1px solid ${hotCues[i]!==null?c+"88":c+"33"}`,color:hotCues[i]!==null?c:c+"66",borderRadius:5,cursor:"pointer",fontFamily:"'DM Mono',monospace",fontSize:11,fontWeight:700,transition:"all .1s",flexShrink:0,boxShadow:hotCues[i]!==null?`0 0 6px ${c}44`:"none"}}>
               {i+1}
             </button>
           ))}
-          <div style={{width:1,height:20,background:"#252535",margin:"0 2px",flexShrink:0}}/>
+          <div style={{width:1,height:22,background:"#252535",margin:"0 3px",flexShrink:0}}/>
           {/* Beat loop buttons: 1, 2, 4, 8, 16 beats */}
           {[[1,"1"],[2,"2"],[4,"4"],[8,"8"],[16,"16"]].map(([beats,label])=>(
             <button key={beats}
@@ -1280,7 +1535,7 @@ function Deck({ id, ch, ctx:ac, color, local, remote, onChange, midi:mt, bpmResu
                 const lEnd=Math.min(1,lStart+lDur/(buf?.duration||1));
                 setLoopStart(lStart);setLoopEnd(lEnd);setLoopActive(true);
               }}
-              style={{height:24,padding:"0 6px",background:"#08080e",border:"1px solid #C8A96E1a",color:"#C8A96E55",borderRadius:4,cursor:"pointer",fontFamily:"'DM Mono',monospace",fontSize:9,letterSpacing:.3,flexShrink:0}}>
+              style={{height:28,padding:"0 8px",background:"#0e0e18",border:"1px solid #C8A96E33",color:"#C8A96E88",borderRadius:4,cursor:"pointer",fontFamily:"'DM Mono',monospace",fontSize:10,fontWeight:600,letterSpacing:.3,flexShrink:0}}>
               {label}
             </button>
           ))}
@@ -1728,7 +1983,7 @@ function ShareButton({ room }) {
     });
   };
   return (
-    <button onClick={copy} style={{ background: copied ? "#22c55e22" : "#00d4ff11", border: copied ? "1px solid #22c55e55" : "1px solid #00d4ff33", color: copied ? "#22c55e" : "#00d4ff", fontFamily:"'DM Mono',monospace", fontWeight:800, fontSize:7, letterSpacing:1, height:22, padding:"0 9px", borderRadius:5, cursor:"pointer", transition:"all .3s" }}>
+    <button onClick={copy} style={{ background: copied ? "#22c55e22" : "#C8A96E11", border: copied ? "1px solid #22c55e55" : "1px solid #C8A96E44", color: copied ? "#22c55e" : "#C8A96E", fontFamily:"'DM Mono',monospace", fontWeight:800, fontSize:7, letterSpacing:1, height:22, padding:"0 9px", borderRadius:5, cursor:"pointer", transition:"all .3s" }}>
       {copied ? "✓ COPIED" : "⎘ INVITE"}
     </button>
   );
@@ -1848,17 +2103,46 @@ export default function CollabMix({ initialPage = "landing", djName = null }) {
   }, []);
 
   const handleLibLoad = useCallback(async (track, deck) => {
+    // Resume audio context on user gesture (browser autoplay policy)
+    if (eng.current?.ctx?.state === "suspended") {
+      try { await eng.current.ctx.resume(); } catch {}
+    }
     const file = await lib.getFile(track.id);
-    if (!file) { alert("File not available — open the Music Library app to grant folder access, then try again."); return; }
+    if (!file) {
+      // Try to re-import by showing file picker
+      const msg = "This track's file is no longer accessible.\n\nThis happens after a browser restart. Click OK to re-select the file, or cancel to dismiss.";
+      if (window.confirm(msg)) {
+        try {
+          const [fileHandle] = await window.showOpenFilePicker({ types:[{description:"Audio",accept:{"audio/*":[]}}], multiple:false });
+          const reFile = await fileHandle.getFile();
+          lib.fileMap?.current && (lib.fileMap.current[track.id] = reFile);
+          if (deck === "A") setLibLoadA({ track, file: reFile, ts: Date.now() });
+          else              setLibLoadB({ track, file: reFile, ts: Date.now() });
+          setPlayingTrack(track);
+        } catch {}
+      }
+      return;
+    }
     if (deck === "A") setLibLoadA({ track, file, ts: Date.now() });
     else              setLibLoadB({ track, file, ts: Date.now() });
     setPlayingTrack(track);
+  }, [lib]);
+
+  // Delete track from local library (in-memory + IDB)
+  const handleDeleteTrack = useCallback(async (trackId) => {
+    lib.setLibrary?.(prev => prev.filter(t => t.id !== trackId));
+    try { await cmDbDelete("tracks", trackId); await cmDbDelete("handles", trackId); } catch {}
+    if (lib.fileMap?.current) delete lib.fileMap.current[trackId];
   }, [lib]);
 
   // Audio preview in library
   const [previewTrackId, setPreviewTrackId] = useState(null);
   const previewAudioRef = useRef(null);
   const handlePreview = useCallback(async (track) => {
+    // Resume audio context on gesture
+    if (eng.current?.ctx?.state === "suspended") {
+      try { await eng.current.ctx.resume(); } catch {}
+    }
     if (previewAudioRef.current) {
       previewAudioRef.current.pause();
       try { URL.revokeObjectURL(previewAudioRef.current._url); } catch {}
@@ -1866,13 +2150,17 @@ export default function CollabMix({ initialPage = "landing", djName = null }) {
     }
     if (previewTrackId === track.id) { setPreviewTrackId(null); return; }
     const file = await lib.getFile(track.id);
-    if (!file) return;
+    if (!file) { alert("Preview not available — the file can't be accessed."); return; }
     const url = URL.createObjectURL(file);
     const audio = new Audio(url);
     audio._url = url;
     previewAudioRef.current = audio;
     setPreviewTrackId(track.id);
-    audio.play().catch(() => {});
+    try { await audio.play(); } catch(err) {
+      // If blocked by autoplay, show helpful message
+      if (err.name === "NotAllowedError") alert("Click anywhere on the page first, then try previewing.");
+      setPreviewTrackId(null); previewAudioRef.current = null;
+    }
     audio.onended = () => { setPreviewTrackId(null); previewAudioRef.current = null; };
   }, [previewTrackId, lib]);
 
@@ -2069,10 +2357,10 @@ export default function CollabMix({ initialPage = "landing", djName = null }) {
 
         {/* ── DECK A (local) ── */}
         <div style={{ display:"flex", flexDirection:"column", minWidth:0, minHeight:0, overflow:"hidden", background:"#0c0c12", border:"1px solid #1e1e28", borderRadius:10 }}>
-          <div style={{ display:"flex", gap:6, alignItems:"center", padding:"5px 10px", borderBottom:"1px solid #1e1e28", background:"#080810", flexShrink:0 }}>
-            <div style={{ width:5, height:5, borderRadius:"50%", background:"#00d4ff", boxShadow:"0 0 6px #00d4ff" }}/>
-            <span style={{ fontSize:9, fontFamily:"'DM Mono',monospace", fontWeight:500, color:"#00d4ff", letterSpacing:2 }}>DECK A</span>
-            <span style={{ fontSize:9, fontFamily:"'DM Mono',monospace", color:"#00d4ff44", letterSpacing:.5 }}>{session.name}</span>
+          <div style={{ display:"flex", gap:8, alignItems:"center", padding:"6px 12px", borderBottom:"1px solid #1e1e28", background:"#080810", flexShrink:0 }}>
+            <div style={{ width:6, height:6, borderRadius:"50%", background:"#00d4ff", boxShadow:"0 0 8px #00d4ff" }}/>
+            <span style={{ fontSize:11, fontFamily:"'DM Mono',monospace", fontWeight:700, color:"#00d4ff", letterSpacing:2 }}>DECK A</span>
+            <span style={{ fontSize:11, fontFamily:"'DM Sans',sans-serif", fontWeight:500, color:"#00d4ffaa", letterSpacing:.3 }}>{session.name}</span>
           </div>
           <div style={{ flex:1, overflowY:"auto", minHeight:0 }}>
             <Deck id="A" ch={eng.current?.A} ctx={eng.current?.ctx} color="#00d4ff" local onChange={dh("A")} midi={midiEvt} bpmResult={bpm.results["A"]} bpmAnalyze={bpm.analyze} eqHi={eqA.hi} eqMid={eqA.mid} eqLo={eqA.lo} chanVol={eqA.vol} loadFromLibrary={libLoadA} onTrackInfo={handleTrackInfo} onSync={()=>syncDecks("A",bpm.results["B"]?.bpm)}/>
@@ -2083,14 +2371,12 @@ export default function CollabMix({ initialPage = "landing", djName = null }) {
         <div style={{ display:"flex", flexDirection:"column", background:"#0e0e14", border:"1px solid #222230", borderRadius:10, overflow:"hidden", minHeight:0, boxShadow:"0 8px 32px rgba(0,0,0,.8), inset 0 1px 0 #2a2a38" }}>
 
           {/* HEADER */}
-          <div style={{ padding:"5px 10px", background:"#0a0a10", borderBottom:"1px solid #202028", display:"flex", alignItems:"center", justifyContent:"space-between", flexShrink:0 }}>
-            <div>
-              <div style={{ fontFamily:"'Cormorant Garamond',serif", fontWeight:700, fontSize:13, color:"#d8d8e2" }}>Collab<span style={{color:"#C8A96E"}}>//</span>Mix</div>
-              <div style={{ fontSize:7, fontFamily:"'DM Mono',monospace", color:"#555562", letterSpacing:2 }}>LIVE SESSION</div>
-            </div>
-            <div style={{ display:"flex", flexDirection:"column", alignItems:"flex-end", gap:2 }}>
-              <VU an={eng.current?.masterAn} color="#C8A96E" w={52}/>
-              <div style={{ fontSize:7, fontFamily:"'DM Mono',monospace", color:"#555562", letterSpacing:1 }}>MASTER OUT</div>
+          <div style={{ padding:"5px 8px", background:"#0a0a10", borderBottom:"1px solid #202028", display:"flex", flexDirection:"column", alignItems:"center", gap:3, flexShrink:0 }}>
+            <VU an={eng.current?.masterAn} color="#C8A96E" w={80}/>
+            <div style={{ display:"flex", gap:6, alignItems:"center" }}>
+              <div style={{ fontSize:7, fontFamily:"'DM Mono',monospace", color:"#C8A96E", letterSpacing:1.5, fontWeight:600 }}>MASTER OUT</div>
+              <div style={{ width:1, height:8, background:"#2a2a38" }}/>
+              <div style={{ fontSize:7, fontFamily:"'DM Mono',monospace", color:"#555562", letterSpacing:1 }}>{session.room}</div>
             </div>
           </div>
 
@@ -2167,10 +2453,10 @@ export default function CollabMix({ initialPage = "landing", djName = null }) {
 
         {/* ── DECK B (partner) ── */}
         <div style={{ display:"flex", flexDirection:"column", minWidth:0, minHeight:0, overflow:"hidden", background:"#0c0c12", border:"1px solid #1e1e28", borderRadius:10 }}>
-          <div style={{ display:"flex", gap:6, alignItems:"center", padding:"5px 10px", borderBottom:"1px solid #1e1e28", background:"#080810", flexShrink:0 }}>
-            <div style={{ width:5, height:5, borderRadius:"50%", background:sync.partner?"#ff6b35":"#282835", boxShadow:sync.partner?"0 0 6px #ff6b35":"none", transition:"all .3s" }}/>
-            <span style={{ fontSize:9, fontFamily:"'DM Mono',monospace", fontWeight:500, color:sync.partner?"#ff6b35":"#444454", letterSpacing:2 }}>DECK B</span>
-            {sync.partner&&<span style={{ fontSize:9, fontFamily:"'DM Mono',monospace", color:"#ff6b3544", letterSpacing:.5 }}>{sync.partner}</span>}
+          <div style={{ display:"flex", gap:8, alignItems:"center", padding:"6px 12px", borderBottom:"1px solid #1e1e28", background:"#080810", flexShrink:0 }}>
+            <div style={{ width:6, height:6, borderRadius:"50%", background:sync.partner?"#ff6b35":"#282835", boxShadow:sync.partner?"0 0 8px #ff6b35":"none", transition:"all .3s" }}/>
+            <span style={{ fontSize:11, fontFamily:"'DM Mono',monospace", fontWeight:700, color:sync.partner?"#ff6b35":"#444454", letterSpacing:2 }}>DECK B</span>
+            {sync.partner&&<span style={{ fontSize:11, fontFamily:"'DM Sans',sans-serif", fontWeight:500, color:"#ff6b35aa", letterSpacing:.3 }}>{sync.partner}</span>}
           </div>
           <div style={{ flex:1, overflowY:"auto", minHeight:0 }}>
             <Deck id="B" ch={null} ctx={null} color="#ff6b35" remote={pA} bpmResult={null} bpmAnalyze={null} eqHi={pA?.eqHi||0} eqMid={pA?.eqMid||0} eqLo={pA?.eqLo||0} chanVol={pA?.vol||1}/>
@@ -2220,6 +2506,7 @@ export default function CollabMix({ initialPage = "landing", djName = null }) {
           playingTrack={playingTrack}
           previewTrackId={previewTrackId}
           onPreview={handlePreview}
+          onDelete={handleDeleteTrack}
           chat={chat}
           onSendChat={msg=>sync.send({type:"chat",msg})}
           me={session.name}
