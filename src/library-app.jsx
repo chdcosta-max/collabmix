@@ -543,9 +543,11 @@ function Pill({ label, color, small }) {
 }
 
 // ── Track row ─────────────────────────────────────────────────
-function TrackRow({ track, selected, onClick, onAddToCrate, crates, onPlay, onSendToDeck, queueIds, onToggleQueue, onLabelFound }) {
+function TrackRow({ track, selected, onClick, onAddToCrate, crates, onPlay, onSendToDeck, queueIds, onToggleQueue, onLabelFound, previewTrackId, onPreview, onDeleteTrack, inCrateId, onRemoveFromCrate }) {
   const [hov, setHov] = useState(false);
-  const [showCrateMenu, setShowCrateMenu] = useState(false);
+  const [showQuickMenu, setShowQuickMenu] = useState(false);
+  const [ctxMenu, setCtxMenu] = useState(null); // { x, y }
+  const quickMenuRef = useRef(null);
   const [artworkUrl, setArtworkUrl] = useState(() => artworkCache.get(`${track.artist}|${track.title}`) || null);
   const camelot = CAMELOT[track.key] || (track.key?.match(/^\d+[AB]$/) ? track.key : null);
   const eColor = ENERGY_COLOR[track.energy?.label] || C.muted;
@@ -555,6 +557,24 @@ function TrackRow({ track, selected, onClick, onAddToCrate, crates, onPlay, onSe
   const initial = (track.artist || track.title || "?")[0].toUpperCase();
   const srcBadge = SOURCE_BADGE[track.source];
   const inQ = queueIds?.has(track.id);
+  const isPreviewing = previewTrackId === track.id;
+
+  // Close quick-add menu on outside click
+  useEffect(() => {
+    if (!showQuickMenu) return;
+    const close = (e) => { if (quickMenuRef.current && !quickMenuRef.current.contains(e.target)) setShowQuickMenu(false); };
+    document.addEventListener("mousedown", close);
+    return () => document.removeEventListener("mousedown", close);
+  }, [showQuickMenu]);
+
+  // Close right-click context menu on any click
+  useEffect(() => {
+    if (!ctxMenu) return;
+    const close = () => setCtxMenu(null);
+    document.addEventListener("mousedown", close);
+    window.addEventListener("scroll", close, true);
+    return () => { document.removeEventListener("mousedown", close); window.removeEventListener("scroll", close, true); };
+  }, [ctxMenu]);
 
   // Fetch artwork lazily
   useEffect(() => {
@@ -576,14 +596,17 @@ function TrackRow({ track, selected, onClick, onAddToCrate, crates, onPlay, onSe
     return () => { cancelled = true; };
   }, [track.id, track.artist, track.title, track.label]);
 
+  const menuItemStyle = { width:"100%", padding:"8px 12px", display:"flex", alignItems:"center", gap:8, background:"transparent", border:"none", borderRadius:7, cursor:"pointer", fontSize:12, fontFamily:"'DM Sans',sans-serif", color:C.text, textAlign:"left", transition:"background .1s" };
+
   return (
     <div
       onMouseEnter={() => setHov(true)}
-      onMouseLeave={() => { setHov(false); setShowCrateMenu(false); }}
+      onMouseLeave={() => setHov(false)}
       onClick={() => onClick(track)}
+      onContextMenu={e=>{ e.preventDefault(); e.stopPropagation(); setCtxMenu({ x:e.clientX, y:e.clientY }); }}
       style={{
         display:"grid",
-        gridTemplateColumns:"28px 36px 1fr 90px 56px 80px 52px 96px",
+        gridTemplateColumns:"28px 36px 1fr 90px 56px 80px 52px 80px",
         gap:8,
         alignItems:"center",
         padding:"6px 14px",
@@ -594,34 +617,59 @@ function TrackRow({ track, selected, onClick, onAddToCrate, crates, onPlay, onSe
         position:"relative",
       }}
     >
-      {/* # / play */}
-      <div style={{ textAlign:"center", color: hov ? G : C.muted, fontSize:10, fontFamily:"'DM Mono',monospace" }}>
-        {hov
-          ? track.cloudOnly
-            ? <span onClick={e=>{e.stopPropagation();openAppleMusic(track.artist,track.title);}} title="Open in Apple Music to download" style={{fontSize:15,cursor:"pointer",color:"#60a5fa"}}>⬇</span>
-            : <span onClick={e=>{e.stopPropagation();onPlay&&onPlay(track);}} style={{fontSize:15,cursor:"pointer",color:G}}>▶</span>
-          : track.cloudOnly
-            ? <span title="Cloud only" style={{fontSize:10,color:"#60a5fa",opacity:.7}}>☁</span>
-            : <span style={{opacity:.4}}>{track._rowNum||""}</span>
-        }
+      {/* + Quick-add button */}
+      <div style={{ position:"relative" }} ref={quickMenuRef}>
+        <button
+          onClick={e=>{ e.stopPropagation(); setShowQuickMenu(v=>!v); }}
+          title="Add to deck or playlist"
+          style={{ width:22, height:22, borderRadius:5, background:showQuickMenu?`${G}22`:hov?`${G}12`:"transparent", border:`1px solid ${hov||showQuickMenu?G+"44":"transparent"}`, color:hov||showQuickMenu?G:"transparent", fontSize:14, lineHeight:1, cursor:"pointer", display:"flex", alignItems:"center", justifyContent:"center", transition:"all .15s", fontFamily:"'DM Mono',monospace", fontWeight:400 }}>＋</button>
+        {showQuickMenu && (
+          <div onClick={e=>e.stopPropagation()} style={{ position:"absolute", left:0, top:"calc(100% + 6px)", zIndex:500, background:C.raised, border:`1px solid ${C.border}`, borderRadius:12, padding:8, minWidth:190, boxShadow:"0 16px 40px rgba(0,0,0,.8)" }}>
+            {/* Decks */}
+            <div style={{ fontSize:9, color:C.muted, fontFamily:"'DM Mono',monospace", padding:"2px 8px 6px", letterSpacing:1.2 }}>LOAD TO DECK</div>
+            <div style={{ display:"flex", gap:5, padding:"0 4px 8px" }}>
+              <button onClick={e=>{ e.stopPropagation(); onSendToDeck&&onSendToDeck(track,"A"); setShowQuickMenu(false); }}
+                style={{ flex:1, padding:"8px 4px", background:`${G}18`, border:`1px solid ${G}44`, color:G, borderRadius:8, cursor:"pointer", fontFamily:"'DM Mono',monospace", fontSize:11, fontWeight:700, letterSpacing:.5 }}>▶ A</button>
+              <button onClick={e=>{ e.stopPropagation(); onSendToDeck&&onSendToDeck(track,"B"); setShowQuickMenu(false); }}
+                style={{ flex:1, padding:"8px 4px", background:"#00d4ff18", border:"1px solid #00d4ff44", color:"#00d4ff", borderRadius:8, cursor:"pointer", fontFamily:"'DM Mono',monospace", fontSize:11, fontWeight:700, letterSpacing:.5 }}>▶ B</button>
+            </div>
+            <div style={{ height:1, background:C.border, margin:"0 4px 8px" }}/>
+            {/* Playlists */}
+            <div style={{ fontSize:9, color:C.muted, fontFamily:"'DM Mono',monospace", padding:"0 8px 6px", letterSpacing:1.2 }}>ADD TO PLAYLIST</div>
+            {crates.length === 0
+              ? <div style={{ fontSize:10, color:C.muted, padding:"4px 8px 6px", fontFamily:"'DM Mono',monospace" }}>No playlists yet</div>
+              : <div style={{ maxHeight:150, overflowY:"auto" }}>
+                  {crates.map(cr => (
+                    <div key={cr.id} onClick={e=>{ e.stopPropagation(); onAddToCrate(track.id, cr.id); setShowQuickMenu(false); }}
+                      style={{ padding:"7px 10px", fontSize:12, color:C.text, borderRadius:7, cursor:"pointer", fontFamily:"'DM Sans',sans-serif", display:"flex", alignItems:"center", gap:7, transition:"background .1s" }}
+                      onMouseEnter={e=>e.currentTarget.style.background=`${G}14`}
+                      onMouseLeave={e=>e.currentTarget.style.background="transparent"}>
+                      <span style={{ fontSize:11, color:G }}>◈</span> {cr.name}
+                    </div>
+                  ))}
+                </div>
+            }
+          </div>
+        )}
       </div>
 
-      {/* Artwork avatar — real art when available, gradient fallback */}
-      <div style={{
-        width:34, height:34, borderRadius:6, flexShrink:0,
-        background: artworkUrl ? "#000" : `linear-gradient(135deg,${ac},${ac2})`,
-        display:"flex", alignItems:"center", justifyContent:"center",
-        fontSize:13, fontWeight:700, color:"#fff", fontFamily:"'DM Sans',sans-serif",
-        boxShadow:`0 2px 8px ${ac}44`, userSelect:"none",
-        position:"relative", overflow:"hidden",
-      }}>
-        {artworkUrl
-          ? <img src={artworkUrl} alt="" style={{ width:"100%", height:"100%", objectFit:"cover", display:"block" }} onError={()=>setArtworkUrl(null)}/>
-          : initial
-        }
-        {srcBadge && (
-          <div style={{ position:"absolute", bottom:0, right:0, background:"rgba(0,0,0,.7)", fontSize:6, fontFamily:"'DM Mono',monospace", color:"#fff", padding:"1px 3px", lineHeight:1.4, letterSpacing:.5, borderRadius:"4px 0 0 0" }}>{srcBadge}</div>
+      {/* Artwork — click to preview */}
+      <div
+        onClick={e=>{ e.stopPropagation(); if (!track.cloudOnly && onPreview) onPreview(track); }}
+        title={track.cloudOnly ? undefined : isPreviewing ? "Click to stop preview" : "Click to preview"}
+        style={{ width:34, height:34, borderRadius:6, flexShrink:0, background: artworkUrl?"#000":`linear-gradient(135deg,${ac},${ac2})`, display:"flex", alignItems:"center", justifyContent:"center", fontSize:13, fontWeight:700, color:"#fff", fontFamily:"'DM Sans',sans-serif", boxShadow:`0 2px 8px ${ac}44`, userSelect:"none", position:"relative", overflow:"hidden", cursor:track.cloudOnly?"default":"pointer", outline:isPreviewing?`2px solid ${G}`:"none", transition:"outline .1s" }}>
+        {artworkUrl ? <img src={artworkUrl} alt="" style={{ width:"100%", height:"100%", objectFit:"cover", display:"block" }} onError={()=>setArtworkUrl(null)}/> : initial}
+        {isPreviewing && (
+          <div style={{ position:"absolute", inset:0, background:"rgba(0,0,0,.5)", display:"flex", alignItems:"center", justifyContent:"center" }}>
+            <span style={{ fontSize:13, animation:"pulse 1s ease-in-out infinite" }}>⏸</span>
+          </div>
         )}
+        {!isPreviewing && hov && !track.cloudOnly && (
+          <div style={{ position:"absolute", inset:0, background:"rgba(0,0,0,.4)", display:"flex", alignItems:"center", justifyContent:"center" }}>
+            <span style={{ fontSize:11, color:"#fff" }}>▶</span>
+          </div>
+        )}
+        {srcBadge && <div style={{ position:"absolute", bottom:0, right:0, background:"rgba(0,0,0,.7)", fontSize:6, fontFamily:"'DM Mono',monospace", color:"#fff", padding:"1px 3px", lineHeight:1.4, letterSpacing:.5, borderRadius:"4px 0 0 0" }}>{srcBadge}</div>}
       </div>
 
       {/* Title + artist */}
@@ -669,56 +717,44 @@ function TrackRow({ track, selected, onClick, onAddToCrate, crates, onPlay, onSe
         {fmt(track.duration)}
       </div>
 
-      {/* Actions (always show deck buttons, queue on hover) */}
+      {/* Actions: Queue + Cloud download */}
       <div style={{ display:"flex", gap:3, justifyContent:"flex-end", alignItems:"center" }}>
         {onToggleQueue && (
           <button
             onClick={e=>{ e.stopPropagation(); onToggleQueue(track.id); }}
-            title={inQ ? "Remove from queue" : "Add to queue"}
-            style={{ fontSize:9, fontFamily:"'DM Mono',monospace", padding:"3px 6px", background:inQ?"#22c55e18":"transparent", border:`1px solid ${inQ?"#22c55e44":C.border}`, color:inQ?"#22c55e":C.muted, borderRadius:4, cursor:"pointer", opacity: hov||inQ ? 1 : 0, transition:"all .15s" }}
-          >{inQ ? "✓" : "+"}</button>
+            title={inQ ? "Remove from session queue" : "Add to session queue"}
+            style={{ fontSize:9, fontFamily:"'DM Mono',monospace", padding:"3px 7px", background:inQ?"#22c55e18":"transparent", border:`1px solid ${inQ?"#22c55e44":C.border}`, color:inQ?"#22c55e":C.muted, borderRadius:4, cursor:"pointer", opacity:hov||inQ?1:0, transition:"all .15s" }}
+          >{inQ ? "✓ Q" : "Q"}</button>
         )}
-        {track.cloudOnly ? (
-          <button
-            onClick={e=>{ e.stopPropagation(); openAppleMusic(track.artist, track.title); }}
-            style={{ fontSize:9, fontFamily:"'DM Mono',monospace", padding:"3px 6px", background:"#60a5fa14", border:"1px solid #60a5fa44", color:"#60a5fa", borderRadius:4, cursor:"pointer", opacity: hov ? 1 : 0.4, transition:"opacity .15s" }}
-          >⬇</button>
-        ) : onSendToDeck ? (
-          <div style={{ display:"flex", gap:2 }}>
+        {track.cloudOnly && (
+          <button onClick={e=>{ e.stopPropagation(); openAppleMusic(track.artist, track.title); }}
+            style={{ fontSize:9, fontFamily:"'DM Mono',monospace", padding:"3px 6px", background:"#60a5fa14", border:"1px solid #60a5fa44", color:"#60a5fa", borderRadius:4, cursor:"pointer", opacity:hov?1:0.4, transition:"opacity .15s" }}>⬇</button>
+        )}
+      </div>
+
+      {/* Right-click context menu (fixed position) */}
+      {ctxMenu && (
+        <div onClick={e=>e.stopPropagation()} style={{ position:"fixed", left:Math.min(ctxMenu.x, window.innerWidth-200), top:Math.min(ctxMenu.y, window.innerHeight-120), zIndex:9999, background:C.raised, border:`1px solid ${C.border}`, borderRadius:12, padding:6, minWidth:190, boxShadow:"0 16px 40px rgba(0,0,0,.85)" }}>
+          {inCrateId && onRemoveFromCrate && (
             <button
-              onClick={e=>{ e.stopPropagation(); onSendToDeck(track,"A"); }}
-              title="Load to Deck A"
-              style={{ fontSize:9, fontFamily:"'DM Mono',monospace", padding:"3px 7px", background:`${G}18`, border:`1px solid ${G}44`, color:G, borderRadius:4, cursor:"pointer", fontWeight:600, opacity: hov ? 1 : 0.5, transition:"all .15s" }}
-            >A</button>
+              onClick={e=>{ e.stopPropagation(); onRemoveFromCrate(track.id, inCrateId); setCtxMenu(null); }}
+              style={menuItemStyle}
+              onMouseEnter={e=>e.currentTarget.style.background=`${G}14`}
+              onMouseLeave={e=>e.currentTarget.style.background="transparent"}>
+              <span style={{fontSize:14}}>↩</span> Remove from Playlist
+            </button>
+          )}
+          {onDeleteTrack && (
             <button
-              onClick={e=>{ e.stopPropagation(); onSendToDeck(track,"B"); }}
-              title="Load to Deck B"
-              style={{ fontSize:9, fontFamily:"'DM Mono',monospace", padding:"3px 7px", background:"#00d4ff18", border:"1px solid #00d4ff44", color:"#00d4ff", borderRadius:4, cursor:"pointer", fontWeight:600, opacity: hov ? 1 : 0.5, transition:"all .15s" }}
-            >B</button>
-          </div>
-        ) : null}
-        <div style={{ position:"relative" }}>
-          <button
-            onClick={e=>{ e.stopPropagation(); setShowCrateMenu(v=>!v); }}
-            style={{ fontSize:11, padding:"2px 6px", background:"transparent", border:`1px solid ${C.border}`, color:C.muted, borderRadius:4, cursor:"pointer", opacity: hov ? 1 : 0, transition:"opacity .15s" }}
-          >⋮</button>
-          {showCrateMenu && (
-            <div style={{ position:"absolute", right:0, top:"100%", zIndex:100, background:C.raised, border:`1px solid ${C.border}`, borderRadius:8, padding:6, minWidth:160, boxShadow:"0 8px 24px rgba(0,0,0,.6)" }}>
-              <div style={{ fontSize:9, color:C.muted, fontFamily:"'DM Mono',monospace", padding:"2px 8px 6px", letterSpacing:1 }}>ADD TO PLAYLIST</div>
-              {crates.length === 0
-                ? <div style={{ fontSize:10, color:C.muted, padding:"4px 8px", fontFamily:"'DM Mono',monospace" }}>No playlists yet</div>
-                : crates.map(cr => (
-                  <div key={cr.id} onClick={e=>{e.stopPropagation();onAddToCrate(track.id,cr.id);setShowCrateMenu(false);}}
-                    style={{ fontSize:11, color:C.text, padding:"5px 8px", borderRadius:4, cursor:"pointer", fontFamily:"'DM Sans',sans-serif" }}
-                    onMouseEnter={e=>e.currentTarget.style.background=`${G}14`}
-                    onMouseLeave={e=>e.currentTarget.style.background="transparent"}
-                  >{cr.name}</div>
-                ))
-              }
-            </div>
+              onClick={e=>{ e.stopPropagation(); onDeleteTrack(track.id); setCtxMenu(null); }}
+              style={{...menuItemStyle, color:"#ef4444"}}
+              onMouseEnter={e=>{ e.currentTarget.style.background="#ef444414"; }}
+              onMouseLeave={e=>{ e.currentTarget.style.background="transparent"; }}>
+              <span style={{fontSize:14}}>🗑</span> Delete from Library
+            </button>
           )}
         </div>
-      </div>
+      )}
     </div>
   );
 }
@@ -726,7 +762,7 @@ function TrackRow({ track, selected, onClick, onAddToCrate, crates, onPlay, onSe
 // ── Column header ─────────────────────────────────────────────
 function ColHeader({ cols, sortBy, sortDir, onSort }) {
   return (
-    <div style={{ display:"grid", gridTemplateColumns:"28px 36px 1fr 90px 56px 80px 52px 96px", gap:8, padding:"7px 14px", borderBottom:`1px solid ${C.border}`, background:C.surface, flexShrink:0 }}>
+    <div style={{ display:"grid", gridTemplateColumns:"28px 36px 1fr 90px 56px 80px 52px 80px", gap:8, padding:"7px 14px", borderBottom:`1px solid ${C.border}`, background:C.surface, flexShrink:0 }}>
       {cols.map(([label, key]) => (
         <div key={label} onClick={() => onSort(key)}
           style={{ fontSize:9, fontFamily:"'DM Mono',monospace", color:sortBy===key?G:C.muted, letterSpacing:1.5, cursor:key?"pointer":"default", userSelect:"none", textAlign: label==="BPM"||label==="TIME" ? "right" : label==="KEY" ? "center" : "left" }}>
@@ -738,7 +774,7 @@ function ColHeader({ cols, sortBy, sortDir, onSort }) {
 }
 
 // ── Track list view ────────────────────────────────────────────
-function TrackListView({ tracks, crates, onAddToCrate, onSelect, selected, onPlay, onSendToDeck, queueIds, onToggleQueue, onLabelFound }) {
+function TrackListView({ tracks, crates, onAddToCrate, onSelect, selected, onPlay, onSendToDeck, queueIds, onToggleQueue, onLabelFound, previewTrackId, onPreview, onDeleteTrack, inCrateId, onRemoveFromCrate }) {
   const [sortBy, setSortBy] = useState("addedAt");
   const [sortDir, setSortDir] = useState(-1);
 
@@ -766,7 +802,9 @@ function TrackListView({ tracks, crates, onAddToCrate, onSelect, selected, onPla
         {sorted.map(t => (
           <TrackRow key={t.id} track={t} selected={selected===t.id} onClick={onSelect}
             onAddToCrate={onAddToCrate} crates={crates} onPlay={onPlay} onSendToDeck={onSendToDeck}
-            queueIds={queueIds} onToggleQueue={onToggleQueue} onLabelFound={onLabelFound}/>
+            queueIds={queueIds} onToggleQueue={onToggleQueue} onLabelFound={onLabelFound}
+            previewTrackId={previewTrackId} onPreview={onPreview}
+            onDeleteTrack={onDeleteTrack} inCrateId={inCrateId} onRemoveFromCrate={onRemoveFromCrate}/>
         ))}
         {tracks.length === 0 && (
           <div style={{ display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"center", height:"100%", gap:16, fontFamily:"'DM Mono',monospace" }}>
@@ -780,7 +818,7 @@ function TrackListView({ tracks, crates, onAddToCrate, onSelect, selected, onPla
 }
 
 // ── Artist view ───────────────────────────────────────────────
-function ArtistView({ tracks, crates, onAddToCrate, onSelect, selected, onPlay, onSendToDeck, queueIds, onToggleQueue }) {
+function ArtistView({ tracks, crates, onAddToCrate, onSelect, selected, onPlay, onSendToDeck, queueIds, onToggleQueue, previewTrackId, onPreview, onDeleteTrack }) {
   const [activeArtist, setActiveArtist] = useState(null);
 
   const byArtist = useMemo(() => {
@@ -827,7 +865,7 @@ function ArtistView({ tracks, crates, onAddToCrate, onSelect, selected, onPlay, 
               <div style={{ fontSize:10, color:C.muted, fontFamily:"'DM Mono',monospace", marginTop:2 }}>{artistTracks.length} tracks</div>
             </div>
             <div style={{ flex:1, overflow:"hidden" }}>
-              <TrackListView tracks={artistTracks} crates={crates} onAddToCrate={onAddToCrate} onSelect={onSelect} selected={selected} onPlay={onPlay} onSendToDeck={onSendToDeck} queueIds={queueIds} onToggleQueue={onToggleQueue}/>
+              <TrackListView tracks={artistTracks} crates={crates} onAddToCrate={onAddToCrate} onSelect={onSelect} selected={selected} onPlay={onPlay} onSendToDeck={onSendToDeck} queueIds={queueIds} onToggleQueue={onToggleQueue} previewTrackId={previewTrackId} onPreview={onPreview} onDeleteTrack={onDeleteTrack}/>
             </div>
           </>
         ) : (
@@ -841,7 +879,7 @@ function ArtistView({ tracks, crates, onAddToCrate, onSelect, selected, onPlay, 
 }
 
 // ── Generic grouped sidebar + tracklist view ───────────────────
-function GroupedView({ tracks, crates, onAddToCrate, onSelect, selected, onPlay, onSendToDeck, queueIds, onToggleQueue, getKey, sortGroups, colorFn, accentColor, emptyText }) {
+function GroupedView({ tracks, crates, onAddToCrate, onSelect, selected, onPlay, onSendToDeck, queueIds, onToggleQueue, getKey, sortGroups, colorFn, accentColor, emptyText, previewTrackId, onPreview, onDeleteTrack }) {
   const [activeKey, setActiveKey] = useState(null);
   const color = accentColor || G;
 
@@ -893,7 +931,7 @@ function GroupedView({ tracks, crates, onAddToCrate, onSelect, selected, onPlay,
               <div style={{ fontSize:10, color:C.muted, fontFamily:"'DM Mono',monospace" }}>{filteredTracks.length} tracks</div>
             </div>
             <div style={{ flex:1, overflow:"hidden" }}>
-              <TrackListView tracks={filteredTracks} crates={crates} onAddToCrate={onAddToCrate} onSelect={onSelect} selected={selected} onPlay={onPlay} onSendToDeck={onSendToDeck} queueIds={queueIds} onToggleQueue={onToggleQueue}/>
+              <TrackListView tracks={filteredTracks} crates={crates} onAddToCrate={onAddToCrate} onSelect={onSelect} selected={selected} onPlay={onPlay} onSendToDeck={onSendToDeck} queueIds={queueIds} onToggleQueue={onToggleQueue} previewTrackId={previewTrackId} onPreview={onPreview} onDeleteTrack={onDeleteTrack}/>
             </div>
           </>
         ) : (
@@ -1070,6 +1108,10 @@ export default function MusicLibrary() {
   const [showItunesHelper,  setShowItunesHelper]  = useState(false);
   const [showAddMusicMenu,  setShowAddMusicMenu]  = useState(false);
   const addMusicMenuRef = useRef(null);
+  const [previewTrackId,    setPreviewTrackId]    = useState(null);
+  const previewAudioRef = useRef(null);
+  const [trackCtxMenu,      setTrackCtxMenu]      = useState(null); // { trackId, x, y, inCrateId }
+  const [crateCtxMenu,      setCrateCtxMenu]      = useState(null); // { crateId, x, y }
   const [cratesExpanded,    setCratesExpanded]     = useState(true);
   const [activeCrateId,     setActiveCrateId]      = useState(null);
   const [showNewCrateInput, setShowNewCrateInput]  = useState(false);
@@ -1105,6 +1147,14 @@ export default function MusicLibrary() {
     document.addEventListener("mousedown", close);
     return () => document.removeEventListener("mousedown", close);
   }, [showAddMusicMenu]);
+
+  // Close context menus on any click
+  useEffect(() => {
+    if (!trackCtxMenu && !crateCtxMenu) return;
+    const close = () => { setTrackCtxMenu(null); setCrateCtxMenu(null); };
+    document.addEventListener("mousedown", close);
+    return () => document.removeEventListener("mousedown", close);
+  }, [trackCtxMenu, crateCtxMenu]);
 
   // Keyboard shortcuts: "/" = focus search, Escape = clear search
   useEffect(() => {
@@ -1720,6 +1770,64 @@ export default function MusicLibrary() {
     const existing = await new Promise(r => { const rq = st.get(trackId); rq.onsuccess = () => r(rq.result); });
     if (existing) { existing.label = label; st.put(existing); }
   }, []);
+  // ── Audio preview ────────────────────────────────────────────
+  const handlePreview = useCallback(async (track) => {
+    if (previewAudioRef.current) {
+      previewAudioRef.current.pause();
+      URL.revokeObjectURL(previewAudioRef.current._url || "");
+      previewAudioRef.current = null;
+    }
+    if (previewTrackId === track.id) { setPreviewTrackId(null); return; }
+    if (track.cloudOnly) return;
+    const db = dbRef.current;
+    const handleRec = await dbGet(db, "handles", track.id);
+    if (!handleRec) return;
+    try {
+      let file;
+      if (handleRec.file) { file = handleRec.file; }
+      else {
+        const perm = await handleRec.handle.queryPermission({ mode:"read" });
+        if (perm !== "granted") await handleRec.handle.requestPermission({ mode:"read" });
+        file = await handleRec.handle.getFile();
+      }
+      const url = URL.createObjectURL(file);
+      const audio = new Audio(url);
+      audio._url = url;
+      previewAudioRef.current = audio;
+      setPreviewTrackId(track.id);
+      audio.play().catch(()=>{});
+      audio.onended = () => { setPreviewTrackId(null); previewAudioRef.current=null; URL.revokeObjectURL(url); };
+      audio.onerror = () => { setPreviewTrackId(null); previewAudioRef.current=null; URL.revokeObjectURL(url); };
+    } catch {}
+  }, [previewTrackId]);
+
+  // ── Delete track from library ─────────────────────────────
+  const deleteTrack = useCallback(async (trackId) => {
+    if (!confirm("Remove this track from your library? Your actual music file won't be deleted.")) return;
+    if (previewAudioRef.current) { previewAudioRef.current.pause(); previewAudioRef.current=null; }
+    if (previewTrackId === trackId) setPreviewTrackId(null);
+    setTracks(prev => prev.filter(t => t.id !== trackId));
+    const updatedCrates = crates.map(c => ({...c, trackIds:(c.trackIds||[]).filter(id=>id!==trackId)}));
+    setCrates(updatedCrates);
+    const db = dbRef.current;
+    if (db) {
+      await dbDelete(db, "tracks",   trackId);
+      await dbDelete(db, "handles",  trackId);
+      for (const cr of updatedCrates) await dbPut(db, "crates", cr);
+    }
+    setTrackCtxMenu(null);
+  }, [crates, previewTrackId]);
+
+  // ── Duplicate playlist ────────────────────────────────────
+  const duplicateCrate = useCallback(async (crateId) => {
+    const original = crates.find(c => c.id === crateId);
+    if (!original) return;
+    const cr = { id:`cr_${Date.now()}`, name:`${original.name} (copy)`, trackIds:[...(original.trackIds||[])], createdAt:Date.now() };
+    setCrates(p => [...p, cr]);
+    if (dbRef.current) await dbPut(dbRef.current, "crates", cr);
+    setCrateCtxMenu(null);
+  }, [crates]);
+
   const clearQueue  = async () => {
     const db = dbRef.current; if (!db) return;
     await dbClear(db, "queue");
@@ -1940,16 +2048,8 @@ export default function MusicLibrary() {
           </button>
         )}
 
-        {/* Stats + actions */}
+        {/* Actions */}
         <div style={{ display:"flex", alignItems:"center", gap:10, flexShrink:0 }}>
-          <div style={{ textAlign:"right" }}>
-            <div style={{ fontSize:11, fontFamily:"'DM Mono',monospace", color:G }}>{tracks.length} tracks</div>
-            {analyzedCount < tracks.length && (
-              <div style={{ fontSize:9, fontFamily:"'DM Mono',monospace", color:C.muted, animation:"pulse 1s infinite" }}>
-                {analyzedCount}/{tracks.length} analyzed
-              </div>
-            )}
-          </div>
 
           {/* ── ADD MUSIC dropdown ── */}
           <div style={{ position:"relative", flexShrink:0 }} ref={addMusicMenuRef}>
@@ -2015,10 +2115,6 @@ export default function MusicLibrary() {
             )}
           </div>
 
-          {tracks.length>0 && analyzedCount<tracks.length && (
-            <button onClick={reanalyzeAll} style={{ padding:"9px 12px", background:"transparent", border:`1px solid ${C.border}`, color:C.muted, fontFamily:"'DM Mono',monospace", fontSize:9, letterSpacing:1, borderRadius:8, cursor:"pointer" }}>⟳ ANALYZE</button>
-          )}
-          {tracks.length>0 && <button onClick={clearAll} style={{ padding:"9px 12px", background:"transparent", border:"1px solid #ef444422", color:"#ef444455", fontFamily:"'DM Mono',monospace", fontSize:9, letterSpacing:1, borderRadius:8, cursor:"pointer" }}>✕ CLEAR</button>}
         </div>
       </div>
 
@@ -2238,12 +2334,36 @@ export default function MusicLibrary() {
         </div>
       )}
 
+      {/* ── PLAYLIST right-click context menu ── */}
+      {crateCtxMenu && (
+        <div onClick={e=>e.stopPropagation()} style={{ position:"fixed", left:Math.min(crateCtxMenu.x, window.innerWidth-210), top:Math.min(crateCtxMenu.y, window.innerHeight-100), zIndex:9999, background:C.raised, border:`1px solid ${C.border}`, borderRadius:12, padding:6, minWidth:200, boxShadow:"0 16px 40px rgba(0,0,0,.85)" }}>
+          <button
+            onClick={()=>{ duplicateCrate(crateCtxMenu.crateId); }}
+            style={{ width:"100%", padding:"8px 12px", display:"flex", alignItems:"center", gap:8, background:"transparent", border:"none", borderRadius:7, cursor:"pointer", fontSize:12, fontFamily:"'DM Sans',sans-serif", color:C.text, textAlign:"left", transition:"background .1s" }}
+            onMouseEnter={e=>e.currentTarget.style.background=`${G}14`}
+            onMouseLeave={e=>e.currentTarget.style.background="transparent"}>
+            <span style={{fontSize:14}}>⧉</span> Duplicate Playlist
+          </button>
+          <div style={{ height:1, background:C.border, margin:"4px 8px" }}/>
+          <button
+            onClick={()=>{ deleteCrate(crateCtxMenu.crateId); if(activeCrateId===crateCtxMenu.crateId){setActiveCrateId(null);setView("tracks");} setCrateCtxMenu(null); }}
+            style={{ width:"100%", padding:"8px 12px", display:"flex", alignItems:"center", gap:8, background:"transparent", border:"none", borderRadius:7, cursor:"pointer", fontSize:12, fontFamily:"'DM Sans',sans-serif", color:"#ef4444", textAlign:"left", transition:"background .1s" }}
+            onMouseEnter={e=>e.currentTarget.style.background="#ef444414"}
+            onMouseLeave={e=>e.currentTarget.style.background="transparent"}>
+            <span style={{fontSize:14}}>🗑</span> Delete Playlist
+          </button>
+        </div>
+      )}
+
       {/* ── BODY ── */}
       <div style={{ flex:1, display:"flex", overflow:"hidden" }}>
 
         {/* ── LEFT NAV ── */}
         <div style={{ width:200, flexShrink:0, background:C.surface, borderRight:`1px solid ${C.border}`, display:"flex", flexDirection:"column", padding:"12px 0" }}>
 
+
+          {/* Current Library header */}
+          <div style={{ padding:"8px 18px 4px", fontSize:8, fontFamily:"'DM Mono',monospace", color:C.muted, letterSpacing:2, opacity:.6 }}>CURRENT LIBRARY</div>
 
           {VIEWS.map(([id,label]) => (
             <button key={id} onClick={()=>selectView(id)}
@@ -2264,17 +2384,6 @@ export default function MusicLibrary() {
               <span>◉ SESSION QUEUE</span>
               {queueIds.size > 0 && <span style={{ fontSize:9, fontFamily:"'DM Mono',monospace", background:"#22c55e22", color:"#22c55e", padding:"1px 6px", borderRadius:10, border:"1px solid #22c55e44" }}>{queueIds.size}</span>}
             </button>
-          </div>
-
-          {/* ── ADD MUSIC button ── */}
-          <div style={{ padding:"10px 12px 4px", borderTop:`1px solid ${C.border}` }}>
-            <label style={{ width:"100%", padding:"9px 12px", background:scanning?`${G}08`:`${G}12`, border:`1px solid ${G}${scanning?"22":"44"}`, color:scanning?C.muted:G, fontFamily:"'DM Mono',monospace", fontSize:10, letterSpacing:1.5, borderRadius:8, cursor:scanning?"not-allowed":"pointer", display:"flex", alignItems:"center", justifyContent:"center", gap:7, transition:"all .2s", boxSizing:"border-box" }}>
-              {scanning
-                ? <><span style={{ width:8, height:8, border:`1.5px solid ${G}44`, borderTop:`1.5px solid ${G}`, borderRadius:"50%", animation:"spin 1s linear infinite", display:"inline-block" }}/> {scanProg.found > 0 ? `${scanProg.found} / ${scanProg.total} IMPORTED` : "IMPORTING..."}</>
-                : <><span style={{ fontSize:14 }}>＋</span> ADD MUSIC</>
-              }
-              <input type="file" accept="audio/*" multiple webkitdirectory="" onChange={handleImport} style={{ display:"none" }} disabled={scanning} />
-            </label>
           </div>
 
           {/* ── PLAYLISTS section ── */}
@@ -2324,19 +2433,14 @@ export default function MusicLibrary() {
                   return (
                     <div key={cr.id}
                       onClick={()=>selectCrate(cr.id)}
+                      onContextMenu={e=>{ e.preventDefault(); e.stopPropagation(); setCrateCtxMenu({ crateId:cr.id, x:e.clientX, y:e.clientY }); }}
                       style={{ padding:"8px 12px 8px 20px", display:"flex", alignItems:"center", gap:6, cursor:"pointer", background:isActive?`${G}0d`:"transparent", borderLeft:`3px solid ${isActive?G:"transparent"}`, transition:"all .12s" }}
                       onMouseEnter={e=>e.currentTarget.style.background=isActive?`${G}0d`:C.raised}
                       onMouseLeave={e=>e.currentTarget.style.background=isActive?`${G}0d`:"transparent"}
                     >
                       <span style={{ fontSize:10, color:isActive?G:C.muted, flexShrink:0 }}>◈</span>
                       <span style={{ flex:1, fontSize:12, color:isActive?G:C.text, fontFamily:"'DM Sans',sans-serif", whiteSpace:"nowrap", overflow:"hidden", textOverflow:"ellipsis" }}>{cr.name}</span>
-                      <span style={{ fontSize:9, color:C.muted, fontFamily:"'DM Mono',monospace", flexShrink:0, marginRight:2 }}>{(cr.trackIds||[]).length}</span>
-                      <button
-                        onClick={e=>{ e.stopPropagation(); deleteCrate(cr.id); if(activeCrateId===cr.id){setActiveCrateId(null);setView("tracks");} }}
-                        style={{ background:"none", border:"none", color:C.muted, cursor:"pointer", fontSize:11, opacity:.4, padding:0, lineHeight:1, flexShrink:0 }}
-                        onMouseEnter={e=>e.currentTarget.style.opacity=1}
-                        onMouseLeave={e=>e.currentTarget.style.opacity=.4}
-                      >✕</button>
+                      <span style={{ fontSize:9, color:C.muted, fontFamily:"'DM Mono',monospace", flexShrink:0 }}>{(cr.trackIds||[]).length}</span>
                     </div>
                   );
                 })}
@@ -2376,7 +2480,7 @@ export default function MusicLibrary() {
           </div>
 
           {/* Stats block */}
-          <div style={{ padding:"16px 18px", borderTop:`1px solid ${C.border}` }}>
+          <div style={{ padding:"16px 18px 10px", borderTop:`1px solid ${C.border}` }}>
             {[
               ["Tracks",    tracks.length],
               ["☁ Cloud",   cloudCount],
@@ -2389,6 +2493,23 @@ export default function MusicLibrary() {
                 <span style={{ fontSize:10, color:G, fontFamily:"'DM Mono',monospace" }}>{v}</span>
               </div>
             ))}
+            {/* Analyze + Clear actions */}
+            {tracks.length > 0 && analyzedCount < tracks.length && (
+              <button onClick={reanalyzeAll}
+                style={{ width:"100%", marginTop:8, padding:"7px 10px", background:`${G}10`, border:`1px solid ${G}33`, color:G, fontFamily:"'DM Mono',monospace", fontSize:9, letterSpacing:1.2, borderRadius:7, cursor:"pointer", display:"flex", alignItems:"center", justifyContent:"center", gap:5, transition:"all .15s" }}
+                onMouseEnter={e=>e.currentTarget.style.background=`${G}20`}
+                onMouseLeave={e=>e.currentTarget.style.background=`${G}10`}>
+                ⟳ ANALYZE LIBRARY
+              </button>
+            )}
+            {tracks.length > 0 && (
+              <button onClick={clearAll}
+                style={{ width:"100%", marginTop:6, padding:"7px 10px", background:"transparent", border:"1px solid #ef444422", color:"#ef444455", fontFamily:"'DM Mono',monospace", fontSize:9, letterSpacing:1.2, borderRadius:7, cursor:"pointer", transition:"all .15s" }}
+                onMouseEnter={e=>{ e.currentTarget.style.borderColor="#ef444444"; e.currentTarget.style.color="#ef4444aa"; }}
+                onMouseLeave={e=>{ e.currentTarget.style.borderColor="#ef444422"; e.currentTarget.style.color="#ef444455"; }}>
+                ✕ CLEAR LIBRARY
+              </button>
+            )}
           </div>
 
           {/* Link back to mixer */}
@@ -2515,11 +2636,10 @@ export default function MusicLibrary() {
           {/* Views */}
           {tracks.length > 0 && !(sourceFilter && filteredTracks.length === 0 && !scanning) && (
             <div style={{ flex:1, overflow:"hidden", display:"flex", flexDirection:"column" }}>
-              {view==="tracks"  && <TrackListView  tracks={filteredTracks} crates={crates} onAddToCrate={addToCrate} onSelect={t=>setSelected(t.id)} selected={selected} onPlay={null} onSendToDeck={sendToDeck} queueIds={queueIds} onToggleQueue={toggleQueue} onLabelFound={handleLabelFound}/>}
-              {view==="artists" && <ArtistView     tracks={filteredTracks} crates={crates} onAddToCrate={addToCrate} onSelect={t=>setSelected(t.id)} selected={selected} onPlay={null} onSendToDeck={sendToDeck} queueIds={queueIds} onToggleQueue={toggleQueue} onLabelFound={handleLabelFound}/>}
-              {view==="energy"  && <EnergyView     tracks={filteredTracks} crates={crates} onAddToCrate={addToCrate} onSelect={t=>setSelected(t.id)} selected={selected} onPlay={null} onSendToDeck={sendToDeck} queueIds={queueIds} onToggleQueue={toggleQueue} onLabelFound={handleLabelFound}/>}
-              {view==="genres"  && <GenreView      tracks={filteredTracks} crates={crates} onAddToCrate={addToCrate} onSelect={t=>setSelected(t.id)} selected={selected} onPlay={null} onSendToDeck={sendToDeck} queueIds={queueIds} onToggleQueue={toggleQueue} onLabelFound={handleLabelFound}/>}
-              {view==="labels"  && <LabelView      tracks={filteredTracks} crates={crates} onAddToCrate={addToCrate} onSelect={t=>setSelected(t.id)} selected={selected} onPlay={null} onSendToDeck={sendToDeck} queueIds={queueIds} onToggleQueue={toggleQueue} onLabelFound={handleLabelFound}/>}
+              {view==="tracks"  && <TrackListView  tracks={filteredTracks} crates={crates} onAddToCrate={addToCrate} onSelect={t=>setSelected(t.id)} selected={selected} onPlay={handlePreview} onSendToDeck={sendToDeck} queueIds={queueIds} onToggleQueue={toggleQueue} onLabelFound={handleLabelFound} previewTrackId={previewTrackId} onPreview={handlePreview} onDeleteTrack={deleteTrack}/>}
+              {view==="artists" && <ArtistView     tracks={filteredTracks} crates={crates} onAddToCrate={addToCrate} onSelect={t=>setSelected(t.id)} selected={selected} onPlay={handlePreview} onSendToDeck={sendToDeck} queueIds={queueIds} onToggleQueue={toggleQueue} onLabelFound={handleLabelFound} previewTrackId={previewTrackId} onPreview={handlePreview} onDeleteTrack={deleteTrack}/>}
+              {view==="genres"  && <GenreView      tracks={filteredTracks} crates={crates} onAddToCrate={addToCrate} onSelect={t=>setSelected(t.id)} selected={selected} onPlay={handlePreview} onSendToDeck={sendToDeck} queueIds={queueIds} onToggleQueue={toggleQueue} onLabelFound={handleLabelFound} previewTrackId={previewTrackId} onPreview={handlePreview} onDeleteTrack={deleteTrack}/>}
+              {view==="labels"  && <LabelView      tracks={filteredTracks} crates={crates} onAddToCrate={addToCrate} onSelect={t=>setSelected(t.id)} selected={selected} onPlay={handlePreview} onSendToDeck={sendToDeck} queueIds={queueIds} onToggleQueue={toggleQueue} onLabelFound={handleLabelFound} previewTrackId={previewTrackId} onPreview={handlePreview} onDeleteTrack={deleteTrack}/>}
               {view==="queue" && (() => {
                 const queuedTracks = [...queueIds].map(id => tracks.find(t=>t.id===id)).filter(Boolean);
                 const totalSec = queuedTracks.reduce((s, t) => s + (t.duration || 0), 0);
@@ -2560,8 +2680,9 @@ export default function MusicLibrary() {
                           <div key={t.id} style={{ display:"flex", alignItems:"center" }}>
                             <div style={{ flex:1, minWidth:0 }}>
                               <TrackRow track={{...t,_rowNum:i+1}} selected={selected===t.id} onClick={tr=>setSelected(tr.id)}
-                                onAddToCrate={addToCrate} crates={crates} onPlay={null} onSendToDeck={sendToDeck}
-                                queueIds={queueIds} onToggleQueue={toggleQueue} onLabelFound={handleLabelFound}/>
+                                onAddToCrate={addToCrate} crates={crates} onPlay={handlePreview} onSendToDeck={sendToDeck}
+                                queueIds={queueIds} onToggleQueue={toggleQueue} onLabelFound={handleLabelFound}
+                                previewTrackId={previewTrackId} onPreview={handlePreview} onDeleteTrack={deleteTrack}/>
                             </div>
                             <button onClick={()=>removeFromQueue(t.id)} title="Remove from queue"
                               style={{ flexShrink:0, margin:"0 10px", background:"none", border:"none", color:C.muted, cursor:"pointer", fontSize:13, opacity:.4, padding:"0 2px" }}
@@ -2584,7 +2705,7 @@ export default function MusicLibrary() {
                       <span style={{ fontSize:22, color:G }}>◈</span>
                       <div style={{ flex:1 }}>
                         <div style={{ fontSize:18, fontWeight:600, color:C.text, fontFamily:"'DM Sans',sans-serif" }}>{crate?.name}</div>
-                        <div style={{ fontSize:10, color:C.muted, fontFamily:"'DM Mono',monospace", marginTop:2 }}>{crateTracks.length} tracks · hover a track and click <span style={{color:G}}>+ CRATE</span> to add</div>
+                        <div style={{ fontSize:10, color:C.muted, fontFamily:"'DM Mono',monospace", marginTop:2 }}>{crateTracks.length} tracks · right-click a track to remove · click <span style={{color:G}}>＋</span> on any track to add</div>
                       </div>
                       {crateTracks.length > 0 && (
                         <button
@@ -2604,20 +2725,11 @@ export default function MusicLibrary() {
                         </div>
                       ) : (
                         crateTracks.map((t,i) => (
-                          <div key={t.id} style={{ display:"flex", alignItems:"center" }}>
-                            <div style={{ flex:1, minWidth:0 }}>
-                              <TrackRow track={{...t,_rowNum:i+1}} selected={selected===t.id} onClick={tr=>setSelected(tr.id)}
-                                onAddToCrate={addToCrate} crates={crates} onPlay={null} onSendToDeck={sendToDeck}
-                                queueIds={queueIds} onToggleQueue={toggleQueue} onLabelFound={handleLabelFound}/>
-                            </div>
-                            <button
-                              onClick={()=>removeFromCrate(t.id, activeCrateId)}
-                              title="Remove from crate"
-                              style={{ flexShrink:0, margin:"0 10px", background:"none", border:"none", color:C.muted, cursor:"pointer", fontSize:13, opacity:.4, padding:"0 2px", lineHeight:1 }}
-                              onMouseEnter={e=>e.currentTarget.style.opacity=1}
-                              onMouseLeave={e=>e.currentTarget.style.opacity=.4}
-                            >✕</button>
-                          </div>
+                          <TrackRow key={t.id} track={{...t,_rowNum:i+1}} selected={selected===t.id} onClick={tr=>setSelected(tr.id)}
+                            onAddToCrate={addToCrate} crates={crates} onPlay={handlePreview} onSendToDeck={sendToDeck}
+                            queueIds={queueIds} onToggleQueue={toggleQueue} onLabelFound={handleLabelFound}
+                            previewTrackId={previewTrackId} onPreview={handlePreview} onDeleteTrack={deleteTrack}
+                            inCrateId={activeCrateId} onRemoveFromCrate={removeFromCrate}/>
                         ))
                       )}
                     </div>
