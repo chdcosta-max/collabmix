@@ -1505,7 +1505,7 @@ function ChatBar({ log, send, me }) {
       {expanded && (
         <div style={{ maxHeight:140, overflowY:"auto", padding:"8px 18px", display:"flex", flexDirection:"column", gap:4, borderBottom:`1px solid ${G}14` }}>
           {log.length===0
-            ? <span style={{ fontSize:9, fontFamily:"'DM Mono',monospace", color:"#1C1830", fontStyle:"italic" }}>No messages yet — say hi to your partner</span>
+            ? <span style={{ fontSize:9, fontFamily:"'DM Mono',monospace", color:"#555562", fontStyle:"italic" }}>No messages yet — say hi to your partner</span>
             : log.map((m,i)=>(
                 <div key={i} style={{ fontSize:9, fontFamily:"'DM Mono',monospace" }}>
                   {m.type==="system"
@@ -1527,7 +1527,7 @@ function ChatBar({ log, send, me }) {
           <span style={{ fontSize:8, fontFamily:"'DM Mono',monospace", color:"#555562", overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap", flex:1 }}>
             <span style={{ color:last.from===me?"#00d4ff55":"#ff6b3555" }}>{last.from}: </span>{last.msg}
           </span>
-        ) : <span style={{ flex:1, fontSize:8, fontFamily:"'DM Mono',monospace", color:"#1C1830" }}>Message your partner...</span>; })()}
+        ) : <span style={{ flex:1, fontSize:8, fontFamily:"'DM Mono',monospace", color:"#555562" }}>Message your partner...</span>; })()}
         {expanded && <div style={{ flex:1 }}/>}
         <input
           value={input}
@@ -1804,7 +1804,7 @@ function Lobby({ onJoin, djName = null }) {
           OPEN THE ROOM →
         </button>
 
-        <div style={{ fontSize:8, fontFamily:"'DM Mono',monospace", color:"#1C1830", textAlign:"center", letterSpacing:1 }}>
+        <div style={{ fontSize:8, fontFamily:"'DM Mono',monospace", color:"#555562", textAlign:"center", letterSpacing:1 }}>
           Chrome · Edge · Free
         </div>
       </div>
@@ -1824,7 +1824,7 @@ export default function CollabMix({ initialPage = "landing", djName = null }) {
   const [pA, setPA]             = useState(null);
   const [pB, setPB]             = useState(null);
   const [midiEvt, setMidiEvt]   = useState(null);
-  const [panel, setPanel]       = useState("sync");
+  const [panel, setPanel]       = useState(null);
   // FIX: track actual playback rates so BPM sync display is correct
   const [rateA, setRateA]       = useState(1);
   const [rateB, setRateB]       = useState(1);
@@ -2109,7 +2109,7 @@ export default function CollabMix({ initialPage = "landing", djName = null }) {
               </div>
               {/* GAIN → HI → MID → LO — vertical */}
               <div style={{ flex:1, display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"space-evenly", padding:"6px 0 2px" }}>
-                <Knob v={eqA.vol>1?eqA.vol-1:0} set={v=>updateEqA("vol",1+Math.max(0,v))} min={0} max={0.5} ctr={0} label="GAIN" color="#00d4ff" size={24}/>
+                <Knob v={eqA.vol} set={v=>updateEqA("vol",v)} min={0} max={1.5} ctr={1} label="GAIN" color="#00d4ff" size={24}/>
                 <Knob v={eqA.hi}  set={v=>updateEqA("hi",v)}  min={-12} max={12} ctr={0} label="HI"   color="#00d4ff" size={24}/>
                 <Knob v={eqA.mid} set={v=>updateEqA("mid",v)} min={-12} max={12} ctr={0} label="MID"  color="#00d4ff" size={24}/>
                 <Knob v={eqA.lo}  set={v=>updateEqA("lo",v)}  min={-12} max={12} ctr={0} label="LO"   color="#00d4ff" size={24}/>
@@ -2127,7 +2127,7 @@ export default function CollabMix({ initialPage = "landing", djName = null }) {
               <div style={{ flex:1, display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"center", gap:3, minHeight:0 }}>
                 <div style={{ fontSize:7, fontFamily:"'DM Mono',monospace", color:"#C8A96E99", letterSpacing:2 }}>MASTER</div>
                 <VerticalFader val={mvol} set={setMvol} color="#C8A96E" h={120}/>
-                <div style={{ fontSize:7, fontFamily:"'DM Mono',monospace", color:"#C8A96E99" }}>{(mvol/1.2*100).toFixed(0)}%</div>
+                <div style={{ fontSize:7, fontFamily:"'DM Mono',monospace", color:"#C8A96E99" }}>{(mvol/1.5*100).toFixed(0)}%</div>
               </div>
               {/* Session info */}
               <div style={{ padding:"5px 6px 4px", borderTop:"1px solid #202028", flexShrink:0 }}>
@@ -2151,7 +2151,7 @@ export default function CollabMix({ initialPage = "landing", djName = null }) {
               </div>
               {/* GAIN → HI → MID → LO — vertical, read-only */}
               <div style={{ flex:1, display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"space-evenly", padding:"6px 0 2px" }}>
-                <Knob v={pA?.vol>1?(pA?.vol||1)-1:0} set={()=>{}} min={0} max={0.5} ctr={0} label="GAIN" color="#ff6b35" size={24} off={true}/>
+                <Knob v={pA?.vol||1.0} set={()=>{}} min={0} max={1.5} ctr={1} label="GAIN" color="#ff6b35" size={24} off={true}/>
                 <Knob v={pA?.eqHi||0}  set={()=>{}} min={-12} max={12} ctr={0} label="HI"   color="#ff6b35" size={24} off={true}/>
                 <Knob v={pA?.eqMid||0} set={()=>{}} min={-12} max={12} ctr={0} label="MID"  color="#ff6b35" size={24} off={true}/>
                 <Knob v={pA?.eqLo||0}  set={()=>{}} min={-12} max={12} ctr={0} label="LO"   color="#ff6b35" size={24} off={true}/>
@@ -2182,7 +2182,7 @@ export default function CollabMix({ initialPage = "landing", djName = null }) {
                 <button key={pid} onClick={()=>setPanel(p=>p===pid?null:pid)} style={{ flex:1, padding:"5px 2px", fontSize:9, fontFamily:"'DM Mono',monospace", background:"transparent", color:panel===pid?"#ff6b35":"#888898", border:"none", borderBottom:`2px solid ${panel===pid?"#ff6b35":"transparent"}`, cursor:"pointer", outline:"none", letterSpacing:.3 }}>{l}</button>
               ))}
             </div>
-            <div style={{ maxHeight:68, overflow:"auto", background:"#0c0c14" }}>
+            <div style={{ maxHeight:160, overflow:"auto", background:"#0c0c14" }}>
               {panel==="rtc"  && <RTCPanel rtc={rtc} partner={sync.partner} syncOk={sync.status==="connected"}/>}
               {panel==="rec"  && <RecPanel rec={rec} ready={ready}/>}
               {panel==="midi" && <MidiPanel midi={midi}/>}
