@@ -226,6 +226,18 @@ async function cmDbPut(store,item){
   const db=await openCmDB();
   return new Promise((res,rej)=>{const tx=db.transaction(store,"readwrite");const r=tx.objectStore(store).put(item);r.onsuccess=()=>res();r.onerror=e=>rej(e.target.error);});
 }
+// Store FileSystemFileHandle with explicit out-of-line key (handles store uses no keyPath in Library app)
+async function cmDbPutHandle(trackId,handle){
+  const db=await openCmDB();
+  return new Promise((res,rej)=>{
+    const tx=db.transaction("handles","readwrite");
+    const store=tx.objectStore("handles");
+    // Try out-of-line key first (Library app pattern), fall back to inline id property
+    try{store.put(handle,trackId);}catch{try{store.put({id:trackId,...handle});}catch{}}
+    tx.oncomplete=()=>res();
+    tx.onerror=e=>rej(e.target.error);
+  });
+}
 
 // ── useLibrary hook — reads from shared cm_music_library IDB ─────────────────
 function useLibrary(){
@@ -233,8 +245,10 @@ function useLibrary(){
   const [queue,setQueue]=useState([]);   // ordered array of trackIds in session queue
   const [crates,setCrates]=useState([]); // playlists from shared IDB
   const [importing,setImporting]=useState(false);
+  const [analyzing,setAnalyzing]=useState(false);
   const workerRef=useRef(null),queueRef=useRef([]),activeRef=useRef(false),fileMap=useRef({});
   const audioCtx=useRef(null);
+  const artworkCache=useRef({}); // trackId → data URL, kept in memory
 
   // Load tracks + crates from shared IDB and poll for updates from the library app
   useEffect(()=>{
@@ -282,22 +296,82 @@ function useLibrary(){
     })();
   },[]);
 
-  // Quick-add files directly in the mixer (in-memory only, doesn't save to IDB)
-  const importFiles=useCallback(async(files)=>{
+  // Core import logic — works with File objects or FileSystemFileHandle arrays
+  const _importFileObjects=useCallback(async(files,handles=[])=>{
     const audio=[...files].filter(f=>f.type.startsWith("audio/")||f.name.match(/\.(mp3|wav|flac|aac|ogg|m4a)$/i));
     if(!audio.length)return;
     setImporting(true);
-    for(const file of audio){
+    for(let i=0;i<audio.length;i++){
+      const file=audio[i];
+      const handle=handles[i]||null;
       const id=`t_${Date.now()}_${Math.random().toString(36).slice(2,6)}`;
       let tags={};
       try{const sl=file.slice(0,262144);tags=parseID3(await sl.arrayBuffer());}catch{}
-      const track={id,filename:file.name.replace(/\.[^.]+$/,""),title:tags.title||file.name.replace(/\.[^.]+$/,""),artist:tags.artist||"",album:tags.album||"",genre:tags.genre||"",label:tags.label||"",bpm:tags.bpm?parseFloat(tags.bpm):null,key:tags.key||null,duration:null,energy:null,analyzed:false,error:false,addedAt:Date.now(),artwork:tags.artwork||null};
+      // Cache artwork separately (don't inflate IDB track record)
+      if(tags.artwork){artworkCache.current[id]=tags.artwork;}
+      const track={id,filename:file.name.replace(/\.[^.]+$/,""),title:tags.title||file.name.replace(/\.[^.]+$/,""),artist:tags.artist||"",album:tags.album||"",genre:tags.genre||"",label:tags.label||"",bpm:tags.bpm?parseFloat(tags.bpm):null,key:tags.key||null,duration:null,energy:null,analyzed:false,error:false,addedAt:Date.now()};
       fileMap.current[id]=file;
       setLibrary(prev=>{if(prev.find(t=>t.filename===track.filename))return prev;return [...prev,track];});
+      // Persist metadata + handle to IDB so tracks survive page reloads
+      try{await cmDbPut("tracks",track);}catch{}
+      if(handle){try{await cmDbPutHandle(id,handle);}catch{}}
       queueRef.current.push({id,file,skipBPM:!!track.bpm,skipKey:!!track.key});
     }
     setImporting(false); processQ();
   },[processQ]);
+
+  // Import via showOpenFilePicker (preferred — handles persist in IDB)
+  const importFromPicker=useCallback(async()=>{
+    if(!window.showOpenFilePicker){
+      // Fallback handled by caller (file input click)
+      return false;
+    }
+    try{
+      const handles=await window.showOpenFilePicker({
+        multiple:true,
+        types:[{description:"Audio Files",accept:{"audio/*":[".mp3",".wav",".flac",".aac",".ogg",".m4a"]}}]
+      });
+      const files=await Promise.all(handles.map(h=>h.getFile()));
+      await _importFileObjects(files,handles);
+      return true;
+    }catch(e){
+      if(e.name==="AbortError")return true; // user cancelled
+      return false;
+    }
+  },[_importFileObjects]);
+
+  // Fallback: import from File objects (drag-drop or input — handles NOT persisted)
+  const importFiles=useCallback(async(files)=>{
+    await _importFileObjects([...files],[]);
+  },[_importFileObjects]);
+
+  // Analyze all unanalyzed tracks in library
+  const analyzeAll=useCallback(async(getFileFn)=>{
+    setAnalyzing(true);
+    const unanalyzed=(library||[]).filter(t=>!t.analyzed||t.error);
+    for(const track of unanalyzed){
+      const file=await getFileFn(track.id);
+      if(file){
+        queueRef.current.push({id:track.id,file,skipBPM:!!track.bpm,skipKey:!!track.key});
+      }
+    }
+    processQ();
+    setTimeout(()=>setAnalyzing(false),500);
+  },[library,processQ]);
+
+  // Background artwork extraction for IDB tracks that have accessible file handles
+  const extractArtworkForTrack=useCallback(async(trackId,getFileFn)=>{
+    if(artworkCache.current[trackId])return artworkCache.current[trackId];
+    const file=await getFileFn(trackId);
+    if(!file)return null;
+    try{
+      const sl=file.slice(0,262144);
+      const tags=parseID3(await sl.arrayBuffer());
+      if(tags.artwork){artworkCache.current[trackId]=tags.artwork;return tags.artwork;}
+    }catch{}
+    artworkCache.current[trackId]=false; // mark as checked, no artwork
+    return null;
+  },[]);
 
   // Get File object — in-memory first, then IDB handle (from library app)
   const getFile=useCallback(async(id)=>{
@@ -329,7 +403,7 @@ function useLibrary(){
     }catch{}
   },[]);
 
-  return{library,queue,crates,importing,importFiles,getFile,clear,reload,setLibrary,fileMap};
+  return{library,queue,crates,importing,importFiles,importFromPicker,getFile,clear,reload,setLibrary,fileMap,analyzing,analyzeAll,extractArtworkForTrack,artworkCache};
 }
 
 // ── Library Panel UI ──────────────────────────────────────────
@@ -338,10 +412,11 @@ function useLibrary(){
 const SES_AVATAR_COLORS=[["#8B5CF6","#6D28D9"],["#C8A96E","#A07840"],["#00d4ff","#0099bb"],["#22c55e","#16a34a"],["#f59e0b","#d97706"],["#ef4444","#dc2626"],["#ec4899","#db2777"],["#14b8a6","#0d9488"]];
 function sesAvatarColor(str=""){let h=0;for(let i=0;i<str.length;i++)h=(h<<5)-h+str.charCodeAt(i);return SES_AVATAR_COLORS[Math.abs(h)%SES_AVATAR_COLORS.length];}
 
-function TrackRow({track, onLoadA, onLoadB, isRec, reasons, canLoad, previewTrackId, onPreview, onDelete, onDragStart}){
+function TrackRow({track, onLoadA, onLoadB, isRec, reasons, canLoad, previewTrackId, onPreview, onDelete, onRemoveFromPlaylist, onDragStart, extractArtwork}){
   const [hov,setHov]=useState(false);
   const [showDeckMenu,setShowDeckMenu]=useState(false);
   const [ctxMenu,setCtxMenu]=useState(null); // {x,y}
+  const [artworkSrc,setArtworkSrc]=useState(track.artwork||null);
   const deckMenuRef=useRef(null);
   const G="#C8A96E";
   const eColor=ENERGY_COLOR[track.energy?.label]||"#555562";
@@ -352,6 +427,14 @@ function TrackRow({track, onLoadA, onLoadB, isRec, reasons, canLoad, previewTrac
   const [ac,ac2]=sesAvatarColor(track.artist||track.title||"");
   const initial=(track.artist||track.title||"?")[0].toUpperCase();
   const isPreviewing=previewTrackId===track.id;
+
+  // Lazy artwork extraction for IDB tracks
+  useEffect(()=>{
+    if(artworkSrc||!extractArtwork)return;
+    let cancelled=false;
+    extractArtwork(track.id).then(src=>{if(!cancelled&&src)setArtworkSrc(src);});
+    return()=>{cancelled=true;};
+  },[track.id,artworkSrc,extractArtwork]);
 
   // Close deck menu on outside click
   useEffect(()=>{
@@ -391,6 +474,7 @@ function TrackRow({track, onLoadA, onLoadB, isRec, reasons, canLoad, previewTrac
           {onLoadB&&<div onClick={()=>{onLoadB(track);setCtxMenu(null);}} style={{padding:"7px 14px",fontSize:10,fontFamily:"'DM Sans',sans-serif",color:"#ff6b35",cursor:"pointer",background:"transparent"}} onMouseEnter={e=>e.currentTarget.style.background="#ff6b350e"} onMouseLeave={e=>e.currentTarget.style.background="transparent"}>▶ Load to Deck B</div>}
           {onPreview&&<div onClick={()=>{onPreview(track);setCtxMenu(null);}} style={{padding:"7px 14px",fontSize:10,fontFamily:"'DM Sans',sans-serif",color:"#888898",cursor:"pointer",background:"transparent"}} onMouseEnter={e=>e.currentTarget.style.background="#18182299"} onMouseLeave={e=>e.currentTarget.style.background="transparent"}>{isPreviewing?"⏸ Stop Preview":"▶ Preview"}</div>}
           <div style={{height:1,background:"#1e1e28",margin:"4px 0"}}/>
+          {onRemoveFromPlaylist&&<div onClick={()=>{onRemoveFromPlaylist(track.id);setCtxMenu(null);}} style={{padding:"7px 14px",fontSize:10,fontFamily:"'DM Sans',sans-serif",color:"#C8A96E",cursor:"pointer",background:"transparent"}} onMouseEnter={e=>e.currentTarget.style.background="#C8A96E10"} onMouseLeave={e=>e.currentTarget.style.background="transparent"}>↩ Remove from Playlist</div>}
           {onDelete&&<div onClick={()=>{onDelete(track.id);setCtxMenu(null);}} style={{padding:"7px 14px",fontSize:10,fontFamily:"'DM Sans',sans-serif",color:"#ef4444",cursor:"pointer",background:"transparent"}} onMouseEnter={e=>e.currentTarget.style.background="#ef444410"} onMouseLeave={e=>e.currentTarget.style.background="transparent"}>🗑 Remove from Library</div>}
         </div>
       )}
@@ -411,8 +495,8 @@ function TrackRow({track, onLoadA, onLoadB, isRec, reasons, canLoad, previewTrac
 
       {/* Artwork — click to preview */}
       <div onClick={e=>{e.stopPropagation();if(onPreview)onPreview(track);}} title={isPreviewing?"Stop preview":"Preview"}
-        style={{width:32,height:32,borderRadius:5,flexShrink:0,background:track.artwork?`#000`:`linear-gradient(135deg,${ac},${ac2})`,display:"flex",alignItems:"center",justifyContent:"center",fontSize:12,fontWeight:700,color:"#fff",fontFamily:"'DM Sans',sans-serif",userSelect:"none",position:"relative",overflow:"hidden",cursor:"pointer",outline:isPreviewing?`2px solid ${G}`:"none",transition:"outline .1s"}}>
-        {track.artwork?<img src={track.artwork} alt="" style={{width:"100%",height:"100%",objectFit:"cover",position:"absolute",inset:0}}/>:<span style={{position:"relative",zIndex:1}}>{initial}</span>}
+        style={{width:32,height:32,borderRadius:5,flexShrink:0,background:artworkSrc?`#000`:`linear-gradient(135deg,${ac},${ac2})`,display:"flex",alignItems:"center",justifyContent:"center",fontSize:12,fontWeight:700,color:"#fff",fontFamily:"'DM Sans',sans-serif",userSelect:"none",position:"relative",overflow:"hidden",cursor:"pointer",outline:isPreviewing?`2px solid ${G}`:"none",transition:"outline .1s"}}>
+        {artworkSrc?<img src={artworkSrc} alt="" style={{width:"100%",height:"100%",objectFit:"cover",position:"absolute",inset:0}}/>:<span style={{position:"relative",zIndex:1}}>{initial}</span>}
         {isPreviewing&&<div style={{position:"absolute",inset:0,background:"rgba(0,0,0,.6)",display:"flex",alignItems:"center",justifyContent:"center",zIndex:2}}><span style={{fontSize:11}}>⏸</span></div>}
         {!isPreviewing&&hov&&<div style={{position:"absolute",inset:0,background:"rgba(0,0,0,.45)",display:"flex",alignItems:"center",justifyContent:"center",zIndex:2}}><span style={{fontSize:10,color:"#fff"}}>▶</span></div>}
       </div>
@@ -549,6 +633,15 @@ function LibraryPanel({lib, onLoad, playingTrack, previewTrackId, onPreview, onD
     lib.reload?.();
   };
 
+  const removeFromPlaylist=useCallback(async(trackId)=>{
+    if(!activeCrateId)return;
+    const crate=(lib.crates||[]).find(c=>c.id===activeCrateId);
+    if(!crate)return;
+    const updated={...crate,trackIds:(crate.trackIds||[]).filter(id=>id!==trackId)};
+    await cmDbPut("crates",updated);
+    lib.reload?.();
+  },[activeCrateId,lib]);
+
   const NAV=[
     ["tracks","All Tracks",null],
     ["artists","Artists",null],
@@ -603,8 +696,18 @@ function LibraryPanel({lib, onLoad, playingTrack, previewTrackId, onPreview, onD
 
       {/* ── LIBRARY NAV SIDEBAR ── */}
       <div style={{width:155,flexShrink:0,display:"flex",flexDirection:"column",borderRight:"1px solid #1e1e28",background:"#0a0a10"}}>
-        <div style={{padding:"8px 10px 6px",borderBottom:"1px solid #1e1e28",flexShrink:0}}>
-          <div style={{fontFamily:"'DM Mono',monospace",fontSize:9,color:"#888898",letterSpacing:2}}>CURRENT LIBRARY</div>
+        <div style={{padding:"8px 10px 6px",borderBottom:"1px solid #1e1e28",flexShrink:0,display:"flex",alignItems:"center",justifyContent:"space-between"}}>
+          <div style={{fontFamily:"'DM Mono',monospace",fontSize:11,color:"#d8d8e2",letterSpacing:1,fontWeight:600}}>Library</div>
+          <button title={lib.analyzing?"Analyzing...":"Analyze library"} onClick={()=>lib.analyzeAll?.(lib.getFile)} style={{background:"none",border:"none",cursor:"pointer",padding:"2px 3px",borderRadius:4,opacity:lib.analyzing?0.5:1,transition:"opacity 0.2s",display:"flex",alignItems:"center"}}>
+            <svg width="18" height="14" viewBox="0 0 18 14" fill="none" xmlns="http://www.w3.org/2000/svg">
+              <rect x="0"  y="5"  width="2" height="4" rx="1" fill={lib.analyzing?"#C8A96E":"#888898"}/>
+              <rect x="3"  y="2"  width="2" height="10" rx="1" fill={lib.analyzing?"#C8A96E":"#888898"}/>
+              <rect x="6"  y="0"  width="2" height="14" rx="1" fill={lib.analyzing?"#C8A96E":"#aaa8b8"}/>
+              <rect x="9"  y="3"  width="2" height="8"  rx="1" fill={lib.analyzing?"#C8A96E":"#888898"}/>
+              <rect x="12" y="1"  width="2" height="12" rx="1" fill={lib.analyzing?"#C8A96E":"#aaa8b8"}/>
+              <rect x="15" y="4"  width="2" height="6"  rx="1" fill={lib.analyzing?"#C8A96E":"#888898"}/>
+            </svg>
+          </button>
         </div>
         <div style={{flex:1,overflowY:"auto",padding:"4px 0"}}>
 
@@ -866,6 +969,8 @@ function LibraryPanel({lib, onLoad, playingTrack, previewTrackId, onPreview, onD
                   previewTrackId={previewTrackId}
                   onPreview={onPreview}
                   onDelete={onDelete}
+                  onRemoveFromPlaylist={activeCrateId?removeFromPlaylist:undefined}
+                  extractArtwork={lib.extractArtworkForTrack?(id)=>lib.extractArtworkForTrack(id,lib.getFile):undefined}
                 />
               );
             })}
@@ -2110,17 +2215,15 @@ export default function CollabMix({ initialPage = "landing", djName = null }) {
     const file = await lib.getFile(track.id);
     if (!file) {
       // Try to re-import by showing file picker
-      const msg = "This track's file is no longer accessible.\n\nThis happens after a browser restart. Click OK to re-select the file, or cancel to dismiss.";
-      if (window.confirm(msg)) {
-        try {
-          const [fileHandle] = await window.showOpenFilePicker({ types:[{description:"Audio",accept:{"audio/*":[]}}], multiple:false });
-          const reFile = await fileHandle.getFile();
-          lib.fileMap?.current && (lib.fileMap.current[track.id] = reFile);
-          if (deck === "A") setLibLoadA({ track, file: reFile, ts: Date.now() });
-          else              setLibLoadB({ track, file: reFile, ts: Date.now() });
-          setPlayingTrack(track);
-        } catch {}
-      }
+      // Silently open file picker to let user re-locate the track
+      try {
+        const [fileHandle] = await window.showOpenFilePicker({ types:[{description:"Audio",accept:{"audio/*":[]}}], multiple:false });
+        const reFile = await fileHandle.getFile();
+        lib.fileMap?.current && (lib.fileMap.current[track.id] = reFile);
+        if (deck === "A") setLibLoadA({ track, file: reFile, ts: Date.now() });
+        else              setLibLoadB({ track, file: reFile, ts: Date.now() });
+        setPlayingTrack(track);
+      } catch {}
       return;
     }
     if (deck === "A") setLibLoadA({ track, file, ts: Date.now() });
