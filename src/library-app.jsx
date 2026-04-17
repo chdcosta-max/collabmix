@@ -1861,7 +1861,7 @@ export default function MusicLibrary() {
   };
 
   const clearAll = async () => {
-    if (!confirm("Remove all tracks from your library? (Your actual music files are safe)")) return;
+    if (!confirm("Delete your entire library?\n\nThis removes all tracks, playlists, and analysis data from CollabMix. Your actual music files on your computer will NOT be deleted — they are completely safe.")) return;
     setTracks([]); setCrates([]);
     const db = dbRef.current;
     await dbClear(db,"tracks"); await dbClear(db,"handles"); await dbClear(db,"crates");
@@ -1929,10 +1929,10 @@ export default function MusicLibrary() {
 
   // ── NAV VIEWS (no crates — handled inline in sidebar) ────────
   const VIEWS = [
-    ["tracks",  "♫ ALL TRACKS"],
-    ["artists", "👤 ARTISTS"],
-    ["labels",  "🏷 RECORD LABEL"],
-    ["genres",  "◎ GENRE"],
+    ["tracks",  "ALL TRACKS"],
+    ["artists", "ARTISTS"],
+    ["labels",  "RECORD LABEL"],
+    ["genres",  "GENRE"],
   ];
 
   return (
@@ -2381,7 +2381,7 @@ export default function MusicLibrary() {
               onMouseEnter={e=>{ if(!(view==="queue"&&!activeCrateId)) e.currentTarget.style.color=C.text; }}
               onMouseLeave={e=>{ if(!(view==="queue"&&!activeCrateId)) e.currentTarget.style.color=C.subtle; }}
             >
-              <span>◉ SESSION QUEUE</span>
+              <span>SESSION QUEUE</span>
               {queueIds.size > 0 && <span style={{ fontSize:9, fontFamily:"'DM Mono',monospace", background:"#22c55e22", color:"#22c55e", padding:"1px 6px", borderRadius:10, border:"1px solid #22c55e44" }}>{queueIds.size}</span>}
             </button>
           </div>
@@ -2507,7 +2507,7 @@ export default function MusicLibrary() {
                 style={{ width:"100%", marginTop:6, padding:"7px 10px", background:"transparent", border:"1px solid #ef444422", color:"#ef444455", fontFamily:"'DM Mono',monospace", fontSize:9, letterSpacing:1.2, borderRadius:7, cursor:"pointer", transition:"all .15s" }}
                 onMouseEnter={e=>{ e.currentTarget.style.borderColor="#ef444444"; e.currentTarget.style.color="#ef4444aa"; }}
                 onMouseLeave={e=>{ e.currentTarget.style.borderColor="#ef444422"; e.currentTarget.style.color="#ef444455"; }}>
-                ✕ CLEAR LIBRARY
+                DELETE LIBRARY
               </button>
             )}
           </div>
