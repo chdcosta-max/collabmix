@@ -115,7 +115,7 @@ function AppPreview() {
 
       {/* Header */}
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16, paddingBottom: 12, borderBottom: `1px solid ${C.gold}10` }}>
-        <span style={{ fontFamily: "'DM Mono', monospace", fontSize: 8, color: C.gold, letterSpacing: 3 }}>COLLAB//MIX</span>
+        <span style={{ fontFamily: "'DM Mono', monospace", fontSize: 8, color: C.gold, letterSpacing: 3 }}>MIX//MATCH</span>
         <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
           <div style={{ width: 5, height: 5, borderRadius: "50%", background: "#22c55e", boxShadow: "0 0 6px #22c55e" }} />
           <span style={{ fontFamily: "'DM Mono', monospace", fontSize: 7, color: C.subtle, letterSpacing: 2 }}>SESSION LIVE</span>
@@ -220,11 +220,7 @@ function Step({ n, title, body, last }) {
 // ─────────────────────────────────────────────────────────────
 export default function Landing({ onLaunch = () => {} }) {
   const [navSolid, setNavSolid] = useState(false);
-  const [djName, setDjName] = useState("");
-  const isJoining = typeof window !== "undefined" && new URLSearchParams(window.location.search).has("room");
   const containerRef = useRef(null);
-
-  const handleLaunch = () => onLaunch(djName.trim() || null);
 
   // Section refs for smooth scroll
   const featuresRef   = useRef(null);
@@ -348,9 +344,9 @@ export default function Landing({ onLaunch = () => {} }) {
             <span style={{ fontFamily: "'DM Mono', monospace", fontSize: 10, color: C.gold }}>{"//"}</span>
           </div>
           <span style={{ fontFamily: "'Cormorant Garamond', serif", fontSize: 20, fontWeight: 700, color: C.text, letterSpacing: -0.3 }}>
-            {"Collab"}
-            <span style={{ color: C.gold }}>{"//"}</span>
             {"Mix"}
+            <span style={{ color: C.gold }}>{"//"}</span>
+            {"Match"}
           </span>
         </div>
 
@@ -359,8 +355,8 @@ export default function Landing({ onLaunch = () => {} }) {
           <span className="nav-link" style={{ fontSize: 13, color: C.subtle }} onClick={() => scrollTo(featuresRef)}>Features</span>
           <span className="nav-link" style={{ fontSize: 13, color: C.subtle }} onClick={() => scrollTo(communityRef)}>Community</span>
           <span className="nav-link" style={{ fontSize: 13, color: C.subtle }} onClick={() => scrollTo(howRef)}>How It Works</span>
-          <button onClick={handleLaunch} className="btn-gold" style={{ ...btnGold, padding: "9px 22px", fontSize: 10 }}>
-            OPEN THE ROOM
+          <button onClick={onLaunch} className="btn-gold" style={{ ...btnGold, padding: "9px 22px", fontSize: 10 }}>
+            START A SESSION
           </button>
         </div>
       </nav>
@@ -379,34 +375,21 @@ export default function Landing({ onLaunch = () => {} }) {
 
           {/* Copy */}
           <div style={{ animation: "fadeUp .9s ease forwards" }}>
-            <Eyebrow>Remote DJ Collaboration</Eyebrow>
+            <Eyebrow>DJ Matchmaking {"&"} Collaboration</Eyebrow>
 
             <h1 style={{ fontFamily: "'Cormorant Garamond', serif", fontSize: "clamp(48px,5.2vw,80px)", fontWeight: 700, lineHeight: 1.0, letterSpacing: -1.5, margin: "0 0 24px", color: C.text }}>
-              {"The music"}
+              {"Find your match."}
               <br />
-              <em style={{ color: C.gold, fontStyle: "italic" }}>{"doesn't stop"}</em>
-              <br />
-              {"at distance."}
+              <em style={{ color: C.gold, fontStyle: "italic" }}>{"Mix together."}</em>
             </h1>
 
             <p style={{ fontFamily: "'DM Sans', sans-serif", fontSize: 16, color: C.subtle, lineHeight: 1.85, maxWidth: 420, fontWeight: 300, margin: "0 0 40px" }}>
-              Two DJs. Any city. One session. Match with DJs who share your taste, mix together live, and build your crew from anywhere in the world.
+              Join a session in seconds. Play your music, match with someone who shares your taste, and mix together in real time.
             </p>
 
-            <div style={{ display: "flex", flexDirection: "column", gap: 10, maxWidth: 400 }}>
-              <input
-                value={djName}
-                onChange={e => setDjName(e.target.value)}
-                onKeyDown={e => e.key === "Enter" && handleLaunch()}
-                placeholder="Enter your DJ name..."
-                style={{ background: "rgba(255,255,255,0.05)", border: `1px solid ${C.gold}33`, borderRadius: 8, padding: "13px 16px", fontSize: 15, fontFamily: "'DM Sans', sans-serif", color: C.text, outline: "none", letterSpacing: 0.5 }}
-              />
-              <div style={{ display: "flex", gap: 12, alignItems: "center", flexWrap: "wrap" }}>
-                <button onClick={handleLaunch} className="btn-gold" style={btnGold}>
-                  {isJoining ? "JOIN THE ROOM →" : "OPEN THE ROOM"}
-                </button>
-                {!isJoining && <button onClick={() => scrollTo(communityRef)} className="btn-ghost" style={btnGhost}>SEE THE LOBBY {"↓"}</button>}
-              </div>
+            <div style={{ display: "flex", gap: 12, alignItems: "center", flexWrap: "wrap" }}>
+              <button onClick={onLaunch} className="btn-gold" style={btnGold}>START A SESSION</button>
+              <button onClick={() => scrollTo(communityRef)} className="btn-ghost" style={btnGhost}>FIND A MATCH {"↓"}</button>
             </div>
 
             <div style={{ marginTop: 32, display: "flex", gap: 18, alignItems: "center" }}>
@@ -495,7 +478,7 @@ export default function Landing({ onLaunch = () => {} }) {
               Quick Match pairs you with a compatible DJ in seconds. No searching required.
             </div>
           </div>
-          <button onClick={handleLaunch} className="btn-gold" style={btnGold}>QUICK MATCH {"→"}</button>
+          <button onClick={onLaunch} className="btn-gold" style={btnGold}>FIND A MATCH {"→"}</button>
         </div>
       </section>
 
@@ -574,8 +557,8 @@ export default function Landing({ onLaunch = () => {} }) {
               <span style={{ fontFamily: "'DM Mono', monospace", fontSize: 10, color: C.subtle }}>{v}</span>
             </div>
           ))}
-          <button onClick={handleLaunch} className="btn-gold" style={{ ...btnGold, width: "100%", marginTop: 28, padding: "13px", fontSize: 10, letterSpacing: 2, borderRadius: 7 }}>
-            OPEN THE ROOM {"→"}
+          <button onClick={onLaunch} className="btn-gold" style={{ ...btnGold, width: "100%", marginTop: 28, padding: "13px", fontSize: 10, letterSpacing: 2, borderRadius: 7 }}>
+            START A SESSION {"→"}
           </button>
         </div>
       </section>
@@ -596,7 +579,7 @@ export default function Landing({ onLaunch = () => {} }) {
             </div>
           ))}
           <div style={{ marginTop: 28 }}>
-            <span style={{ fontFamily: "'DM Mono', monospace", fontSize: 9, color: `${C.gold}44`, letterSpacing: 4 }}>{"— COLLAB//MIX"}</span>
+            <span style={{ fontFamily: "'DM Mono', monospace", fontSize: 9, color: `${C.gold}44`, letterSpacing: 4 }}>{"— MIX//MATCH"}</span>
           </div>
         </div>
       </section>
@@ -607,15 +590,15 @@ export default function Landing({ onLaunch = () => {} }) {
         <div style={{ position: "relative", maxWidth: 580, margin: "0 auto" }}>
           <Eyebrow>Ready when you are</Eyebrow>
           <h2 style={{ fontFamily: "'Cormorant Garamond', serif", fontSize: "clamp(40px,5.5vw,72px)", fontWeight: 700, color: C.text, margin: "0 0 20px", lineHeight: 0.95, letterSpacing: -2 }}>
-            {"Find your partner."}
+            {"Find your match."}
             <br />
-            <em style={{ color: C.gold }}>{"Start the session."}</em>
+            <em style={{ color: C.gold }}>{"Mix together."}</em>
           </h2>
           <p style={{ fontFamily: "'DM Sans', sans-serif", fontSize: 15, color: C.subtle, margin: "0 0 44px", lineHeight: 1.8, fontWeight: 300 }}>
             No account. No download. Open the app, find your match, and you are mixing together in under a minute.
           </p>
-          <button onClick={handleLaunch} className="btn-gold" style={{ ...btnGold, padding: "18px 56px", fontSize: 12, letterSpacing: 3 }}>
-            OPEN THE ROOM
+          <button onClick={onLaunch} className="btn-gold" style={{ ...btnGold, padding: "18px 56px", fontSize: 12, letterSpacing: 3 }}>
+            START A SESSION
           </button>
           <div style={{ marginTop: 20, fontFamily: "'DM Mono', monospace", fontSize: 9, color: C.muted, letterSpacing: 2 }}>
             Free forever {"·"} No account {"·"} Chrome {"&"} Edge
@@ -626,12 +609,12 @@ export default function Landing({ onLaunch = () => {} }) {
       {/* ── FOOTER ── */}
       <footer style={{ padding: "28px 48px", borderTop: `1px solid ${C.gold}0C`, display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 16, background: C.dark2 }}>
         <span style={{ fontFamily: "'Cormorant Garamond', serif", fontSize: 17, fontWeight: 700, color: C.muted, letterSpacing: -0.2 }}>
-          {"Collab"}
-          <span style={{ color: `${C.gold}55` }}>{"//"}</span>
           {"Mix"}
+          <span style={{ color: `${C.gold}55` }}>{"//"}</span>
+          {"Match"}
         </span>
         <span style={{ fontFamily: "'DM Mono', monospace", fontSize: 9, color: `${C.muted}55`, letterSpacing: 1 }}>
-          Mix together, from anywhere.
+          Find your match. Mix together.
         </span>
         <span style={{ fontFamily: "'DM Mono', monospace", fontSize: 9, color: `${C.muted}33`, letterSpacing: 1 }}>
           Chrome {"&"} Edge {"·"} HTTPS {"·"} Free
