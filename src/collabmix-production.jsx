@@ -203,6 +203,10 @@ async function cmDbDelete(store,key){
   const db=await openCmDB();
   return new Promise((res,rej)=>{const tx=db.transaction(store,"readwrite");const r=tx.objectStore(store).delete(key);r.onsuccess=()=>res();r.onerror=e=>rej(e.target.error);});
 }
+async function cmDbPut(store,item){
+  const db=await openCmDB();
+  return new Promise((res,rej)=>{const tx=db.transaction(store,"readwrite");const r=tx.objectStore(store).put(item);r.onsuccess=()=>res();r.onerror=e=>rej(e.target.error);});
+}
 
 // ── useLibrary hook — reads from shared cm_music_library IDB ─────────────────
 function useLibrary(){
@@ -295,7 +299,18 @@ function useLibrary(){
 
   const clear=()=>{setLibrary([]);fileMap.current={};};
 
-  return{library,queue,crates,importing,importFiles,getFile,clear};
+  const reload=useCallback(async()=>{
+    try{
+      const tracks=await cmDbAll("tracks");
+      if(tracks.length>0) setLibrary(tracks);
+      const q=await cmDbAll("queue");
+      setQueue(q.sort((a,b)=>a.order-b.order).map(r=>r.trackId));
+      const cr=await cmDbAll("crates");
+      setCrates(cr);
+    }catch{}
+  },[]);
+
+  return{library,queue,crates,importing,importFiles,getFile,clear,reload};
 }
 
 // ── Library Panel UI ──────────────────────────────────────────
@@ -401,14 +416,23 @@ function LibraryPanel({lib, onLoad, playingTrack, previewTrackId, onPreview, cha
   const [filter,setFilter]=useState("");
   const [sortBy,setSortBy]=useState("addedAt");
   const [sortDir,setSortDir]=useState(-1);
-  const [tab,setTab]=useState("library"); // "library" | "queue" | "suggest"
+  const [view,setView]=useState("tracks"); // "tracks"|"artists"|"labels"|"energy"|"queue"|"suggest"
   const [activeCrateId,setActiveCrateId]=useState(null);
+  const [cratesExpanded,setCratesExpanded]=useState(true);
+  const [showNewCrateInput,setShowNewCrateInput]=useState(false);
+  const [newCrateName,setNewCrateName]=useState("");
   const [chatInput,setChatInput]=useState("");
+  const [energyFilter,setEnergyFilter]=useState(null);
+  const [bpmRange,setBpmRange]=useState([60,200]);
+  const [keyFilter,setKeyFilter]=useState(null);
+  const [showFilters,setShowFilters]=useState(false);
   const chatEndRef=useRef(null);
   const fileRef=useRef(null);
+  const newCrateRef=useRef(null);
   const G="#C8A96E";
 
   useEffect(()=>chatEndRef.current?.scrollIntoView({behavior:"smooth"}),[chat]);
+  useEffect(()=>{if(showNewCrateInput)newCrateRef.current?.focus();},[showNewCrateInput]);
   const sendChat=()=>{if(!chatInput.trim())return;onSendChat(chatInput);setChatInput("");};
 
   const allTracks=lib.library||[];
@@ -417,23 +441,69 @@ function LibraryPanel({lib, onLoad, playingTrack, previewTrackId, onPreview, cha
   const selfRecs=playingTrack&&allTracks.length>0?recommendTracks(playingTrack,allTracks):[];
   const recIds=new Set(selfRecs.map(r=>r.id));
 
+  // Base tracks by view/crate
   let baseTracks;
   if(activeCrate) baseTracks=(activeCrate.trackIds||[]).map(id=>allTracks.find(t=>t.id===id)).filter(Boolean);
-  else if(tab==="queue") baseTracks=queuedTracks;
-  else if(tab==="suggest") baseTracks=selfRecs;
+  else if(view==="queue") baseTracks=queuedTracks;
+  else if(view==="suggest") baseTracks=selfRecs;
   else baseTracks=allTracks;
 
+  const ENERGY_LABELS=["Ambient","Warm-Up","Build","Peak Hour","Hard"];
+  const CAMELOT_KEYS=["1A","2A","3A","4A","5A","6A","7A","8A","9A","10A","11A","12A",
+                       "1B","2B","3B","4B","5B","6B","7B","8B","9B","10B","11B","12B"];
+  const hasActiveFilter=energyFilter!=null||keyFilter!=null||bpmRange[0]>60||bpmRange[1]<200;
+
   const filtered=baseTracks
-    .filter(t=>{const q=filter.toLowerCase();return!q||t.title?.toLowerCase().includes(q)||t.artist?.toLowerCase().includes(q)||t.genre?.toLowerCase().includes(q);})
-    .sort((a,b)=>{const va=a[sortBy]??0,vb=b[sortBy]??0;return(typeof va==="string"?va.localeCompare(vb):(va-vb))*sortDir;});
+    .filter(t=>{
+      const q=filter.toLowerCase();
+      if(q&&!t.title?.toLowerCase().includes(q)&&!t.artist?.toLowerCase().includes(q)&&
+         !t.label?.toLowerCase().includes(q)&&!t.genre?.toLowerCase().includes(q))return false;
+      if(energyFilter!=null&&t.energy?.label!==energyFilter)return false;
+      if(t.bpm&&(t.bpm<bpmRange[0]||t.bpm>bpmRange[1]))return false;
+      if(keyFilter&&CAMELOT[t.key]!==keyFilter)return false;
+      return true;
+    })
+    .sort((a,b)=>{
+      let key=sortBy;
+      if(!activeCrate&&view==="energy")key="energy";
+      if(!activeCrate&&view==="artists")key="artist";
+      if(!activeCrate&&view==="labels")key="label";
+      const va=key==="energy"?(a.energy?.score??-1):(a[key]??0);
+      const vb=key==="energy"?(b.energy?.score??-1):(b[key]??0);
+      return(typeof va==="string"?va.localeCompare(vb):(va-vb))*sortDir;
+    });
 
   const colHdr=(label,key)=>(
-    <div onClick={()=>{if(sortBy===key)setSortDir(d=>-d);else{setSortBy(key);setSortDir(1);}}} style={{fontFamily:"'DM Mono',monospace",fontSize:8,color:sortBy===key?G:"#3A3555",cursor:"pointer",letterSpacing:1,userSelect:"none",whiteSpace:"nowrap"}}>
+    <div onClick={()=>{if(sortBy===key)setSortDir(d=>-d);else{setSortBy(key);setSortDir(1);}}}
+      style={{fontFamily:"'DM Mono',monospace",fontSize:8,color:sortBy===key?G:"#3A3555",cursor:"pointer",letterSpacing:1,userSelect:"none",whiteSpace:"nowrap"}}>
       {label}{sortBy===key?(sortDir===1?" ↑":" ↓"):""}
     </div>
   );
 
-  const TABS=[["library","LIBRARY"],["queue",`SESSION QUEUE${queuedTracks.length>0?` (${queuedTracks.length})`:""}`],["suggest",`SUGGEST${selfRecs.length>0?` (${selfRecs.length})`:""}`]];
+  const createCrate=async()=>{
+    if(!newCrateName.trim())return;
+    const id=`crate_${Date.now()}`;
+    await cmDbPut("crates",{id,name:newCrateName.trim(),trackIds:[],createdAt:Date.now()});
+    setNewCrateName("");setShowNewCrateInput(false);
+    lib.reload?.();
+  };
+
+  const NAV=[
+    ["tracks","All Tracks",null],
+    ["artists","Artists",null],
+    ["labels","Record Label",null],
+    ["energy","Energy",null],
+    ["queue","Session Queue",queuedTracks.length||null],
+  ];
+
+  const navItemStyle=(id,isQueue)=>({
+    padding:"6px 12px",fontSize:10,fontFamily:"'DM Sans',sans-serif",
+    color:!activeCrateId&&view===id?(isQueue?"#22c55e":G):"#7A7090",
+    background:!activeCrateId&&view===id?(isQueue?"#22c55e10":`${G}10`):"transparent",
+    cursor:"pointer",
+    borderLeft:`2px solid ${!activeCrateId&&view===id?(isQueue?"#22c55e":G):"transparent"}`,
+    transition:"all .1s",display:"flex",justifyContent:"space-between",alignItems:"center"
+  });
 
   return(
     <div style={{display:"flex",height:"100%",overflow:"hidden"}}>
@@ -470,33 +540,68 @@ function LibraryPanel({lib, onLoad, playingTrack, previewTrackId, onPreview, cha
         </div>
       </div>
 
-      {/* ── PLAYLISTS SIDEBAR ── */}
+      {/* ── LIBRARY NAV SIDEBAR ── */}
       <div style={{width:155,flexShrink:0,display:"flex",flexDirection:"column",borderRight:`1px solid ${G}14`,background:"#07070e"}}>
         <div style={{padding:"8px 10px 6px",borderBottom:`1px solid ${G}14`,flexShrink:0}}>
-          <div style={{fontFamily:"'DM Mono',monospace",fontSize:9,color:G,letterSpacing:2}}>PLAYLISTS</div>
+          <div style={{fontFamily:"'DM Mono',monospace",fontSize:9,color:G,letterSpacing:2}}>CURRENT LIBRARY</div>
         </div>
         <div style={{flex:1,overflowY:"auto",padding:"4px 0"}}>
-          {/* All Tracks */}
-          <div onClick={()=>{setActiveCrateId(null);setTab("library");}}
-            style={{padding:"6px 12px",fontSize:10,fontFamily:"'DM Sans',sans-serif",color:!activeCrateId&&tab==="library"?G:"#7A7090",background:!activeCrateId&&tab==="library"?`${G}10`:"transparent",cursor:"pointer",borderLeft:`2px solid ${!activeCrateId&&tab==="library"?G:"transparent"}`,transition:"all .1s",display:"flex",justifyContent:"space-between",alignItems:"center"}}>
-            <span>All Tracks</span>
-            <span style={{fontSize:8,color:"#3A3555",fontFamily:"'DM Mono',monospace"}}>{allTracks.length}</span>
-          </div>
-          {/* Queue */}
-          <div onClick={()=>{setActiveCrateId(null);setTab("queue");}}
-            style={{padding:"6px 12px",fontSize:10,fontFamily:"'DM Sans',sans-serif",color:!activeCrateId&&tab==="queue"?"#22c55e":"#7A7090",background:!activeCrateId&&tab==="queue"?"#22c55e10":"transparent",cursor:"pointer",borderLeft:`2px solid ${!activeCrateId&&tab==="queue"?"#22c55e":"transparent"}`,transition:"all .1s",display:"flex",justifyContent:"space-between",alignItems:"center"}}>
-            <span>Session Queue</span>
-            {queuedTracks.length>0&&<span style={{fontSize:8,color:"#22c55e",background:"#22c55e18",borderRadius:8,padding:"1px 5px",fontFamily:"'DM Mono',monospace"}}>{queuedTracks.length}</span>}
-          </div>
-          {(lib.crates||[]).length>0&&<div style={{height:1,background:"#1C1830",margin:"4px 8px"}}/>}
-          {(lib.crates||[]).map(cr=>(
-            <div key={cr.id} onClick={()=>setActiveCrateId(cr.id)}
-              style={{padding:"6px 12px",fontSize:10,fontFamily:"'DM Sans',sans-serif",color:activeCrateId===cr.id?G:"#7A7090",background:activeCrateId===cr.id?`${G}10`:"transparent",cursor:"pointer",borderLeft:`2px solid ${activeCrateId===cr.id?G:"transparent"}`,transition:"all .1s",display:"flex",justifyContent:"space-between",alignItems:"center"}}>
-              <span style={{overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",flex:1}}>{cr.name}</span>
-              <span style={{fontSize:8,color:"#3A3555",fontFamily:"'DM Mono',monospace",flexShrink:0,marginLeft:4}}>{(cr.trackIds||[]).length}</span>
+
+          {/* Main nav items */}
+          {NAV.map(([id,label,count])=>(
+            <div key={id} onClick={()=>{setActiveCrateId(null);setView(id);}} style={navItemStyle(id,id==="queue")}>
+              <span>{label}</span>
+              {count!=null&&(
+                <span style={{fontSize:8,fontFamily:"'DM Mono',monospace",
+                  color:!activeCrateId&&view===id&&id==="queue"?"#22c55e":"#3A3555",
+                  background:!activeCrateId&&view===id&&id==="queue"?"#22c55e18":"transparent",
+                  borderRadius:8,padding:"1px 5px"}}>{count}</span>
+              )}
             </div>
           ))}
+
+          {/* Divider + PLAYLISTS collapsible */}
+          <div style={{height:1,background:"#1C1830",margin:"6px 8px 2px"}}/>
+          <div onClick={()=>setCratesExpanded(e=>!e)}
+            style={{padding:"5px 12px 4px",display:"flex",justifyContent:"space-between",alignItems:"center",cursor:"pointer"}}>
+            <span style={{fontSize:8,fontFamily:"'DM Mono',monospace",color:"#3A3555",letterSpacing:1.5}}>PLAYLISTS</span>
+            <span style={{fontSize:9,color:"#3A3555"}}>{cratesExpanded?"▾":"▸"}</span>
+          </div>
+
+          {cratesExpanded&&(
+            <div style={{maxHeight:160,overflowY:"auto"}}>
+              {(lib.crates||[]).map(cr=>(
+                <div key={cr.id} onClick={()=>{setActiveCrateId(cr.id);setView("tracks");}}
+                  style={{padding:"5px 12px 5px 20px",fontSize:10,fontFamily:"'DM Sans',sans-serif",
+                    color:activeCrateId===cr.id?G:"#6A6080",
+                    background:activeCrateId===cr.id?`${G}10`:"transparent",
+                    cursor:"pointer",
+                    borderLeft:`2px solid ${activeCrateId===cr.id?G:"transparent"}`,
+                    transition:"all .1s",display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+                  <span style={{overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",flex:1}}>{cr.name}</span>
+                  <span style={{fontSize:8,color:"#3A3555",fontFamily:"'DM Mono',monospace",flexShrink:0,marginLeft:4}}>{(cr.trackIds||[]).length}</span>
+                </div>
+              ))}
+              {showNewCrateInput
+                ?<div style={{padding:"4px 8px",display:"flex",gap:4}}>
+                    <input ref={newCrateRef} value={newCrateName}
+                      onChange={e=>setNewCrateName(e.target.value)}
+                      onKeyDown={e=>{if(e.key==="Enter")createCrate();if(e.key==="Escape"){setShowNewCrateInput(false);setNewCrateName("");}}}
+                      placeholder="Playlist name..."
+                      style={{flex:1,background:"#0E0C1A",border:`1px solid ${G}44`,color:"#EDE8DF",borderRadius:4,padding:"3px 6px",fontSize:9,fontFamily:"'DM Mono',monospace",outline:"none",minWidth:0}}/>
+                    <button onClick={createCrate}
+                      style={{padding:"2px 6px",background:`${G}18`,border:`1px solid ${G}44`,color:G,borderRadius:4,cursor:"pointer",fontSize:10,fontFamily:"'DM Mono',monospace"}}>✓</button>
+                  </div>
+                :<div onClick={()=>setShowNewCrateInput(true)}
+                    style={{padding:"4px 20px",fontSize:9,fontFamily:"'DM Mono',monospace",color:"#3A3555",cursor:"pointer",letterSpacing:.5}}>
+                    + New Playlist
+                  </div>
+              }
+            </div>
+          )}
         </div>
+
+        {/* ADD TRACKS */}
         <div style={{flexShrink:0,padding:"6px 8px",borderTop:`1px solid ${G}14`}}>
           <label style={{display:"flex",alignItems:"center",justifyContent:"center",padding:"4px",fontSize:8,fontFamily:"'DM Mono',monospace",background:`${G}11`,border:`1px solid ${G}33`,color:G,borderRadius:5,cursor:"pointer",letterSpacing:1}}>
             + ADD TRACKS
@@ -507,17 +612,80 @@ function LibraryPanel({lib, onLoad, playingTrack, previewTrackId, onPreview, cha
 
       {/* ── TRACK LIST ── */}
       <div style={{flex:1,display:"flex",flexDirection:"column",overflow:"hidden",minWidth:0}}>
-        {/* Header: tabs + search */}
-        <div style={{padding:"6px 10px",borderBottom:`1px solid #0a0a14`,flexShrink:0,display:"flex",gap:8,alignItems:"center",flexWrap:"wrap"}}>
-          <div style={{display:"flex",gap:3}}>
-            {TABS.map(([id,l])=>(
-              <button key={id} onClick={()=>{setActiveCrateId(null);setTab(id);}} style={{padding:"3px 9px",fontSize:7,fontFamily:"'DM Mono',monospace",letterSpacing:1,background:!activeCrateId&&tab===id?`${G}18`:"transparent",color:!activeCrateId&&tab===id?G:"#3A3555",border:`1px solid ${!activeCrateId&&tab===id?G+"33":"#1C1830"}`,borderRadius:4,cursor:"pointer",outline:"none",whiteSpace:"nowrap"}}>{l}</button>
-            ))}
+
+        {/* Header: search + SUGGEST + FILTER */}
+        <div style={{padding:"6px 10px",borderBottom:`1px solid #0a0a14`,flexShrink:0}}>
+          <div style={{display:"flex",gap:6,alignItems:"center"}}>
+            <input value={filter} onChange={e=>setFilter(e.target.value)} placeholder="Search tracks..."
+              style={{flex:1,background:"#080710",border:`1px solid #1C1830`,color:"#d0d0e0",borderRadius:5,padding:"4px 9px",fontSize:9,fontFamily:"'DM Mono',monospace",outline:"none"}}/>
+            <button onClick={()=>{setActiveCrateId(null);setView(v=>v==="suggest"?"tracks":"suggest");}}
+              style={{padding:"3px 10px",fontSize:7,fontFamily:"'DM Mono',monospace",letterSpacing:1,
+                background:view==="suggest"?`${G}22`:"transparent",
+                color:view==="suggest"?G:"#4A4465",
+                border:`1px solid ${view==="suggest"?G+"44":"#1C1830"}`,
+                borderRadius:4,cursor:"pointer",outline:"none",whiteSpace:"nowrap",flexShrink:0}}>
+              SUGGEST{selfRecs.length>0?` (${selfRecs.length})`:""}</button>
+            <button onClick={()=>setShowFilters(f=>!f)}
+              style={{padding:"3px 10px",fontSize:7,fontFamily:"'DM Mono',monospace",letterSpacing:1,
+                background:hasActiveFilter||showFilters?`${G}22`:"transparent",
+                color:hasActiveFilter||showFilters?G:"#4A4465",
+                border:`1px solid ${hasActiveFilter||showFilters?G+"44":"#1C1830"}`,
+                borderRadius:4,cursor:"pointer",outline:"none",whiteSpace:"nowrap",flexShrink:0}}>
+              FILTER{hasActiveFilter?" ●":""}</button>
+            <span style={{fontSize:8,fontFamily:"'DM Mono',monospace",color:"#3A3555",flexShrink:0}}>{filtered.length}</span>
+            {lib.importing&&<div style={{width:8,height:8,border:`1.5px solid ${G}33`,borderTop:`1.5px solid ${G}`,borderRadius:"50%",animation:"spin 1s linear infinite",flexShrink:0}}/>}
           </div>
-          <input value={filter} onChange={e=>setFilter(e.target.value)} placeholder="Search tracks..."
-            style={{flex:1,background:"#080710",border:`1px solid #1C1830`,color:"#d0d0e0",borderRadius:5,padding:"4px 9px",fontSize:9,fontFamily:"'DM Mono',monospace",outline:"none",maxWidth:260}}/>
-          <span style={{fontSize:8,fontFamily:"'DM Mono',monospace",color:"#3A3555",flexShrink:0}}>{filtered.length} tracks</span>
-          {lib.importing&&<div style={{width:8,height:8,border:`1.5px solid ${G}33`,borderTop:`1.5px solid ${G}`,borderRadius:"50%",animation:"spin 1s linear infinite"}}/>}
+
+          {/* Filter panel */}
+          {showFilters&&(
+            <div style={{marginTop:8,padding:"10px 12px",background:"#06060f",borderRadius:6,border:`1px solid ${G}18`,display:"flex",flexDirection:"column",gap:10}}>
+              {/* Energy pills */}
+              <div>
+                <div style={{fontSize:7,fontFamily:"'DM Mono',monospace",color:"#3A3555",letterSpacing:1.5,marginBottom:5}}>ENERGY</div>
+                <div style={{display:"flex",flexWrap:"wrap",gap:4}}>
+                  {ENERGY_LABELS.map(e=>(
+                    <button key={e} onClick={()=>setEnergyFilter(ef=>ef===e?null:e)}
+                      style={{padding:"3px 9px",fontSize:7,fontFamily:"'DM Mono',monospace",borderRadius:12,
+                        background:energyFilter===e?ENERGY_COLOR[e]:`${ENERGY_COLOR[e]}22`,
+                        color:energyFilter===e?"#000":ENERGY_COLOR[e],
+                        border:`1px solid ${ENERGY_COLOR[e]}55`,cursor:"pointer",letterSpacing:.5,
+                        fontWeight:energyFilter===e?700:400}}>{e}</button>
+                  ))}
+                </div>
+              </div>
+              {/* BPM range */}
+              <div>
+                <div style={{display:"flex",justifyContent:"space-between",fontSize:7,fontFamily:"'DM Mono',monospace",color:"#3A3555",letterSpacing:1.5,marginBottom:4}}>
+                  <span>BPM RANGE</span><span style={{color:G}}>{bpmRange[0]} – {bpmRange[1]}</span>
+                </div>
+                <input type="range" min={60} max={200} value={bpmRange[0]}
+                  onChange={e=>{const v=Math.min(+e.target.value,bpmRange[1]-1);setBpmRange([v,bpmRange[1]]);}}
+                  style={{width:"100%",accentColor:G,marginBottom:4}}/>
+                <input type="range" min={60} max={200} value={bpmRange[1]}
+                  onChange={e=>{const v=Math.max(+e.target.value,bpmRange[0]+1);setBpmRange([bpmRange[0],v]);}}
+                  style={{width:"100%",accentColor:G}}/>
+              </div>
+              {/* Key/Camelot grid */}
+              <div>
+                <div style={{fontSize:7,fontFamily:"'DM Mono',monospace",color:"#3A3555",letterSpacing:1.5,marginBottom:5}}>KEY (CAMELOT)</div>
+                <div style={{display:"grid",gridTemplateColumns:"repeat(12,1fr)",gap:2}}>
+                  {CAMELOT_KEYS.map(k=>(
+                    <button key={k} onClick={()=>setKeyFilter(kf=>kf===k?null:k)}
+                      style={{padding:"3px 1px",fontSize:7,fontFamily:"'DM Mono',monospace",
+                        background:keyFilter===k?G:"transparent",
+                        color:keyFilter===k?"#000":k.endsWith("A")?"#8B6EAF":G,
+                        border:`1px solid ${keyFilter===k?G:k.endsWith("A")?"#8B6EAF44":G+"33"}`,
+                        borderRadius:3,cursor:"pointer",textAlign:"center"}}>{k}</button>
+                  ))}
+                </div>
+              </div>
+              {hasActiveFilter&&(
+                <button onClick={()=>{setEnergyFilter(null);setBpmRange([60,200]);setKeyFilter(null);}}
+                  style={{padding:"4px",fontSize:7,fontFamily:"'DM Mono',monospace",background:"transparent",border:`1px solid #1C1830`,color:"#3A3555",borderRadius:4,cursor:"pointer",letterSpacing:1}}>
+                  RESET FILTERS</button>
+              )}
+            </div>
+          )}
         </div>
 
         {/* Column headers */}
