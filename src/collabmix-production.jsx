@@ -44,12 +44,13 @@ function createEngine() {
     const hi  = ctx.createBiquadFilter(); hi.type  = "highshelf"; hi.frequency.value  = 8000;
     const mid = ctx.createBiquadFilter(); mid.type = "peaking";   mid.frequency.value = 1200; mid.Q.value = 0.8;
     const lo  = ctx.createBiquadFilter(); lo.type  = "lowshelf";  lo.frequency.value  = 200;
+    const flt = ctx.createBiquadFilter(); flt.type = "allpass"; // DJ filter (swept by knob)
     const vol = ctx.createGain(); vol.gain.value = 1;
     const xf  = ctx.createGain(); xf.gain.value  = 1;
     const an  = ctx.createAnalyser(); an.fftSize  = 512;
     trim.connect(hi); hi.connect(mid); mid.connect(lo);
-    lo.connect(vol); vol.connect(xf); xf.connect(master); xf.connect(an);
-    return { trim, hi, mid, lo, vol, xf, an };
+    lo.connect(flt); flt.connect(vol); vol.connect(xf); xf.connect(master); xf.connect(an);
+    return { trim, hi, mid, lo, flt, vol, xf, an };
   }
   return { ctx, master, masterAn, A: chain(), B: chain() };
 }
@@ -900,7 +901,7 @@ function VU({ an, color, w=100 }) {
   return <canvas ref={ref} width={w} height={6} style={{width:"100%",borderRadius:2}}/>;
 }
 
-function WF({ buf, peaks, freq, prog, onSeek, h=80 }) {
+function WF({ buf, peaks, freq, prog, onSeek, h=80, hotCues=[], loopStart=null, loopEnd=null, loopActive=false }) {
   const ref=useRef(null);
   useEffect(()=>{
     if(!ref.current)return;
@@ -961,11 +962,29 @@ function WF({ buf, peaks, freq, prog, onSeek, h=80 }) {
         ctx.fillStyle=grad;
         ctx.fillRect(x,mid-bh,1,bh*2);
       }
+      // Loop region overlay
+      if(loopStart!==null&&loopEnd!==null){
+        const lx1=Math.floor(loopStart*W),lx2=Math.floor(loopEnd*W);
+        ctx.fillStyle=loopActive?"rgba(200,169,110,0.14)":"rgba(200,169,110,0.05)";
+        ctx.fillRect(lx1,0,lx2-lx1,H);
+        ctx.fillStyle=loopActive?"#C8A96Eaa":"#C8A96E44";
+        ctx.fillRect(lx1,0,2,H); ctx.fillRect(Math.max(lx1,lx2-2),0,2,H);
+      }
       // Playhead
       const phGrad=ctx.createLinearGradient(px,0,px+2,0);
       phGrad.addColorStop(0,"#ffffff");phGrad.addColorStop(1,"#ffffff99");
       ctx.fillStyle=phGrad; ctx.shadowColor="#fff"; ctx.shadowBlur=12;
       ctx.fillRect(px,0,2,H); ctx.shadowBlur=0;
+      // Hot cue markers
+      const CUE_CLR=["#00d4ff","#ef4444","#22c55e","#f59e0b"];
+      hotCues.forEach((cue,i)=>{
+        if(cue===null)return;
+        const cx=Math.floor(cue*W);
+        ctx.fillStyle=CUE_CLR[i]; ctx.shadowColor=CUE_CLR[i]; ctx.shadowBlur=5;
+        ctx.fillRect(cx,0,2,H); ctx.shadowBlur=0;
+        // Triangle marker at top
+        ctx.beginPath();ctx.moveTo(cx-5,0);ctx.lineTo(cx+6,0);ctx.lineTo(cx+1,9);ctx.fillStyle=CUE_CLR[i];ctx.fill();
+      });
     } else {
       // Empty state — visible center line + subtle grid
       ctx.fillStyle="#ffffff12";
@@ -974,7 +993,7 @@ function WF({ buf, peaks, freq, prog, onSeek, h=80 }) {
       for(let x=0;x<W;x+=20)ctx.fillRect(x,0,1,H);
       for(let y=0;y<H;y+=Math.floor(H/4))ctx.fillRect(0,y,W,1);
     }
-  },[buf,peaks,freq,prog]);
+  },[buf,peaks,freq,prog,hotCues,loopStart,loopEnd,loopActive]);
 
   const onClick=e=>{
     if(!onSeek||!ref.current)return;
@@ -1005,16 +1024,37 @@ function Knob({ v, set, min=-12, max=12, ctr=0, label, color="#00d4ff", size=38,
 }
 
 // ── Deck ─────────────────────────────────────────────────────
-function Deck({ id, ch, ctx:ac, color, local, remote, onChange, midi:mt, bpmResult, bpmAnalyze, eqHi=0, eqMid=0, eqLo=0, chanVol=1, loadFromLibrary=null, onTrackInfo=null }) {
+const HOT_CUE_COLORS=["#00d4ff","#ef4444","#22c55e","#f59e0b"];
+
+function Deck({ id, ch, ctx:ac, color, local, remote, onChange, midi:mt, bpmResult, bpmAnalyze, eqHi=0, eqMid=0, eqLo=0, chanVol=1, loadFromLibrary=null, onTrackInfo=null, onSync=null }) {
   const [buf,setBuf]=useState(null),[name,setName]=useState(null),[play,setPlay]=useState(false);
   const [prog,setProg]=useState(0),[dur,setDur]=useState(0);
   const [hi,setHi]=useState(0),[mid,setMid]=useState(0),[lo,setLo]=useState(0),[vol,setVol]=useState(1);
   const [rate,setRate]=useState(1); // FIX: track actual playback rate
   const [dragOver,setDragOver]=useState(false);
   const [wfPeaks,setWfPeaks]=useState(null),[wfFreq,setWfFreq]=useState(null);
+  // Hot cues + loop
+  const [deckKey,setDeckKey]=useState(null);
+  const [hotCues,setHotCues]=useState([null,null,null,null]);
+  const [loopActive,setLoopActive]=useState(false);
+  const [loopStart,setLoopStart]=useState(null);
+  const [loopEnd,setLoopEnd]=useState(null);
+  const loopRef=useRef({active:false,start:null,end:null});
   const src=useRef(null),st=useRef(0),off=useRef(0),raf=useRef(null),fr=useRef(null);
   // EQ is now passed as props: eqHi, eqMid, eqLo, chanVol
   const remProgRef=useRef(0),remTimeRef=useRef(0),remRateRef=useRef(0),remRaf=useRef(null);
+
+  // Keep loop ref in sync with state
+  useEffect(()=>{loopRef.current={active:loopActive,start:loopStart,end:loopEnd};},[loopActive,loopStart,loopEnd]);
+  // Apply loop changes to active AudioBufferSourceNode
+  useEffect(()=>{
+    if(!src.current||!buf)return;
+    src.current.loop=loopActive;
+    if(loopActive&&loopStart!==null){
+      src.current.loopStart=loopStart*buf.duration;
+      src.current.loopEnd=(loopEnd??1)*buf.duration;
+    }
+  },[loopActive,loopStart,loopEnd,buf]);
 
   // Prevent browser from navigating to dropped files
   useEffect(()=>{
@@ -1070,10 +1110,26 @@ function Deck({ id, ch, ctx:ac, color, local, remote, onChange, midi:mt, bpmResu
   const stop_=()=>{ if(src.current){try{src.current.stop();}catch{}src.current.disconnect();src.current=null;}cancelAnimationFrame(raf.current); };
 
   const play_=(o)=>{ if(!buf||!ch||!ac)return; stop_(); if(ac.state==="suspended")ac.resume();
-    const s=ac.createBufferSource(); s.buffer=buf; s.playbackRate.value=rate; s.connect(ch.trim); s.start(0,o);
-    s.onended=()=>{setPlay(false);setProg(0);off.current=0;onChange?.("playing",false);};
+    const s=ac.createBufferSource(); s.buffer=buf; s.playbackRate.value=rate; s.connect(ch.trim);
+    const lr=loopRef.current;
+    if(lr.active&&lr.start!==null){s.loop=true;s.loopStart=lr.start*buf.duration;s.loopEnd=(lr.end??1)*buf.duration;}
+    s.start(0,o);
+    s.onended=()=>{if(!loopRef.current.active){setPlay(false);setProg(0);off.current=0;onChange?.("playing",false);}};
     src.current=s; st.current=ac.currentTime; off.current=o;
-    const tick=()=>{ const c=off.current+(ac.currentTime-st.current); const p=Math.min(1,c/buf.duration); setProg(p); onChange?.("progress",p); if(c<buf.duration)raf.current=requestAnimationFrame(tick); }; tick(); };
+    const tick=()=>{
+      const elapsed=ac.currentTime-st.current;
+      const lr2=loopRef.current;
+      let p;
+      if(lr2.active&&lr2.start!==null&&lr2.end!==null){
+        const lDur=(lr2.end-lr2.start)*buf.duration;
+        const pos=(o-lr2.start*buf.duration+elapsed);
+        p=lr2.start+(pos%lDur)/buf.duration;
+      } else {
+        p=Math.min(1,(o+elapsed)/buf.duration);
+      }
+      setProg(p); onChange?.("progress",p);
+      if(elapsed<buf.duration||lr2.active) raf.current=requestAnimationFrame(tick);
+    }; tick(); };
 
   const toggle=useCallback(()=>{ if(!buf)return; if(play){off.current=Math.min(buf.duration,off.current+(ac.currentTime-st.current));stop_();setPlay(false);onChange?.("playing",false);}else{play_(off.current);setPlay(true);onChange?.("playing",true);} },[buf,play,ac,rate]);
   const seek  =useCallback((p)=>{ const o=p*(buf?.duration||0);off.current=o;if(play)play_(o);else setProg(p);onChange?.("progress",p); },[buf,play,rate]);
@@ -1087,6 +1143,12 @@ function Deck({ id, ch, ctx:ac, color, local, remote, onChange, midi:mt, bpmResu
     setBuf(d);setDur(d.duration);onChange?.("duration",d.duration);
     const n=(trackMeta?.title)||f.name.replace(/\.[^.]+$/,"");
     setName(n);onChange?.("trackName",n);
+    // Extract key from metadata or ID3
+    setDeckKey(trackMeta?.key||null);
+    // Reset hot cues + loop on new track load
+    setHotCues([null,null,null,null]);
+    setLoopActive(false);setLoopStart(null);setLoopEnd(null);
+    loopRef.current={active:false,start:null,end:null};
     bpmAnalyze?.(d, id);
     // If from library, report track info for recommendations
     if(trackMeta) onTrackInfo?.(id, trackMeta);
@@ -1169,10 +1231,17 @@ function Deck({ id, ch, ctx:ac, color, local, remote, onChange, midi:mt, bpmResu
         )}
         <input ref={fr} type="file" accept="audio/*" style={{display:"none"}} onChange={e=>e.target.files[0]&&load(e.target.files[0])}/>
 
-        <div style={{flexShrink:0, padding:"0 12px", borderLeft:BD, display:"flex", flexDirection:"column", alignItems:"flex-end", justifyContent:"center", gap:4, minWidth:72}}>
+        {/* KEY display */}
+        {(()=>{const ck=deckKey?CAMELOT[deckKey]:null;const km=ck?.endsWith("A");return ck?(
+          <div style={{flexShrink:0,padding:"0 10px",borderLeft:BD,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",gap:2,minWidth:52}}>
+            <div style={{fontSize:13,fontFamily:"'DM Mono',monospace",fontWeight:700,color:km?"#9B7EC8":color,background:(km?"#9B7EC8":color)+"1a",borderRadius:4,padding:"2px 7px",letterSpacing:.5}}>{ck}</div>
+            <div style={{fontSize:6,color:"#7A7090",fontFamily:"monospace",letterSpacing:1}}>{deckKey}</div>
+          </div>
+        ):null;})()}
+        <div style={{flexShrink:0, padding:"0 10px", borderLeft:BD, display:"flex", flexDirection:"column", alignItems:"flex-end", justifyContent:"center", gap:4, minWidth:68}}>
           {bpmResult?.analyzing&&<div style={{fontSize:7,color:"#f59e0b",fontFamily:"monospace",animation:"pulse .8s infinite"}}>ANA...</div>}
           <div style={{textAlign:"right"}}>
-            <div style={{fontSize:22, fontFamily:"monospace", fontWeight:800, color, lineHeight:1, letterSpacing:1}}>{bpmResult?.bpm?(bpmResult.bpm*rate).toFixed(1):"—"}</div>
+            <div style={{fontSize:21, fontFamily:"monospace", fontWeight:800, color, lineHeight:1, letterSpacing:1}}>{bpmResult?.bpm?(bpmResult.bpm*rate).toFixed(1):"—"}</div>
             <div style={{fontSize:9, color:"#7A7090", fontFamily:"monospace", letterSpacing:2}}>BPM</div>
           </div>
           <VU an={ch?.an} color={color}/>
@@ -1180,42 +1249,94 @@ function Deck({ id, ch, ctx:ac, color, local, remote, onChange, midi:mt, bpmResu
       </div>
 
       {/* ── OVERVIEW mini waveform ── */}
-      <WF buf={buf} peaks={wfPeaks} freq={wfFreq} prog={prog} color={color} onSeek={local?seek:null} h={18}/>
+      <WF buf={buf} peaks={wfPeaks} freq={wfFreq} prog={prog} onSeek={local?seek:null} h={16} hotCues={hotCues} loopStart={loopStart} loopEnd={loopEnd} loopActive={loopActive}/>
 
       {/* ── MAIN WAVEFORM ── */}
       <div style={{borderTop:BD, borderBottom:BD}}>
-        <WF buf={buf} peaks={wfPeaks} freq={wfFreq} prog={prog} color={color} onSeek={local?seek:null} h={96}/>
+        <WF buf={buf} peaks={wfPeaks} freq={wfFreq} prog={prog} onSeek={local?seek:null} h={84} hotCues={hotCues} loopStart={loopStart} loopEnd={loopEnd} loopActive={loopActive}/>
         {bpmResult?.bpm&&dur>0&&<BeatGrid bpm={bpmResult.bpm*rate} dur={dur} prog={prog} color={color}/>}
       </div>
 
-      {/* ── LCD TIME ── */}
-      <div style={{display:"flex", alignItems:"center", justifyContent:"space-between", padding:"10px 16px", background:"#0E0C1A", borderBottom:BD}}>
-        <div>
-          <div style={{fontFamily:"monospace", fontWeight:800, fontSize:26, color, letterSpacing:3, lineHeight:1, textShadow:`0 0 18px ${color}66`}}>{fmt(cur)}</div>
-          <div style={{fontSize:9, color:"#7A7090", fontFamily:"monospace", letterSpacing:2, marginTop:3}}>ELAPSED</div>
+      {/* ── HOT CUES + LOOP CONTROLS ── */}
+      {local&&(
+        <div style={{display:"flex",gap:3,padding:"5px 10px",background:"#05050d",borderBottom:"1px solid #0a0a14",alignItems:"center"}}>
+          {/* Hot cue buttons */}
+          {HOT_CUE_COLORS.map((c,i)=>(
+            <button key={i}
+              onClick={()=>{if(!buf)return;if(hotCues[i]!==null){seek(hotCues[i]);}else{setHotCues(p=>{const n=[...p];n[i]=prog;return n;});}}}
+              onContextMenu={e=>{e.preventDefault();if(buf)setHotCues(p=>{const n=[...p];n[i]=null;return n;});}}
+              title={hotCues[i]!==null?"Click:recall  Right-click:clear":"Click to set cue"}
+              style={{width:32,height:26,background:hotCues[i]!==null?`${c}28`:"#08080f",border:`1px solid ${hotCues[i]!==null?c+"66":c+"22"}`,color:hotCues[i]!==null?c:c+"44",borderRadius:5,cursor:"pointer",fontFamily:"'DM Mono',monospace",fontSize:10,fontWeight:700,transition:"all .1s",flexShrink:0}}>
+              {i+1}
+            </button>
+          ))}
+          <div style={{width:1,height:20,background:"#1C1830",margin:"0 2px",flexShrink:0}}/>
+          {/* Beat loop buttons: 1, 2, 4, 8, 16 beats */}
+          {[[1,"1"],[2,"2"],[4,"4"],[8,"8"],[16,"16"]].map(([beats,label])=>(
+            <button key={beats}
+              onClick={()=>{
+                if(!buf)return;
+                const bps=(bpmResult?.bpm||120)/60;
+                const lDur=beats/bps;
+                const lStart=prog;
+                const lEnd=Math.min(1,lStart+lDur/(buf?.duration||1));
+                setLoopStart(lStart);setLoopEnd(lEnd);setLoopActive(true);
+              }}
+              style={{height:26,padding:"0 5px",background:"#08080f",border:"1px solid #C8A96E22",color:"#C8A96E66",borderRadius:4,cursor:"pointer",fontFamily:"'DM Mono',monospace",fontSize:8,letterSpacing:.5,flexShrink:0}}>
+              {label}
+            </button>
+          ))}
+          {/* Loop active toggle */}
+          {loopStart!==null&&(
+            <button
+              onClick={()=>{
+                const nv=!loopActive;
+                setLoopActive(nv);
+                if(!nv&&src.current)src.current.loop=false;
+              }}
+              style={{height:26,padding:"0 7px",background:loopActive?"#C8A96E22":"#08080f",border:`1px solid ${loopActive?"#C8A96E77":"#C8A96E22"}`,color:loopActive?"#C8A96E":"#C8A96E44",borderRadius:4,cursor:"pointer",fontFamily:"'DM Mono',monospace",fontSize:8,fontWeight:loopActive?700:400}}>
+              {loopActive?"⟳ LOOP":"LOOP"}
+            </button>
+          )}
+          {loopStart!==null&&(
+            <button
+              onClick={()=>{setLoopActive(false);setLoopStart(null);setLoopEnd(null);if(src.current)src.current.loop=false;}}
+              style={{height:26,width:26,background:"transparent",border:"1px solid #ef444422",color:"#ef444455",borderRadius:4,cursor:"pointer",fontSize:10}}>
+              ✕
+            </button>
+          )}
         </div>
-        <div style={{display:"flex", flexDirection:"column", alignItems:"center", gap:4}}>
-          {play&&<div style={{width:7,height:7,borderRadius:"50%",background:color,boxShadow:`0 0 10px ${color}`,animation:"pulse .7s infinite"}}/>}
-          <div style={{fontSize:8, color:"#7A7090", fontFamily:"monospace"}}>{buf?`${(prog*100).toFixed(1)}%`:""}</div>
+      )}
+
+      {/* ── LCD TIME ── */}
+      <div style={{display:"flex", alignItems:"center", justifyContent:"space-between", padding:"6px 14px", background:"#0E0C1A", borderBottom:BD}}>
+        <div>
+          <div style={{fontFamily:"monospace", fontWeight:800, fontSize:22, color, letterSpacing:3, lineHeight:1, textShadow:`0 0 18px ${color}66`}}>{fmt(cur)}</div>
+          <div style={{fontSize:8, color:"#7A7090", fontFamily:"monospace", letterSpacing:2, marginTop:2}}>ELAPSED</div>
+        </div>
+        <div style={{display:"flex", flexDirection:"column", alignItems:"center", gap:3}}>
+          {play&&<div style={{width:6,height:6,borderRadius:"50%",background:color,boxShadow:`0 0 10px ${color}`,animation:"pulse .7s infinite"}}/>}
+          <div style={{fontSize:7, color:"#7A7090", fontFamily:"monospace"}}>{buf?`${(prog*100).toFixed(1)}%`:""}</div>
         </div>
         <div style={{textAlign:"right"}}>
-          <div style={{fontFamily:"monospace", fontWeight:800, fontSize:26, color:"#3A3555", letterSpacing:3, lineHeight:1}}>-{fmt(Math.max(0,dur-cur))}</div>
-          <div style={{fontSize:9, color:"#7A7090", fontFamily:"monospace", letterSpacing:2, marginTop:3}}>REMAIN</div>
+          <div style={{fontFamily:"monospace", fontWeight:800, fontSize:22, color:"#3A3555", letterSpacing:3, lineHeight:1}}>-{fmt(Math.max(0,dur-cur))}</div>
+          <div style={{fontSize:8, color:"#7A7090", fontFamily:"monospace", letterSpacing:2, marginTop:2}}>REMAIN</div>
         </div>
       </div>
 
       {/* ── TRANSPORT ── */}
       {local?(
-        <div style={{display:"flex", alignItems:"center", gap:6, padding:"10px 14px", borderBottom:BD}}>
-          <button onClick={cue} disabled={!buf} style={{height:34,padding:"0 12px",background:"#1C1830",border:"1px solid #C8A96E18",color:"#7A7090",borderRadius:6,cursor:buf?"pointer":"default",fontFamily:"monospace",fontSize:9,letterSpacing:1,outline:"none",flexShrink:0}}>⏮ CUE</button>
-          <button onClick={()=>seek(Math.max(0,prog-.005))} disabled={!buf} style={{height:34,width:38,background:"#1C1830",border:"1px solid #C8A96E18",color:"#7A7090",borderRadius:6,cursor:buf?"pointer":"default",fontFamily:"monospace",fontSize:13,outline:"none"}}>◂◂</button>
-          <button onClick={toggle} disabled={!buf} style={{flex:1,height:44,background:play?color+"22":"#252527",border:`1px solid ${play?color+"88":color+"33"}`,color:play?color:color+"66",borderRadius:8,cursor:buf?"pointer":"default",fontSize:24,display:"flex",alignItems:"center",justifyContent:"center",boxShadow:play?`0 0 24px ${color}33`:"",outline:"none",transition:"all .15s"}}>
+        <div style={{display:"flex", alignItems:"center", gap:5, padding:"8px 12px", borderBottom:BD}}>
+          <button onClick={cue} disabled={!buf} style={{height:32,padding:"0 9px",background:"#1C1830",border:"1px solid #C8A96E18",color:"#7A7090",borderRadius:6,cursor:buf?"pointer":"default",fontFamily:"monospace",fontSize:8,letterSpacing:1,outline:"none",flexShrink:0}}>⏮</button>
+          <button onClick={()=>seek(Math.max(0,prog-.005))} disabled={!buf} style={{height:32,width:34,background:"#1C1830",border:"1px solid #C8A96E18",color:"#7A7090",borderRadius:6,cursor:buf?"pointer":"default",fontFamily:"monospace",fontSize:12,outline:"none"}}>◂◂</button>
+          <button onClick={toggle} disabled={!buf} style={{flex:1,height:42,background:play?color+"22":"#252527",border:`1px solid ${play?color+"88":color+"33"}`,color:play?color:color+"66",borderRadius:8,cursor:buf?"pointer":"default",fontSize:22,display:"flex",alignItems:"center",justifyContent:"center",boxShadow:play?`0 0 24px ${color}33`:"",outline:"none",transition:"all .15s"}}>
             {play?"⏸":"▶"}
           </button>
-          <button onClick={()=>seek(Math.min(1,prog+.005))} disabled={!buf} style={{height:34,width:38,background:"#1C1830",border:"1px solid #C8A96E18",color:"#7A7090",borderRadius:6,cursor:buf?"pointer":"default",fontFamily:"monospace",fontSize:13,outline:"none"}}>▸▸</button>
+          <button onClick={()=>seek(Math.min(1,prog+.005))} disabled={!buf} style={{height:32,width:34,background:"#1C1830",border:"1px solid #C8A96E18",color:"#7A7090",borderRadius:6,cursor:buf?"pointer":"default",fontFamily:"monospace",fontSize:12,outline:"none"}}>▸▸</button>
+          {onSync&&<button onClick={onSync} disabled={!buf||!bpmResult?.bpm} style={{height:32,padding:"0 8px",background:buf&&bpmResult?.bpm?"#22c55e14":"transparent",border:`1px solid ${buf&&bpmResult?.bpm?"#22c55e44":"#22c55e1a"}`,color:buf&&bpmResult?.bpm?"#22c55e":"#22c55e33",borderRadius:6,cursor:buf&&bpmResult?.bpm?"pointer":"default",fontFamily:"monospace",fontSize:8,letterSpacing:1,outline:"none",flexShrink:0}}>⟳ SYNC</button>}
         </div>
       ):(
-        <div style={{height:64,display:"flex",alignItems:"center",justifyContent:"center",borderBottom:BD}}>
+        <div style={{height:58,display:"flex",alignItems:"center",justifyContent:"center",borderBottom:BD}}>
           <span style={{fontSize:9,fontFamily:"monospace",color:play?color+"77":"#1c1c2c",letterSpacing:3}}>{play?"● PLAYING":"■ STOPPED"}</span>
         </div>
       )}
@@ -1716,7 +1837,7 @@ export default function CollabMix({ initialPage = "landing", djName = null }) {
   // FIX: track actual playback rates so BPM sync display is correct
   const [rateA, setRateA]       = useState(1);
   const [rateB, setRateB]       = useState(1);
-  const [eqA, setEqA]           = useState({hi:0, mid:0, lo:0, vol:1.0});
+  const [eqA, setEqA]           = useState({hi:0, mid:0, lo:0, vol:1.0, filter:0});
   const lsRef                   = useRef({ deckA:{}, deckB:{}, xfade:.5 });
   const rateARef                = useRef(null); // DOM refs to call setRate on Deck
   const rateBRef                = useRef(null);
@@ -1795,6 +1916,24 @@ export default function CollabMix({ initialPage = "landing", djName = null }) {
   useEffect(() => { if (ready) applyXF(xf); }, [xf, ready]);
   useEffect(() => { if (eng.current) eng.current.master.gain.setTargetAtTime(mvol, eng.current.ctx.currentTime, .01); }, [mvol]);
 
+  // DJ Filter (low-pass ↔ high-pass sweep) per channel
+  const applyFilter = useCallback((ch, val) => {
+    if(!eng.current) return;
+    const node = ch==="A" ? eng.current.A.flt : eng.current.B.flt;
+    if(!node) return;
+    if(Math.abs(val)<0.04){ node.type="allpass"; return; }
+    if(val<0){
+      node.type="lowpass";
+      node.frequency.value=Math.max(20,22000*Math.pow(10,val*2.3));
+      node.Q.value=1+Math.abs(val)*4;
+    } else {
+      node.type="highpass";
+      node.frequency.value=Math.min(18000,20*Math.pow(10,val*2.3));
+      node.Q.value=1+val*4;
+    }
+  },[]);
+  useEffect(()=>{ if(ready) applyFilter("A",eqA.filter); },[eqA.filter,ready]);
+
   const handleWS = useCallback((m) => {
     if (m.type==="joined")        { if(m.partnerState?.deckA)setPA(m.partnerState.deckA); if(m.partnerState?.deckB)setPB(m.partnerState.deckB); }
     if (m.type==="deck_update")    (m.deckId==="A"?setPA:setPB)(p=>({...(p||{}),[m.field]:m.value}));
@@ -1838,7 +1977,7 @@ export default function CollabMix({ initialPage = "landing", djName = null }) {
 
   const updateEqA = useCallback((field, val) => {
     setEqA(e => ({...e, [field]:val}));
-    const wsField = field==="vol" ? "vol" : `eq${field.charAt(0).toUpperCase()+field.slice(1)}`;
+    const wsField = field==="vol"?"vol":field==="filter"?"filter":`eq${field.charAt(0).toUpperCase()+field.slice(1)}`;
     lsRef.current.deckA = {...(lsRef.current.deckA||{}), [wsField]:val};
     sync.send({type:"deck_update", deckId:"A", field:wsField, value:val});
   }, []);
@@ -1935,7 +2074,7 @@ export default function CollabMix({ initialPage = "landing", djName = null }) {
       <div style={{ flex:1, display:"flex", flexDirection:"column", overflow:"hidden", minHeight:0 }}>
 
       {/* DECKS + MIXER ROW */}
-      <div style={{ flexShrink:0, display:"grid", gridTemplateColumns:"1fr 270px 1fr", gap:8, padding:"8px 12px", height:"52vh", overflow:"hidden" }}>
+      <div style={{ flexShrink:0, display:"grid", gridTemplateColumns:"1fr 270px 1fr", gap:8, padding:"8px 12px", height:"56vh", overflow:"hidden" }}>
 
         {/* ── YOUR DECK ── */}
         <div style={{ display:"flex", flexDirection:"column", gap:6, minWidth:0, minHeight:0, overflowY:"auto" }}>
@@ -1943,7 +2082,7 @@ export default function CollabMix({ initialPage = "landing", djName = null }) {
             <div style={{ width:6, height:6, borderRadius:"50%", background:"#00d4ff", boxShadow:"0 0 8px #00d4ff" }}/>
             <span style={{ fontSize:10, fontFamily:"'DM Mono',monospace", fontWeight:500, color:"#00d4ff", letterSpacing:2 }}>{session.name} · YOU</span>
           </div>
-          <Deck id="A" ch={eng.current?.A} ctx={eng.current?.ctx} color="#00d4ff" local onChange={dh("A")} midi={midiEvt} bpmResult={bpm.results["A"]} bpmAnalyze={bpm.analyze} eqHi={eqA.hi} eqMid={eqA.mid} eqLo={eqA.lo} chanVol={eqA.vol} loadFromLibrary={libLoadA} onTrackInfo={handleTrackInfo}/>
+          <Deck id="A" ch={eng.current?.A} ctx={eng.current?.ctx} color="#00d4ff" local onChange={dh("A")} midi={midiEvt} bpmResult={bpm.results["A"]} bpmAnalyze={bpm.analyze} eqHi={eqA.hi} eqMid={eqA.mid} eqLo={eqA.lo} chanVol={eqA.vol} loadFromLibrary={libLoadA} onTrackInfo={handleTrackInfo} onSync={()=>syncDecks("A",bpm.results["B"]?.bpm)}/>
         </div>
 
         {/* ── CENTER MIXER — Rekordbox style ── */}
@@ -1974,6 +2113,8 @@ export default function CollabMix({ initialPage = "landing", djName = null }) {
               <Knob v={eqA.hi} set={v=>updateEqA("hi",v)} min={-12} max={12} ctr={0} label="HI" color="#00d4ff" size={36}/>
               <Knob v={eqA.mid} set={v=>updateEqA("mid",v)} min={-12} max={12} ctr={0} label="MID" color="#00d4ff" size={36}/>
               <Knob v={eqA.lo} set={v=>updateEqA("lo",v)} min={-12} max={12} ctr={0} label="LO" color="#00d4ff" size={36}/>
+              {/* FILTER */}
+              <Knob v={eqA.filter||0} set={v=>updateEqA("filter",v)} min={-1} max={1} ctr={0} label="FILTER" color="#00d4ff" size={36}/>
               {/* Channel fader */}
               <div style={{ fontSize:9, fontFamily:"'DM Mono',monospace", color:"#00d4ff66", letterSpacing:1.5, marginTop:6 }}>VOL</div>
               <VerticalFader val={eqA.vol} set={v=>updateEqA("vol",v)} color="#00d4ff" h={110}/>
@@ -1990,6 +2131,8 @@ export default function CollabMix({ initialPage = "landing", djName = null }) {
               <Knob v={pA?.eqHi||0} set={()=>{}} min={-12} max={12} ctr={0} label="HI" color="#ff6b35" size={36} off={true}/>
               <Knob v={pA?.eqMid||0} set={()=>{}} min={-12} max={12} ctr={0} label="MID" color="#ff6b35" size={36} off={true}/>
               <Knob v={pA?.eqLo||0} set={()=>{}} min={-12} max={12} ctr={0} label="LO" color="#ff6b35" size={36} off={true}/>
+              {/* FILTER - read only */}
+              <Knob v={pA?.filter||0} set={()=>{}} min={-1} max={1} ctr={0} label="FILTER" color="#ff6b35" size={36} off={true}/>
               {/* Channel fader - read only */}
               <div style={{ fontSize:9, fontFamily:"'DM Mono',monospace", color:"#ff6b3566", letterSpacing:1.5, marginTop:6 }}>VOL</div>
               <VerticalFader val={pA?.vol||1} set={()=>{}} color="#ff6b35" h={110}/>
