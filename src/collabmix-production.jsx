@@ -473,58 +473,24 @@ function LibraryCol({title, color, tracks, queue, onLoadA, onLoadB, playingTrack
   );
 }
 
-function LibraryPanel({lib, onLoad, playingTrack, partnerName, partnerLibrary}){
-  const G="#C8A96E";
+function LibraryPanel({lib, onLoad, playingTrack}){
   const handleDrop=(e)=>{e.preventDefault();lib.importFiles([...e.dataTransfer.files]);};
-  const crossRecs = playingTrack&&partnerLibrary?.length>0 ? recommendTracks(playingTrack, partnerLibrary) : [];
-
   return(
     <div style={{display:"flex",flexDirection:"column",height:"100%",overflow:"hidden"}}>
-      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"10px 12px",borderBottom:`1px solid ${G}14`,flexShrink:0}}>
-        <div style={{fontFamily:"'DM Mono',monospace",fontSize:10,color:G,letterSpacing:3}}>SHARED LIBRARY</div>
-        <div style={{display:"flex",gap:12,alignItems:"center"}}>
-          {playingTrack&&(
-            <div style={{display:"flex",gap:5,alignItems:"center"}}>
-              <div style={{width:5,height:5,borderRadius:"50%",background:"#22c55e",boxShadow:"0 0 5px #22c55e"}}/>
-              <span style={{fontFamily:"'DM Mono',monospace",fontSize:8,color:"#22c55e",letterSpacing:1}}>NOW PLAYING: {(playingTrack.title||playingTrack.filename||"").slice(0,20)}</span>
-              {crossRecs.length>0&&<span style={{fontFamily:"'DM Mono',monospace",fontSize:8,color:"#22c55e",background:"#22c55e11",borderRadius:3,padding:"1px 6px"}}>{crossRecs.length} partner matches</span>}
-            </div>
-          )}
-          {lib.library.length>0&&(
-            <button onClick={lib.clear} style={{fontSize:7,fontFamily:"'DM Mono',monospace",background:"transparent",border:"1px solid #ef444422",color:"#ef444455",borderRadius:3,padding:"1px 7px",cursor:"pointer"}}>CLEAR</button>
-          )}
-        </div>
-      </div>
-      <div style={{flex:1,display:"grid",gridTemplateColumns:"1fr 1px 1fr",overflow:"hidden"}}>
-        <LibraryCol
-          title="YOUR LIBRARY"
-          color="#00d4ff"
-          tracks={lib.library}
-          queue={lib.queue}
-          onLoadA={(t)=>onLoad(t,"A")}
-          onLoadB={(t)=>onLoad(t,"B")}
-          playingTrack={playingTrack}
-          partnerTracks={partnerLibrary}
-          importing={lib.importing}
-          onImport={lib.importFiles}
-          onDrop={handleDrop}
-          isOwn
-        />
-        <div style={{background:`#C8A96E14`,width:1}}/>
-        <LibraryCol
-          title={partnerName?`${partnerName.toUpperCase()}'S LIBRARY`:"PARTNER LIBRARY"}
-          color="#ff6b35"
-          tracks={partnerLibrary||[]}
-          onLoadA={null}
-          onLoadB={null}
-          playingTrack={playingTrack}
-          partnerTracks={lib.library}
-          importing={false}
-          onImport={null}
-          onDrop={null}
-          isOwn={false}
-        />
-      </div>
+      <LibraryCol
+        title="YOUR LIBRARY"
+        color="#00d4ff"
+        tracks={lib.library}
+        queue={lib.queue}
+        onLoadA={(t)=>onLoad(t,"A")}
+        onLoadB={(t)=>onLoad(t,"B")}
+        playingTrack={playingTrack}
+        partnerTracks={[]}
+        importing={lib.importing}
+        onImport={lib.importFiles}
+        onDrop={handleDrop}
+        isOwn
+      />
     </div>
   );
 }
@@ -1665,8 +1631,6 @@ export default function CollabMix({ initialPage = "landing", djName = null }) {
     sync.send({ type:"library_sync", tracks: meta });
   }, [lib.library, session]);
 
-  const [showLib, setShowLib] = useState(false);
-
   const SC = { connected:"#22c55e", connecting:"#f59e0b", disconnected:"#444", error:"#ef4444" };
   const PANELS = [["sync","⟳ SYNC"],["rtc","⚡ AUDIO"],["rec","⏺ REC"],["midi","⎍ MIDI"]];
 
@@ -1675,7 +1639,7 @@ export default function CollabMix({ initialPage = "landing", djName = null }) {
 
   const G = "#C8A96E"; // gold accent — matches App.jsx landing
   return (
-    <div style={{ minHeight:"100vh", background:"#0E0C1A", fontFamily:"'DM Sans',sans-serif", color:"#EDE8DF", display:"flex", flexDirection:"column" }}>
+    <div style={{ height:"100vh", overflow:"hidden", background:"#0E0C1A", fontFamily:"'DM Sans',sans-serif", color:"#EDE8DF", display:"flex", flexDirection:"column" }}>
       <style>{`
         @keyframes blink{0%,100%{box-shadow:0 0 5px currentColor}50%{box-shadow:0 0 14px currentColor}}
         @keyframes pulse{0%,100%{opacity:1}50%{opacity:.4}}
@@ -1713,8 +1677,11 @@ export default function CollabMix({ initialPage = "landing", djName = null }) {
         </div>
       </div>
 
-      {/* MAIN LAYOUT */}
-      <div style={{ flex:1, display:"grid", gridTemplateColumns:"1fr 270px 1fr", gap:8, padding:"8px 12px", minHeight:0, overflow:"hidden" }}>
+      {/* MAIN CONTENT AREA */}
+      <div style={{ flex:1, display:"flex", flexDirection:"column", overflow:"hidden", minHeight:0 }}>
+
+      {/* DECKS + MIXER ROW */}
+      <div style={{ flexShrink:0, display:"grid", gridTemplateColumns:"1fr 270px 1fr", gap:8, padding:"8px 12px", height:"52vh", overflow:"hidden" }}>
 
         {/* ── YOUR DECK ── */}
         <div style={{ display:"flex", flexDirection:"column", gap:6, minWidth:0, overflowY:"auto" }}>
@@ -1859,29 +1826,12 @@ export default function CollabMix({ initialPage = "landing", djName = null }) {
 
       </div>
 
-      {/* ── LIBRARY PANEL (full-width expandable drawer) ── */}
-      {/* ── LIBRARY PANEL (full-width expandable drawer) ── */}
-      <div style={{ flexShrink:0, borderTop:`1px solid ${G}18`, background:"#080710" }}>
-        {/* Library toggle bar */}
-        <div style={{ display:"flex", alignItems:"center", gap:10, padding:"6px 16px" }}>
-          <div style={{ display:"flex", alignItems:"center", gap:8, cursor:"pointer", flex:1 }} onClick={()=>setShowLib(v=>!v)}>
-            <span style={{ fontSize:10, fontFamily:"'DM Mono',monospace", color:showLib?G:`${G}66`, letterSpacing:2 }}>♫ {showLib?"▾ LIBRARY":"▸ LIBRARY"}</span>
-            {lib.library.length>0&&<span style={{ fontSize:9, fontFamily:"'DM Mono',monospace", color:`${G}88` }}>{lib.library.length} tracks</span>}
-            {lib.importing&&<span style={{ fontSize:8, fontFamily:"'DM Mono',monospace", color:G, animation:"pulse .8s infinite" }}>analyzing...</span>}
-            {partnerLibrary.length>0&&<span style={{ fontSize:9, fontFamily:"'DM Mono',monospace", color:"#ff6b3577" }}>· {partnerLibrary.length} partner</span>}
-          </div>
-          <a href="/library" target="_blank" rel="noreferrer" onClick={e=>e.stopPropagation()} style={{ fontSize:8, fontFamily:"'DM Mono',monospace", padding:"2px 10px", background:"transparent", border:`1px solid ${G}33`, color:`${G}99`, borderRadius:4, textDecoration:"none", letterSpacing:1, cursor:"pointer" }}>LIBRARY APP ↗</a>
-          <label style={{ fontSize:9, fontFamily:"'DM Mono',monospace", padding:"3px 12px", background:`${G}14`, border:`1px solid ${G}33`, color:G, borderRadius:5, cursor:"pointer", letterSpacing:1 }}>
-            + ADD TRACKS
-            <input type="file" accept="audio/*" multiple style={{display:"none"}} onChange={e=>lib.importFiles(e.target.files)}/>
-          </label>
-        </div>
-        {showLib&&(
-          <div style={{ height:340, borderTop:`1px solid ${G}14` }}>
-            <LibraryPanel lib={lib} onLoad={handleLibLoad} playingTrack={playingTrack} partnerName={sync.partner} partnerLibrary={partnerLibrary}/>
-          </div>
-        )}
+      {/* ── EMBEDDED LIBRARY — fills remaining space below decks ── */}
+      <div style={{ flex:1, overflow:"hidden", borderTop:`1px solid ${G}14`, background:"#080710", minHeight:0 }}>
+        <LibraryPanel lib={lib} onLoad={handleLibLoad} playingTrack={playingTrack}/>
       </div>
+
+      </div>{/* end main content area */}
 
       {/* PERSISTENT BOTTOM CHAT BAR */}
       <ChatBar log={chat} send={msg=>sync.send({type:"chat",msg})} me={session.name}/>
