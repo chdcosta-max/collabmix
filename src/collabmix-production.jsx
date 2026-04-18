@@ -1446,106 +1446,105 @@ function VU({ an, color, w=100 }) {
   return <canvas ref={ref} width={w} height={6} style={{width:"100%",borderRadius:2}}/>;
 }
 
-function WF({ buf, peaks, freq, prog, onSeek, h=80, hotCues=[], loopStart=null, loopEnd=null, loopActive=false }) {
+function WF({ bands, peaks, freq, prog, onSeek, h=80, hotCues=[], loopStart=null, loopEnd=null, loopActive=false }) {
   const ref=useRef(null);
   useEffect(()=>{
     if(!ref.current)return;
     const canvas=ref.current;
     const dpr=window.devicePixelRatio||1;
-    const W=canvas.clientWidth||460, H=h;
+    const W=canvas.clientWidth||900, H=h;
     canvas.width=W*dpr; canvas.height=H*dpr;
     const ctx=canvas.getContext("2d");
     ctx.scale(dpr,dpr);
     ctx.clearRect(0,0,W,H);
     const px=Math.floor(prog*W);
-    let rawAmp=null,rawFreq=null;
+    const base=H; // waveform grows upward from bottom
 
-    if(buf){
-      const step=Math.max(1,Math.floor(buf.length/W));
-      rawAmp=new Float32Array(W); rawFreq=new Float32Array(W);
-      for(let ch=0;ch<buf.numberOfChannels;ch++){
-        const d=buf.getChannelData(ch);
-        for(let x=0;x<W;x++){
-          let mx=0,zcr=0; const s=x*step;
-          for(let j=0;j<step;j++) mx=Math.max(mx,Math.abs(d[s+j]||0));
-          for(let j=1;j<step;j++) if((d[s+j]>=0)!==(d[s+j-1]>=0))zcr++;
-          if(mx>rawAmp[x]){rawAmp[x]=mx; rawFreq[x]=Math.min(1,(zcr/step)*4);}
-        }
-      }
+    // ── Resolve band data ──
+    let bArr=null,mArr=null,hArr=null;
+    if(bands&&bands.bass&&bands.bass.length){
+      bArr=bands.bass; mArr=bands.mid; hArr=bands.high;
     } else if(peaks&&peaks.length){
-      rawAmp=peaks; rawFreq=freq||null;
+      // Simulate bands from legacy peaks+freq data
+      bArr=peaks.map((p,i)=>p*Math.max(0.2,1-(freq?.[i]||0.3)*1.8));
+      mArr=peaks.map((p,i)=>p*(0.3+(freq?.[i]||0.3)*0.8));
+      hArr=peaks.map((p,i)=>p*Math.min(0.6,(freq?.[i]||0)*1.5));
     }
 
-    if(rawAmp){
-      let maxP=0; for(let x=0;x<rawAmp.length;x++)maxP=Math.max(maxP,rawAmp[x]); if(maxP<0.001)maxP=1;
-      const step=rawAmp.length/W, mid=H/2;
-      // Center line
-      ctx.fillStyle="#ffffff08"; ctx.fillRect(0,mid-1,W,1);
+    if(bArr){
+      const len=bArr.length;
       for(let x=0;x<W;x++){
-        const i=Math.min(rawAmp.length-1,Math.floor(x*step));
-        // Power 0.3 — much more aggressive than sqrt, fills the canvas
-        const norm=Math.pow((rawAmp[i]||0)/maxP, 0.3);
-        const bh=Math.max(1.5, norm*(mid-2)*0.98);
-        const fr=rawFreq?(rawFreq[i]||0):0.5;
-        const hue=fr*180; // 0=red, 90=yellow, 180=cyan
+        const i=Math.min(len-1,Math.floor(x*len/W));
+        const bv=bArr[i]||0;
+        const mv=mArr?mArr[i]||0:0;
+        const hv=hArr?hArr[i]||0:0;
+
+        // Overall amplitude drives total bar height
+        // Power-compress so quiet parts are still visible
+        const amp=Math.pow(bv*0.55+mv*0.32+hv*0.13, 0.58);
+        const totalH=Math.max(2, amp*(H-2));
+
+        // Distribute color layers proportionally to band energy
+        // Bass (blue) always forms majority; orange mid; white tips
+        const bw=bv*1.6, mw=mv*1.1, hw=hv*0.7;
+        const sum=bw+mw+hw||1;
+        const bH=(bw/sum)*totalH;
+        const mH=(mw/sum)*totalH;
+        const hH=(hw/sum)*totalH;
+
         const played=x<px;
-        // Draw bar with gradient: bright peak, slightly dimmer root
-        const grad=ctx.createLinearGradient(0,mid-bh,0,mid+bh);
-        if(played){
-          grad.addColorStop(0,  `hsl(${hue},100%,72%)`);
-          grad.addColorStop(0.4,`hsl(${hue},100%,55%)`);
-          grad.addColorStop(0.5,`hsl(${hue}, 80%,30%)`);
-          grad.addColorStop(0.6,`hsl(${hue},100%,55%)`);
-          grad.addColorStop(1,  `hsl(${hue},100%,72%)`);
-        } else {
-          grad.addColorStop(0,  `hsl(${hue},70%,32%)`);
-          grad.addColorStop(0.4,`hsl(${hue},70%,22%)`);
-          grad.addColorStop(0.5,`hsl(${hue},40%,12%)`);
-          grad.addColorStop(0.6,`hsl(${hue},70%,22%)`);
-          grad.addColorStop(1,  `hsl(${hue},70%,32%)`);
-        }
-        ctx.fillStyle=grad;
-        ctx.fillRect(x,mid-bh,1,bh*2);
+
+        // ── Blue (bass) — bottom layer ──
+        ctx.fillStyle=played?'#2288ff':'#1155bb';
+        if(bH>0.5)ctx.fillRect(x,base-bH,1,bH);
+
+        // ── Orange (mid) — stacked above blue ──
+        ctx.fillStyle=played?'#ffaa22':'#bb7714';
+        if(mH>0.5)ctx.fillRect(x,base-bH-mH,1,mH);
+
+        // ── White (high) — tips only ──
+        ctx.fillStyle=played?'rgba(255,255,255,0.92)':'rgba(220,220,220,0.5)';
+        if(hH>0.5)ctx.fillRect(x,base-bH-mH-hH,1,hH);
       }
-      // Loop region overlay
+
+      // ── Loop region ──
       if(loopStart!==null&&loopEnd!==null){
         const lx1=Math.floor(loopStart*W),lx2=Math.floor(loopEnd*W);
-        ctx.fillStyle=loopActive?"rgba(200,169,110,0.14)":"rgba(200,169,110,0.05)";
+        ctx.fillStyle=loopActive?"rgba(200,169,110,0.18)":"rgba(200,169,110,0.07)";
         ctx.fillRect(lx1,0,lx2-lx1,H);
-        ctx.fillStyle=loopActive?"#C8A96Eaa":"#C8A96E44";
+        ctx.fillStyle=loopActive?"#C8A96Ecc":"#C8A96E66";
         ctx.fillRect(lx1,0,2,H); ctx.fillRect(Math.max(lx1,lx2-2),0,2,H);
       }
-      // Playhead
-      const phGrad=ctx.createLinearGradient(px,0,px+2,0);
-      phGrad.addColorStop(0,"#ffffff");phGrad.addColorStop(1,"#ffffff99");
-      ctx.fillStyle=phGrad; ctx.shadowColor="#fff"; ctx.shadowBlur=12;
+
+      // ── Playhead ──
+      ctx.fillStyle='#ffffff'; ctx.shadowColor='#ffffff'; ctx.shadowBlur=10;
       ctx.fillRect(px,0,2,H); ctx.shadowBlur=0;
-      // Hot cue markers
+
+      // ── Hot cue markers ──
       const CUE_CLR=["#00d4ff","#ef4444","#22c55e","#f59e0b"];
-      hotCues.forEach((cue,i)=>{
+      hotCues.forEach((cue,ci)=>{
         if(cue===null)return;
         const cx=Math.floor(cue*W);
-        ctx.fillStyle=CUE_CLR[i]; ctx.shadowColor=CUE_CLR[i]; ctx.shadowBlur=5;
+        ctx.fillStyle=CUE_CLR[ci]; ctx.shadowColor=CUE_CLR[ci]; ctx.shadowBlur=6;
         ctx.fillRect(cx,0,2,H); ctx.shadowBlur=0;
-        // Triangle marker at top
-        ctx.beginPath();ctx.moveTo(cx-5,0);ctx.lineTo(cx+6,0);ctx.lineTo(cx+1,9);ctx.fillStyle=CUE_CLR[i];ctx.fill();
+        ctx.beginPath();ctx.moveTo(cx-5,0);ctx.lineTo(cx+6,0);ctx.lineTo(cx+1,10);
+        ctx.fillStyle=CUE_CLR[ci];ctx.fill();
       });
     } else {
-      // Empty state — visible center line + subtle grid
-      ctx.fillStyle="#ffffff12";
-      ctx.fillRect(0,H/2-1,W,1);
-      ctx.fillStyle="#ffffff07";
-      for(let x=0;x<W;x+=20)ctx.fillRect(x,0,1,H);
-      for(let y=0;y<H;y+=Math.floor(H/4))ctx.fillRect(0,y,W,1);
+      // Empty state — subtle baseline
+      ctx.fillStyle="#ffffff10";
+      ctx.fillRect(0,H-1,W,1);
+      ctx.fillStyle="#ffffff06";
+      for(let x=0;x<W;x+=40)ctx.fillRect(x,0,1,H);
     }
-  },[buf,peaks,freq,prog,hotCues,loopStart,loopEnd,loopActive]);
+  },[bands,peaks,freq,prog,hotCues,loopStart,loopEnd,loopActive]);
 
   const onClick=e=>{
     if(!onSeek||!ref.current)return;
     const r=ref.current.getBoundingClientRect();
     onSeek((e.clientX-r.left)/r.width);
   };
-  return <canvas ref={ref} onClick={onClick} style={{width:"100%",height:h,background:"#03030e",borderRadius:6,cursor:onSeek?"crosshair":"default",display:"block"}}/>;
+  return <canvas ref={ref} onClick={onClick} style={{width:"100%",height:h,background:"#050508",borderRadius:6,cursor:onSeek?"crosshair":"default",display:"block"}}/>;
 }
 
 function BeatGrid({ bpm, dur, prog, color }) {
@@ -1577,6 +1576,7 @@ function Deck({ id, ch, ctx:ac, color, local, remote, onChange, midi:mt, bpmResu
   const [rate,setRate]=useState(1); // FIX: track actual playback rate
   const [dragOver,setDragOver]=useState(false);
   const [wfPeaks,setWfPeaks]=useState(null),[wfFreq,setWfFreq]=useState(null);
+  const [wfBass,setWfBass]=useState(null),[wfMid,setWfMid]=useState(null),[wfHigh,setWfHigh]=useState(null);
   // Hot cues + loop
   const [deckKey,setDeckKey]=useState(null);
   const [hotCues,setHotCues]=useState([null,null,null,null]);
@@ -1622,6 +1622,9 @@ function Deck({ id, ch, ctx:ac, color, local, remote, onChange, midi:mt, bpmResu
     if(remote.duration)setDur(remote.duration);
     if(remote.waveformPeaks)setWfPeaks(remote.waveformPeaks);
     if(remote.waveformFreq)setWfFreq(remote.waveformFreq);
+    if(remote.waveformBass)setWfBass(remote.waveformBass);
+    if(remote.waveformMid)setWfMid(remote.waveformMid);
+    if(remote.waveformHigh)setWfHigh(remote.waveformHigh);
     // Update interpolation refs when we get a new progress value
     if(remote.progress!=null){
       const now=performance.now();
@@ -1697,22 +1700,37 @@ function Deck({ id, ch, ctx:ac, color, local, remote, onChange, midi:mt, bpmResu
     // If from library, report track info for recommendations
     if(trackMeta) onTrackInfo?.(id, trackMeta);
     else onTrackInfo?.(id, null);
-    // Compute compact peaks + frequency ratio (ZCR-based) for all channels
-    const W=460,step=Math.max(1,Math.floor(d.length/W));
-    const pk=new Array(W).fill(0),fq=new Array(W).fill(0);
+    // Compute 3-band waveform (Rekordbox-style: bass/mid/high) via IIR filters
+    const WF_W=800;
+    const sr=d.sampleRate;
+    // One-pole IIR lowpass coefficients: bass<300Hz, bass+mid<3500Hz
+    const aB=Math.exp(-2*Math.PI*300/sr);
+    const aM=Math.exp(-2*Math.PI*3500/sr);
+    const bassArr=new Float32Array(WF_W);
+    const midArr=new Float32Array(WF_W);
+    const highArr=new Float32Array(WF_W);
+    const step=Math.max(1,Math.floor(d.length/WF_W));
     for(let ch=0;ch<d.numberOfChannels;ch++){
       const data=d.getChannelData(ch);
-      for(let x=0;x<W;x++){
-        let mx=0,zcr=0; const s=x*step;
-        for(let j=0;j<step;j++)mx=Math.max(mx,Math.abs(data[s+j]||0));
-        for(let j=1;j<step;j++)if((data[s+j]>=0)!==(data[s+j-1]>=0))zcr++;
-        if(mx>pk[x]){pk[x]=mx;fq[x]=Math.min(1,(zcr/step)*4);}
+      let lpB=0,lpM=0;
+      for(let i=0;i<d.length;i++){
+        const s=data[i];
+        lpB=aB*lpB+(1-aB)*s;   // low-pass → bass only (<300Hz)
+        lpM=aM*lpM+(1-aM)*s;   // low-pass → bass+mid (<3500Hz)
+        const x=Math.min(WF_W-1,Math.floor(i/step));
+        const bv=Math.abs(lpB);
+        const mv=Math.abs(lpM-lpB);  // band: 300-3500Hz
+        const hv=Math.abs(s-lpM);    // band: >3500Hz
+        if(bv>bassArr[x])bassArr[x]=bv;
+        if(mv>midArr[x])midArr[x]=mv;
+        if(hv>highArr[x])highArr[x]=hv;
       }
     }
-    const pkR=pk.map(v=>Math.round(v*1000)/1000);
-    const fqR=fq.map(v=>Math.round(v*1000)/1000);
-    setWfPeaks(pkR);setWfFreq(fqR);
-    onChange?.("waveformPeaks",pkR);onChange?.("waveformFreq",fqR);
+    // Normalize each band independently to 0-1
+    const normBand=(arr)=>{let mx=0;for(let i=0;i<arr.length;i++)mx=Math.max(mx,arr[i]);if(mx<0.0001)return new Array(arr.length).fill(0);const out=new Array(arr.length);for(let i=0;i<arr.length;i++)out[i]=Math.round(arr[i]/mx*1000)/1000;return out;};
+    const bN=normBand(bassArr),mN=normBand(midArr),hN=normBand(highArr);
+    setWfBass(bN);setWfMid(mN);setWfHigh(hN);
+    onChange?.("waveformBass",bN);onChange?.("waveformMid",mN);onChange?.("waveformHigh",hN);
   };
 
   // Handle library load trigger from parent
@@ -1793,11 +1811,11 @@ function Deck({ id, ch, ctx:ac, color, local, remote, onChange, midi:mt, bpmResu
       </div>
 
       {/* ── OVERVIEW mini waveform ── */}
-      <WF buf={buf} peaks={wfPeaks} freq={wfFreq} prog={prog} onSeek={local?seek:null} h={16} hotCues={hotCues} loopStart={loopStart} loopEnd={loopEnd} loopActive={loopActive}/>
+      <WF bands={wfBass?{bass:wfBass,mid:wfMid,high:wfHigh}:null} peaks={wfPeaks} freq={wfFreq} prog={prog} onSeek={local?seek:null} h={20} hotCues={hotCues} loopStart={loopStart} loopEnd={loopEnd} loopActive={loopActive}/>
 
       {/* ── MAIN WAVEFORM ── */}
       <div style={{borderTop:BD, borderBottom:BD}}>
-        <WF buf={buf} peaks={wfPeaks} freq={wfFreq} prog={prog} onSeek={local?seek:null} h={84} hotCues={hotCues} loopStart={loopStart} loopEnd={loopEnd} loopActive={loopActive}/>
+        <WF bands={wfBass?{bass:wfBass,mid:wfMid,high:wfHigh}:null} peaks={wfPeaks} freq={wfFreq} prog={prog} onSeek={local?seek:null} h={88} hotCues={hotCues} loopStart={loopStart} loopEnd={loopEnd} loopActive={loopActive}/>
         {bpmResult?.bpm&&dur>0&&<BeatGrid bpm={bpmResult.bpm*rate} dur={dur} prog={prog} color={color}/>}
       </div>
 
