@@ -322,13 +322,38 @@ function useLibrary(){
   const workerRef=useRef(null),queueRef=useRef([]),activeRef=useRef(false),fileMap=useRef({});
   const audioCtx=useRef(null);
   const artworkCache=useRef({}); // trackId → data URL, kept in memory
+  const processQRef=useRef(null); // forward ref so startup effect can call processQ
+  const hasAutoQueued=useRef(false); // ensure startup analysis runs once
 
   // Load tracks + crates from shared IDB and poll for updates from the library app
   useEffect(()=>{
     const load=async()=>{
       try{
         const tracks=await cmDbAll("tracks");
-        if(tracks.length>0) setLibrary(tracks);
+        if(tracks.length>0){
+          setLibrary(tracks);
+          // On first load, auto-queue any unanalyzed tracks from OPFS
+          if(!hasAutoQueued.current){
+            hasAutoQueued.current=true;
+            const unanalyzed=tracks.filter(t=>!t.analyzed&&!t.error);
+            if(unanalyzed.length>0){
+              (async()=>{
+                for(const t of unanalyzed){
+                  const file=await opfsGet(t.id);
+                  if(file){
+                    fileMap.current[t.id]=file;
+                    queueRef.current.push({id:t.id,file,skipBPM:!!t.bpm,skipKey:!!t.key});
+                  } else {
+                    // File not in OPFS — mark analyzed to stop spinner, keep any existing tag data
+                    setLibrary(prev=>prev.map(x=>x.id===t.id?{...x,analyzed:true}:x));
+                    cmDbPut("tracks",{...t,analyzed:true}).catch(()=>{});
+                  }
+                }
+                processQRef.current?.();
+              })();
+            }
+          }
+        }
         const q=await cmDbAll("queue");
         setQueue(q.sort((a,b)=>a.order-b.order).map(r=>r.trackId));
         const cr=await cmDbAll("crates");
@@ -344,7 +369,13 @@ function useLibrary(){
     workerRef.current=createLibWorker();
     workerRef.current.onmessage=(e)=>{
       const{id,bpm,key,energy}=e.data;
-      setLibrary(prev=>prev.map(t=>t.id===id?{...t,bpm:bpm||t.bpm,key:key||t.key,energy,analyzed:true}:t));
+      setLibrary(prev=>{
+        const updated=prev.map(t=>t.id===id?{...t,bpm:bpm||t.bpm,key:key||t.key,energy,analyzed:true}:t);
+        // Persist analyzed state to IDB so spinner doesn't reappear on next page load
+        const track=updated.find(t=>t.id===id);
+        if(track) cmDbPut("tracks",track).catch(()=>{});
+        return updated;
+      });
       activeRef.current=false; processQ();
     };
     return()=>workerRef.current?.terminate();
@@ -368,6 +399,8 @@ function useLibrary(){
       }
     })();
   },[]);
+  // Keep ref current so startup effect (which has empty deps) can call processQ
+  useEffect(()=>{ processQRef.current=processQ; },[processQ]);
 
   // Core import logic — works with File objects or FileSystemFileHandle arrays
   const _importFileObjects=useCallback(async(files,handles=[])=>{
@@ -965,9 +998,64 @@ function LibraryPanel({lib, onLoad, playingTrack, previewTrackId, onPreview, onD
 
         {/* ADD TRACKS */}
         <div style={{flexShrink:0,padding:"6px 8px",borderTop:"1px solid #1e1e28",display:"flex",flexDirection:"column",gap:4}}>
-          <button onClick={()=>setShowImportModal(true)}
-            style={{display:"flex",alignItems:"center",justifyContent:"center",padding:"6px",fontSize:9,fontFamily:"'DM Mono',monospace",background:`${G}0e`,border:`1px solid ${G}2a`,color:G,borderRadius:5,cursor:"pointer",letterSpacing:.5,width:"100%"}}>
-            + ADD MUSIC
+          <button
+            onClick={async () => {
+              try {
+                // Open a folder picker — user clicks their Music folder once
+                const dirHandle = await window.showDirectoryPicker({ mode: "read" });
+                // Save for auto-reconnect next session
+                try {
+                  const db = await new Promise((res, rej) => {
+                    const r = indexedDB.open("mm_db", 1);
+                    r.onupgradeneeded = e => e.target.result.createObjectStore("handles");
+                    r.onsuccess = e => res(e.target.result);
+                    r.onerror = e => rej(e);
+                  });
+                  const tx = db.transaction("handles", "readwrite");
+                  tx.objectStore("handles").put(dirHandle, "folder");
+                  localStorage.setItem("mm_folder", dirHandle.name);
+                } catch {}
+                // Recursively collect all audio files
+                const files = [];
+                async function collect(dh) {
+                  for await (const [name, handle] of dh.entries()) {
+                    if (handle.kind === "directory") {
+                      await collect(handle);
+                    } else if (handle.kind === "file" && name.match(/\.(mp3|wav|flac|aac|ogg|m4a)$/i)) {
+                      const file = await handle.getFile();
+                      files.push(file);
+                    }
+                  }
+                }
+                await collect(dirHandle);
+                // Import all files into the library
+                if (files.length > 0) {
+                  lib.importFiles(files);
+                }
+              } catch (e) {
+                if (e.name !== "AbortError") console.error(e);
+              }
+            }}
+            style={{
+              padding: "8px 16px",
+              background: "#C8A96E",
+              border: "none",
+              color: "#07070f",
+              fontFamily: "'DM Mono', monospace",
+              fontWeight: 500,
+              fontSize: 10,
+              letterSpacing: 2,
+              borderRadius: 7,
+              cursor: "pointer",
+              boxShadow: "0 0 20px #C8A96E28",
+              transition: "all .2s",
+              whiteSpace: "nowrap",
+              width: "100%",
+            }}
+            onMouseEnter={e => e.currentTarget.style.transform = "translateY(-1px)"}
+            onMouseLeave={e => e.currentTarget.style.transform = "none"}
+          >
+            ⊕ SELECT MUSIC FOLDER
           </button>
           <input ref={fileRef} type="file" accept="audio/*" multiple style={{display:"none"}} onChange={e=>{lib.importFiles(e.target.files);setShowImportModal(false);}}/>
           <input ref={itunesRef} type="file" accept=".xml" style={{display:"none"}} onChange={e=>{
@@ -1458,14 +1546,12 @@ function WF({ bands, peaks, freq, prog, onSeek, h=80, hotCues=[], loopStart=null
     ctx.scale(dpr,dpr);
     ctx.clearRect(0,0,W,H);
     const px=Math.floor(prog*W);
-    const base=H; // waveform grows upward from bottom
 
     // ── Resolve band data ──
     let bArr=null,mArr=null,hArr=null;
     if(bands&&bands.bass&&bands.bass.length){
       bArr=bands.bass; mArr=bands.mid; hArr=bands.high;
     } else if(peaks&&peaks.length){
-      // Simulate bands from legacy peaks+freq data
       bArr=peaks.map((p,i)=>p*Math.max(0.2,1-(freq?.[i]||0.3)*1.8));
       mArr=peaks.map((p,i)=>p*(0.3+(freq?.[i]||0.3)*0.8));
       hArr=peaks.map((p,i)=>p*Math.min(0.6,(freq?.[i]||0)*1.5));
@@ -1473,52 +1559,52 @@ function WF({ bands, peaks, freq, prog, onSeek, h=80, hotCues=[], loopStart=null
 
     if(bArr){
       const len=bArr.length;
-      for(let x=0;x<W;x++){
-        const i=Math.min(len-1,Math.floor(x*len/W));
-        const bv=bArr[i]||0;
-        const mv=mArr?mArr[i]||0:0;
-        const hv=hArr?hArr[i]||0:0;
+      // Overview: solid energy envelope — 2px bars, 1px gap → 3px step
+      const BAR=2, GAP=1, STEP=BAR+GAP;
+      for(let x=0;x<W;x+=STEP){
+        // Average samples across this bar's range for smoother overview
+        const i0=Math.floor(x*len/W), i1=Math.min(len-1,Math.floor((x+STEP)*len/W));
+        let bv=0,mv=0,hv=0,cnt=0;
+        for(let k=i0;k<=i1;k++){bv+=bArr[k]||0;mv+=mArr?mArr[k]||0:0;hv+=hArr?hArr[k]||0:0;cnt++;}
+        if(cnt>0){bv/=cnt;mv/=cnt;hv/=cnt;}
 
-        // Overall amplitude drives total bar height
-        // Power-compress so quiet parts are still visible
-        const amp=Math.pow(bv*0.55+mv*0.32+hv*0.13, 0.58);
-        const totalH=Math.max(2, amp*(H-2));
+        // Gamma correction for punch: quiet parts visible, loud parts dominant
+        const amp=Math.pow(bv*0.55+mv*0.32+hv*0.13, 0.38);
+        const totalH=Math.max(1.5, amp*(H-2));
 
-        // Distribute color layers proportionally to band energy
-        // Bass (blue) always forms majority; orange mid; white tips
-        const bw=bv*1.6, mw=mv*1.1, hw=hv*0.7;
+        const bw=bv*2.2, mw=mv*1.3, hw=hv*0.7;
         const sum=bw+mw+hw||1;
-        const bH=(bw/sum)*totalH;
-        const mH=(mw/sum)*totalH;
-        const hH=(hw/sum)*totalH;
+        const bH=Math.max(0,(bw/sum)*totalH);
+        const mH=Math.max(0,(mw/sum)*totalH);
+        const hH=Math.max(0,(hw/sum)*totalH);
 
         const played=x<px;
+        const base=H;
 
-        // ── Blue (bass) — bottom layer ──
-        ctx.fillStyle=played?'#2288ff':'#1155bb';
-        if(bH>0.5)ctx.fillRect(x,base-bH,1,bH);
-
-        // ── Orange (mid) — stacked above blue ──
-        ctx.fillStyle=played?'#ffaa22':'#bb7714';
-        if(mH>0.5)ctx.fillRect(x,base-bH-mH,1,mH);
-
-        // ── White (high) — tips only ──
-        ctx.fillStyle=played?'rgba(255,255,255,0.92)':'rgba(220,220,220,0.5)';
-        if(hH>0.5)ctx.fillRect(x,base-bH-mH-hH,1,hH);
+        // Bass (blue)
+        ctx.fillStyle=played?'#44aaff':'#1e5599';
+        if(bH>0.5)ctx.fillRect(x,base-bH,BAR,bH);
+        // Mid (orange)
+        ctx.fillStyle=played?'#ffbb33':'#a87020';
+        if(mH>0.5)ctx.fillRect(x,base-bH-mH,BAR,mH);
+        // High (white)
+        ctx.fillStyle=played?'rgba(255,255,255,1)':'rgba(200,200,200,0.5)';
+        if(hH>0.5)ctx.fillRect(x,base-bH-mH-hH,BAR,hH);
       }
+
+      // ── Playhead marker ──
+      ctx.fillStyle='rgba(0,0,0,0.35)'; ctx.fillRect(px-1,0,4,H);
+      ctx.fillStyle='#ffffff'; ctx.shadowColor='#ffffff'; ctx.shadowBlur=8;
+      ctx.fillRect(px,0,2,H); ctx.shadowBlur=0;
 
       // ── Loop region ──
       if(loopStart!==null&&loopEnd!==null){
         const lx1=Math.floor(loopStart*W),lx2=Math.floor(loopEnd*W);
-        ctx.fillStyle=loopActive?"rgba(200,169,110,0.18)":"rgba(200,169,110,0.07)";
+        ctx.fillStyle=loopActive?"rgba(200,169,110,0.22)":"rgba(200,169,110,0.09)";
         ctx.fillRect(lx1,0,lx2-lx1,H);
         ctx.fillStyle=loopActive?"#C8A96Ecc":"#C8A96E66";
         ctx.fillRect(lx1,0,2,H); ctx.fillRect(Math.max(lx1,lx2-2),0,2,H);
       }
-
-      // ── Playhead ──
-      ctx.fillStyle='#ffffff'; ctx.shadowColor='#ffffff'; ctx.shadowBlur=10;
-      ctx.fillRect(px,0,2,H); ctx.shadowBlur=0;
 
       // ── Hot cue markers ──
       const CUE_CLR=["#00d4ff","#ef4444","#22c55e","#f59e0b"];
@@ -1527,15 +1613,11 @@ function WF({ bands, peaks, freq, prog, onSeek, h=80, hotCues=[], loopStart=null
         const cx=Math.floor(cue*W);
         ctx.fillStyle=CUE_CLR[ci]; ctx.shadowColor=CUE_CLR[ci]; ctx.shadowBlur=6;
         ctx.fillRect(cx,0,2,H); ctx.shadowBlur=0;
-        ctx.beginPath();ctx.moveTo(cx-5,0);ctx.lineTo(cx+6,0);ctx.lineTo(cx+1,10);
-        ctx.fillStyle=CUE_CLR[ci];ctx.fill();
+        if(cx>4&&cx<W-4){ctx.beginPath();ctx.moveTo(cx-4,0);ctx.lineTo(cx+5,0);ctx.lineTo(cx+1,9);ctx.fillStyle=CUE_CLR[ci];ctx.fill();}
       });
     } else {
-      // Empty state — subtle baseline
-      ctx.fillStyle="#ffffff10";
-      ctx.fillRect(0,H-1,W,1);
-      ctx.fillStyle="#ffffff06";
-      for(let x=0;x<W;x+=40)ctx.fillRect(x,0,1,H);
+      // Empty state
+      ctx.fillStyle="#ffffff08"; ctx.fillRect(0,H-1,W,1);
     }
   },[bands,peaks,freq,prog,hotCues,loopStart,loopEnd,loopActive]);
 
@@ -1544,7 +1626,322 @@ function WF({ bands, peaks, freq, prog, onSeek, h=80, hotCues=[], loopStart=null
     const r=ref.current.getBoundingClientRect();
     onSeek((e.clientX-r.left)/r.width);
   };
-  return <canvas ref={ref} onClick={onClick} style={{width:"100%",height:h,background:"#050508",borderRadius:6,cursor:onSeek?"crosshair":"default",display:"block"}}/>;
+  return <canvas ref={ref} onClick={onClick} style={{width:"100%",height:h,background:"#030306",cursor:onSeek?"crosshair":"default",display:"block"}}/>;
+}
+
+// ── AnimatedZoomedWF — smooth 60fps waveform for real-time mixing ──
+// Phase 1 (once on load): precompute totH/basH/higH Float32Arrays from band data.
+// Phase 2 (every RAF frame, no throttle): write ImageData at physical pixel resolution
+//   using linear interpolation between source samples — eliminates blockiness at any zoom.
+// Result: buttery-smooth scroll at full device refresh rate, crisp at any DPR.
+function AnimatedZoomedWF({ bands, dur, progRef, onSeek, h=96, windowSec=16, hotCues=[], loopStart=null, loopEnd=null, loopActive=false }) {
+  const ref=useRef(null);
+  const raf=useRef(null);
+  const hRef=useRef(null);     // {totH,basH,higH:Float32Array, len, maxH}
+  const imgRef=useRef(null);   // {buf:ImageData, px:Uint8ClampedArray, physW, physH} — reused
+  const durRef=useRef(dur);
+  const seekRef=useRef(onSeek);
+  const hotCuesRef=useRef(hotCues);
+  const loopRef=useRef({loopStart,loopEnd,loopActive});
+  useEffect(()=>{durRef.current=dur;},[dur]);
+  useEffect(()=>{seekRef.current=onSeek;},[onSeek]);
+  useEffect(()=>{hotCuesRef.current=hotCues;},[hotCues]);
+  useEffect(()=>{loopRef.current={loopStart,loopEnd,loopActive};},[loopStart,loopEnd,loopActive]);
+
+  // ── Phase 1: compute heights once per track ──
+  useEffect(()=>{
+    if(!bands?.bass?.length||!dur){hRef.current=null;return;}
+    const len=bands.bass.length;
+    const maxH=(h>>1)-2;
+    const bArr=bands.bass, mArr=bands.mid, hArr=bands.high;
+    const totH=new Float32Array(len);
+    const basH=new Float32Array(len);
+    const higH=new Float32Array(len);
+    for(let x=0;x<len;x++){
+      const bv=bArr[x]||0, mv=mArr[x]||0, hv=hArr[x]||0;
+      const mix=bv*0.55+mv*0.32+hv*0.13;
+      if(mix<=0)continue;
+      totH[x]=Math.pow(mix,0.72)*maxH;
+      basH[x]=Math.pow(bv,0.68)*maxH*0.85;
+      higH[x]=Math.min(maxH*0.22,Math.pow(hv,0.6)*maxH*0.9);
+    }
+    hRef.current={totH,basH,higH,len,maxH};
+    imgRef.current=null; // force buffer realloc on new track
+  },[bands,dur,h]);
+
+  // ── Phase 2: 60fps animation — ImageData at physical resolution + lerp ──
+  useEffect(()=>{
+    const canvas=ref.current; if(!canvas)return;
+    let physW=0, physH=0, ctx=null;
+
+    const draw=()=>{
+      raf.current=requestAnimationFrame(draw); // no throttle — run at device refresh rate
+
+      const dpr=window.devicePixelRatio||1;
+      const cssW=canvas.clientWidth||1200;
+      const newPW=Math.round(cssW*dpr);
+      const newPH=Math.round(h*dpr);
+
+      // Only resize canvas when dimensions actually change (expensive op)
+      if(newPW!==physW||newPH!==physH){
+        physW=newPW; physH=newPH;
+        canvas.width=physW; canvas.height=physH;
+        ctx=canvas.getContext('2d');
+        imgRef.current=null; // realloc on resize
+      }
+      if(!ctx)return;
+
+      // Reuse ImageData buffer (avoids GC pressure from new allocation each frame)
+      if(!imgRef.current||imgRef.current.physW!==physW){
+        const buf=ctx.createImageData(physW,physH);
+        imgRef.current={buf,px:buf.data,physW};
+      }
+      const{buf,px}=imgRef.current;
+      px.fill(3); // near-black background (avoids true-black crush on OLED)
+
+      const hd=hRef.current, dur2=durRef.current, prog2=progRef?.current??0;
+      const cy=physH>>1;
+
+      if(hd&&dur2){
+        const{totH,basH,higH,len}=hd;
+        const viewPx=windowSec/dur2*len;
+        const srcX=prog2*len-viewPx/2;
+
+        // Row-major loop: sequential memory writes = cache-friendly = fast
+        for(let y=0;y<physH;y++){
+          const dy=Math.abs(y-cy); // distance from center in physical px
+          const row=y*physW*4;
+          for(let sx=0;sx<physW;sx++){
+            // Fractional source position → linear interpolation between adjacent samples
+            const frac=srcX+(sx/physW)*viewPx;
+            const si0=frac|0; // Math.floor, fast
+            if(si0<0||si0>=len)continue;
+            const si1=si0+1<len?si0+1:si0;
+            const tf=frac-si0; // interpolation factor [0,1)
+            // Lerp heights, scale from CSS→physical pixels
+            const tot=(totH[si0]+(totH[si1]-totH[si0])*tf)*dpr;
+            if(dy>tot)continue;
+            const i=row+sx*4;
+            const bas=(basH[si0]+(basH[si1]-basH[si0])*tf)*dpr;
+            const hig=(higH[si0]+(higH[si1]-higH[si0])*tf)*dpr;
+            if(dy<=hig){            // white — high-freq transient tips
+              px[i]=255;px[i+1]=255;px[i+2]=255;px[i+3]=220;
+            }else if(dy<=bas){      // electric blue — bass body
+              px[i]=20;px[i+1]=160;px[i+2]=255;px[i+3]=255;
+            }else{                  // orange — total amplitude envelope
+              px[i]=255;px[i+1]=138;px[i+2]=18;px[i+3]=255;
+            }
+          }
+        }
+      }
+      ctx.putImageData(buf,0,0); // single GPU upload — everything above is pure JS
+
+      // ── Overlays drawn in physical pixel space ──
+      const hd2=hRef.current, dur2b=durRef.current, prog2b=progRef?.current??0;
+      const len2=hd2?.len||1;
+      const viewPx2=hd2&&dur2b?windowSec/dur2b*len2:1;
+      const srcX2=prog2b*len2-viewPx2/2;
+      const toSX=p=>(p*len2-srcX2)/viewPx2*physW;
+      const cx=physW>>1;
+
+      // Loop region
+      const{loopStart:ls,loopEnd:le,loopActive:la}=loopRef.current;
+      if(ls!==null&&le!==null){
+        const lx1=toSX(ls), lx2=toSX(le);
+        if(lx2>0&&lx1<physW){
+          ctx.fillStyle=la?'rgba(200,169,110,0.18)':'rgba(200,169,110,0.07)';
+          ctx.fillRect(Math.max(0,lx1),0,Math.min(physW,lx2)-Math.max(0,lx1),physH);
+          ctx.fillStyle=la?'#C8A96Ecc':'#C8A96E55';
+          if(lx1>=0&&lx1<physW)ctx.fillRect(lx1,0,2,physH);
+          if(lx2>=0&&lx2<physW)ctx.fillRect(lx2-2,0,2,physH);
+        }
+      }
+
+      // Hot cues
+      const CUE_CLR=['#00d4ff','#ef4444','#22c55e','#f59e0b'];
+      (hotCuesRef.current||[]).forEach((cue,ci)=>{
+        if(cue===null)return;
+        const cxm=toSX(cue);
+        if(cxm<-8||cxm>physW+8)return;
+        ctx.fillStyle=CUE_CLR[ci];ctx.shadowColor=CUE_CLR[ci];ctx.shadowBlur=10;
+        ctx.fillRect(cxm,0,2,physH);ctx.shadowBlur=0;
+      });
+
+      // Playhead — glowing white line at dead center
+      ctx.fillStyle='rgba(0,0,0,0.6)';ctx.fillRect(cx-3,0,8,physH);
+      ctx.fillStyle='#ffffff';ctx.shadowColor='#ffffff';ctx.shadowBlur=18;
+      ctx.fillRect(cx-1,0,3,physH);ctx.shadowBlur=0;
+    };
+
+    draw();
+    return()=>cancelAnimationFrame(raf.current);
+  },[windowSec,h,progRef]);
+
+  const onClick=e=>{
+    const hd=hRef.current;
+    if(!seekRef.current||!ref.current||!durRef.current||!hd)return;
+    const r=ref.current.getBoundingClientRect(), W=r.width, clickX=e.clientX-r.left;
+    const viewPx=windowSec/durRef.current*hd.len;
+    const srcX=(progRef?.current??0)*hd.len-viewPx/2;
+    seekRef.current(Math.max(0,Math.min(1,(srcX+clickX/W*viewPx)/hd.len)));
+  };
+  return <canvas ref={ref} onClick={onClick} style={{width:'100%',height:h,background:'#030306',cursor:'crosshair',display:'block'}}/>;
+}
+
+// ── Scrolling zoomed waveform (Rekordbox-style) ───────────────
+// Playhead fixed at center — waveform scrolls through it.
+function ZoomedWF({ bands, peaks, freq, prog, dur, onSeek, h=72, hotCues=[], loopStart=null, loopEnd=null, loopActive=false, windowSec=8 }) {
+  const ref=useRef(null);
+  useEffect(()=>{
+    if(!ref.current)return;
+    const canvas=ref.current;
+    const dpr=window.devicePixelRatio||1;
+    const W=canvas.clientWidth||900, H=h;
+    canvas.width=W*dpr; canvas.height=H*dpr;
+    const ctx=canvas.getContext("2d");
+    ctx.scale(dpr,dpr);
+    ctx.clearRect(0,0,W,H);
+    const centerX=Math.floor(W/2);
+
+    let bArr=null,mArr=null,hArr=null;
+    if(bands&&bands.bass&&bands.bass.length){
+      bArr=bands.bass; mArr=bands.mid; hArr=bands.high;
+    } else if(peaks&&peaks.length){
+      bArr=peaks.map((p,i)=>p*Math.max(0.2,1-(freq?.[i]||0.3)*1.8));
+      mArr=peaks.map((p,i)=>p*(0.3+(freq?.[i]||0.3)*0.8));
+      hArr=peaks.map((p,i)=>p*Math.min(0.6,(freq?.[i]||0)*1.5));
+    }
+
+    if(!bArr||!dur){
+      ctx.fillStyle="#ffffff08"; ctx.fillRect(0,H/2-0.5,W,1);
+      ctx.fillStyle="#ffffffaa"; ctx.fillRect(centerX-1,0,3,H);
+      return;
+    }
+
+    const len=bArr.length;
+    const samplesPerPx=(windowSec/dur)*len/W;
+    const currentSample=prog*len;
+    const startSample=currentSample-samplesPerPx*centerX;
+    const midY=H/2;
+
+    // ── Leaf-shaped bars (Rekordbox/Serato style) ──
+    // Each bar is pointed at top & bottom, widest at center — bezier curves
+    const BAR=6, GAP=2, STEP=BAR+GAP;
+    const hw=BAR/2; // half-width at widest point
+
+    // Helper: draw a leaf/flame shape centered at (cx, midY), height h above+below
+    const leaf=(cx,hTop,hBot,fillStyle)=>{
+      if(hTop<0.5&&hBot<0.5)return;
+      ctx.fillStyle=fillStyle;
+      ctx.beginPath();
+      ctx.moveTo(cx, midY-hTop);
+      ctx.bezierCurveTo(cx+hw, midY-hTop*0.45, cx+hw, midY-hTop*0.1, cx+hw, midY);
+      ctx.bezierCurveTo(cx+hw, midY+hBot*0.1, cx+hw, midY+hBot*0.45, cx, midY+hBot);
+      ctx.bezierCurveTo(cx-hw, midY+hBot*0.45, cx-hw, midY+hBot*0.1, cx-hw, midY);
+      ctx.bezierCurveTo(cx-hw, midY-hTop*0.1, cx-hw, midY-hTop*0.45, cx, midY-hTop);
+      ctx.closePath();
+      ctx.fill();
+    };
+
+    for(let x=0;x<W;x+=STEP){
+      const cx=x+hw;
+      // Sample averaging across bar range
+      const s0=startSample+x*samplesPerPx;
+      const s1=startSample+(x+STEP)*samplesPerPx;
+      const i0=Math.max(0,Math.floor(s0)), i1=Math.min(len-1,Math.ceil(s1));
+      if(i0>=len)continue;
+      let bv=0,mv=0,hv=0,cnt=0;
+      if(samplesPerPx<1){
+        // Interpolate for sub-sample zoom
+        const fi=s0+samplesPerPx*hw;
+        const lo=Math.max(0,Math.floor(fi)), hi2=Math.min(len-1,lo+1);
+        const t=fi-lo;
+        bv=(bArr[lo]||0)*(1-t)+(bArr[hi2]||0)*t;
+        mv=(mArr?mArr[lo]||0:0)*(1-t)+(mArr?mArr[hi2]||0:0)*t;
+        hv=(hArr?hArr[lo]||0:0)*(1-t)+(hArr?hArr[hi2]||0:0)*t;
+        cnt=1;
+      } else {
+        for(let k=i0;k<=i1;k++){bv+=bArr[k]||0;mv+=mArr?mArr[k]||0:0;hv+=hArr?hArr[k]||0:0;cnt++;}
+        if(cnt>0){bv/=cnt;mv/=cnt;hv/=cnt;}
+      }
+
+      // Strong gamma for punchy transients
+      const rawAmp=bv*0.52+mv*0.34+hv*0.14;
+      const amp=Math.pow(rawAmp, 0.32);
+      const maxH=midY-3;
+      const totalH=Math.max(2, amp*maxH);
+
+      // Color zones: orange body (full envelope), blue inner bass, white tips
+      // Proportional band heights
+      const bw2=bv*2.5, mw2=mv*1.6, hw2=hv*0.9;
+      const sum2=bw2+mw2+hw2||1;
+      const bassH=Math.max(0,(bw2/sum2)*totalH);
+      const midH_=Math.max(0,(mw2/sum2)*totalH);
+      const highH=Math.max(0,(hw2/sum2)*totalH);
+
+      const played=x<centerX;
+
+      // Layer 1: orange/amber outer envelope (mids + highs define the shape)
+      leaf(cx, totalH, totalH, played?'#ffb833':'#7d5010');
+
+      // Layer 2: blue bass core (inner diamond overlaid)
+      if(bassH>1.5){
+        leaf(cx, bassH, bassH, played?'#44aaff':'#1a4d99');
+      }
+
+      // Layer 3: bright white tip flash (high freq energy at very tips)
+      if(highH>1){
+        const tipH=Math.min(highH*0.7, 6);
+        leaf(cx, tipH, tipH, played?'rgba(255,255,255,0.92)':'rgba(200,220,255,0.35)');
+      }
+    }
+
+    // ── Center line ──
+    ctx.fillStyle='#ffffff1a'; ctx.fillRect(0,midY-0.5,W,1);
+
+    // ── Loop region ──
+    if(loopStart!==null&&loopEnd!==null){
+      const lx1=Math.floor(((loopStart*len)-startSample)/samplesPerPx);
+      const lx2=Math.floor(((loopEnd*len)-startSample)/samplesPerPx);
+      if(lx2>0&&lx1<W){
+        ctx.fillStyle=loopActive?"rgba(200,169,110,0.2)":"rgba(200,169,110,0.08)";
+        ctx.fillRect(Math.max(0,lx1),0,Math.min(W,lx2)-Math.max(0,lx1),H);
+        ctx.fillStyle=loopActive?"#C8A96Ecc":"#C8A96E66";
+        if(lx1>=0&&lx1<W)ctx.fillRect(lx1,0,2,H);
+        if(lx2>=0&&lx2<W)ctx.fillRect(lx2-1,0,2,H);
+      }
+    }
+
+    // ── Hot cue markers ──
+    const CUE_CLR=["#00d4ff","#ef4444","#22c55e","#f59e0b"];
+    hotCues.forEach((cue,ci)=>{
+      if(cue===null)return;
+      const cxm=Math.floor(((cue*len)-startSample)/samplesPerPx);
+      if(cxm<-6||cxm>W+6)return;
+      ctx.fillStyle=CUE_CLR[ci]; ctx.shadowColor=CUE_CLR[ci]; ctx.shadowBlur=8;
+      ctx.fillRect(cxm,0,2,H); ctx.shadowBlur=0;
+      if(cxm>4&&cxm<W-4){ctx.beginPath();ctx.moveTo(cxm-4,0);ctx.lineTo(cxm+5,0);ctx.lineTo(cxm+1,9);ctx.fillStyle=CUE_CLR[ci];ctx.fill();}
+    });
+
+    // ── Fixed playhead — shadow + bright white ──
+    ctx.fillStyle='rgba(0,0,0,0.45)'; ctx.fillRect(centerX-2,0,7,H);
+    ctx.fillStyle='#ffffff'; ctx.shadowColor='#ffffff'; ctx.shadowBlur=20;
+    ctx.fillRect(centerX,0,3,H); ctx.shadowBlur=0;
+
+  },[bands,peaks,freq,prog,dur,hotCues,loopStart,loopEnd,loopActive,windowSec]);
+
+  const onClick=e=>{
+    if(!onSeek||!ref.current||!dur)return;
+    const r=ref.current.getBoundingClientRect();
+    const W=r.width, clickX=e.clientX-r.left;
+    const len=(bands?.bass?.length||peaks?.length||1);
+    const samplesPerPx=(windowSec/dur)*len/W;
+    const startSample=prog*len-samplesPerPx*(W/2);
+    const clickSample=startSample+clickX*samplesPerPx;
+    onSeek(Math.max(0,Math.min(1,clickSample/len)));
+  };
+
+  return <canvas ref={ref} onClick={onClick} style={{width:"100%",height:h,background:"#030306",cursor:onSeek?"crosshair":"default",display:"block"}}/>;
 }
 
 function BeatGrid({ bpm, dur, prog, color }) {
@@ -1569,9 +1966,10 @@ function Knob({ v, set, min=-12, max=12, ctr=0, label, color="#00d4ff", size=38,
 // ── Deck ─────────────────────────────────────────────────────
 const HOT_CUE_COLORS=["#00d4ff","#ef4444","#22c55e","#f59e0b"];
 
-function Deck({ id, ch, ctx:ac, color, local, remote, onChange, midi:mt, bpmResult, bpmAnalyze, eqHi=0, eqMid=0, eqLo=0, chanVol=1, loadFromLibrary=null, onTrackInfo=null, onSync=null, onLibraryTrackDrop=null }) {
+function Deck({ id, ch, ctx:ac, color, local, remote, onChange, midi:mt, bpmResult, bpmAnalyze, eqHi=0, eqMid=0, eqLo=0, chanVol=1, loadFromLibrary=null, onTrackInfo=null, onSync=null, onLibraryTrackDrop=null, onProgUpdate=null, onWaveform=null }) {
   const [buf,setBuf]=useState(null),[name,setName]=useState(null),[play,setPlay]=useState(false);
   const [prog,setProg]=useState(0),[dur,setDur]=useState(0);
+  const progRef=useRef(0); // mirror of prog for parent AnimatedZoomedWF without 60fps setState
   const [hi,setHi]=useState(0),[mid,setMid]=useState(0),[lo,setLo]=useState(0),[vol,setVol]=useState(1);
   const [rate,setRate]=useState(1); // FIX: track actual playback rate
   const [dragOver,setDragOver]=useState(false);
@@ -1642,7 +2040,7 @@ function Deck({ id, ch, ctx:ac, color, local, remote, onChange, midi:mt, bpmResu
       const animate=()=>{
         const elapsed=performance.now()-remTimeRef.current;
         const interp=Math.min(1,Math.max(0,remProgRef.current+remRateRef.current*elapsed));
-        setProg(interp);
+        setProg(interp); progRef.current=interp; onProgUpdate?.(interp);
         remRaf.current=requestAnimationFrame(animate);
       };
       remRaf.current=requestAnimationFrame(animate);
@@ -1654,7 +2052,7 @@ function Deck({ id, ch, ctx:ac, color, local, remote, onChange, midi:mt, bpmResu
   const sfx=`DECK_${id}`;
   useEffect(()=>{ if(!mt||!local)return; const{actionKey:ak,value:v}=mt; if(ak===`${sfx}_PLAY`&&v===true)toggle(); if(ak===`${sfx}_CUE`&&v===true)cue(); },[mt]);
 
-  const stop_=()=>{ if(src.current){try{src.current.stop();}catch{}src.current.disconnect();src.current=null;}cancelAnimationFrame(raf.current); };
+  const stop_=()=>{ if(src.current){src.current.onended=null;try{src.current.stop();}catch{}src.current.disconnect();src.current=null;}cancelAnimationFrame(raf.current); };
 
   const play_=(o)=>{ if(!buf||!ch||!ac)return; stop_(); if(ac.state==="suspended")ac.resume();
     const s=ac.createBufferSource(); s.buffer=buf; s.playbackRate.value=rate; s.connect(ch.trim);
@@ -1674,7 +2072,7 @@ function Deck({ id, ch, ctx:ac, color, local, remote, onChange, midi:mt, bpmResu
       } else {
         p=Math.min(1,(o+elapsed)/buf.duration);
       }
-      setProg(p); onChange?.("progress",p);
+      setProg(p); progRef.current=p; onChange?.("progress",p); onProgUpdate?.(p);
       if(elapsed<buf.duration||lr2.active) raf.current=requestAnimationFrame(tick);
     }; tick(); };
 
@@ -1701,7 +2099,7 @@ function Deck({ id, ch, ctx:ac, color, local, remote, onChange, midi:mt, bpmResu
     if(trackMeta) onTrackInfo?.(id, trackMeta);
     else onTrackInfo?.(id, null);
     // Compute 3-band waveform (Rekordbox-style: bass/mid/high) via IIR filters
-    const WF_W=800;
+    const WF_W=12000; // high-res for sharp zoomed waveform detail
     const sr=d.sampleRate;
     // One-pole IIR lowpass coefficients: bass<300Hz, bass+mid<3500Hz
     const aB=Math.exp(-2*Math.PI*300/sr);
@@ -1731,6 +2129,7 @@ function Deck({ id, ch, ctx:ac, color, local, remote, onChange, midi:mt, bpmResu
     const bN=normBand(bassArr),mN=normBand(midArr),hN=normBand(highArr);
     setWfBass(bN);setWfMid(mN);setWfHigh(hN);
     onChange?.("waveformBass",bN);onChange?.("waveformMid",mN);onChange?.("waveformHigh",hN);
+    onWaveform?.({bass:bN,mid:mN,high:hN,dur:d.duration});
   };
 
   // Handle library load trigger from parent
@@ -1810,12 +2209,9 @@ function Deck({ id, ch, ctx:ac, color, local, remote, onChange, midi:mt, bpmResu
         </div>
       </div>
 
-      {/* ── OVERVIEW mini waveform ── */}
-      <WF bands={wfBass?{bass:wfBass,mid:wfMid,high:wfHigh}:null} peaks={wfPeaks} freq={wfFreq} prog={prog} onSeek={local?seek:null} h={20} hotCues={hotCues} loopStart={loopStart} loopEnd={loopEnd} loopActive={loopActive}/>
-
-      {/* ── MAIN WAVEFORM ── */}
-      <div style={{borderTop:BD, borderBottom:BD}}>
-        <WF bands={wfBass?{bass:wfBass,mid:wfMid,high:wfHigh}:null} peaks={wfPeaks} freq={wfFreq} prog={prog} onSeek={local?seek:null} h={88} hotCues={hotCues} loopStart={loopStart} loopEnd={loopEnd} loopActive={loopActive}/>
+      {/* ── OVERVIEW STRIP — full track structure ── */}
+      <div style={{borderTop:BD, borderBottom:BD, background:"#03030a"}}>
+        <WF bands={wfBass?{bass:wfBass,mid:wfMid,high:wfHigh}:null} peaks={wfPeaks} freq={wfFreq} prog={prog} onSeek={local?seek:null} h={40} hotCues={hotCues} loopStart={loopStart} loopEnd={loopEnd} loopActive={loopActive}/>
         {bpmResult?.bpm&&dur>0&&<BeatGrid bpm={bpmResult.bpm*rate} dur={dur} prog={prog} color={color}/>}
       </div>
 
@@ -2377,10 +2773,10 @@ function Lobby({ onJoin, djName = null }) {
 
 // ── MAIN APP ─────────────────────────────────────────────────
 export default function CollabMix({ initialPage = "landing", djName = null }) {
-  const [page, setPage]         = useState(initialPage); // "landing"|"lobby"|"session"
+  const [page, setPage]         = useState("session"); // "landing"|"lobby"|"session"
   const eng                     = useRef(null);
-  const [ready, setReady]       = useState(false);
-  const [session, setSession]   = useState(null);
+  const [ready, setReady]       = useState(true);
+  const [session, setSession]   = useState({ url:"wss://localhost:8080", room:"preview", name:"DJ Preview" });
   const [xf, setXf]             = useState(.5);
   const [mvol, setMvol]         = useState(.85);
   const [chat, setChat]         = useState([]);
@@ -2399,6 +2795,27 @@ export default function CollabMix({ initialPage = "landing", djName = null }) {
   const bpm = useBPM();
   const rec = useRecorder({ engineRef: eng });
   const lib = useLibrary();
+
+  // Initialize audio engine when session is ready but engine hasn't been created yet
+  // (covers preview/bypass mode where join() is skipped)
+  useEffect(() => {
+    if (ready && !eng.current) { eng.current = createEngine(); }
+  }, [ready]);
+
+  // ── Full-width waveform state (lifted from Deck components) ──
+  const [wfA, setWfA] = useState(null); // {bass, mid, high, dur} — only updates on track load
+  const [wfB, setWfB] = useState(null);
+  const [wfZoom, setWfZoom] = useState(0); // 0=WIDE(16s) 1=MED(8s) 2=ZOOM(4s)
+  const WF_WINDOWS = [16, 8, 4];
+  const WF_ZOOM_LABELS = ["WIDE","MED","ZOOM"];
+  const progRefA = useRef(0);
+  const progRefB = useRef(0);
+  const handleProgA = useCallback((p) => { progRefA.current = p; }, []);
+  const handleProgB = useCallback((p) => { progRefB.current = p; }, []);
+  // Sync wfB from remote player data (pA contains waveform arrays from WS)
+  useEffect(() => {
+    if (pA?.waveformBass) setWfB({ bass: pA.waveformBass, mid: pA.waveformMid, high: pA.waveformHigh, dur: pA.duration||0 });
+  }, [pA?.waveformBass]);
 
   // Library: track which deck is playing + metadata for recommendations
   const [playingTrack, setPlayingTrack] = useState(null);
@@ -2655,8 +3072,35 @@ export default function CollabMix({ initialPage = "landing", djName = null }) {
       {/* MAIN CONTENT AREA */}
       <div style={{ flex:1, display:"flex", flexDirection:"column", overflow:"hidden", minHeight:0 }}>
 
+      {/* ── FULL-WIDTH WAVEFORM SECTION (Rekordbox layout) ── */}
+      <div style={{ flexShrink:0, background:"#020208", borderBottom:"1px solid #16161e" }}>
+        {/* Deck A — blue, full screen width */}
+        <div style={{ position:"relative" }}>
+          <div style={{ position:"absolute", top:6, left:10, zIndex:2, display:"flex", gap:8, alignItems:"center", pointerEvents:"none" }}>
+            <div style={{ width:5, height:5, borderRadius:"50%", background:"#00d4ff", boxShadow:"0 0 6px #00d4ff" }}/>
+            <span style={{ fontSize:9, fontFamily:"'DM Mono',monospace", fontWeight:700, color:"#00d4ff88", letterSpacing:2 }}>A</span>
+          </div>
+          {/* Zoom controls — top right */}
+          <div style={{ position:"absolute", top:6, right:10, zIndex:2, display:"flex", gap:3, alignItems:"center" }}>
+            {WF_ZOOM_LABELS.map((lbl,i)=>(
+              <button key={i} onClick={()=>setWfZoom(i)} style={{ height:18, padding:"0 7px", fontSize:8, fontFamily:"'DM Mono',monospace", letterSpacing:.5, background:wfZoom===i?"#C8A96E22":"transparent", border:`1px solid ${wfZoom===i?"#C8A96E88":"#ffffff18"}`, color:wfZoom===i?"#C8A96E":"#ffffff44", borderRadius:4, cursor:"pointer", outline:"none" }}>{lbl}</button>
+            ))}
+          </div>
+          <AnimatedZoomedWF bands={wfA} dur={wfA?.dur||0} progRef={progRefA} onSeek={null} h={96} windowSec={WF_WINDOWS[wfZoom]}/>
+        </div>
+        <div style={{ height:1, background:"#0d0d18" }}/>
+        {/* Deck B — orange, full screen width */}
+        <div style={{ position:"relative" }}>
+          <div style={{ position:"absolute", top:6, left:10, zIndex:2, display:"flex", gap:8, alignItems:"center", pointerEvents:"none" }}>
+            <div style={{ width:5, height:5, borderRadius:"50%", background:"#ff6b35", boxShadow:"0 0 6px #ff6b35" }}/>
+            <span style={{ fontSize:9, fontFamily:"'DM Mono',monospace", fontWeight:700, color:"#ff6b3588", letterSpacing:2 }}>B</span>
+          </div>
+          <AnimatedZoomedWF bands={wfB} dur={wfB?.dur||0} progRef={progRefB} onSeek={null} h={96} windowSec={WF_WINDOWS[wfZoom]}/>
+        </div>
+      </div>
+
       {/* DECKS + MIXER ROW */}
-      <div style={{ flexShrink:0, display:"grid", gridTemplateColumns:"1fr 260px 1fr", gap:8, padding:"8px 12px 0", height:"47vh", overflow:"hidden" }}>
+      <div style={{ flexShrink:0, display:"grid", gridTemplateColumns:"1fr 260px 1fr", gap:8, padding:"8px 12px 0", height:"288px", overflow:"hidden" }}>
 
         {/* ── DECK A (local) ── */}
         <div style={{ display:"flex", flexDirection:"column", minWidth:0, minHeight:0, overflow:"hidden", background:"#0c0c12", border:"1px solid #1e1e28", borderRadius:10 }}>
@@ -2665,8 +3109,8 @@ export default function CollabMix({ initialPage = "landing", djName = null }) {
             <span style={{ fontSize:11, fontFamily:"'DM Mono',monospace", fontWeight:700, color:"#00d4ff", letterSpacing:2 }}>DECK A</span>
             <span style={{ fontSize:11, fontFamily:"'DM Sans',sans-serif", fontWeight:500, color:"#00d4ffaa", letterSpacing:.3 }}>{session.name}</span>
           </div>
-          <div style={{ flex:1, overflowY:"auto", minHeight:0 }}>
-            <Deck id="A" ch={eng.current?.A} ctx={eng.current?.ctx} color="#00d4ff" local onChange={dh("A")} midi={midiEvt} bpmResult={bpm.results["A"]} bpmAnalyze={bpm.analyze} eqHi={eqA.hi} eqMid={eqA.mid} eqLo={eqA.lo} chanVol={eqA.vol} loadFromLibrary={libLoadA} onTrackInfo={handleTrackInfo} onSync={()=>syncDecks("A",bpm.results["B"]?.bpm)} onLibraryTrackDrop={(trackId)=>{const t=lib.library.find(x=>x.id===trackId);if(t)handleLibLoad(t,"A");}}/>
+          <div style={{ flex:1, overflow:"hidden", minHeight:0 }}>
+            <Deck id="A" ch={eng.current?.A} ctx={eng.current?.ctx} color="#00d4ff" local onChange={dh("A")} midi={midiEvt} bpmResult={bpm.results["A"]} bpmAnalyze={bpm.analyze} eqHi={eqA.hi} eqMid={eqA.mid} eqLo={eqA.lo} chanVol={eqA.vol} loadFromLibrary={libLoadA} onTrackInfo={handleTrackInfo} onSync={()=>syncDecks("A",bpm.results["B"]?.bpm)} onLibraryTrackDrop={(trackId)=>{const t=lib.library.find(x=>x.id===trackId);if(t)handleLibLoad(t,"A");}} onProgUpdate={handleProgA} onWaveform={setWfA}/>
           </div>
         </div>
 
@@ -2688,25 +3132,26 @@ export default function CollabMix({ initialPage = "landing", djName = null }) {
 
             {/* ─── CH A STRIP ─── */}
             <div style={{ display:"flex", flexDirection:"column", borderRight:"1px solid #202028", overflow:"hidden" }}>
-              <div style={{ padding:"4px 6px 3px", background:"#0a0a10", borderBottom:"1px solid #202028", display:"flex", justifyContent:"space-between", alignItems:"center", flexShrink:0 }}>
-                <span style={{ fontFamily:"'DM Mono',monospace", fontSize:11, color:"#00d4ff", fontWeight:500, letterSpacing:1 }}>A</span>
-                <span style={{ fontFamily:"'DM Mono',monospace", fontSize:7, color:"#00d4ff44" }}>VOL</span>
+              {/* Header: label + VU inline */}
+              <div style={{ padding:"3px 6px", background:"#0a0a10", borderBottom:"1px solid #202028", display:"flex", justifyContent:"space-between", alignItems:"center", flexShrink:0 }}>
+                <span style={{ fontFamily:"'DM Mono',monospace", fontSize:11, color:"#00d4ff", fontWeight:600, letterSpacing:1 }}>A</span>
+                <VU an={eng.current?.A?.an} color="#00d4ff" w={50}/>
               </div>
-              {/* Channel VU */}
-              <div style={{ padding:"3px 6px 2px", background:"#080810", borderBottom:"1px solid #181820", flexShrink:0 }}>
-                <VU an={eng.current?.A?.an} color="#00d4ff" w={60}/>
-              </div>
-              {/* GAIN → HI → MID → LO — vertical */}
-              <div style={{ flex:1, display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"space-evenly", padding:"6px 0 2px" }}>
-                <Knob v={eqA.vol} set={v=>updateEqA("vol",v)} min={0} max={1.5} ctr={1} label="GAIN" color="#00d4ff" size={24}/>
-                <Knob v={eqA.hi}  set={v=>updateEqA("hi",v)}  min={-12} max={12} ctr={0} label="HI"   color="#00d4ff" size={24}/>
-                <Knob v={eqA.mid} set={v=>updateEqA("mid",v)} min={-12} max={12} ctr={0} label="MID"  color="#00d4ff" size={24}/>
-                <Knob v={eqA.lo}  set={v=>updateEqA("lo",v)}  min={-12} max={12} ctr={0} label="LO"   color="#00d4ff" size={24}/>
-              </div>
-              {/* Channel fader */}
-              <div style={{ display:"flex", flexDirection:"column", alignItems:"center", padding:"4px 0 6px", borderTop:"1px solid #181820", flexShrink:0, gap:2 }}>
-                <VerticalFader val={eqA.vol} set={v=>updateEqA("vol",v)} color="#00d4ff" h={78}/>
-                <div style={{ fontSize:7, fontFamily:"'DM Mono',monospace", color:"#00d4ff77" }}>{(eqA.vol/1.5*100).toFixed(0)}%</div>
+              {/* Channel fader LEFT, EQ knobs RIGHT — outer edge layout */}
+              <div style={{ flex:1, display:"flex", flexDirection:"row", minHeight:0, overflow:"hidden" }}>
+                {/* Channel volume fader — far left (outer edge) */}
+                <div style={{ flexShrink:0, display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"center", padding:"5px 4px", borderRight:"1px solid #181820", gap:2 }}>
+                  <div style={{ fontSize:6, fontFamily:"'DM Mono',monospace", color:"#00d4ff55", letterSpacing:1 }}>VOL</div>
+                  <VerticalFader val={eqA.vol} set={v=>updateEqA("vol",v)} color="#00d4ff" h={150}/>
+                  <div style={{ fontSize:7, fontFamily:"'DM Mono',monospace", color:"#00d4ff88" }}>{(eqA.vol/1.5*100).toFixed(0)}%</div>
+                </div>
+                {/* Knobs column — inner side */}
+                <div style={{ flex:1, display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"space-evenly", padding:"5px 2px" }}>
+                  <Knob v={eqA.vol} set={v=>updateEqA("vol",v)} min={0} max={1.5} ctr={1} label="GAIN" color="#00d4ff" size={20}/>
+                  <Knob v={eqA.hi}  set={v=>updateEqA("hi",v)}  min={-12} max={12} ctr={0} label="HI"   color="#00d4ff" size={20}/>
+                  <Knob v={eqA.mid} set={v=>updateEqA("mid",v)} min={-12} max={12} ctr={0} label="MID"  color="#00d4ff" size={20}/>
+                  <Knob v={eqA.lo}  set={v=>updateEqA("lo",v)}  min={-12} max={12} ctr={0} label="LO"   color="#00d4ff" size={20}/>
+                </div>
               </div>
             </div>
 
@@ -2715,7 +3160,7 @@ export default function CollabMix({ initialPage = "landing", djName = null }) {
               {/* Master fader */}
               <div style={{ flex:1, display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"center", gap:3, minHeight:0 }}>
                 <div style={{ fontSize:7, fontFamily:"'DM Mono',monospace", color:"#C8A96E99", letterSpacing:2 }}>MASTER</div>
-                <VerticalFader val={mvol} set={setMvol} color="#C8A96E" h={120}/>
+                <VerticalFader val={mvol} set={setMvol} color="#C8A96E" h={150}/>
                 <div style={{ fontSize:7, fontFamily:"'DM Mono',monospace", color:"#C8A96E99" }}>{(mvol/1.5*100).toFixed(0)}%</div>
               </div>
               {/* Session info */}
@@ -2731,24 +3176,26 @@ export default function CollabMix({ initialPage = "landing", djName = null }) {
 
             {/* ─── CH B STRIP (partner — read-only) ─── */}
             <div style={{ display:"flex", flexDirection:"column", borderLeft:"1px solid #202028", overflow:"hidden" }}>
-              <div style={{ padding:"4px 6px 3px", background:"#0a0a10", borderBottom:"1px solid #202028", display:"flex", justifyContent:"space-between", alignItems:"center", flexShrink:0 }}>
-                <span style={{ fontFamily:"'DM Mono',monospace", fontSize:11, color:"#ff6b35", fontWeight:500, letterSpacing:1 }}>B</span>
-                <span style={{ fontFamily:"'DM Mono',monospace", fontSize:7, color:"#ff6b3544" }}>VOL</span>
+              {/* Header: label + VU inline */}
+              <div style={{ padding:"3px 6px", background:"#0a0a10", borderBottom:"1px solid #202028", display:"flex", justifyContent:"space-between", alignItems:"center", flexShrink:0 }}>
+                <span style={{ fontFamily:"'DM Mono',monospace", fontSize:11, color:"#ff6b35", fontWeight:600, letterSpacing:1 }}>B</span>
+                <VU an={null} color="#ff6b35" w={50}/>
               </div>
-              <div style={{ padding:"3px 6px 2px", background:"#080810", borderBottom:"1px solid #181820", flexShrink:0 }}>
-                <VU an={null} color="#ff6b35" w={60}/>
-              </div>
-              {/* GAIN → HI → MID → LO — vertical, read-only */}
-              <div style={{ flex:1, display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"space-evenly", padding:"6px 0 2px" }}>
-                <Knob v={pA?.vol||1.0} set={()=>{}} min={0} max={1.5} ctr={1} label="GAIN" color="#ff6b35" size={24} off={true}/>
-                <Knob v={pA?.eqHi||0}  set={()=>{}} min={-12} max={12} ctr={0} label="HI"   color="#ff6b35" size={24} off={true}/>
-                <Knob v={pA?.eqMid||0} set={()=>{}} min={-12} max={12} ctr={0} label="MID"  color="#ff6b35" size={24} off={true}/>
-                <Knob v={pA?.eqLo||0}  set={()=>{}} min={-12} max={12} ctr={0} label="LO"   color="#ff6b35" size={24} off={true}/>
-              </div>
-              {/* Channel fader */}
-              <div style={{ display:"flex", flexDirection:"column", alignItems:"center", padding:"4px 0 6px", borderTop:"1px solid #181820", flexShrink:0, gap:2 }}>
-                <VerticalFader val={pA?.vol||1} set={()=>{}} color="#ff6b35" h={78}/>
-                <div style={{ fontSize:7, fontFamily:"'DM Mono',monospace", color:"#ff6b3577" }}>{((pA?.vol||1)/1.5*100).toFixed(0)}%</div>
+              {/* EQ knobs LEFT, channel fader RIGHT — outer edge layout */}
+              <div style={{ flex:1, display:"flex", flexDirection:"row", minHeight:0, overflow:"hidden" }}>
+                {/* Knobs column — inner side */}
+                <div style={{ flex:1, display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"space-evenly", padding:"5px 2px" }}>
+                  <Knob v={pA?.vol||1.0} set={()=>{}} min={0} max={1.5} ctr={1} label="GAIN" color="#ff6b35" size={20} off={true}/>
+                  <Knob v={pA?.eqHi||0}  set={()=>{}} min={-12} max={12} ctr={0} label="HI"   color="#ff6b35" size={20} off={true}/>
+                  <Knob v={pA?.eqMid||0} set={()=>{}} min={-12} max={12} ctr={0} label="MID"  color="#ff6b35" size={20} off={true}/>
+                  <Knob v={pA?.eqLo||0}  set={()=>{}} min={-12} max={12} ctr={0} label="LO"   color="#ff6b35" size={20} off={true}/>
+                </div>
+                {/* Channel volume fader — far right (outer edge) */}
+                <div style={{ flexShrink:0, display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"center", padding:"5px 4px", borderLeft:"1px solid #181820", gap:2 }}>
+                  <div style={{ fontSize:6, fontFamily:"'DM Mono',monospace", color:"#ff6b3555", letterSpacing:1 }}>VOL</div>
+                  <VerticalFader val={pA?.vol||1} set={()=>{}} color="#ff6b35" h={150}/>
+                  <div style={{ fontSize:7, fontFamily:"'DM Mono',monospace", color:"#ff6b3588" }}>{((pA?.vol||1)/1.5*100).toFixed(0)}%</div>
+                </div>
               </div>
             </div>
           </div>
@@ -2761,25 +3208,26 @@ export default function CollabMix({ initialPage = "landing", djName = null }) {
             <span style={{ fontSize:11, fontFamily:"'DM Mono',monospace", fontWeight:700, color:sync.partner?"#ff6b35":"#444454", letterSpacing:2 }}>DECK B</span>
             {sync.partner&&<span style={{ fontSize:11, fontFamily:"'DM Sans',sans-serif", fontWeight:500, color:"#ff6b35aa", letterSpacing:.3 }}>{sync.partner}</span>}
           </div>
-          <div style={{ flex:1, overflowY:"auto", minHeight:0 }}>
-            <Deck id="B" ch={null} ctx={null} color="#ff6b35" remote={pA} bpmResult={null} bpmAnalyze={null} eqHi={pA?.eqHi||0} eqMid={pA?.eqMid||0} eqLo={pA?.eqLo||0} chanVol={pA?.vol||1}/>
-          </div>
-          {/* ── PANELS (AUDIO / REC / MIDI) ── */}
-          <div style={{ flexShrink:0, borderTop:"1px solid #1e1e28" }}>
-            <div style={{ display:"flex", background:"#080810" }}>
-              {PANELS.map(([pid,l])=>(
-                <button key={pid} onClick={()=>setPanel(p=>p===pid?null:pid)} style={{ flex:1, padding:"5px 2px", fontSize:9, fontFamily:"'DM Mono',monospace", background:"transparent", color:panel===pid?"#ff6b35":"#888898", border:"none", borderBottom:`2px solid ${panel===pid?"#ff6b35":"transparent"}`, cursor:"pointer", outline:"none", letterSpacing:.3 }}>{l}</button>
-              ))}
-            </div>
-            <div style={{ maxHeight:160, overflow:"auto", background:"#0c0c14" }}>
-              {panel==="rtc"  && <RTCPanel rtc={rtc} partner={sync.partner} syncOk={sync.status==="connected"}/>}
-              {panel==="rec"  && <RecPanel rec={rec} ready={ready}/>}
-              {panel==="midi" && <MidiPanel midi={midi}/>}
-            </div>
+          <div style={{ flex:1, overflow:"hidden", minHeight:0 }}>
+            <Deck id="B" ch={null} ctx={null} color="#ff6b35" remote={pA} bpmResult={null} bpmAnalyze={null} eqHi={pA?.eqHi||0} eqMid={pA?.eqMid||0} eqLo={pA?.eqLo||0} chanVol={pA?.vol||1} onProgUpdate={handleProgB}/>
           </div>
         </div>
 
       </div>
+
+      {/* ── PANELS (AUDIO / REC / MIDI) — full-width, below decks ── */}
+      {(panel||true) && <div style={{ flexShrink:0, borderTop:"1px solid #181828", background:"#07070e" }}>
+        <div style={{ display:"flex", borderBottom:"1px solid #111118" }}>
+          {PANELS.map(([pid,l])=>(
+            <button key={pid} onClick={()=>setPanel(p=>p===pid?null:pid)} style={{ padding:"4px 16px", fontSize:9, fontFamily:"'DM Mono',monospace", background:"transparent", color:panel===pid?"#C8A96E":"#555562", border:"none", borderBottom:`2px solid ${panel===pid?"#C8A96E":"transparent"}`, cursor:"pointer", outline:"none", letterSpacing:.5 }}>{l}</button>
+          ))}
+        </div>
+        {panel && <div style={{ maxHeight:120, overflow:"auto", background:"#0a0a12" }}>
+          {panel==="rtc"  && <RTCPanel rtc={rtc} partner={sync.partner} syncOk={sync.status==="connected"}/>}
+          {panel==="rec"  && <RecPanel rec={rec} ready={ready}/>}
+          {panel==="midi" && <MidiPanel midi={midi}/>}
+        </div>}
+      </div>}
 
       {/* ── CROSSFADER ROW — same grid as deck row, only center column has content ── */}
       <div style={{ flexShrink:0, display:"grid", gridTemplateColumns:"1fr 260px 1fr", gap:8, padding:"4px 12px", background:"#070710", borderTop:"1px solid #181828", borderBottom:"1px solid #181828" }}>
