@@ -2614,6 +2614,8 @@ export default function CollabMix({ initialPage = "landing", djName = null }) {
       <div style={{ flexShrink:0, display:"grid", gridTemplateColumns:"1fr 260px 1fr", gap:8, padding:"4px 12px", background:"#070710", borderTop:"1px solid #181828", borderBottom:"1px solid #181828" }}>
         <div/>{/* empty left */}
         <div style={{ display:"flex", alignItems:"center", gap:8, padding:"4px 6px" }}>
+          {/* invisible spacer matching CTR button width so slider is visually centered */}
+          <button aria-hidden="true" tabIndex={-1} style={{ fontSize:7, height:16, padding:"0 8px", background:"transparent", border:"1px solid transparent", color:"transparent", borderRadius:3, cursor:"default", fontFamily:"'DM Mono',monospace", letterSpacing:.5, flexShrink:0, pointerEvents:"none", userSelect:"none" }}>CTR</button>
           <span style={{ fontSize:11, fontFamily:"'DM Mono',monospace", color:"#00d4ff99", fontWeight:700, lineHeight:1, flexShrink:0 }}>A</span>
           <div style={{ flex:1, position:"relative", height:24, display:"flex", alignItems:"center" }}>
             <div style={{ width:"100%", height:6, borderRadius:4, background:"#030310", border:"1px solid #181828", boxShadow:"inset 0 1px 3px rgba(0,0,0,.7)" }}>
