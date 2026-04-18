@@ -345,14 +345,35 @@ function useLibrary(){
     await _importFileObjects([...files],[]);
   },[_importFileObjects]);
 
-  // Analyze all unanalyzed tracks in library
+  // Analyze all unanalyzed tracks in library (also extracts + persists artwork for tracks missing it)
   const analyzeAll=useCallback(async(getFileFn)=>{
     setAnalyzing(true);
-    const unanalyzed=(library||[]).filter(t=>!t.analyzed||t.error);
-    for(const track of unanalyzed){
+    const toProcess=library||[];
+    for(const track of toProcess){
       const file=await getFileFn(track.id);
-      if(file){
+      if(!file) continue;
+      // Queue for BPM/key analysis if needed
+      if(!track.analyzed||track.error){
         queueRef.current.push({id:track.id,file,skipBPM:!!track.bpm,skipKey:!!track.key});
+      }
+      // Extract and persist artwork if this track is missing it
+      if(!track.artwork&&artworkCache.current[track.id]!==false){
+        try{
+          const sl=file.slice(0,262144);
+          const tags=parseID3(await sl.arrayBuffer());
+          if(tags.artwork){
+            artworkCache.current[track.id]=tags.artwork;
+            try{
+              const existing=await cmDbGet("tracks",track.id);
+              if(existing&&!existing.artwork){
+                await cmDbPut("tracks",{...existing,artwork:tags.artwork});
+                setLibrary(prev=>prev.map(t=>t.id===track.id?{...t,artwork:tags.artwork}:t));
+              }
+            }catch{}
+          }else{
+            artworkCache.current[track.id]=false;
+          }
+        }catch{}
       }
     }
     processQ();
@@ -503,8 +524,8 @@ function TrackRow({track, onLoadA, onLoadB, isRec, reasons, canLoad, previewTrac
 
       {/* Artwork — click to preview */}
       <div onClick={e=>{e.stopPropagation();if(onPreview)onPreview(track);}} title={isPreviewing?"Stop preview":"Preview"}
-        style={{width:32,height:32,borderRadius:5,flexShrink:0,background:artworkSrc?`#000`:`linear-gradient(135deg,${ac},${ac2})`,display:"flex",alignItems:"center",justifyContent:"center",fontSize:12,fontWeight:700,color:"#fff",fontFamily:"'DM Sans',sans-serif",userSelect:"none",position:"relative",overflow:"hidden",cursor:"pointer",outline:isPreviewing?`2px solid ${G}`:"none",transition:"outline .1s"}}>
-        {artworkSrc?<img src={artworkSrc} alt="" style={{width:"100%",height:"100%",objectFit:"cover",position:"absolute",inset:0}}/>:<span style={{position:"relative",zIndex:1}}>{initial}</span>}
+        style={{width:32,height:32,borderRadius:5,flexShrink:0,background:(artworkSrc||track.artwork)?`#000`:`linear-gradient(135deg,${ac},${ac2})`,display:"flex",alignItems:"center",justifyContent:"center",fontSize:12,fontWeight:700,color:"#fff",fontFamily:"'DM Sans',sans-serif",userSelect:"none",position:"relative",overflow:"hidden",cursor:"pointer",outline:isPreviewing?`2px solid ${G}`:"none",transition:"outline .1s"}}>
+        {(artworkSrc||track.artwork)?<img src={artworkSrc||track.artwork} alt="" style={{width:"100%",height:"100%",objectFit:"cover",position:"absolute",inset:0}}/>:<span style={{position:"relative",zIndex:1}}>{initial}</span>}
         {isPreviewing&&<div style={{position:"absolute",inset:0,background:"rgba(0,0,0,.6)",display:"flex",alignItems:"center",justifyContent:"center",zIndex:2}}><span style={{fontSize:11}}>⏸</span></div>}
         {!isPreviewing&&hov&&<div style={{position:"absolute",inset:0,background:"rgba(0,0,0,.45)",display:"flex",alignItems:"center",justifyContent:"center",zIndex:2}}><span style={{fontSize:10,color:"#fff"}}>▶</span></div>}
       </div>
