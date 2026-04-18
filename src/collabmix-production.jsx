@@ -307,9 +307,9 @@ function useLibrary(){
       const id=`t_${Date.now()}_${Math.random().toString(36).slice(2,6)}`;
       let tags={};
       try{const sl=file.slice(0,262144);tags=parseID3(await sl.arrayBuffer());}catch{}
-      // Cache artwork separately (don't inflate IDB track record)
+      // Store artwork in both memory cache and track record so it survives page reloads
       if(tags.artwork){artworkCache.current[id]=tags.artwork;}
-      const track={id,filename:file.name.replace(/\.[^.]+$/,""),title:tags.title||file.name.replace(/\.[^.]+$/,""),artist:tags.artist||"",album:tags.album||"",genre:tags.genre||"",label:tags.label||"",bpm:tags.bpm?parseFloat(tags.bpm):null,key:tags.key||null,duration:null,energy:null,analyzed:false,error:false,addedAt:Date.now()};
+      const track={id,filename:file.name.replace(/\.[^.]+$/,""),title:tags.title||file.name.replace(/\.[^.]+$/,""),artist:tags.artist||"",album:tags.album||"",genre:tags.genre||"",label:tags.label||"",bpm:tags.bpm?parseFloat(tags.bpm):null,key:tags.key||null,duration:null,energy:null,analyzed:false,error:false,addedAt:Date.now(),artwork:tags.artwork||null};
       fileMap.current[id]=file;
       setLibrary(prev=>{if(prev.find(t=>t.filename===track.filename))return prev;return [...prev,track];});
       // Persist metadata + handle to IDB so tracks survive page reloads
@@ -367,7 +367,15 @@ function useLibrary(){
     try{
       const sl=file.slice(0,262144);
       const tags=parseID3(await sl.arrayBuffer());
-      if(tags.artwork){artworkCache.current[trackId]=tags.artwork;return tags.artwork;}
+      if(tags.artwork){
+        artworkCache.current[trackId]=tags.artwork;
+        // Persist artwork back into the IDB track record so it survives future reloads
+        try{
+          const existing=await cmDbGet("tracks",trackId);
+          if(existing&&!existing.artwork){await cmDbPut("tracks",{...existing,artwork:tags.artwork});}
+        }catch{}
+        return tags.artwork;
+      }
     }catch{}
     artworkCache.current[trackId]=false; // mark as checked, no artwork
     return null;
