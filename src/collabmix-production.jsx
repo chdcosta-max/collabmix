@@ -135,39 +135,76 @@ function recommendTracks(current,library,limit=6){
   }).sort((a,b)=>b.score-a.score).slice(0,limit);
 }
 
-// ── ID3 parser (minimal) ──────────────────────────────────────
+// ── ID3 parser (robust v2) ────────────────────────────────────
 function parseID3(buffer){
   const bytes=new Uint8Array(buffer),view=new DataView(buffer),tags={};
-  if(bytes[0]!==0x49||bytes[1]!==0x44||bytes[2]!==0x33)return tags;
-  const ver=bytes[3];
-  const size=((bytes[6]&0x7F)<<21)|((bytes[7]&0x7F)<<14)|((bytes[8]&0x7F)<<7)|(bytes[9]&0x7F);
-  let off=10;const end=Math.min(off+size,buffer.byteLength);
+  if(bytes.length<10||bytes[0]!==0x49||bytes[1]!==0x44||bytes[2]!==0x33)return tags;
+  const ver=bytes[3]; // 2, 3, or 4
+  const flags=bytes[5];
+  const tagSize=((bytes[6]&0x7F)<<21)|((bytes[7]&0x7F)<<14)|((bytes[8]&0x7F)<<7)|(bytes[9]&0x7F);
+  let off=10;
+  // Skip extended header if present (flag bit 6)
+  if(flags&0x40){
+    const extSz=ver>=4?((bytes[off]&0x7F)<<21)|((bytes[off+1]&0x7F)<<14)|((bytes[off+2]&0x7F)<<7)|(bytes[off+3]&0x7F):view.getUint32(off);
+    off+=extSz;
+  }
+  const end=Math.min(10+tagSize,buffer.byteLength);
   const fmap={"TIT2":"title","TPE1":"artist","TBPM":"bpm","TKEY":"key","TCON":"genre","TALB":"album","TOPE":"originalArtist","TPUB":"label"};
-  function rStr(o,len){const enc=bytes[o];const sl=bytes.slice(o+1,o+len);try{return enc===1||enc===2?new TextDecoder("utf-16").decode(sl).replace(/\0/g,"").trim():new TextDecoder("utf-8").decode(sl).replace(/\0/g,"").trim();}catch{return "";}}
-  while(off+10<end){
+  function rStr(o,len){
+    if(o>=buffer.byteLength)return"";
+    const enc=bytes[o];
+    const sl=bytes.slice(o+1,o+len);
+    try{
+      if(enc===1||enc===2)return new TextDecoder(enc===2?"utf-16be":"utf-16").decode(sl).replace(/\0/g,"").trim();
+      if(enc===0)return new TextDecoder("iso-8859-1").decode(sl).replace(/\0/g,"").trim();
+      return new TextDecoder("utf-8").decode(sl).replace(/\0/g,"").trim();
+    }catch{return"";}
+  }
+  while(off+10<=end){
     const fid=String.fromCharCode(bytes[off],bytes[off+1],bytes[off+2],bytes[off+3]);
     if(!fid.match(/^[A-Z0-9]{4}$/))break;
     const fsz=ver>=4?((bytes[off+4]&0x7F)<<21)|((bytes[off+5]&0x7F)<<14)|((bytes[off+6]&0x7F)<<7)|(bytes[off+7]&0x7F):view.getUint32(off+4);
+    if(fsz===0||off+10+fsz>end+1){off+=10+fsz;continue;}
     if(fmap[fid]&&fsz>1)tags[fmap[fid]]=rStr(off+10,fsz);
     // Extract APIC (artwork) frame
     if(fid==="APIC"&&fsz>20&&!tags.artwork){
       try{
-        let p=off+11; // skip encoding byte
-        while(p<off+10+fsz&&bytes[p]!==0)p++; // skip mime type
-        p++; // skip null
+        const aEnc=bytes[off+10];
+        let p=off+11;
+        // skip MIME type (always ASCII, single-null terminated)
+        while(p<off+10+fsz&&bytes[p]!==0)p++;
+        p++; // skip mime null
         p++; // skip picture type byte
-        while(p<off+10+fsz&&bytes[p]!==0)p++; // skip description
-        p++; // skip null
+        // skip description — UTF-16 uses double-null, others use single-null
+        if(aEnc===1||aEnc===2){
+          while(p+1<off+10+fsz&&!(bytes[p]===0&&bytes[p+1]===0))p+=2;
+          p+=2; // skip double-null
+        }else{
+          while(p<off+10+fsz&&bytes[p]!==0)p++;
+          p++; // skip single-null
+        }
         if(p<off+10+fsz){
           const picBytes=bytes.slice(p,off+10+fsz);
-          // detect mime from header bytes
           const mime=(picBytes[0]===0xFF&&picBytes[1]===0xD8)?"image/jpeg":(picBytes[0]===0x89&&picBytes[1]===0x50)?"image/png":"image/jpeg";
-          const b64=btoa(Array.from(picBytes.slice(0,Math.min(picBytes.length,200000))).map(b=>String.fromCharCode(b)).join(""));
+          const b64=btoa(Array.from(picBytes.slice(0,Math.min(picBytes.length,500000))).map(b=>String.fromCharCode(b)).join(""));
           tags.artwork=`data:${mime};base64,${b64}`;
         }
       }catch{}
     }
-    off+=10+fsz; if(fsz===0)break;
+    off+=10+fsz;
+  }
+  // ID3v1 fallback (last 128 bytes) for artist/title/album if ID3v2 had none
+  if(!tags.title&&!tags.artist&&buffer.byteLength>=128){
+    try{
+      const v1=bytes.slice(buffer.byteLength-128);
+      if(v1[0]===0x54&&v1[1]===0x41&&v1[2]===0x47){// "TAG"
+        const d=new TextDecoder("iso-8859-1");
+        const t=d.decode(v1.slice(3,33)).replace(/\0/g,"").trim();
+        const a=d.decode(v1.slice(33,63)).replace(/\0/g,"").trim();
+        const al=d.decode(v1.slice(63,93)).replace(/\0/g,"").trim();
+        if(t)tags.title=t; if(a)tags.artist=a; if(al)tags.album=al;
+      }
+    }catch{}
   }
   return tags;
 }
@@ -306,7 +343,7 @@ function useLibrary(){
       const handle=handles[i]||null;
       const id=`t_${Date.now()}_${Math.random().toString(36).slice(2,6)}`;
       let tags={};
-      try{const sl=file.slice(0,262144);tags=parseID3(await sl.arrayBuffer());}catch{}
+      try{const sl=file.slice(0,1048576);tags=parseID3(await sl.arrayBuffer());}catch{}
       // Store artwork in both memory cache and track record so it survives page reloads
       if(tags.artwork){artworkCache.current[id]=tags.artwork;}
       const track={id,filename:file.name.replace(/\.[^.]+$/,""),title:tags.title||file.name.replace(/\.[^.]+$/,""),artist:tags.artist||"",album:tags.album||"",genre:tags.genre||"",label:tags.label||"",bpm:tags.bpm?parseFloat(tags.bpm):null,key:tags.key||null,duration:null,energy:null,analyzed:false,error:false,addedAt:Date.now(),artwork:tags.artwork||null};
@@ -359,7 +396,7 @@ function useLibrary(){
       // Extract and persist artwork if this track is missing it
       if(!track.artwork&&artworkCache.current[track.id]!==false){
         try{
-          const sl=file.slice(0,262144);
+          const sl=file.slice(0,1048576);
           const tags=parseID3(await sl.arrayBuffer());
           if(tags.artwork){
             artworkCache.current[track.id]=tags.artwork;
@@ -386,7 +423,7 @@ function useLibrary(){
     const file=await getFileFn(trackId);
     if(!file)return null;
     try{
-      const sl=file.slice(0,262144);
+      const sl=file.slice(0,1048576);
       const tags=parseID3(await sl.arrayBuffer());
       if(tags.artwork){
         artworkCache.current[trackId]=tags.artwork;
@@ -2237,23 +2274,20 @@ export default function CollabMix({ initialPage = "landing", djName = null }) {
   }, []);
 
   const handleLibLoad = useCallback(async (track, deck) => {
-    // Resume audio context on user gesture (browser autoplay policy)
-    if (eng.current?.ctx?.state === "suspended") {
-      try { await eng.current.ctx.resume(); } catch {}
-    }
-    const file = await lib.getFile(track.id);
+    // Get the file FIRST — requestPermission and showOpenFilePicker both need the user gesture.
+    // Do NOT call AudioContext.resume() before this or it consumes the gesture.
+    let file = await lib.getFile(track.id);
     if (!file) {
-      // Try to re-import by showing file picker
-      // Silently open file picker to let user re-locate the track
+      // File handle expired — open picker so user can re-locate the track
       try {
         const [fileHandle] = await window.showOpenFilePicker({ types:[{description:"Audio",accept:{"audio/*":[]}}], multiple:false });
-        const reFile = await fileHandle.getFile();
-        lib.fileMap?.current && (lib.fileMap.current[track.id] = reFile);
-        if (deck === "A") setLibLoadA({ track, file: reFile, ts: Date.now() });
-        else              setLibLoadB({ track, file: reFile, ts: Date.now() });
-        setPlayingTrack(track);
-      } catch {}
-      return;
+        file = await fileHandle.getFile();
+        lib.fileMap?.current && (lib.fileMap.current[track.id] = file);
+      } catch { return; } // user cancelled — do nothing
+    }
+    // Resume audio context after we have the file (still within user gesture window)
+    if (eng.current?.ctx?.state === "suspended") {
+      try { await eng.current.ctx.resume(); } catch {}
     }
     if (deck === "A") setLibLoadA({ track, file, ts: Date.now() });
     else              setLibLoadB({ track, file, ts: Date.now() });
