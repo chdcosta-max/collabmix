@@ -1629,144 +1629,199 @@ function WF({ bands, peaks, freq, prog, onSeek, h=80, hotCues=[], loopStart=null
   return <canvas ref={ref} onClick={onClick} style={{width:"100%",height:h,background:"#030306",cursor:onSeek?"crosshair":"default",display:"block"}}/>;
 }
 
-// ── AnimatedZoomedWF — smooth 60fps waveform for real-time DJ mixing ──
-// Strategy: compute waveform heights per DISPLAY PIXEL each frame using batched canvas paths.
-//   - No drawImage scaling → no blurriness at any zoom level
-//   - 3 ctx.fill() calls per frame (one per color band), all geometry batched into paths
-//   - Handles both upscale (lerp between samples) and downscale (average samples) correctly
-//   - Crisp 1-physical-pixel columns at any DPR
-function AnimatedZoomedWF({ bands, dur, progRef, onSeek, h=96, windowSec=16, hotCues=[], loopStart=null, loopEnd=null, loopActive=false }) {
+// ── AnimatedZoomedWF — smooth 60fps half-waveform with beat grid ──
+// Performance design:
+//   Phase 1 (track load): Math.pow() runs once per source sample → totH/basH Float32Arrays
+//   Phase 2 (every frame): zero pow() calls — just lerp + Int multiply + ImageData writes
+//   Resize check throttled to every 30 frames → no layout-reflow stutter every 5s
+//   Half-waveform: bars rise from baseline (bottom 15% margin) — drops hit visually hard
+//   Beat grid: tick every beat, red triangle every 4 beats — drawn after putImageData
+function AnimatedZoomedWF({ bands, dur, progRef, onSeek, h=96, windowSec=16, bpm=null, hotCues=[], loopStart=null, loopEnd=null, loopActive=false }) {
   const ref=useRef(null);
   const raf=useRef(null);
-  const hRef=useRef(null);   // {bArr,mArr,hArr,len} — raw band arrays from track load
+  const hRef=useRef(null);   // {totH,basH:Float32Array(len), len} — precomputed 0..1 values
+  const imgRef=useRef(null); // {buf:ImageData, px:Uint8ClampedArray, physW, physH}
   const durRef=useRef(dur);
+  const bpmRef=useRef(bpm);
   const seekRef=useRef(onSeek);
   const hotCuesRef=useRef(hotCues);
   const loopRef=useRef({loopStart,loopEnd,loopActive});
   useEffect(()=>{durRef.current=dur;},[dur]);
+  useEffect(()=>{bpmRef.current=bpm;},[bpm]);
   useEffect(()=>{seekRef.current=onSeek;},[onSeek]);
   useEffect(()=>{hotCuesRef.current=hotCues;},[hotCues]);
   useEffect(()=>{loopRef.current={loopStart,loopEnd,loopActive};},[loopStart,loopEnd,loopActive]);
 
-  // Phase 1: store band array references (no per-sample pre-computation needed)
+  // ── Phase 1: precompute normalized (0..1) heights once per track ──
+  // Math.pow runs here, NOT in the 60fps loop — eliminates the main perf bottleneck
   useEffect(()=>{
-    if(!bands?.bass?.length||!dur){hRef.current=null;return;}
-    hRef.current={bArr:bands.bass,mArr:bands.mid,hArr:bands.high,len:bands.bass.length};
+    if(!bands?.bass?.length||!dur){hRef.current=null;imgRef.current=null;return;}
+    const len=bands.bass.length;
+    const bArr=bands.bass,mArr=bands.mid,hArr=bands.high;
+    const totH=new Float32Array(len);
+    const basH=new Float32Array(len);
+    for(let x=0;x<len;x++){
+      const bv=bArr[x]||0,mv=mArr[x]||0,hv=hArr[x]||0;
+      const energy=bv*0.70+mv*0.25+hv*0.05;
+      if(energy<=0)continue;
+      const tot=Math.pow(energy,0.82);     // 0..1, strong dynamic range
+      const bas=Math.min(tot*0.80, Math.pow(bv,0.65)); // 0..1, bass fraction
+      totH[x]=tot;
+      basH[x]=bas;
+    }
+    hRef.current={totH,basH,len};
+    imgRef.current=null;
   },[bands,dur]);
 
-  // Phase 2: 60fps draw — batched canvas paths, crisp 1-px physical columns
+  // ── Phase 2: 60fps draw — zero allocations, throttled resize check ──
   useEffect(()=>{
     const canvas=ref.current; if(!canvas)return;
-    let physW=0,physH=0,ctx=null;
-    // Pre-allocated height arrays — reused every frame, no GC
+    let physW=0,physH=0,ctx=null,frame=0;
     let tots=new Int32Array(4096);
     let bass=new Int32Array(4096);
-    let higs=new Int32Array(4096);
 
     const draw=()=>{
       raf.current=requestAnimationFrame(draw);
+      frame++;
 
-      const dpr=window.devicePixelRatio||1;
-      const cssW=canvas.clientWidth||1200;
-      const newPW=Math.round(cssW*dpr);
-      const newPH=Math.round(h*dpr);
-
-      if(newPW!==physW||newPH!==physH){
-        physW=newPW; physH=newPH;
-        canvas.width=physW; canvas.height=physH;
-        ctx=canvas.getContext('2d');
-        // Grow height arrays if needed
-        if(physW>tots.length){tots=new Int32Array(physW+256);bass=new Int32Array(physW+256);higs=new Int32Array(physW+256);}
+      // Throttle expensive clientWidth DOM read to every 30 frames (~0.5s)
+      // Prevents layout-reflow stutter that caused the 5-second periodic hiccup
+      if(frame%30===1||physW===0){
+        const dpr=window.devicePixelRatio||1;
+        const cssW=canvas.clientWidth||1200;
+        const newPW=Math.round(cssW*dpr);
+        const newPH=Math.round(h*dpr);
+        if(newPW!==physW||newPH!==physH){
+          physW=newPW; physH=newPH;
+          canvas.width=physW; canvas.height=physH;
+          ctx=canvas.getContext('2d');
+          imgRef.current=null;
+          if(physW>tots.length){
+            tots=new Int32Array(physW+256);
+            bass=new Int32Array(physW+256);
+          }
+        }
       }
       if(!ctx)return;
 
-      ctx.fillStyle='#030306';
-      ctx.fillRect(0,0,physW,physH);
+      // Reuse ImageData buffer — no per-frame allocation
+      if(!imgRef.current||imgRef.current.physW!==physW||imgRef.current.physH!==physH){
+        const buf=ctx.createImageData(physW,physH);
+        imgRef.current={buf,px:buf.data,physW,physH};
+      }
+      const{buf,px}=imgRef.current;
+      px.fill(3);
 
       const hd=hRef.current, dur2=durRef.current, prog2=progRef?.current??0;
-      const cy=physH>>1;
-      const maxH=cy-2;
+
+      // Half-waveform: baseline sits at 88% of canvas height, bars go upward
+      // This gives maximum visual impact — drops spike tall, breakdowns go flat
+      const baseline=Math.round(physH*0.88);
+      const maxH=baseline-2;
 
       if(hd&&dur2&&maxH>0){
-        const{bArr,mArr,hArr,len}=hd;
-        const viewPx=windowSec/dur2*len;   // source samples in current window
-        const srcX=prog2*len-viewPx/2;     // left-edge in source-sample space
-        const spp=viewPx/physW;            // source samples per display pixel
+        const{totH,basH,len}=hd;
+        const viewPx=windowSec/dur2*len;
+        const srcX=prog2*len-viewPx/2;
+        const spp=viewPx/physW;
 
-        // ── Pass 1: compute height for each display column ──
+        // ── Pass 1: sample heights for each display column (no pow() — just lerp) ──
         for(let dx=0;dx<physW;dx++){
           const frac=srcX+dx*spp;
-          let bv=0,mv=0,hv=0;
+          let tv=0,bv=0;
 
           if(spp>=1){
-            // Downscale: average all samples that map to this display pixel
             const s0=Math.max(0,frac|0);
-            const s1=Math.min(len-1,((frac+spp)|0));
+            const s1=Math.min(len-1,(frac+spp)|0);
             if(s0>=len){tots[dx]=0;continue;}
             let cnt=0;
-            for(let k=s0;k<=s1;k++){bv+=bArr[k];mv+=mArr[k];hv+=hArr[k];cnt++;}
-            if(cnt){bv/=cnt;mv/=cnt;hv/=cnt;}
+            for(let k=s0;k<=s1;k++){tv+=totH[k];bv+=basH[k];cnt++;}
+            if(cnt){tv/=cnt;bv/=cnt;}
           } else {
-            // Upscale: linear interpolation between nearest samples
             const si0=frac|0;
             if(si0<0||si0>=len){tots[dx]=0;continue;}
             const si1=si0+1<len?si0+1:si0;
             const tf=frac-si0;
-            bv=bArr[si0]+(bArr[si1]-bArr[si0])*tf;
-            mv=mArr[si0]+(mArr[si1]-mArr[si0])*tf;
-            hv=hArr[si0]+(hArr[si1]-hArr[si0])*tf;
+            tv=totH[si0]+(totH[si1]-totH[si0])*tf;
+            bv=basH[si0]+(basH[si1]-basH[si0])*tf;
           }
 
-          // Total height: exponent 0.82 preserves dynamic range
-          // (breakdowns genuinely thin, drops genuinely tall)
-          const energy=bv*0.55+mv*0.32+hv*0.13;
-          const tot=(Math.pow(energy,0.82)*maxH)|0;
-          if(tot<1){tots[dx]=0;bass[dx]=0;higs[dx]=0;continue;}
-
-          // Bass: capped at 78% of tot — orange ring always visible at edges
-          const b=Math.min((tot*0.78)|0, (Math.pow(bv,0.68)*maxH)|0);
-
-          // White tips: thin bright spine (≤7% of maxH) — shows hi-hats/snares at center
-          const hiRaw=(Math.pow(hv,0.58)*maxH*0.50)|0;
-          const hi=Math.min((maxH*0.07)|0, Math.min(b,hiRaw));
-
-          tots[dx]=tot; bass[dx]=b; higs[dx]=hi;
+          tots[dx]=(tv*maxH)|0;
+          bass[dx]=(bv*maxH)|0;
         }
 
-        // ── Pass 2: batch-draw by color (3 fill() calls total) ──
-        // Orange outer envelope
-        ctx.beginPath();
-        for(let dx=0;dx<physW;dx++){if(tots[dx]>0)ctx.rect(dx,cy-tots[dx],1,tots[dx]*2);}
-        ctx.fillStyle='#ff8a12'; ctx.fill();
+        // ── Pass 2: row-major half-waveform fill (only rows above baseline) ──
+        for(let y=0;y<baseline;y++){
+          const dy=baseline-y; // distance above baseline (always positive)
+          const row=y*physW*4;
+          for(let dx=0;dx<physW;dx++){
+            const tot=tots[dx];
+            if(dy>tot)continue;
+            const i=row+dx*4;
+            if(dy<=bass[dx]){
+              px[i]=20;px[i+1]=160;px[i+2]=255;px[i+3]=255; // blue — bass
+            } else {
+              px[i]=255;px[i+1]=138;px[i+2]=18;px[i+3]=255;  // orange — envelope
+            }
+          }
+        }
 
-        // Blue bass core (overwrites orange center)
-        ctx.beginPath();
-        for(let dx=0;dx<physW;dx++){if(bass[dx]>0)ctx.rect(dx,cy-bass[dx],1,bass[dx]*2);}
-        ctx.fillStyle='#14a0ff'; ctx.fill();
+        // Baseline hairline
+        const bRow=baseline*physW*4;
+        for(let dx=0;dx<physW;dx++){
+          const i=bRow+dx*4;
+          px[i]=60;px[i+1]=60;px[i+2]=70;px[i+3]=200;
+        }
 
-        // White transient spine (thin — overwrites blue center)
-        ctx.beginPath();
-        for(let dx=0;dx<physW;dx++){if(higs[dx]>0)ctx.rect(dx,cy-higs[dx],1,higs[dx]*2);}
-        ctx.fillStyle='#ffffff'; ctx.fill();
+        ctx.putImageData(buf,0,0);
+
+        // ── Beat grid overlay (after putImageData, using canvas 2D) ──
+        const bpm2=bpmRef.current;
+        if(bpm2&&bpm2>0){
+          const beatSamples=(60/bpm2)/dur2*len; // samples per beat
+          // find first beat at or after view left edge
+          const firstBeatIdx=Math.ceil(srcX/beatSamples);
+          for(let bi=firstBeatIdx;bi*beatSamples<srcX+viewPx+beatSamples;bi++){
+            const beatSrc=bi*beatSamples;
+            const sx=(beatSrc-srcX)/viewPx*physW;
+            if(sx<-4||sx>physW+4)continue;
+            const isBar=(bi%4===0); // downbeat every 4 beats
+            if(isBar){
+              // Red downbeat marker — vertical line + triangle at top
+              ctx.fillStyle='rgba(220,40,40,0.75)';
+              ctx.fillRect(sx-0.5,0,1.5,baseline*0.35);
+              ctx.beginPath();
+              ctx.moveTo(sx-5,0);ctx.lineTo(sx+5,0);ctx.lineTo(sx,10);
+              ctx.fillStyle='#e02828';ctx.fill();
+            } else {
+              // White beat tick — top ~18% of waveform
+              ctx.fillStyle='rgba(255,255,255,0.22)';
+              ctx.fillRect(sx-0.5,0,1,baseline*0.18);
+            }
+          }
+        }
+
+      } else {
+        ctx.putImageData(buf,0,0);
       }
 
-      // ── Overlays: loop region, hot cues, playhead ──
+      // ── Overlays: loop, cues, playhead ──
       const hd2=hRef.current, dur2b=durRef.current, prog2b=progRef?.current??0;
       const len2=hd2?.len||1;
       const viewPx2=hd2&&dur2b?windowSec/dur2b*len2:1;
       const srcX2=prog2b*len2-viewPx2/2;
       const toSX=p=>(p*len2-srcX2)/viewPx2*physW;
-      const cx=physW>>1;
+      const baseline2=Math.round(physH*0.88);
 
       const{loopStart:ls,loopEnd:le,loopActive:la}=loopRef.current;
       if(ls!==null&&le!==null){
         const lx1=toSX(ls),lx2=toSX(le);
         if(lx2>0&&lx1<physW){
           ctx.fillStyle=la?'rgba(200,169,110,0.18)':'rgba(200,169,110,0.07)';
-          ctx.fillRect(Math.max(0,lx1),0,Math.min(physW,lx2)-Math.max(0,lx1),physH);
+          ctx.fillRect(Math.max(0,lx1),0,Math.min(physW,lx2)-Math.max(0,lx1),baseline2);
           ctx.fillStyle=la?'#C8A96Ecc':'#C8A96E55';
-          if(lx1>=0&&lx1<physW)ctx.fillRect(lx1,0,2,physH);
-          if(lx2>=0&&lx2<physW)ctx.fillRect(Math.max(lx1+2,lx2-2),0,2,physH);
+          if(lx1>=0&&lx1<physW)ctx.fillRect(lx1,0,2,baseline2);
+          if(lx2>=0&&lx2<physW)ctx.fillRect(Math.max(lx1+2,lx2-2),0,2,baseline2);
         }
       }
 
@@ -1776,10 +1831,11 @@ function AnimatedZoomedWF({ bands, dur, progRef, onSeek, h=96, windowSec=16, hot
         const cxm=toSX(cue);
         if(cxm<-8||cxm>physW+8)return;
         ctx.fillStyle=CUE_CLR[ci];ctx.shadowColor=CUE_CLR[ci];ctx.shadowBlur=10;
-        ctx.fillRect(cxm,0,2,physH);ctx.shadowBlur=0;
+        ctx.fillRect(cxm,0,2,baseline2);ctx.shadowBlur=0;
       });
 
-      // Playhead — glowing white line at dead center
+      // Playhead — glowing white line at center
+      const cx=physW>>1;
       ctx.fillStyle='rgba(0,0,0,0.55)';ctx.fillRect(cx-3,0,8,physH);
       ctx.fillStyle='#ffffff';ctx.shadowColor='#ffffff';ctx.shadowBlur=20;
       ctx.fillRect(cx-1,0,3,physH);ctx.shadowBlur=0;
@@ -3098,7 +3154,7 @@ export default function CollabMix({ initialPage = "landing", djName = null }) {
               <button key={i} onClick={()=>setWfZoom(i)} style={{ height:18, padding:"0 7px", fontSize:8, fontFamily:"'DM Mono',monospace", letterSpacing:.5, background:wfZoom===i?"#C8A96E22":"transparent", border:`1px solid ${wfZoom===i?"#C8A96E88":"#ffffff18"}`, color:wfZoom===i?"#C8A96E":"#ffffff44", borderRadius:4, cursor:"pointer", outline:"none" }}>{lbl}</button>
             ))}
           </div>
-          <AnimatedZoomedWF bands={wfA} dur={wfA?.dur||0} progRef={progRefA} onSeek={null} h={96} windowSec={WF_WINDOWS[wfZoom]}/>
+          <AnimatedZoomedWF bands={wfA} dur={wfA?.dur||0} progRef={progRefA} onSeek={null} h={96} windowSec={WF_WINDOWS[wfZoom]} bpm={bpm.results["A"]?.bpm||null}/>
         </div>
         <div style={{ height:1, background:"#0d0d18" }}/>
         {/* Deck B — orange, full screen width */}
@@ -3107,7 +3163,7 @@ export default function CollabMix({ initialPage = "landing", djName = null }) {
             <div style={{ width:5, height:5, borderRadius:"50%", background:"#ff6b35", boxShadow:"0 0 6px #ff6b35" }}/>
             <span style={{ fontSize:9, fontFamily:"'DM Mono',monospace", fontWeight:700, color:"#ff6b3588", letterSpacing:2 }}>B</span>
           </div>
-          <AnimatedZoomedWF bands={wfB} dur={wfB?.dur||0} progRef={progRefB} onSeek={null} h={96} windowSec={WF_WINDOWS[wfZoom]}/>
+          <AnimatedZoomedWF bands={wfB} dur={wfB?.dur||0} progRef={progRefB} onSeek={null} h={96} windowSec={WF_WINDOWS[wfZoom]} bpm={bpm.results["B"]?.bpm||null}/>
         </div>
       </div>
 
