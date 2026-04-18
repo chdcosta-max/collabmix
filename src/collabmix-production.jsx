@@ -276,6 +276,42 @@ async function cmDbPutHandle(trackId,handle){
   });
 }
 
+// ── OPFS helpers — Origin Private File System, zero-permission persistent audio storage ──
+// Files stored here survive page reloads and browser restarts with NO user gesture needed.
+const OPFS_DIR="cm_audio";
+async function opfsStore(trackId,file){
+  try{
+    const root=await navigator.storage.getDirectory();
+    const dir=await root.getDirectoryHandle(OPFS_DIR,{create:true});
+    const fh=await dir.getFileHandle(trackId,{create:true});
+    const wr=await fh.createWritable();
+    await wr.write(file);
+    await wr.close();
+    return true;
+  }catch{return false;}
+}
+async function opfsGet(trackId){
+  try{
+    const root=await navigator.storage.getDirectory();
+    const dir=await root.getDirectoryHandle(OPFS_DIR,{create:false});
+    const fh=await dir.getFileHandle(trackId);
+    return await fh.getFile();
+  }catch{return null;}
+}
+async function opfsDelete(trackId){
+  try{
+    const root=await navigator.storage.getDirectory();
+    const dir=await root.getDirectoryHandle(OPFS_DIR,{create:false});
+    await dir.removeEntry(trackId);
+  }catch{}
+}
+async function opfsClear(){
+  try{
+    const root=await navigator.storage.getDirectory();
+    await root.removeEntry(OPFS_DIR,{recursive:true});
+  }catch{}
+}
+
 // ── useLibrary hook — reads from shared cm_music_library IDB ─────────────────
 function useLibrary(){
   const [library,setLibrary]=useState([]);
@@ -348,6 +384,7 @@ function useLibrary(){
       if(tags.artwork){artworkCache.current[id]=tags.artwork;}
       const track={id,filename:file.name.replace(/\.[^.]+$/,""),title:tags.title||file.name.replace(/\.[^.]+$/,""),artist:tags.artist||"",album:tags.album||"",genre:tags.genre||"",label:tags.label||"",bpm:tags.bpm?parseFloat(tags.bpm):null,key:tags.key||null,duration:null,energy:null,analyzed:false,error:false,addedAt:Date.now(),artwork:tags.artwork||null};
       fileMap.current[id]=file;
+      opfsStore(id,file); // background write to OPFS — no await, keeps import fast
       setLibrary(prev=>{if(prev.find(t=>t.filename===track.filename))return prev;return [...prev,track];});
       // Persist metadata + handle to IDB so tracks survive page reloads
       try{await cmDbPut("tracks",track);}catch{}
@@ -455,6 +492,7 @@ function useLibrary(){
         let file;
         try{file=await h.getFile();}catch{continue;}
         fileMap.current[track.id]=file;
+        opfsStore(track.id,file); // write to OPFS so future sessions need zero clicks
         // Also store handle in IDB so future sessions work
         try{await cmDbPut("handles",h,track.id);}catch{}
         // Extract artwork if this track is missing it
@@ -481,9 +519,13 @@ function useLibrary(){
     }catch{} // user cancelled
   },[library]);
 
-  // Get File object — in-memory first, then IDB handle (from library app)
+  // Get File object — in-memory first, then OPFS (zero-click, survives restarts), then IDB handle
   const getFile=useCallback(async(id)=>{
     if(fileMap.current[id]) return fileMap.current[id];
+    // OPFS: zero permissions, always works, survives browser restarts
+    const opfsFile=await opfsGet(id);
+    if(opfsFile){fileMap.current[id]=opfsFile;return opfsFile;}
+    // Fall back to IDB file handle (requires browser session or user gesture)
     try{
       const handle=await cmDbGet("handles",id);
       if(!handle) return null;
@@ -494,11 +536,12 @@ function useLibrary(){
       }
       const file=await handle.getFile();
       fileMap.current[id]=file;
+      opfsStore(id,file); // migrate to OPFS so future sessions need zero clicks
       return file;
     }catch{return null;}
   },[]);
 
-  const clear=()=>{setLibrary([]);fileMap.current={};};
+  const clear=()=>{setLibrary([]);fileMap.current={};opfsClear();};
 
   const reload=useCallback(async()=>{
     try{
