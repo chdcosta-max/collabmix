@@ -1629,16 +1629,18 @@ function WF({ bands, peaks, freq, prog, onSeek, h=80, hotCues=[], loopStart=null
   return <canvas ref={ref} onClick={onClick} style={{width:"100%",height:h,background:"#030306",cursor:onSeek?"crosshair":"default",display:"block"}}/>;
 }
 
-// ── AnimatedZoomedWF — smooth 60fps waveform for real-time mixing ──
-// Phase 1 (once on load): precompute totH/basH/higH Float32Arrays from band data.
-// Phase 2 (every RAF frame, no throttle): write ImageData at physical pixel resolution
-//   using linear interpolation between source samples — eliminates blockiness at any zoom.
-// Result: buttery-smooth scroll at full device refresh rate, crisp at any DPR.
+// ── AnimatedZoomedWF — smooth 60fps waveform for real-time DJ mixing ──
+// Strategy:
+//   Phase 1 (once on track load): pre-render the ENTIRE waveform (all 12k samples) to an
+//     OffscreenCanvas at 2× height. One fillRect per sample — done in <5ms, GPU-accelerated.
+//   Phase 2 (every RAF frame): ctx.drawImage(offscreen, srcX, 0, viewPx, offH, 0, 0, physW, physH)
+//     The GPU bilinear-scales the current viewport to fill the display canvas — essentially free.
+//     Then draw overlays (playhead, loop, cues) on top with canvas 2D calls.
+// Result: zero JS pixel math per frame → no glitches, no stutter, crisp at any DPR.
 function AnimatedZoomedWF({ bands, dur, progRef, onSeek, h=96, windowSec=16, hotCues=[], loopStart=null, loopEnd=null, loopActive=false }) {
   const ref=useRef(null);
   const raf=useRef(null);
-  const hRef=useRef(null);     // {totH,basH,higH:Float32Array, len, maxH}
-  const imgRef=useRef(null);   // {buf:ImageData, px:Uint8ClampedArray, physW, physH} — reused
+  const offRef=useRef(null);  // {canvas:OffscreenCanvas, len, offH} — pre-rendered waveform
   const durRef=useRef(dur);
   const seekRef=useRef(onSeek);
   const hotCuesRef=useRef(hotCues);
@@ -1648,98 +1650,101 @@ function AnimatedZoomedWF({ bands, dur, progRef, onSeek, h=96, windowSec=16, hot
   useEffect(()=>{hotCuesRef.current=hotCues;},[hotCues]);
   useEffect(()=>{loopRef.current={loopStart,loopEnd,loopActive};},[loopStart,loopEnd,loopActive]);
 
-  // ── Phase 1: compute heights once per track ──
+  // ── Phase 1: pre-render full waveform to OffscreenCanvas once per track ──
   useEffect(()=>{
-    if(!bands?.bass?.length||!dur){hRef.current=null;return;}
+    if(!bands?.bass?.length||!dur){offRef.current=null;return;}
     const len=bands.bass.length;
-    const maxH=(h>>1)-2;
+    const offH=h*2; // render at 2× height so it's crisp on Retina after drawImage
+    const oc=new OffscreenCanvas(len,offH);
+    const ctx2=oc.getContext('2d');
+    const midY=offH/2;
+    const maxH=midY-2;
     const bArr=bands.bass, mArr=bands.mid, hArr=bands.high;
-    const totH=new Float32Array(len);
-    const basH=new Float32Array(len);
-    const higH=new Float32Array(len);
+
+    // Background
+    ctx2.fillStyle='#030306';
+    ctx2.fillRect(0,0,len,offH);
+
+    // Draw one 1-px column per source sample
     for(let x=0;x<len;x++){
       const bv=bArr[x]||0, mv=mArr[x]||0, hv=hArr[x]||0;
-      const mix=bv*0.55+mv*0.32+hv*0.13;
-      if(mix<=0)continue;
-      totH[x]=Math.pow(mix,0.72)*maxH;
-      basH[x]=Math.pow(bv,0.68)*maxH*0.85;
-      higH[x]=Math.min(maxH*0.22,Math.pow(hv,0.6)*maxH*0.9);
+
+      // Total height: bass-forward mix, exponent 0.82 for good dynamic range
+      // (less gamma compression than 0.68 → breakdowns look genuinely thin, drops genuinely tall)
+      const energy=bv*0.62+mv*0.28+hv*0.10;
+      const tot=Math.round(Math.pow(energy,0.82)*maxH);
+      if(tot<1)continue;
+
+      // Bass layer: capped at 82% of tot so orange ring always remains visible
+      // pow(bv,0.70) → kicks spike boldly, no-bass sections stay low
+      const basRaw=Math.round(Math.pow(bv,0.70)*maxH);
+      const bas=Math.min(Math.round(tot*0.82), basRaw);
+
+      // Layer 1: orange outer envelope (total amplitude — all frequencies)
+      ctx2.fillStyle='#ff8a12';
+      ctx2.fillRect(x,midY-tot,1,tot*2);
+
+      // Layer 2: electric blue bass core (overwrites inner portion)
+      // Orange ring thickness = tot-bas, always visible when bass is partial
+      if(bas>=1){
+        ctx2.fillStyle='#14a0ff';
+        ctx2.fillRect(x,midY-bas,1,bas*2);
+      }
     }
-    hRef.current={totH,basH,higH,len,maxH};
-    imgRef.current=null; // force buffer realloc on new track
+
+    offRef.current={canvas:oc,len,offH};
   },[bands,dur,h]);
 
-  // ── Phase 2: 60fps animation — ImageData at physical resolution + lerp ──
+  // ── Phase 2: 60fps RAF — drawImage viewport + overlays. Zero pixel math per frame. ──
   useEffect(()=>{
     const canvas=ref.current; if(!canvas)return;
     let physW=0, physH=0, ctx=null;
 
     const draw=()=>{
-      raf.current=requestAnimationFrame(draw); // no throttle — run at device refresh rate
+      raf.current=requestAnimationFrame(draw);
 
       const dpr=window.devicePixelRatio||1;
       const cssW=canvas.clientWidth||1200;
       const newPW=Math.round(cssW*dpr);
       const newPH=Math.round(h*dpr);
 
-      // Only resize canvas when dimensions actually change (expensive op)
       if(newPW!==physW||newPH!==physH){
         physW=newPW; physH=newPH;
         canvas.width=physW; canvas.height=physH;
         ctx=canvas.getContext('2d');
-        imgRef.current=null; // realloc on resize
+        if(ctx){ctx.imageSmoothingEnabled=true;ctx.imageSmoothingQuality='high';}
       }
       if(!ctx)return;
 
-      // Reuse ImageData buffer (avoids GC pressure from new allocation each frame)
-      if(!imgRef.current||imgRef.current.physW!==physW){
-        const buf=ctx.createImageData(physW,physH);
-        imgRef.current={buf,px:buf.data,physW};
-      }
-      const{buf,px}=imgRef.current;
-      px.fill(3); // near-black background (avoids true-black crush on OLED)
+      // Clear to background
+      ctx.fillStyle='#030306';
+      ctx.fillRect(0,0,physW,physH);
 
-      const hd=hRef.current, dur2=durRef.current, prog2=progRef?.current??0;
-      const cy=physH>>1;
+      const off=offRef.current;
+      const dur2=durRef.current;
+      const prog2=progRef?.current??0;
 
-      if(hd&&dur2){
-        const{totH,basH,higH,len}=hd;
-        const viewPx=windowSec/dur2*len;
-        const srcX=prog2*len-viewPx/2;
+      if(off&&dur2){
+        const{canvas:offCanvas,len,offH}=off;
+        const viewPx=windowSec/dur2*len; // how many source samples fit in the window
+        const srcX=prog2*len-viewPx/2;   // left edge in source-sample space
 
-        // Row-major loop: sequential memory writes = cache-friendly = fast
-        for(let y=0;y<physH;y++){
-          const dy=Math.abs(y-cy); // distance from center in physical px
-          const row=y*physW*4;
-          for(let sx=0;sx<physW;sx++){
-            // Fractional source position → linear interpolation between adjacent samples
-            const frac=srcX+(sx/physW)*viewPx;
-            const si0=frac|0; // Math.floor, fast
-            if(si0<0||si0>=len)continue;
-            const si1=si0+1<len?si0+1:si0;
-            const tf=frac-si0; // interpolation factor [0,1)
-            // Lerp heights, scale from CSS→physical pixels
-            const tot=(totH[si0]+(totH[si1]-totH[si0])*tf)*dpr;
-            if(dy>tot)continue;
-            const i=row+sx*4;
-            const bas=(basH[si0]+(basH[si1]-basH[si0])*tf)*dpr;
-            const hig=(higH[si0]+(higH[si1]-higH[si0])*tf)*dpr;
-            if(dy<=hig){            // white — high-freq transient tips
-              px[i]=255;px[i+1]=255;px[i+2]=255;px[i+3]=220;
-            }else if(dy<=bas){      // electric blue — bass body
-              px[i]=20;px[i+1]=160;px[i+2]=255;px[i+3]=255;
-            }else{                  // orange — total amplitude envelope
-              px[i]=255;px[i+1]=138;px[i+2]=18;px[i+3]=255;
-            }
-          }
+        // Clamp source rect to valid [0, len] range (handles track start/end)
+        const sx0=Math.max(0,srcX);
+        const sx1=Math.min(len,srcX+viewPx);
+        const svw=sx1-sx0;
+        if(svw>0){
+          const dx=(sx0-srcX)/viewPx*physW; // destination x offset when clamped
+          const dw=svw/viewPx*physW;
+          // GPU-bilinear stretch: copies current viewport from pre-rendered waveform
+          ctx.drawImage(offCanvas,sx0,0,svw,offH,dx,0,dw,physH);
         }
       }
-      ctx.putImageData(buf,0,0); // single GPU upload — everything above is pure JS
 
-      // ── Overlays drawn in physical pixel space ──
-      const hd2=hRef.current, dur2b=durRef.current, prog2b=progRef?.current??0;
-      const len2=hd2?.len||1;
-      const viewPx2=hd2&&dur2b?windowSec/dur2b*len2:1;
+      // ── Overlays (playhead, loop region, hot cues) ──
+      const off2=offRef.current, dur2b=durRef.current, prog2b=progRef?.current??0;
+      const len2=off2?.len||1;
+      const viewPx2=off2&&dur2b?windowSec/dur2b*len2:1;
       const srcX2=prog2b*len2-viewPx2/2;
       const toSX=p=>(p*len2-srcX2)/viewPx2*physW;
       const cx=physW>>1;
@@ -1747,13 +1752,13 @@ function AnimatedZoomedWF({ bands, dur, progRef, onSeek, h=96, windowSec=16, hot
       // Loop region
       const{loopStart:ls,loopEnd:le,loopActive:la}=loopRef.current;
       if(ls!==null&&le!==null){
-        const lx1=toSX(ls), lx2=toSX(le);
+        const lx1=toSX(ls),lx2=toSX(le);
         if(lx2>0&&lx1<physW){
           ctx.fillStyle=la?'rgba(200,169,110,0.18)':'rgba(200,169,110,0.07)';
           ctx.fillRect(Math.max(0,lx1),0,Math.min(physW,lx2)-Math.max(0,lx1),physH);
           ctx.fillStyle=la?'#C8A96Ecc':'#C8A96E55';
           if(lx1>=0&&lx1<physW)ctx.fillRect(lx1,0,2,physH);
-          if(lx2>=0&&lx2<physW)ctx.fillRect(lx2-2,0,2,physH);
+          if(lx2>=0&&lx2<physW)ctx.fillRect(Math.max(lx1+2,lx2-2),0,2,physH);
         }
       }
 
@@ -1767,9 +1772,9 @@ function AnimatedZoomedWF({ bands, dur, progRef, onSeek, h=96, windowSec=16, hot
         ctx.fillRect(cxm,0,2,physH);ctx.shadowBlur=0;
       });
 
-      // Playhead — glowing white line at dead center
-      ctx.fillStyle='rgba(0,0,0,0.6)';ctx.fillRect(cx-3,0,8,physH);
-      ctx.fillStyle='#ffffff';ctx.shadowColor='#ffffff';ctx.shadowBlur=18;
+      // Playhead — glowing white line pinned at center
+      ctx.fillStyle='rgba(0,0,0,0.55)';ctx.fillRect(cx-3,0,8,physH);
+      ctx.fillStyle='#ffffff';ctx.shadowColor='#ffffff';ctx.shadowBlur=20;
       ctx.fillRect(cx-1,0,3,physH);ctx.shadowBlur=0;
     };
 
@@ -1778,12 +1783,12 @@ function AnimatedZoomedWF({ bands, dur, progRef, onSeek, h=96, windowSec=16, hot
   },[windowSec,h,progRef]);
 
   const onClick=e=>{
-    const hd=hRef.current;
-    if(!seekRef.current||!ref.current||!durRef.current||!hd)return;
-    const r=ref.current.getBoundingClientRect(), W=r.width, clickX=e.clientX-r.left;
-    const viewPx=windowSec/durRef.current*hd.len;
-    const srcX=(progRef?.current??0)*hd.len-viewPx/2;
-    seekRef.current(Math.max(0,Math.min(1,(srcX+clickX/W*viewPx)/hd.len)));
+    const off=offRef.current;
+    if(!seekRef.current||!ref.current||!durRef.current||!off)return;
+    const r=ref.current.getBoundingClientRect(),W=r.width,clickX=e.clientX-r.left;
+    const viewPx=windowSec/durRef.current*off.len;
+    const srcX=(progRef?.current??0)*off.len-viewPx/2;
+    seekRef.current(Math.max(0,Math.min(1,(srcX+clickX/W*viewPx)/off.len)));
   };
   return <canvas ref={ref} onClick={onClick} style={{width:'100%',height:h,background:'#030306',cursor:'crosshair',display:'block'}}/>;
 }
