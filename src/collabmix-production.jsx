@@ -439,6 +439,48 @@ function useLibrary(){
     return null;
   },[]);
 
+  // Reconnect all tracks from a folder the user selects — one click restores file access + artwork
+  const reconnectFromFolder=useCallback(async()=>{
+    try{
+      const dir=await window.showDirectoryPicker({mode:"read"});
+      // Build filename→fileHandle map from selected folder
+      const nameMap={};
+      for await(const[name,h]of dir.entries()){
+        if(h.kind==="file"){nameMap[name.replace(/\.[^.]+$/,"").toLowerCase()]=h;}
+      }
+      const artworkUpdates=[];
+      for(const track of library||[]){
+        const h=nameMap[track.filename.toLowerCase()]||nameMap[track.title.toLowerCase()];
+        if(!h)continue;
+        let file;
+        try{file=await h.getFile();}catch{continue;}
+        fileMap.current[track.id]=file;
+        // Also store handle in IDB so future sessions work
+        try{await cmDbPut("handles",h,track.id);}catch{}
+        // Extract artwork if this track is missing it
+        if(!track.artwork&&artworkCache.current[track.id]!==false){
+          try{
+            const sl=file.slice(0,1048576);
+            const tags=parseID3(await sl.arrayBuffer());
+            if(tags.artwork){
+              artworkCache.current[track.id]=tags.artwork;
+              try{
+                const existing=await cmDbGet("tracks",track.id);
+                if(existing&&!existing.artwork){
+                  await cmDbPut("tracks",{...existing,artwork:tags.artwork});
+                  artworkUpdates.push({id:track.id,artwork:tags.artwork});
+                }
+              }catch{}
+            }else{artworkCache.current[track.id]=false;}
+          }catch{}
+        }
+      }
+      if(artworkUpdates.length){
+        setLibrary(prev=>prev.map(t=>{const u=artworkUpdates.find(x=>x.id===t.id);return u?{...t,artwork:u.artwork}:t;}));
+      }
+    }catch{} // user cancelled
+  },[library]);
+
   // Get File object — in-memory first, then IDB handle (from library app)
   const getFile=useCallback(async(id)=>{
     if(fileMap.current[id]) return fileMap.current[id];
@@ -469,7 +511,7 @@ function useLibrary(){
     }catch{}
   },[]);
 
-  return{library,queue,crates,importing,importFiles,importFromPicker,getFile,clear,reload,setLibrary,fileMap,analyzing,analyzeAll,extractArtworkForTrack,artworkCache};
+  return{library,queue,crates,importing,importFiles,importFromPicker,getFile,clear,reload,setLibrary,fileMap,analyzing,analyzeAll,extractArtworkForTrack,artworkCache,reconnectFromFolder};
 }
 
 // ── Library Panel UI ──────────────────────────────────────────
@@ -764,6 +806,14 @@ function LibraryPanel({lib, onLoad, playingTrack, previewTrackId, onPreview, onD
       <div style={{width:155,flexShrink:0,display:"flex",flexDirection:"column",borderRight:"1px solid #1e1e28",background:"#0a0a10"}}>
         <div style={{padding:"8px 10px 6px",borderBottom:"1px solid #1e1e28",flexShrink:0,display:"flex",alignItems:"center",justifyContent:"space-between"}}>
           <div style={{fontFamily:"'DM Mono',monospace",fontSize:11,color:"#d8d8e2",letterSpacing:1,fontWeight:600}}>Library</div>
+          <div style={{display:"flex",alignItems:"center",gap:4}}>
+          {/* Reconnect folder — restores file access + artwork after browser restart */}
+          <button title="Reconnect music folder (restores artwork & playback after browser restart)" onClick={()=>lib.reconnectFromFolder?.()} style={{background:"none",border:"none",cursor:"pointer",padding:"2px 3px",borderRadius:4,display:"flex",alignItems:"center",opacity:0.7,transition:"opacity 0.2s"}} onMouseEnter={e=>e.currentTarget.style.opacity=1} onMouseLeave={e=>e.currentTarget.style.opacity=0.7}>
+            <svg width="16" height="14" viewBox="0 0 16 14" fill="none" xmlns="http://www.w3.org/2000/svg">
+              <path d="M1 3C1 2.44772 1.44772 2 2 2H6.5L7.5 3.5H14C14.5523 3.5 15 3.94772 15 4.5V11C15 11.5523 14.5523 12 14 12H2C1.44772 12 1 11.5523 1 11V3Z" stroke="#C8A96E" strokeWidth="1.5" strokeLinejoin="round" fill="none"/>
+              <path d="M5.5 8L7.5 10L10.5 6.5" stroke="#C8A96E" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
+            </svg>
+          </button>
           <button title={lib.analyzing?"Analyzing...":"Analyze library"} onClick={()=>lib.analyzeAll?.(lib.getFile)} style={{background:"none",border:"none",cursor:"pointer",padding:"2px 3px",borderRadius:4,opacity:lib.analyzing?0.5:1,transition:"opacity 0.2s",display:"flex",alignItems:"center"}}>
             <svg width="18" height="14" viewBox="0 0 18 14" fill="none" xmlns="http://www.w3.org/2000/svg">
               <rect x="0"  y="5"  width="2" height="4" rx="1" fill={lib.analyzing?"#C8A96E":"#888898"}/>
@@ -774,6 +824,7 @@ function LibraryPanel({lib, onLoad, playingTrack, previewTrackId, onPreview, onD
               <rect x="15" y="4"  width="2" height="6"  rx="1" fill={lib.analyzing?"#C8A96E":"#888898"}/>
             </svg>
           </button>
+          </div>
         </div>
         <div style={{flex:1,overflowY:"auto",padding:"4px 0"}}>
 
@@ -1451,7 +1502,7 @@ function Knob({ v, set, min=-12, max=12, ctr=0, label, color="#00d4ff", size=38,
 // ── Deck ─────────────────────────────────────────────────────
 const HOT_CUE_COLORS=["#00d4ff","#ef4444","#22c55e","#f59e0b"];
 
-function Deck({ id, ch, ctx:ac, color, local, remote, onChange, midi:mt, bpmResult, bpmAnalyze, eqHi=0, eqMid=0, eqLo=0, chanVol=1, loadFromLibrary=null, onTrackInfo=null, onSync=null }) {
+function Deck({ id, ch, ctx:ac, color, local, remote, onChange, midi:mt, bpmResult, bpmAnalyze, eqHi=0, eqMid=0, eqLo=0, chanVol=1, loadFromLibrary=null, onTrackInfo=null, onSync=null, onLibraryTrackDrop=null }) {
   const [buf,setBuf]=useState(null),[name,setName]=useState(null),[play,setPlay]=useState(false);
   const [prog,setProg]=useState(0),[dur,setDur]=useState(0);
   const [hi,setHi]=useState(0),[mid,setMid]=useState(0),[lo,setLo]=useState(0),[vol,setVol]=useState(1);
@@ -1625,7 +1676,7 @@ function Deck({ id, ch, ctx:ac, color, local, remote, onChange, midi:mt, bpmResu
           <div onClick={()=>fr.current?.click()}
             onDragOver={e=>{e.preventDefault();e.stopPropagation();setDragOver(true);}}
             onDragLeave={()=>setDragOver(false)}
-            onDrop={e=>{e.preventDefault();e.stopPropagation();setDragOver(false);const f=e.dataTransfer.files[0];if(f&&f.type.startsWith("audio/"))load(f);}}
+            onDrop={e=>{e.preventDefault();e.stopPropagation();setDragOver(false);const f=e.dataTransfer.files[0];if(f&&f.type.startsWith("audio/")){load(f);return;}try{const d=JSON.parse(e.dataTransfer.getData("application/json"));if(d?.trackId&&onLibraryTrackDrop)onLibraryTrackDrop(d.trackId);}catch{}}}
             style={{flex:1, padding:"0 14px", cursor:"pointer", display:"flex", flexDirection:"column", justifyContent:"center", background:dragOver?color+"08":"transparent", transition:"background .12s", minWidth:0}}>
             {buf?(
               <>
@@ -2529,7 +2580,7 @@ export default function CollabMix({ initialPage = "landing", djName = null }) {
             <span style={{ fontSize:11, fontFamily:"'DM Sans',sans-serif", fontWeight:500, color:"#00d4ffaa", letterSpacing:.3 }}>{session.name}</span>
           </div>
           <div style={{ flex:1, overflowY:"auto", minHeight:0 }}>
-            <Deck id="A" ch={eng.current?.A} ctx={eng.current?.ctx} color="#00d4ff" local onChange={dh("A")} midi={midiEvt} bpmResult={bpm.results["A"]} bpmAnalyze={bpm.analyze} eqHi={eqA.hi} eqMid={eqA.mid} eqLo={eqA.lo} chanVol={eqA.vol} loadFromLibrary={libLoadA} onTrackInfo={handleTrackInfo} onSync={()=>syncDecks("A",bpm.results["B"]?.bpm)}/>
+            <Deck id="A" ch={eng.current?.A} ctx={eng.current?.ctx} color="#00d4ff" local onChange={dh("A")} midi={midiEvt} bpmResult={bpm.results["A"]} bpmAnalyze={bpm.analyze} eqHi={eqA.hi} eqMid={eqA.mid} eqLo={eqA.lo} chanVol={eqA.vol} loadFromLibrary={libLoadA} onTrackInfo={handleTrackInfo} onSync={()=>syncDecks("A",bpm.results["B"]?.bpm)} onLibraryTrackDrop={(trackId)=>{const t=lib.library.find(x=>x.id===trackId);if(t)handleLibLoad(t,"A");}}/>
           </div>
         </div>
 
