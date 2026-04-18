@@ -497,7 +497,8 @@ function useLibrary(){
       await scanDir(dir);
       const artworkUpdates=[];
       for(const track of library||[]){
-        const h=nameMap[track.filename.toLowerCase()]||nameMap[track.title.toLowerCase()];
+        const baseFn=track.filename.replace(/\.[^.]+$/,"").toLowerCase(); // strip extension if stored with one
+        const h=nameMap[baseFn]||nameMap[track.title.toLowerCase()];
         if(!h)continue;
         let file;
         try{file=await h.getFile();}catch{continue;}
