@@ -480,11 +480,21 @@ function useLibrary(){
   const reconnectFromFolder=useCallback(async()=>{
     try{
       const dir=await window.showDirectoryPicker({mode:"read"});
-      // Build filename→fileHandle map from selected folder
+      // Recursively build filename→fileHandle map so subfolders are included
       const nameMap={};
-      for await(const[name,h]of dir.entries()){
-        if(h.kind==="file"){nameMap[name.replace(/\.[^.]+$/,"").toLowerCase()]=h;}
-      }
+      const scanDir=async(dirHandle)=>{
+        for await(const[name,h]of dirHandle.entries()){
+          if(h.kind==="file"){
+            const ext=name.split(".").pop().toLowerCase();
+            if(["mp3","wav","flac","aiff","aif","ogg","m4a","opus","weba"].includes(ext)){
+              nameMap[name.replace(/\.[^.]+$/,"").toLowerCase()]=h;
+            }
+          }else if(h.kind==="directory"){
+            try{await scanDir(h);}catch{}
+          }
+        }
+      };
+      await scanDir(dir);
       const artworkUpdates=[];
       for(const track of library||[]){
         const h=nameMap[track.filename.toLowerCase()]||nameMap[track.title.toLowerCase()];
@@ -495,7 +505,10 @@ function useLibrary(){
         opfsStore(track.id,file); // write to OPFS so future sessions need zero clicks
         // Also store handle in IDB so future sessions work
         try{await cmDbPut("handles",h,track.id);}catch{}
-        // Extract artwork if this track is missing it
+        // Populate in-memory artwork cache — cover tracks already in IDB and those missing artwork
+        if(track.artwork&&!artworkCache.current[track.id]){
+          artworkCache.current[track.id]=track.artwork; // restore cache from IDB value
+        }
         if(!track.artwork&&artworkCache.current[track.id]!==false){
           try{
             const sl=file.slice(0,1048576);
@@ -546,7 +559,13 @@ function useLibrary(){
   const reload=useCallback(async()=>{
     try{
       const tracks=await cmDbAll("tracks");
-      if(tracks.length>0) setLibrary(tracks);
+      if(tracks.length>0){
+        // Pre-populate artworkCache from IDB so artwork shows immediately without file access
+        tracks.forEach(t=>{
+          if(t.artwork&&!artworkCache.current[t.id])artworkCache.current[t.id]=t.artwork;
+        });
+        setLibrary(tracks);
+      }
       const q=await cmDbAll("queue");
       setQueue(q.sort((a,b)=>a.order-b.order).map(r=>r.trackId));
       const cr=await cmDbAll("crates");
@@ -579,7 +598,12 @@ function TrackRow({track, onLoadA, onLoadB, isRec, reasons, canLoad, previewTrac
   const initial=(track.artist||track.title||"?")[0].toUpperCase();
   const isPreviewing=previewTrackId===track.id;
 
-  // Lazy artwork extraction for IDB tracks
+  // Sync artworkSrc when track.artwork is updated externally (e.g. after reconnect or analyzeAll)
+  useEffect(()=>{
+    if(track.artwork&&!artworkSrc)setArtworkSrc(track.artwork);
+  },[track.artwork,artworkSrc]);
+
+  // Lazy artwork extraction for IDB tracks (fallback when not in IDB record)
   useEffect(()=>{
     if(artworkSrc||!extractArtwork)return;
     let cancelled=false;
