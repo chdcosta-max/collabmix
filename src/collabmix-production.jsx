@@ -1630,17 +1630,16 @@ function WF({ bands, peaks, freq, prog, onSeek, h=80, hotCues=[], loopStart=null
 }
 
 // ── AnimatedZoomedWF — smooth 60fps half-waveform with beat grid ──
-// Performance design:
-//   Phase 1 (track load): Math.pow() runs once per source sample → totH/basH Float32Arrays
-//   Phase 2 (every frame): zero pow() calls — just lerp + Int multiply + ImageData writes
-//   Resize check throttled to every 30 frames → no layout-reflow stutter every 5s
-//   Half-waveform: bars rise from baseline (bottom 15% margin) — drops hit visually hard
-//   Beat grid: tick every beat, red triangle every 4 beats — drawn after putImageData
+// Performance:
+//   Phase 1 (track load):  Math.pow() runs once per sample → totH/basH/higH Float32Arrays
+//   Phase 2 (every frame): zero pow() — just lerp+multiply+ImageData writes
+//   ResizeObserver watches canvas — RAF loop NEVER reads clientWidth (eliminates reflow stutter)
 function AnimatedZoomedWF({ bands, dur, progRef, onSeek, h=96, windowSec=16, bpm=null, hotCues=[], loopStart=null, loopEnd=null, loopActive=false }) {
   const ref=useRef(null);
   const raf=useRef(null);
-  const hRef=useRef(null);   // {totH,basH:Float32Array(len), len} — precomputed 0..1 values
-  const imgRef=useRef(null); // {buf:ImageData, px:Uint8ClampedArray, physW, physH}
+  const hRef=useRef(null);    // {totH,basH,higH:Float32Array(len), len}
+  const imgRef=useRef(null);  // {buf:ImageData, px, physW, physH}
+  const sizeRef=useRef({physW:0,physH:0,dirty:true}); // set by ResizeObserver, read in RAF
   const durRef=useRef(dur);
   const bpmRef=useRef(bpm);
   const seekRef=useRef(onSeek);
@@ -1652,45 +1651,58 @@ function AnimatedZoomedWF({ bands, dur, progRef, onSeek, h=96, windowSec=16, bpm
   useEffect(()=>{hotCuesRef.current=hotCues;},[hotCues]);
   useEffect(()=>{loopRef.current={loopStart,loopEnd,loopActive};},[loopStart,loopEnd,loopActive]);
 
-  // ── Phase 1: precompute normalized (0..1) heights once per track ──
-  // Math.pow runs here, NOT in the 60fps loop — eliminates the main perf bottleneck
+  // ── Phase 1: precompute normalized heights once per track (all pow() lives here) ──
   useEffect(()=>{
     if(!bands?.bass?.length||!dur){hRef.current=null;imgRef.current=null;return;}
     const len=bands.bass.length;
     const bArr=bands.bass,mArr=bands.mid,hArr=bands.high;
     const totH=new Float32Array(len);
     const basH=new Float32Array(len);
+    const higH=new Float32Array(len);
     for(let x=0;x<len;x++){
       const bv=bArr[x]||0,mv=mArr[x]||0,hv=hArr[x]||0;
-      const energy=bv*0.70+mv*0.25+hv*0.05;
+      // Bass-forward energy → kicks punch hard, breakdowns go flat
+      const energy=bv*0.72+mv*0.23+hv*0.05;
       if(energy<=0)continue;
-      const tot=Math.pow(energy,0.82);     // 0..1, strong dynamic range
-      const bas=Math.min(tot*0.80, Math.pow(bv,0.65)); // 0..1, bass fraction
-      totH[x]=tot;
-      basH[x]=bas;
+      const tot=Math.pow(energy,0.80);          // 0..1, strong dynamic range
+      const bas=Math.min(tot*0.80,Math.pow(bv,0.65)); // 0..1, bass inner layer
+      // White tips: only when hv>0.65 (genuine snare/hi-hat peak, not background noise)
+      // Precomputed 0..1 with 0.12 max → draws as thin bright tip, never a constant band
+      const hi=hv>0.65?Math.pow((hv-0.65)/0.35,0.7)*0.12:0;
+      totH[x]=tot; basH[x]=bas; higH[x]=Math.min(hi,bas);
     }
-    hRef.current={totH,basH,len};
+    hRef.current={totH,basH,higH,len};
     imgRef.current=null;
   },[bands,dur]);
 
-  // ── Phase 2: 60fps draw — zero allocations, throttled resize check ──
+  // ── Phase 2: 60fps draw — zero clientWidth reads via ResizeObserver ──
   useEffect(()=>{
     const canvas=ref.current; if(!canvas)return;
-    let physW=0,physH=0,ctx=null,frame=0;
+    let physW=0,physH=0,ctx=null;
     let tots=new Int32Array(4096);
     let bass=new Int32Array(4096);
+    let higs=new Int32Array(4096);
+
+    // ResizeObserver: fires when canvas CSS size changes, never from inside RAF
+    // This is the key fix — no more layout-reflow forced by clientWidth reads every frame
+    const dpr=window.devicePixelRatio||1;
+    const ro=new ResizeObserver(entries=>{
+      const e=entries[0]; if(!e)return;
+      const pw=Math.round(e.contentRect.width*dpr);
+      const ph=Math.round(e.contentRect.height*dpr);
+      sizeRef.current={physW:pw,physH:ph,dirty:true};
+    });
+    ro.observe(canvas);
 
     const draw=()=>{
       raf.current=requestAnimationFrame(draw);
-      frame++;
 
-      // Throttle expensive clientWidth DOM read to every 30 frames (~0.5s)
-      // Prevents layout-reflow stutter that caused the 5-second periodic hiccup
-      if(frame%30===1||physW===0){
-        const dpr=window.devicePixelRatio||1;
-        const cssW=canvas.clientWidth||1200;
-        const newPW=Math.round(cssW*dpr);
-        const newPH=Math.round(h*dpr);
+      // Apply pending canvas resize (set by ResizeObserver, not by reading clientWidth)
+      const sz=sizeRef.current;
+      if(sz.dirty||physW===0){
+        sz.dirty=false;
+        const newPW=sz.physW||(Math.round((canvas.offsetWidth||1200)*dpr));
+        const newPH=sz.physH||(Math.round(h*dpr));
         if(newPW!==physW||newPH!==physH){
           physW=newPW; physH=newPH;
           canvas.width=physW; canvas.height=physH;
@@ -1699,12 +1711,12 @@ function AnimatedZoomedWF({ bands, dur, progRef, onSeek, h=96, windowSec=16, bpm
           if(physW>tots.length){
             tots=new Int32Array(physW+256);
             bass=new Int32Array(physW+256);
+            higs=new Int32Array(physW+256);
           }
         }
       }
       if(!ctx)return;
 
-      // Reuse ImageData buffer — no per-frame allocation
       if(!imgRef.current||imgRef.current.physW!==physW||imgRef.current.physH!==physH){
         const buf=ctx.createImageData(physW,physH);
         imgRef.current={buf,px:buf.data,physW,physH};
@@ -1713,30 +1725,27 @@ function AnimatedZoomedWF({ bands, dur, progRef, onSeek, h=96, windowSec=16, bpm
       px.fill(3);
 
       const hd=hRef.current, dur2=durRef.current, prog2=progRef?.current??0;
-
-      // Half-waveform: baseline sits at 88% of canvas height, bars go upward
-      // This gives maximum visual impact — drops spike tall, breakdowns go flat
-      const baseline=Math.round(physH*0.88);
+      // Half-waveform baseline at 85% → bars rise upward, max visual height
+      const baseline=Math.round(physH*0.85);
       const maxH=baseline-2;
 
       if(hd&&dur2&&maxH>0){
-        const{totH,basH,len}=hd;
+        const{totH,basH,higH,len}=hd;
         const viewPx=windowSec/dur2*len;
         const srcX=prog2*len-viewPx/2;
         const spp=viewPx/physW;
 
-        // ── Pass 1: sample heights for each display column (no pow() — just lerp) ──
+        // ── Pass 1: lerp precomputed heights for each display column ──
         for(let dx=0;dx<physW;dx++){
           const frac=srcX+dx*spp;
-          let tv=0,bv=0;
-
+          let tv=0,bv=0,hv=0;
           if(spp>=1){
             const s0=Math.max(0,frac|0);
             const s1=Math.min(len-1,(frac+spp)|0);
             if(s0>=len){tots[dx]=0;continue;}
             let cnt=0;
-            for(let k=s0;k<=s1;k++){tv+=totH[k];bv+=basH[k];cnt++;}
-            if(cnt){tv/=cnt;bv/=cnt;}
+            for(let k=s0;k<=s1;k++){tv+=totH[k];bv+=basH[k];hv+=higH[k];cnt++;}
+            if(cnt){tv/=cnt;bv/=cnt;hv/=cnt;}
           } else {
             const si0=frac|0;
             if(si0<0||si0>=len){tots[dx]=0;continue;}
@@ -1744,84 +1753,113 @@ function AnimatedZoomedWF({ bands, dur, progRef, onSeek, h=96, windowSec=16, bpm
             const tf=frac-si0;
             tv=totH[si0]+(totH[si1]-totH[si0])*tf;
             bv=basH[si0]+(basH[si1]-basH[si0])*tf;
+            hv=higH[si0]+(higH[si1]-higH[si0])*tf;
           }
-
           tots[dx]=(tv*maxH)|0;
           bass[dx]=(bv*maxH)|0;
+          higs[dx]=(hv*maxH)|0;
         }
 
-        // ── Pass 2: row-major half-waveform fill (only rows above baseline) ──
+        // ── Pass 2: row-major half-waveform pixel fill ──
         for(let y=0;y<baseline;y++){
-          const dy=baseline-y; // distance above baseline (always positive)
+          const dy=baseline-y;
           const row=y*physW*4;
           for(let dx=0;dx<physW;dx++){
             const tot=tots[dx];
             if(dy>tot)continue;
             const i=row+dx*4;
-            if(dy<=bass[dx]){
-              px[i]=20;px[i+1]=160;px[i+2]=255;px[i+3]=255; // blue — bass
+            const hi=higs[dx];
+            if(dy<=hi){
+              // White — bright high-freq transient tip (snare/hi-hat peak only)
+              px[i]=240;px[i+1]=240;px[i+2]=255;px[i+3]=230;
+            } else if(dy<=bass[dx]){
+              // Electric blue — bass body
+              px[i]=20;px[i+1]=160;px[i+2]=255;px[i+3]=255;
             } else {
-              px[i]=255;px[i+1]=138;px[i+2]=18;px[i+3]=255;  // orange — envelope
+              // Orange — outer total-amplitude envelope
+              px[i]=255;px[i+1]=130;px[i+2]=15;px[i+3]=255;
             }
           }
         }
 
         // Baseline hairline
         const bRow=baseline*physW*4;
-        for(let dx=0;dx<physW;dx++){
-          const i=bRow+dx*4;
-          px[i]=60;px[i+1]=60;px[i+2]=70;px[i+3]=200;
-        }
+        for(let dx=0;dx<physW;dx++){const i=bRow+dx*4;px[i]=55;px[i+1]=55;px[i+2]=68;px[i+3]=255;}
 
         ctx.putImageData(buf,0,0);
 
-        // ── Beat grid overlay (after putImageData, using canvas 2D) ──
+        // ── Beat grid (after putImageData) ──
         const bpm2=bpmRef.current;
-        if(bpm2&&bpm2>0){
-          const beatSamples=(60/bpm2)/dur2*len; // samples per beat
-          // find first beat at or after view left edge
-          const firstBeatIdx=Math.ceil(srcX/beatSamples);
-          for(let bi=firstBeatIdx;bi*beatSamples<srcX+viewPx+beatSamples;bi++){
-            const beatSrc=bi*beatSamples;
+        if(bpm2&&bpm2>0&&hd){
+          const beatSamples=(60/bpm2)/dur2*len;
+
+          // Phase detection: auto-align to track's actual beats (computed once per track).
+          // Tests 32 candidate phase offsets and picks the one that best aligns with
+          // waveform peaks — fixes "markers off on sections without kick drum"
+          if(hd.cachedBpm!==bpm2){
+            hd.cachedBpm=bpm2;
+            const scanEnd=Math.min(len,Math.round(beatSamples*12));
+            const phaseSteps=32;
+            let bestPhase=0,bestScore=-1;
+            for(let pi=0;pi<phaseSteps;pi++){
+              const testPhase=(pi/phaseSteps)*beatSamples;
+              let score=0,count=0;
+              for(let b=0;testPhase+b*beatSamples<scanEnd;b++){
+                const idx=Math.round(testPhase+b*beatSamples);
+                if(idx<0||idx>=len)continue;
+                // Score = peak amplitude in a ±4 sample window around expected beat
+                let peak=0;
+                for(let k=Math.max(0,idx-4);k<=Math.min(len-1,idx+4);k++){
+                  if(totH[k]>peak)peak=totH[k];
+                }
+                score+=peak; count++;
+              }
+              const avg=count>0?score/count:0;
+              if(avg>bestScore){bestScore=avg;bestPhase=testPhase;}
+            }
+            hd.beatPhase=bestPhase;
+          }
+
+          const phase=hd.beatPhase||0;
+          const firstBeatIdx=Math.ceil((srcX-phase)/beatSamples);
+          for(let bi=firstBeatIdx;phase+bi*beatSamples<srcX+viewPx+beatSamples;bi++){
+            const beatSrc=phase+bi*beatSamples;
             const sx=(beatSrc-srcX)/viewPx*physW;
-            if(sx<-4||sx>physW+4)continue;
-            const isBar=(bi%4===0); // downbeat every 4 beats
+            if(sx<-6||sx>physW+6)continue;
+            const isBar=(((bi%4)+4)%4===0);
             if(isBar){
-              // Red downbeat marker — vertical line + triangle at top
-              ctx.fillStyle='rgba(220,40,40,0.75)';
-              ctx.fillRect(sx-0.5,0,1.5,baseline*0.35);
+              ctx.fillStyle='rgba(220,38,38,0.80)';
+              ctx.fillRect(sx-0.5,0,1.5,baseline*0.28);
               ctx.beginPath();
-              ctx.moveTo(sx-5,0);ctx.lineTo(sx+5,0);ctx.lineTo(sx,10);
-              ctx.fillStyle='#e02828';ctx.fill();
+              ctx.moveTo(sx-5,0);ctx.lineTo(sx+5,0);ctx.lineTo(sx,9);
+              ctx.fillStyle='#dc2626';ctx.fill();
             } else {
-              // White beat tick — top ~18% of waveform
-              ctx.fillStyle='rgba(255,255,255,0.22)';
-              ctx.fillRect(sx-0.5,0,1,baseline*0.18);
+              ctx.fillStyle='rgba(255,255,255,0.20)';
+              ctx.fillRect(sx-0.5,0,1,baseline*0.16);
             }
           }
         }
-
       } else {
         ctx.putImageData(buf,0,0);
       }
 
-      // ── Overlays: loop, cues, playhead ──
+      // ── Overlays: loop, hot cues, playhead ──
       const hd2=hRef.current, dur2b=durRef.current, prog2b=progRef?.current??0;
       const len2=hd2?.len||1;
       const viewPx2=hd2&&dur2b?windowSec/dur2b*len2:1;
       const srcX2=prog2b*len2-viewPx2/2;
       const toSX=p=>(p*len2-srcX2)/viewPx2*physW;
-      const baseline2=Math.round(physH*0.88);
+      const bl=Math.round(physH*0.85);
 
       const{loopStart:ls,loopEnd:le,loopActive:la}=loopRef.current;
       if(ls!==null&&le!==null){
         const lx1=toSX(ls),lx2=toSX(le);
         if(lx2>0&&lx1<physW){
           ctx.fillStyle=la?'rgba(200,169,110,0.18)':'rgba(200,169,110,0.07)';
-          ctx.fillRect(Math.max(0,lx1),0,Math.min(physW,lx2)-Math.max(0,lx1),baseline2);
+          ctx.fillRect(Math.max(0,lx1),0,Math.min(physW,lx2)-Math.max(0,lx1),bl);
           ctx.fillStyle=la?'#C8A96Ecc':'#C8A96E55';
-          if(lx1>=0&&lx1<physW)ctx.fillRect(lx1,0,2,baseline2);
-          if(lx2>=0&&lx2<physW)ctx.fillRect(Math.max(lx1+2,lx2-2),0,2,baseline2);
+          if(lx1>=0&&lx1<physW)ctx.fillRect(lx1,0,2,bl);
+          if(lx2>=0&&lx2<physW)ctx.fillRect(Math.max(lx1+2,lx2-2),0,2,bl);
         }
       }
 
@@ -1831,10 +1869,9 @@ function AnimatedZoomedWF({ bands, dur, progRef, onSeek, h=96, windowSec=16, bpm
         const cxm=toSX(cue);
         if(cxm<-8||cxm>physW+8)return;
         ctx.fillStyle=CUE_CLR[ci];ctx.shadowColor=CUE_CLR[ci];ctx.shadowBlur=10;
-        ctx.fillRect(cxm,0,2,baseline2);ctx.shadowBlur=0;
+        ctx.fillRect(cxm,0,2,bl);ctx.shadowBlur=0;
       });
 
-      // Playhead — glowing white line at center
       const cx=physW>>1;
       ctx.fillStyle='rgba(0,0,0,0.55)';ctx.fillRect(cx-3,0,8,physH);
       ctx.fillStyle='#ffffff';ctx.shadowColor='#ffffff';ctx.shadowBlur=20;
@@ -1842,7 +1879,7 @@ function AnimatedZoomedWF({ bands, dur, progRef, onSeek, h=96, windowSec=16, bpm
     };
 
     draw();
-    return()=>cancelAnimationFrame(raf.current);
+    return()=>{cancelAnimationFrame(raf.current);ro.disconnect();};
   },[windowSec,h,progRef]);
 
   const onClick=e=>{
