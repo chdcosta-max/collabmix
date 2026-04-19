@@ -72,13 +72,56 @@ self.onmessage=function(e){
   for(let i=0;i<nf;i++)on[i]=(on[i]-mn)/sd;
   const ml=Math.floor(60/200*ar),xl=Math.ceil(60/60*ar),al=xl-ml+1;
   const ac=new Float32Array(al);for(let li=0;li<al;li++){const lag=li+ml;let s=0;for(let i=0;i<nf-lag;i++)s+=on[i]*on[i+lag];ac[li]=s/(nf-lag);}
-  const peaks=pk(ac);if(!peaks.length){self.postMessage({id,bpm:null,confidence:0,candidates:[]});return;}
+  const peaks=pk(ac);if(!peaks.length){self.postMessage({id,bpm:null,confidence:0,candidates:[],beatPhaseFrac:0});return;}
   const top=peaks[0];const lag=top.idx+ml;const raw=(60/lag)*ar;
   const bpm=rv(raw,100,175);
   const mxA=Math.max(...ac),mnA=Math.min(...ac),rng=mxA-mnA||1;
   const conf=Math.min(100,Math.round(((top.val-mnA)/rng)*100));
   const cands=peaks.slice(0,5).map(p=>({bpm:rv((60/(p.idx+ml))*ar,100,175),score:p.val}));
-  self.postMessage({id,bpm,confidence:conf,candidates:cands});
+  // Beat phase detection at 200fps — find offset within the beat period where onset energy peaks.
+  // Uses Math.max(0,on[]) since on[] was normalized to zero-mean (negative = below-average onset).
+  // octave-adjust the lag to match the folded BPM (e.g. 60BPM lag=200→120BPM adjLag=100)
+  let adjLag=lag;let bChk=raw;while(bChk<100){bChk*=2;adjLag=Math.floor(adjLag/2);}while(bChk>175){bChk/=2;adjLag=adjLag*2;}
+  adjLag=Math.max(1,adjLag);
+  // FLOAT beat lag — eliminates drift for fractional BPMs (e.g. 120.6 BPM).
+  // Integer adjLag accumulates up to 0.69 beat error over a full track; float avoids this.
+  // bChk = octave-adjusted raw BPM (more accurate than rounded bpm variable).
+  const floatBeatLag=(60/bChk)*ar;
+  // Bar-period search (4 beats) when ≥8 bars available — directly finds bar downbeat (beat 1).
+  // Beat-level search can't distinguish beat 1 from beat 3 in 4-on-floor patterns.
+  const floatBarLag=floatBeatLag*4;const intBarLag=Math.round(floatBarLag);
+  const nbBar=Math.floor(nf/intBarLag);
+  const useBar=nbBar>=8;
+  const srchLen=useBar?intBarLag:adjLag;
+  const floatSrch=useBar?floatBarLag:floatBeatLag;
+  const nbPh=Math.floor(nf/srchLen);let bstPh=0,bstSc=-Infinity;
+  // PASS 1 (bandpass 100-400Hz): finds accurate beat TIMING across the whole track.
+  // Cubic weighting: v*v*v makes kick drums (3-5× avg onset) worth 27-125× more than noise.
+  // Float index: Math.round(p+k*floatSrch) — zero drift accumulation across entire track.
+  for(let p=0;p<srchLen;p++){let sc=0;for(let k=0;k<nbPh;k++){const idx=Math.round(p+k*floatSrch);if(idx<nf){const v=Math.max(0,on[idx]);sc+=v*v*v;}}if(sc>bstSc){bstSc=sc;bstPh=p;}}
+  // PASS 2 (full-spectrum): disambiguates BAR PHASE when bar-level search is used.
+  // Problem: bandpass can latch on a non-kick element (bass chord, hi-hat) at the wrong beat,
+  // placing bar markers 1-2 beats off from the visual waveform peaks the DJ sees.
+  // Fix: evaluate all 4 beat offsets from bstPh using full-spectrum onset (matches visual waveform),
+  // then shift bstPh to whichever beat has the strongest full-spectrum visual event.
+  if(useBar){
+    const envF=new Float32Array(nf);
+    for(let i=0;i<nf;i++){let s=0;const st=i*hop,en=Math.min(st+hop,len);for(let j=st;j<en;j++)s+=mono[j]*mono[j];envF[i]=Math.sqrt(s/(en-st));}
+    const onF=new Float32Array(nf);for(let i=1;i<nf;i++){const d=envF[i]-envF[i-1];onF[i]=d>0?d:0;}
+    const mnF=onF.reduce((s,v)=>s+v,0)/nf;const sdF=Math.sqrt(onF.reduce((s,v)=>s+(v-mnF)**2,0)/nf)||1;
+    for(let i=0;i<nf;i++)onF[i]=(onF[i]-mnF)/sdF;
+    let bestShSc=-Infinity,bestSh=0;
+    for(let sh=0;sh<4;sh++){
+      let sc=0;
+      for(let k=0;k<nbPh;k++){const idx=Math.round(bstPh+sh*floatBeatLag+k*floatSrch);if(idx<nf){const v=Math.max(0,onF[idx]);sc+=v*v*v;}}
+      if(sc>bestShSc){bestShSc=sc;bestSh=sh;}
+    }
+    bstPh=Math.round(bstPh+bestSh*floatBeatLag)%intBarLag;
+  }
+  // beatPhaseFrac = phase as fraction of ONE beat period (0..4 for bar-level, 0..1 for beat-level)
+  // In AnimatedZoomedWF: phase = beatPhaseFrac * beatSamples → waveform frame of first downbeat
+  const beatPhaseFrac=adjLag>0?bstPh/adjLag:0;
+  self.postMessage({id,bpm,confidence:conf,candidates:cands,beatPhaseFrac});
 };`;
 
 function createBPMWorker() {
@@ -91,8 +134,8 @@ function useBPM() {
   useEffect(() => {
     worker.current = createBPMWorker();
     worker.current.onmessage = (e) => {
-      const { id, bpm, confidence, candidates } = e.data;
-      setResults(prev => ({ ...prev, [id]: { bpm, confidence, candidates, analyzing: false } }));
+      const { id, bpm, confidence, candidates, beatPhaseFrac } = e.data;
+      setResults(prev => ({ ...prev, [id]: { bpm, confidence, candidates, beatPhaseFrac: beatPhaseFrac||0, analyzing: false } }));
     };
     return () => worker.current?.terminate();
   }, []);
@@ -324,6 +367,10 @@ function useLibrary(){
   const artworkCache=useRef({}); // trackId → data URL, kept in memory
   const processQRef=useRef(null); // forward ref so startup effect can call processQ
   const hasAutoQueued=useRef(false); // ensure startup analysis runs once
+  // Fingerprints to skip setState when nothing actually changed (avoids RAF stutter)
+  const libFingerprintRef=useRef('');
+  const queueFingerprintRef=useRef('');
+  const cratesFingerprintRef=useRef('');
 
   // Load tracks + crates from shared IDB and poll for updates from the library app
   useEffect(()=>{
@@ -331,7 +378,12 @@ function useLibrary(){
       try{
         const tracks=await cmDbAll("tracks");
         if(tracks.length>0){
-          setLibrary(tracks);
+          // Only call setLibrary when something actually changed — avoids 5s RAF stutter
+          const fp=tracks.map(t=>t.id+'|'+(t.analyzed?1:0)+'|'+(t.bpm||0)).join(',');
+          if(fp!==libFingerprintRef.current){
+            libFingerprintRef.current=fp;
+            setLibrary(tracks);
+          }
           // On first load, auto-queue any unanalyzed tracks from OPFS
           if(!hasAutoQueued.current){
             hasAutoQueued.current=true;
@@ -355,9 +407,17 @@ function useLibrary(){
           }
         }
         const q=await cmDbAll("queue");
-        setQueue(q.sort((a,b)=>a.order-b.order).map(r=>r.trackId));
+        const qfp=q.map(r=>r.trackId+'|'+r.order).join(',');
+        if(qfp!==queueFingerprintRef.current){
+          queueFingerprintRef.current=qfp;
+          setQueue(q.sort((a,b)=>a.order-b.order).map(r=>r.trackId));
+        }
         const cr=await cmDbAll("crates");
-        setCrates(cr);
+        const cfp=cr.map(c=>c.id+'|'+(c.tracks||[]).length).join(',');
+        if(cfp!==cratesFingerprintRef.current){
+          cratesFingerprintRef.current=cfp;
+          setCrates(cr);
+        }
       }catch{}
     };
     load();
@@ -1634,7 +1694,7 @@ function WF({ bands, peaks, freq, prog, onSeek, h=80, hotCues=[], loopStart=null
 //   Phase 1 (track load):  Math.pow() runs once per sample → totH/basH/higH Float32Arrays
 //   Phase 2 (every frame): zero pow() — just lerp+multiply+ImageData writes
 //   ResizeObserver watches canvas — RAF loop NEVER reads clientWidth (eliminates reflow stutter)
-function AnimatedZoomedWF({ bands, dur, progRef, onSeek, h=96, windowSec=16, bpm=null, hotCues=[], loopStart=null, loopEnd=null, loopActive=false }) {
+function AnimatedZoomedWF({ bands, dur, progRef, onSeek, h=96, windowSec=16, bpm=null, beatPhaseFrac=null, hotCues=[], loopStart=null, loopEnd=null, loopActive=false }) {
   const ref=useRef(null);
   const raf=useRef(null);
   const hRef=useRef(null);    // {totH,basH,higH:Float32Array(len), len}
@@ -1642,11 +1702,13 @@ function AnimatedZoomedWF({ bands, dur, progRef, onSeek, h=96, windowSec=16, bpm
   const sizeRef=useRef({physW:0,physH:0,dirty:true}); // set by ResizeObserver, read in RAF
   const durRef=useRef(dur);
   const bpmRef=useRef(bpm);
+  const beatPhaseFracRef=useRef(beatPhaseFrac); // from 200fps worker analysis — overrides local detection
   const seekRef=useRef(onSeek);
   const hotCuesRef=useRef(hotCues);
   const loopRef=useRef({loopStart,loopEnd,loopActive});
   useEffect(()=>{durRef.current=dur;},[dur]);
   useEffect(()=>{bpmRef.current=bpm;},[bpm]);
+  useEffect(()=>{beatPhaseFracRef.current=beatPhaseFrac;},[beatPhaseFrac]);
   useEffect(()=>{seekRef.current=onSeek;},[onSeek]);
   useEffect(()=>{hotCuesRef.current=hotCues;},[hotCues]);
   useEffect(()=>{loopRef.current={loopStart,loopEnd,loopActive};},[loopStart,loopEnd,loopActive]);
@@ -1666,12 +1728,17 @@ function AnimatedZoomedWF({ bands, dur, progRef, onSeek, h=96, windowSec=16, bpm
       if(energy<=0)continue;
       const tot=Math.pow(energy,0.80);          // 0..1, strong dynamic range
       const bas=Math.min(tot*0.80,Math.pow(bv,0.65)); // 0..1, bass inner layer
-      // White tips: only when hv>0.65 (genuine snare/hi-hat peak, not background noise)
-      // Precomputed 0..1 with 0.12 max → draws as thin bright tip, never a constant band
-      const hi=hv>0.65?Math.pow((hv-0.65)/0.35,0.7)*0.12:0;
+      // White tips: threshold at 0.28 catches hi-hats & snares, skips silence
+      // Max 0.22 of maxH → bright visible tip without overwhelming the bar color
+      const hi=hv>0.28?Math.pow((hv-0.28)/0.72,0.80)*0.22:0;
       totH[x]=tot; basH[x]=bas; higH[x]=Math.min(hi,bas);
     }
-    hRef.current={totH,basH,higH,len};
+    // Onset strength: captures ATTACK of each kick (rate of rise in bass energy)
+    // Gives sharp spikes at beat transients even when bassline is sustained between kicks
+    // This is much more reliable for phase detection than raw bass energy
+    const onH=new Float32Array(len);
+    for(let x=1;x<len;x++){const d=basH[x]-basH[x-1];if(d>0)onH[x]=d;}
+    hRef.current={totH,basH,higH,onH,len};
     imgRef.current=null;
   },[bands,dur]);
 
@@ -1768,9 +1835,8 @@ function AnimatedZoomedWF({ bands, dur, progRef, onSeek, h=96, windowSec=16, bpm
             const tot=tots[dx];
             if(dy>tot)continue;
             const i=row+dx*4;
-            const hi=higs[dx];
-            if(dy<=hi){
-              // White — bright high-freq transient tip (snare/hi-hat peak only)
+            if(tot-dy<=higs[dx]&&higs[dx]>0){
+              // White — bright high-freq transient TIP (at bar top, not base)
               px[i]=240;px[i+1]=240;px[i+2]=255;px[i+3]=230;
             } else if(dy<=bass[dx]){
               // Electric blue — bass body
@@ -1793,29 +1859,36 @@ function AnimatedZoomedWF({ bands, dur, progRef, onSeek, h=96, windowSec=16, bpm
         if(bpm2&&bpm2>0&&hd){
           const beatSamples=(60/bpm2)/dur2*len;
 
-          // Phase detection: auto-align to track's actual beats (computed once per track).
-          // Tests 32 candidate phase offsets and picks the one that best aligns with
-          // waveform peaks — fixes "markers off on sections without kick drum"
-          if(hd.cachedBpm!==bpm2){
+          // Phase detection: full-track bass energy maximization.
+          // For each candidate phase offset p in [0, bs), sum basH at every
+          // beat position p, p+bs, p+2*bs... across the whole track.
+          // The phase with the highest total = best alignment with actual beats.
+          // This is more reliable than onset detection because it uses ALL beats,
+          // not just the first spike (which might be noise or a non-beat transient).
+          // Use 200fps worker phase when available (much more accurate than local detection).
+          // The worker runs on the full audio signal with proper bandpass filtering.
+          // beatPhaseFrac is a 0..1 fraction of the beat period — convert to waveform frame offset.
+          const workerPhase=beatPhaseFracRef.current;
+          if(workerPhase!==null&&workerPhase!==undefined){
+            // Worker phase available: use directly, clear any local cache so it doesn't fight
+            hd.beatPhase=workerPhase*beatSamples;
+            hd.cachedBpm=bpm2; // mark as cached so we don't re-run local detection
+          } else if(hd.cachedBpm!==bpm2){
+            // Fallback: local onset-strength phase detection in waveform frame space
             hd.cachedBpm=bpm2;
-            const scanEnd=Math.min(len,Math.round(beatSamples*12));
-            const phaseSteps=32;
+            const bs=Math.max(1,Math.round(beatSamples));
+            const numBeats=Math.floor(len/beatSamples);
+            const onH=hd.onH;
             let bestPhase=0,bestScore=-1;
-            for(let pi=0;pi<phaseSteps;pi++){
-              const testPhase=(pi/phaseSteps)*beatSamples;
-              let score=0,count=0;
-              for(let b=0;testPhase+b*beatSamples<scanEnd;b++){
-                const idx=Math.round(testPhase+b*beatSamples);
-                if(idx<0||idx>=len)continue;
-                // Score = peak amplitude in a ±4 sample window around expected beat
-                let peak=0;
-                for(let k=Math.max(0,idx-4);k<=Math.min(len-1,idx+4);k++){
-                  if(totH[k]>peak)peak=totH[k];
-                }
-                score+=peak; count++;
+            for(let p=0;p<bs;p++){
+              let score=0;
+              for(let k=0;k<numBeats;k++){
+                const center=Math.round(p+k*beatSamples);
+                const c0=center>0?center-1:0;
+                const c1=center+1<len?center+1:len-1;
+                if(center<len)score+=onH[c0]*0.5+onH[center]+onH[c1]*0.5;
               }
-              const avg=count>0?score/count:0;
-              if(avg>bestScore){bestScore=avg;bestPhase=testPhase;}
+              if(score>bestScore){bestScore=score;bestPhase=p;}
             }
             hd.beatPhase=bestPhase;
           }
@@ -1828,14 +1901,25 @@ function AnimatedZoomedWF({ bands, dur, progRef, onSeek, h=96, windowSec=16, bpm
             if(sx<-6||sx>physW+6)continue;
             const isBar=(((bi%4)+4)%4===0);
             if(isBar){
-              ctx.fillStyle='rgba(220,38,38,0.80)';
-              ctx.fillRect(sx-0.5,0,1.5,baseline*0.28);
+              // ── Bar 1 marker: bright red full-height line ──
+              ctx.fillStyle='rgba(220,38,38,0.85)';
+              ctx.fillRect(sx-0.5,0,1.5,physH);
+              // Top triangle (▼ downward, sits flush at top edge)
               ctx.beginPath();
-              ctx.moveTo(sx-5,0);ctx.lineTo(sx+5,0);ctx.lineTo(sx,9);
-              ctx.fillStyle='#dc2626';ctx.fill();
+              ctx.moveTo(sx-6,0);ctx.lineTo(sx+6,0);ctx.lineTo(sx,11);
+              ctx.fillStyle='#ef4444';ctx.fill();
+              // Bottom triangle (▲ upward, sits flush at bottom edge)
+              ctx.beginPath();
+              ctx.moveTo(sx-6,physH);ctx.lineTo(sx+6,physH);ctx.lineTo(sx,physH-11);
+              ctx.fillStyle='#ef4444';ctx.fill();
             } else {
-              ctx.fillStyle='rgba(255,255,255,0.20)';
-              ctx.fillRect(sx-0.5,0,1,baseline*0.16);
+              // ── Regular beat: thin white full-height line ──
+              ctx.fillStyle='rgba(255,255,255,0.22)';
+              ctx.fillRect(sx-0.5,0,1,physH);
+              // Small grey notch ticks at top and bottom
+              ctx.fillStyle='rgba(210,210,220,0.55)';
+              ctx.fillRect(sx-1,0,2,5);
+              ctx.fillRect(sx-1,physH-5,2,5);
             }
           }
         }
@@ -3191,7 +3275,7 @@ export default function CollabMix({ initialPage = "landing", djName = null }) {
               <button key={i} onClick={()=>setWfZoom(i)} style={{ height:18, padding:"0 7px", fontSize:8, fontFamily:"'DM Mono',monospace", letterSpacing:.5, background:wfZoom===i?"#C8A96E22":"transparent", border:`1px solid ${wfZoom===i?"#C8A96E88":"#ffffff18"}`, color:wfZoom===i?"#C8A96E":"#ffffff44", borderRadius:4, cursor:"pointer", outline:"none" }}>{lbl}</button>
             ))}
           </div>
-          <AnimatedZoomedWF bands={wfA} dur={wfA?.dur||0} progRef={progRefA} onSeek={null} h={96} windowSec={WF_WINDOWS[wfZoom]} bpm={bpm.results["A"]?.bpm||null}/>
+          <AnimatedZoomedWF bands={wfA} dur={wfA?.dur||0} progRef={progRefA} onSeek={null} h={96} windowSec={WF_WINDOWS[wfZoom]} bpm={bpm.results["A"]?.bpm||null} beatPhaseFrac={bpm.results["A"]?.beatPhaseFrac??null}/>
         </div>
         <div style={{ height:1, background:"#0d0d18" }}/>
         {/* Deck B — orange, full screen width */}
@@ -3200,7 +3284,7 @@ export default function CollabMix({ initialPage = "landing", djName = null }) {
             <div style={{ width:5, height:5, borderRadius:"50%", background:"#ff6b35", boxShadow:"0 0 6px #ff6b35" }}/>
             <span style={{ fontSize:9, fontFamily:"'DM Mono',monospace", fontWeight:700, color:"#ff6b3588", letterSpacing:2 }}>B</span>
           </div>
-          <AnimatedZoomedWF bands={wfB} dur={wfB?.dur||0} progRef={progRefB} onSeek={null} h={96} windowSec={WF_WINDOWS[wfZoom]} bpm={bpm.results["B"]?.bpm||null}/>
+          <AnimatedZoomedWF bands={wfB} dur={wfB?.dur||0} progRef={progRefB} onSeek={null} h={96} windowSec={WF_WINDOWS[wfZoom]} bpm={bpm.results["B"]?.bpm||null} beatPhaseFrac={bpm.results["B"]?.beatPhaseFrac??null}/>
         </div>
       </div>
 
