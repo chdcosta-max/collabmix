@@ -84,26 +84,70 @@ self.onmessage=function(e){
   adjLag=Math.max(1,adjLag);
   // Float beat lag: eliminates drift for fractional BPMs (e.g. 120.6 BPM)
   const floatBeatLag=(60/bChk)*ar;
-  // Bar-period search (4 beats): directly finds bar downbeat when ≥8 bars available
-  const floatBarLag=floatBeatLag*4;const intBarLag=Math.round(floatBarLag);
-  const nbBar=Math.floor(nf/intBarLag);
-  const useBar=nbBar>=8;
-  const srchLen=useBar?intBarLag:adjLag;
-  const floatSrch=useBar?floatBarLag:floatBeatLag;
-  const nbPh=Math.floor(nf/srchLen);
-  // KICK-FOCUSED phase detection: 40-120Hz isolates kick drum fundamental (avoids snare 150-400Hz).
-  // Bar-level search with kick onset directly finds the downbeat — no pass 2 disambiguation needed.
+
+  // ── DP BEAT TRACKER (Ellis 2007-style) ─────────────────────────────────────────
+  // Unlike simple phase search, DP finds the globally optimal beat sequence across
+  // the FULL track — this is what Rekordbox/Traktor do during track analysis.
+  // Each beat is scored by its onset strength PLUS the quality of the transition
+  // from the previous beat. The log-Gaussian transition penalty keeps tempo tight.
+  const dpLo=Math.round(floatBeatLag*0.75);  // min beat interval (allows ±25% tempo flex)
+  const dpHi=Math.round(floatBeatLag*1.35);  // max beat interval
+  const dpAlpha=100;                           // tempo tightness (higher = stricter)
+  const dpLogP=Math.log(floatBeatLag);
+  const dpSc=new Float32Array(nf);
+  const dpBk=new Int32Array(nf).fill(-1);
+  for(let t=dpLo;t<nf;t++){
+    const ov=Math.max(0,on[t]);
+    let bsc=-1e30,bp=-1;
+    for(let p=Math.max(0,t-dpHi);p<=t-dpLo;p++){
+      const lg=Math.log(t-p);
+      const pen=dpAlpha*(lg-dpLogP)*(lg-dpLogP);
+      const sc=dpSc[p]-pen;
+      if(sc>bsc){bsc=sc;bp=p;}
+    }
+    dpSc[t]=ov+(bp>=0&&bsc>-1e29?bsc:0);
+    if(bp>=0)dpBk[t]=bp;
+  }
+  // Find best endpoint in last beat period
+  let dpEnd=nf-1,dpMx=-1e30;
+  for(let t=Math.max(0,nf-dpHi);t<nf;t++){if(dpSc[t]>dpMx){dpMx=dpSc[t];dpEnd=t;}}
+  // Backtrack to collect full beat sequence (most recent → oldest)
+  const dpBeats=[];let dpt=dpEnd;
+  while(dpt>0&&dpBk[dpt]>=0){dpBeats.push(dpt);dpt=dpBk[dpt];}
+  dpBeats.push(dpt);
+  dpBeats.reverse(); // now oldest→newest
+
+  // ── KICK-FOCUSED onset for bar downbeat detection ────────────────────────────
+  // Use 40-120Hz (kick fundamental) to identify which DP beats are bar downbeats.
+  // Kick is strongest on beat 1 of every bar — so whichever of 4 consecutive DP beats
+  // accumulates the most kick energy across the track = the bar downbeat phase.
   const fK=bp(mono,sr,40,120);for(let i=0;i<fK.length;i++)fK[i]=fK[i]>0?fK[i]:0;
   const envK=new Float32Array(nf);for(let i=0;i<nf;i++){let s=0;const st=i*hop,en=Math.min(st+hop,len);for(let j=st;j<en;j++)s+=fK[j]*fK[j];envK[i]=Math.sqrt(s/(en-st));}
   const onK=new Float32Array(nf);for(let i=1;i<nf;i++){const d=envK[i]-envK[i-1];onK[i]=d>0?d:0;}
   const mnK=onK.reduce((s,v)=>s+v,0)/nf;const sdK=Math.sqrt(onK.reduce((s,v)=>s+(v-mnK)**2,0)/nf)||1;
   for(let i=0;i<nf;i++)onK[i]=(onK[i]-mnK)/sdK;
-  let bstPh=0,bstSc=-Infinity;
-  for(let p=0;p<srchLen;p++){let sc=0;for(let k=0;k<nbPh;k++){const idx=Math.round(p+k*floatSrch);if(idx<nf){const v=Math.max(0,onK[idx]);sc+=v*v*v;}}if(sc>bstSc){bstSc=sc;bstPh=p;}}
-  // onK (onset flux) already peaks at the start of each kick's energy rise — no backtracking needed.
-  // Backtracking was removed: walking backward to global minimum caused beatPhaseFrac≈0 for all tracks
-  // (markers locked at position 0, appearing in silence regions and not moving between tracks).
-  const beatPhaseFrac=adjLag>0?bstPh/adjLag:0;
+
+  // Find the first AUDIBLE beat (skip silence intro)
+  let onMx=0;for(let i=0;i<nf;i++)if(on[i]>onMx)onMx=on[i];
+  const onTh=onMx*0.25;
+  let firstBeatDpIdx=0;
+  for(let i=0;i<dpBeats.length;i++){if(Math.max(0,on[dpBeats[i]])>onTh){firstBeatDpIdx=i;break;}}
+
+  // Determine BAR PHASE: which of 4 beats is the bar downbeat (beat 1)?
+  // Score each of 4 phase offsets (0,1,2,3) against kick onset across all dpBeats.
+  // The offset with the highest cumulative kick strength = bar downbeat phase.
+  const phSc=[0,0,0,0];
+  for(let i=firstBeatDpIdx;i<dpBeats.length;i++){
+    phSc[(i-firstBeatDpIdx)%4]+=Math.max(0,onK[dpBeats[i]]);
+  }
+  let bestPh=0,bestPhSc=-1;
+  for(let k=0;k<4;k++){if(phSc[k]>bestPhSc){bestPhSc=phSc[k];bestPh=k;}}
+
+  // First bar downbeat = firstBeatDpIdx + bestPh in dpBeats
+  // beatPhaseFrac: position of first BAR DOWNBEAT in beats from track start.
+  // This ensures bi=0 in AnimatedZoomedWF lands on a real bar-1 kick.
+  const barDownbeatFrame=dpBeats[Math.min(dpBeats.length-1,firstBeatDpIdx+bestPh)]||0;
+  const beatPhaseFrac=adjLag>0?barDownbeatFrame/adjLag:0;
   self.postMessage({id,bpm,confidence:conf,candidates:cands,beatPhaseFrac});
 };`;
 
@@ -1582,7 +1626,7 @@ function VU({ an, color, w=100 }) {
   return <canvas ref={ref} width={w} height={6} style={{width:"100%",borderRadius:2}}/>;
 }
 
-function WF({ bands, peaks, freq, prog, onSeek, h=80, hotCues=[], loopStart=null, loopEnd=null, loopActive=false }) {
+function WF({ bands, peaks, freq, prog, onSeek, h=80, hotCues=[], loopStart=null, loopEnd=null, loopActive=false, bpm=null, dur=0, beatPhaseFrac=null, color='#ffffff' }) {
   const ref=useRef(null);
   useEffect(()=>{
     if(!ref.current)return;
@@ -1640,6 +1684,53 @@ function WF({ bands, peaks, freq, prog, onSeek, h=80, hotCues=[], loopStart=null
         if(hH>0.5)ctx.fillRect(x,base-bH-mH-hH,BAR,hH);
       }
 
+      // ── Beat grid overlay (Rekordbox-style, drawn directly on waveform) ──
+      // At overview zoom, individual beats are ~1px apart on a 7-min track — draw BAR markers only.
+      // Beat markers (every beat) appear in the zoomed AnimatedZoomedWF view.
+      if(bpm && dur > 0) {
+        const spb = 60 / bpm;
+        const spBar = spb * 4;  // bar = 4 beats
+        const phFrac = beatPhaseFrac || 0;
+        // phFrac * spb = absolute position of the first bar downbeat in seconds
+        // (beatPhaseFrac from worker now always points to a bar downbeat, not just any beat)
+        // Walk back by whole bars to find the first bar occurrence >= 0
+        const firstBarAbsSec = phFrac * spb;
+        const firstBarAligned = firstBarAbsSec - Math.floor(firstBarAbsSec / spBar) * spBar;
+        let bt = firstBarAligned;
+
+        // Draw beat markers first (dimmer, half height) — only visible if zoom is wide enough
+        const beatPxSpacing = (spb / dur) * W;
+        if(beatPxSpacing >= 3) {  // only draw beats if they're at least 3px apart
+          const firstBeatAligned = (phFrac % 1) * spb;
+          ctx.fillStyle = color;
+          ctx.globalAlpha = 0.18;
+          let btb = firstBeatAligned;
+          while(btb < dur) {
+            const gx = Math.floor((btb / dur) * W);
+            ctx.fillRect(gx, Math.floor(H * 0.3), 1, Math.floor(H * 0.7));
+            btb += spb;
+          }
+        }
+
+        // Draw bar markers (bright, full height, deck-colored) — always visible
+        ctx.fillStyle = color;
+        while(bt < dur) {
+          const gx = Math.floor((bt / dur) * W);
+          ctx.globalAlpha = 0.75;
+          ctx.fillRect(gx, 0, 1, H);
+          // Small downward triangle at top (like Rekordbox)
+          ctx.globalAlpha = 0.9;
+          ctx.beginPath();
+          ctx.moveTo(gx - 3, 0);
+          ctx.lineTo(gx + 4, 0);
+          ctx.lineTo(gx + 0.5, 5);
+          ctx.closePath();
+          ctx.fill();
+          bt += spBar;
+        }
+        ctx.globalAlpha = 1;
+      }
+
       // ── Playhead marker ──
       ctx.fillStyle='rgba(0,0,0,0.35)'; ctx.fillRect(px-1,0,4,H);
       ctx.fillStyle='#ffffff'; ctx.shadowColor='#ffffff'; ctx.shadowBlur=8;
@@ -1667,7 +1758,7 @@ function WF({ bands, peaks, freq, prog, onSeek, h=80, hotCues=[], loopStart=null
       // Empty state
       ctx.fillStyle="#ffffff08"; ctx.fillRect(0,H-1,W,1);
     }
-  },[bands,peaks,freq,prog,hotCues,loopStart,loopEnd,loopActive]);
+  },[bands,peaks,freq,prog,hotCues,loopStart,loopEnd,loopActive,bpm,dur,beatPhaseFrac,color]);
 
   const onClick=e=>{
     if(!onSeek||!ref.current)return;
@@ -1883,6 +1974,15 @@ function AnimatedZoomedWF({ bands, dur, progRef, onSeek, h=96, windowSec=16, bpm
 
           const phase=hd.beatPhase||0;
           const firstBeatIdx=Math.ceil((srcX-phase)/beatSamples);
+          // DEBUG: log scroll state once per second so we can verify beats are
+          // scrolling with the music (srcX should advance, first-beat sx should
+          // walk leftward). Remove after confirming behavior.
+          if(!hd._lastLog||performance.now()-hd._lastLog>1000){
+            hd._lastLog=performance.now();
+            const firstBeatSrc=phase+firstBeatIdx*beatSamples;
+            const firstBeatSx=(firstBeatSrc-srcX)/viewPx*physW;
+            console.log('[beatgrid] prog=',prog2.toFixed(4),'srcX=',srcX.toFixed(1),'phase=',phase.toFixed(1),'beatSamp=',beatSamples.toFixed(2),'firstBeatSx=',firstBeatSx.toFixed(1));
+          }
           for(let bi=firstBeatIdx;phase+bi*beatSamples<srcX+viewPx+beatSamples;bi++){
             const beatSrc=phase+bi*beatSamples;
             const sx=(beatSrc-srcX)/viewPx*physW;
@@ -1902,10 +2002,10 @@ function AnimatedZoomedWF({ bands, dur, progRef, onSeek, h=96, windowSec=16, bpm
               ctx.fillStyle='#ef4444';ctx.fill();
             } else {
               // ── Regular beat: thin white full-height line ──
-              ctx.fillStyle='rgba(255,255,255,0.22)';
+              ctx.fillStyle='rgba(255,255,255,0.45)';
               ctx.fillRect(sx-0.5,0,1,physH);
               // Small grey notch ticks at top and bottom
-              ctx.fillStyle='rgba(210,210,220,0.55)';
+              ctx.fillStyle='rgba(210,210,220,0.75)';
               ctx.fillRect(sx-1,0,2,5);
               ctx.fillRect(sx-1,physH-5,2,5);
             }
@@ -2121,9 +2221,46 @@ function ZoomedWF({ bands, peaks, freq, prog, dur, onSeek, h=72, hotCues=[], loo
   return <canvas ref={ref} onClick={onClick} style={{width:"100%",height:h,background:"#030306",cursor:onSeek?"crosshair":"default",display:"block"}}/>;
 }
 
-function BeatGrid({ bpm, dur, prog, color }) {
+function BeatGrid({ bpm, dur, prog, color, beatPhaseFrac=null }) {
   const ref=useRef(null);
-  useEffect(()=>{ if(!ref.current||!bpm||!dur)return; const c=ref.current,ctx=c.getContext("2d"),W=c.width,H=c.height; ctx.clearRect(0,0,W,H); const spb=60/bpm; let bt=0,bn=0; while(bt<dur){const x=(bt/dur)*W;ctx.strokeStyle=bn%4===0?color+"66":color+"22";ctx.lineWidth=bn%4===0?1:.5;ctx.beginPath();ctx.moveTo(x,0);ctx.lineTo(x,H);ctx.stroke();bt+=spb;bn++;} const px=Math.floor(prog*W);ctx.fillStyle=color;ctx.shadowColor=color;ctx.shadowBlur=8;ctx.beginPath();ctx.arc(px,H/2,3,0,Math.PI*2);ctx.fill();ctx.shadowBlur=0; },[bpm,dur,prog,color]);
+  useEffect(()=>{
+    if(!ref.current||!bpm||!dur)return;
+    const c=ref.current,ctx=c.getContext("2d"),W=c.width,H=c.height;
+    ctx.clearRect(0,0,W,H);
+    const spb=60/bpm;
+    // beatPhaseFrac: how many beats from track start to first detected kick
+    // e.g. 2.07 means the first kick lands 2.07 beat-lengths into the track
+    // We start the grid at the fractional remainder so it aligns with real kicks
+    const phFrac = beatPhaseFrac !== null ? beatPhaseFrac : 0;
+    const firstBeatSec = (phFrac % 1) * spb;  // offset of first beat within its beat period
+    const barOffset = Math.round(phFrac) % 4;  // which beat-in-bar the first beat lands on
+    // Scrolling grid: playhead is locked at canvas center, beats slide past it.
+    // Show a fixed window of `beatsVisible` beats around the current time so the
+    // grid scale stays consistent regardless of track length.
+    const beatsVisible = 16;
+    const pxPerSec = W / (beatsVisible * spb);
+    const ct = prog * dur;                    // current time in seconds
+    const halfWinSec = (beatsVisible * spb) / 2;
+    const minTime = ct - halfWinSec - spb;    // pad by a beat to cover edges
+    const maxTime = ct + halfWinSec + spb;
+    // Beat n lives at time firstBeatSec + n*spb; find the visible range.
+    const startN = Math.max(0, Math.ceil((minTime - firstBeatSec) / spb));
+    const endN = Math.floor((Math.min(dur, maxTime) - firstBeatSec) / spb);
+    for(let bn = startN; bn <= endN; bn++){
+      const bt = firstBeatSec + bn * spb;
+      const x = W/2 + (bt - ct) * pxPerSec;
+      if(x < 0 || x > W) continue;
+      const isBar = ((bn - barOffset + 400) % 4 === 0);
+      ctx.strokeStyle = isBar ? color+"88" : color+"28";
+      ctx.lineWidth = isBar ? 1.5 : 0.5;
+      ctx.beginPath(); ctx.moveTo(x,0); ctx.lineTo(x,H); ctx.stroke();
+    }
+    // Fixed playhead at center
+    const px = Math.floor(W/2);
+    ctx.fillStyle = color; ctx.shadowColor = color; ctx.shadowBlur = 8;
+    ctx.beginPath(); ctx.arc(px,H/2,3,0,Math.PI*2); ctx.fill();
+    ctx.shadowBlur = 0;
+  },[bpm,dur,prog,color,beatPhaseFrac]);
   return <canvas ref={ref} width={460} height={18} style={{width:"100%",height:18,background:"#04040b",borderRadius:4}}/>;
 }
 
@@ -2388,8 +2525,7 @@ function Deck({ id, ch, ctx:ac, color, local, remote, onChange, midi:mt, bpmResu
 
       {/* ── OVERVIEW STRIP — full track structure ── */}
       <div style={{borderTop:BD, borderBottom:BD, background:"#03030a"}}>
-        <WF bands={wfBass?{bass:wfBass,mid:wfMid,high:wfHigh}:null} peaks={wfPeaks} freq={wfFreq} prog={prog} onSeek={local?seek:null} h={40} hotCues={hotCues} loopStart={loopStart} loopEnd={loopEnd} loopActive={loopActive}/>
-        {bpmResult?.bpm&&dur>0&&<BeatGrid bpm={bpmResult.bpm*rate} dur={dur} prog={prog} color={color}/>}
+        <WF bands={wfBass?{bass:wfBass,mid:wfMid,high:wfHigh}:null} peaks={wfPeaks} freq={wfFreq} prog={prog} onSeek={local?seek:null} h={40} hotCues={hotCues} loopStart={loopStart} loopEnd={loopEnd} loopActive={loopActive} bpm={bpmResult?.bpm?(bpmResult.bpm*rate):null} dur={dur} beatPhaseFrac={bpmResult?.beatPhaseFrac??null} color={color}/>
       </div>
 
       {/* ── HOT CUES + LOOP CONTROLS ── */}
