@@ -64,6 +64,7 @@ function rv(b,mn,mx){let v=b;while(v<mn)v*=2;while(v>mx)v/=2;return Math.round(v
 self.onmessage=function(e){
   const{cd,sr,id}=e.data;const len=cd[0].length,nc=cd.length;
   const mono=new Float32Array(len);for(let c=0;c<nc;c++){const d=cd[c];for(let i=0;i<len;i++)mono[i]+=d[i]/nc;}
+  // BPM detection: 100-400Hz bandpass captures kick + snare transients for autocorrelation
   const f=bp(mono,sr,100,400);for(let i=0;i<f.length;i++)f[i]=f[i]>0?f[i]:0;
   const ar=200,hop=Math.floor(sr/ar),nf=Math.floor(len/hop);
   const env=new Float32Array(nf);for(let i=0;i<nf;i++){let s=0;const st=i*hop,en=Math.min(st+hop,len);for(let j=st;j<en;j++)s+=f[j]*f[j];env[i]=Math.sqrt(s/(en-st));}
@@ -78,48 +79,30 @@ self.onmessage=function(e){
   const mxA=Math.max(...ac),mnA=Math.min(...ac),rng=mxA-mnA||1;
   const conf=Math.min(100,Math.round(((top.val-mnA)/rng)*100));
   const cands=peaks.slice(0,5).map(p=>({bpm:rv((60/(p.idx+ml))*ar,100,175),score:p.val}));
-  // Beat phase detection at 200fps — find offset within the beat period where onset energy peaks.
-  // Uses Math.max(0,on[]) since on[] was normalized to zero-mean (negative = below-average onset).
-  // octave-adjust the lag to match the folded BPM (e.g. 60BPM lag=200→120BPM adjLag=100)
+  // Beat phase detection — octave-adjust lag to match folded BPM range (100-175)
   let adjLag=lag;let bChk=raw;while(bChk<100){bChk*=2;adjLag=Math.floor(adjLag/2);}while(bChk>175){bChk/=2;adjLag=adjLag*2;}
   adjLag=Math.max(1,adjLag);
-  // FLOAT beat lag — eliminates drift for fractional BPMs (e.g. 120.6 BPM).
-  // Integer adjLag accumulates up to 0.69 beat error over a full track; float avoids this.
-  // bChk = octave-adjusted raw BPM (more accurate than rounded bpm variable).
+  // Float beat lag: eliminates drift for fractional BPMs (e.g. 120.6 BPM)
   const floatBeatLag=(60/bChk)*ar;
-  // Bar-period search (4 beats) when ≥8 bars available — directly finds bar downbeat (beat 1).
-  // Beat-level search can't distinguish beat 1 from beat 3 in 4-on-floor patterns.
+  // Bar-period search (4 beats): directly finds bar downbeat when ≥8 bars available
   const floatBarLag=floatBeatLag*4;const intBarLag=Math.round(floatBarLag);
   const nbBar=Math.floor(nf/intBarLag);
   const useBar=nbBar>=8;
   const srchLen=useBar?intBarLag:adjLag;
   const floatSrch=useBar?floatBarLag:floatBeatLag;
-  const nbPh=Math.floor(nf/srchLen);let bstPh=0,bstSc=-Infinity;
-  // PASS 1 (bandpass 100-400Hz): finds accurate beat TIMING across the whole track.
-  // Cubic weighting: v*v*v makes kick drums (3-5× avg onset) worth 27-125× more than noise.
-  // Float index: Math.round(p+k*floatSrch) — zero drift accumulation across entire track.
-  for(let p=0;p<srchLen;p++){let sc=0;for(let k=0;k<nbPh;k++){const idx=Math.round(p+k*floatSrch);if(idx<nf){const v=Math.max(0,on[idx]);sc+=v*v*v;}}if(sc>bstSc){bstSc=sc;bstPh=p;}}
-  // PASS 2 (full-spectrum): disambiguates BAR PHASE when bar-level search is used.
-  // Problem: bandpass can latch on a non-kick element (bass chord, hi-hat) at the wrong beat,
-  // placing bar markers 1-2 beats off from the visual waveform peaks the DJ sees.
-  // Fix: evaluate all 4 beat offsets from bstPh using full-spectrum onset (matches visual waveform),
-  // then shift bstPh to whichever beat has the strongest full-spectrum visual event.
-  if(useBar){
-    const envF=new Float32Array(nf);
-    for(let i=0;i<nf;i++){let s=0;const st=i*hop,en=Math.min(st+hop,len);for(let j=st;j<en;j++)s+=mono[j]*mono[j];envF[i]=Math.sqrt(s/(en-st));}
-    const onF=new Float32Array(nf);for(let i=1;i<nf;i++){const d=envF[i]-envF[i-1];onF[i]=d>0?d:0;}
-    const mnF=onF.reduce((s,v)=>s+v,0)/nf;const sdF=Math.sqrt(onF.reduce((s,v)=>s+(v-mnF)**2,0)/nf)||1;
-    for(let i=0;i<nf;i++)onF[i]=(onF[i]-mnF)/sdF;
-    let bestShSc=-Infinity,bestSh=0;
-    for(let sh=0;sh<4;sh++){
-      let sc=0;
-      for(let k=0;k<nbPh;k++){const idx=Math.round(bstPh+sh*floatBeatLag+k*floatSrch);if(idx<nf){const v=Math.max(0,onF[idx]);sc+=v*v*v;}}
-      if(sc>bestShSc){bestShSc=sc;bestSh=sh;}
-    }
-    bstPh=Math.round(bstPh+bestSh*floatBeatLag)%intBarLag;
-  }
-  // beatPhaseFrac = phase as fraction of ONE beat period (0..4 for bar-level, 0..1 for beat-level)
-  // In AnimatedZoomedWF: phase = beatPhaseFrac * beatSamples → waveform frame of first downbeat
+  const nbPh=Math.floor(nf/srchLen);
+  // KICK-FOCUSED phase detection: 40-120Hz isolates kick drum fundamental (avoids snare 150-400Hz).
+  // Bar-level search with kick onset directly finds the downbeat — no pass 2 disambiguation needed.
+  const fK=bp(mono,sr,40,120);for(let i=0;i<fK.length;i++)fK[i]=fK[i]>0?fK[i]:0;
+  const envK=new Float32Array(nf);for(let i=0;i<nf;i++){let s=0;const st=i*hop,en=Math.min(st+hop,len);for(let j=st;j<en;j++)s+=fK[j]*fK[j];envK[i]=Math.sqrt(s/(en-st));}
+  const onK=new Float32Array(nf);for(let i=1;i<nf;i++){const d=envK[i]-envK[i-1];onK[i]=d>0?d:0;}
+  const mnK=onK.reduce((s,v)=>s+v,0)/nf;const sdK=Math.sqrt(onK.reduce((s,v)=>s+(v-mnK)**2,0)/nf)||1;
+  for(let i=0;i<nf;i++)onK[i]=(onK[i]-mnK)/sdK;
+  let bstPh=0,bstSc=-Infinity;
+  for(let p=0;p<srchLen;p++){let sc=0;for(let k=0;k<nbPh;k++){const idx=Math.round(p+k*floatSrch);if(idx<nf){const v=Math.max(0,onK[idx]);sc+=v*v*v;}}if(sc>bstSc){bstSc=sc;bstPh=p;}}
+  // onK (onset flux) already peaks at the start of each kick's energy rise — no backtracking needed.
+  // Backtracking was removed: walking backward to global minimum caused beatPhaseFrac≈0 for all tracks
+  // (markers locked at position 0, appearing in silence regions and not moving between tracks).
   const beatPhaseFrac=adjLag>0?bstPh/adjLag:0;
   self.postMessage({id,bpm,confidence:conf,candidates:cands,beatPhaseFrac});
 };`;
@@ -134,9 +117,13 @@ function useBPM() {
   useEffect(() => {
     worker.current = createBPMWorker();
     worker.current.onmessage = (e) => {
-      const { id, bpm, confidence, candidates, beatPhaseFrac } = e.data;
+      const { id, bpm, confidence, candidates, beatPhaseFrac, error, _debug } = e.data;
+      if (id === '__err') { console.error('[BPM Worker global error]', e.data.error); return; }
+      if (error) console.error('[BPM Worker caught error]', error);
+      console.log('[BPM result] id='+id+' bpm='+bpm+' bpf='+beatPhaseFrac+' debug='+JSON.stringify(_debug));
       setResults(prev => ({ ...prev, [id]: { bpm, confidence, candidates, beatPhaseFrac: beatPhaseFrac||0, analyzing: false } }));
     };
+    worker.current.onerror = (e) => { console.error('[BPM Worker onerror]', e.message, e.lineno); };
     return () => worker.current?.terminate();
   }, []);
   const analyze = useCallback((buf, id) => {
@@ -144,7 +131,8 @@ function useBPM() {
     setResults(prev => ({ ...prev, [id]: { ...(prev[id] || {}), analyzing: true } }));
     const cd = [];
     for (let c = 0; c < buf.numberOfChannels; c++) cd.push(buf.getChannelData(c).slice());
-    worker.current.postMessage({ cd, sr: buf.sampleRate, id });
+    // Transfer ArrayBuffers (O(1) vs O(n) structured clone) — avoids 10-30s stall on large tracks
+    worker.current.postMessage({ cd, sr: buf.sampleRate, id }, cd.map(a => a.buffer));
   }, []);
   return { results, analyze };
 }
