@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 
 // ═══════════════════════════════════════════════════════════════
-//  COLLAB//MIX  — PRODUCTION READY
+//  MIX//SYNC  — PRODUCTION READY
 //  All bugs fixed. Landing page. Full app.
 // ═══════════════════════════════════════════════════════════════
 
@@ -56,25 +56,149 @@ function createEngine() {
 }
 function xg(p) { const a = p * Math.PI / 2; return { a: Math.cos(a), b: Math.sin(a) }; }
 
+// ── Design tokens (Mix//Sync design system) ─────────────────────
+// Named TOK (not D) because an existing local `const D = "#0c0c14"` uses the D
+// identifier inside the Deck component scope. Future refactors can swap
+// hard-coded color literals for TOK.* references without a mass rename.
+const TOK = {
+  gold:   "#C8A96E", // primary brand, CTAs, accents
+  deckA:  "#7B61FF", // your deck — electric violet
+  deckB:  "#00BFA5", // partner deck — deep teal
+  bg:     "#07070F", // primary background (near-black w/ blue undertone)
+  bg2:    "#0D0C1A", // panels / cards
+  bg3:    "#13122A", // hover / active panels
+  border: "#1A1830", // borders, dividers
+  text:   "#EDE8DF", // primary text — warm off-white
+  subtle: "#9B96B0", // muted purple-grey (secondary text)
+  muted:  "#4A4560", // disabled / very muted
+};
+
 // ── BPM Worker ───────────────────────────────────────────────
 const WORKER_SRC = `
 function bp(sig,sr,low,high){const o=new Float32Array(sig.length);const rL=1/(2*Math.PI*high/sr+1),rH=1/(2*Math.PI*low/sr+1);let pi=0,po=0;const hp=new Float32Array(sig.length);for(let i=0;i<sig.length;i++){hp[i]=rH*(po+sig[i]-pi);pi=sig[i];po=hp[i];}let pv=0;for(let i=0;i<hp.length;i++){pv=o[i]=pv+(1-rL)*(hp[i]-pv);}return o;}
 function pk(a){const r=[];for(let i=1;i<a.length-1;i++){if(a[i]>a[i-1]&&a[i]>a[i+1]){const lm=Math.min(...a.slice(Math.max(0,i-10),i),...a.slice(i+1,Math.min(a.length,i+11)));r.push({idx:i,val:a[i],p:a[i]-lm});}}return r.sort((a,b)=>b.val-a.val);}
 function rv(b,mn,mx){let v=b;while(v<mn)v*=2;while(v>mx)v/=2;return Math.round(v*10)/10;}
+function dphase(mono,sr,bpm){
+  if(!bpm||bpm<=0)return{beatPhaseSec:0,beatPeriodSec:60/bpm};
+  let beatPeriodSec=60/bpm;
+  const beatPeriodSamples=sr*beatPeriodSec;
+
+  // Build kick-drum onset envelope at FULL sample rate
+  // Bandpass 40-120Hz to isolate kick fundamental.
+  // Target ~5 ms hops but use the ACTUAL hop/sr for all seconds conversions —
+  // otherwise beatPeriodSec drifts 0.23% per beat at 44.1 kHz (same bug as main
+  // worker body).
+  const hop=Math.floor(sr*0.005);
+  const hopSec=hop/sr;
+  const nf=Math.floor(mono.length/hop);
+
+  // Simple lowpass to get kick energy
+  const env=new Float32Array(nf);
+  let prev=0;
+  const alpha=1/(2*Math.PI*(100/sr)+1);
+  for(let i=0;i<nf;i++){
+    const st=i*hop;
+    let s=0;
+    for(let j=0;j<hop&&st+j<mono.length;j++){
+      const v=mono[st+j];
+      s+=v*v;
+    }
+    const rms=Math.sqrt(s/hop);
+    prev=prev+(1-alpha)*(rms-prev);
+    env[i]=Math.max(0,rms-prev*0.7); // onset = RMS minus smoothed baseline
+  }
+
+  // Beat period in frames (nominal, from calculated BPM — used for search windows only)
+  const beatFrames=beatPeriodSec/hopSec;
+
+  // Find first strong onset after 0.5s (skip intro silence)
+  const skipFrames=Math.round(0.5/hopSec);
+  let maxVal=0;
+  for(let i=skipFrames;i<nf;i++)if(env[i]>maxVal)maxVal=env[i];
+  const thresh=maxVal*0.35;
+
+  // Find the peak of the first strong kick
+  let firstKick=skipFrames;
+  for(let i=skipFrames;i<Math.min(nf,skipFrames+beatFrames*8);i++){
+    if(env[i]>thresh){
+      // Find local maximum around this onset
+      let peak=i;
+      for(let j=i;j<Math.min(nf,i+Math.round(beatFrames*0.1));j++){
+        if(env[j]>env[peak])peak=j;
+      }
+      firstKick=peak;
+      break;
+    }
+  }
+  // Shift back 2 hop frames — onset detection lands on the attack ramp,
+  // not the perceived beat center. Subtracting ~10ms brings the grid onto the kick.
+  firstKick=Math.max(0,firstKick-2);
+
+  // Measure beat period across MANY kicks (up to 32 beats out) for precision.
+  // At each expected beat position (firstKick + i*beatFrames) search a ±20% window for
+  // the strongest above-threshold peak. Use the latest-found kick and its beat index N
+  // to compute period = (lastKick - firstKick) * hopSec / N — long baseline, low noise.
+  let lastKick=firstKick;
+  let lastKickBeatIdx=0;
+  const maxKicks=32;
+  const winRad=Math.round(beatFrames*0.2);
+  for(let i=1;i<=maxKicks;i++){
+    const expected=firstKick+Math.round(i*beatFrames);
+    if(expected>=nf)break;
+    const winStart=Math.max(0,expected-winRad);
+    const winEnd=Math.min(nf,expected+winRad);
+    let peak=-1;
+    let peakVal=thresh;
+    for(let j=winStart;j<winEnd;j++){
+      if(env[j]>peakVal){peakVal=env[j];peak=j;}
+    }
+    if(peak>=0){lastKick=peak;lastKickBeatIdx=i;}
+  }
+  if(lastKickBeatIdx>0){
+    beatPeriodSec=(lastKick-firstKick)*hopSec/lastKickBeatIdx;
+  }
+
+  // Convert back to seconds
+  const firstKickSec=firstKick*hopSec;
+
+  // Phase within beat period (0 to beatPeriodSec)
+  const beatPhaseSec=firstKickSec%beatPeriodSec;
+
+  return{beatPhaseSec,beatPeriodSec};
+}
 self.onmessage=function(e){
   const{cd,sr,id}=e.data;const len=cd[0].length,nc=cd.length;
   const mono=new Float32Array(len);for(let c=0;c<nc;c++){const d=cd[c];for(let i=0;i<len;i++)mono[i]+=d[i]/nc;}
   // BPM detection: 100-400Hz bandpass captures kick + snare transients for autocorrelation
   const f=bp(mono,sr,100,400);for(let i=0;i<f.length;i++)f[i]=f[i]>0?f[i]:0;
-  const ar=200,hop=Math.floor(sr/ar),nf=Math.floor(len/hop);
+  // Target onset-envelope frame rate ~200 Hz. hop is an integer sample count, so
+  // the ACTUAL frame rate ar = sr/hop drifts from 200 (e.g. for 44.1 kHz,
+  // hop=220 → ar=200.4545). Every frames↔seconds conversion below uses this
+  // exact ar — not 200 — or beatPeriodSec accumulates ~0.23% error per beat and
+  // the grid drifts ~1 s across a 5-minute track at 44.1 kHz.
+  const hop=Math.floor(sr/200),ar=sr/hop,nf=Math.floor(len/hop);
   const env=new Float32Array(nf);for(let i=0;i<nf;i++){let s=0;const st=i*hop,en=Math.min(st+hop,len);for(let j=st;j<en;j++)s+=f[j]*f[j];env[i]=Math.sqrt(s/(en-st));}
   const on=new Float32Array(nf);for(let i=1;i<nf;i++){const d=env[i]-env[i-1];on[i]=d>0?d:0;}
   const mn=on.reduce((s,v)=>s+v,0)/nf;const sd=Math.sqrt(on.reduce((s,v)=>s+(v-mn)**2,0)/nf)||1;
   for(let i=0;i<nf;i++)on[i]=(on[i]-mn)/sd;
   const ml=Math.floor(60/200*ar),xl=Math.ceil(60/60*ar),al=xl-ml+1;
   const ac=new Float32Array(al);for(let li=0;li<al;li++){const lag=li+ml;let s=0;for(let i=0;i<nf-lag;i++)s+=on[i]*on[i+lag];ac[li]=s/(nf-lag);}
-  const peaks=pk(ac);if(!peaks.length){self.postMessage({id,bpm:null,confidence:0,candidates:[],beatPhaseFrac:0});return;}
-  const top=peaks[0];const lag=top.idx+ml;const raw=(60/lag)*ar;
+  const peaks=pk(ac);if(!peaks.length){self.postMessage({id,bpm:null,confidence:0,candidates:[],beatPhaseFrac:0,beatPeriodSec:null,beatPhaseSec:0});return;}
+  // Parabolic interpolation around the autocorrelation peak for sub-integer lag
+  // precision. Fit y = a*(x-x₀)² + b through (idx-1, idx, idx+1) and take x₀.
+  // Closed-form: x₀ = idx + (yL - yR) / (2 * (yL - 2·yC + yR)), bounded to ±0.5.
+  // This nudges BPM estimation below the 1.3-BPM gap between integer lags.
+  const top=peaks[0];
+  let frac=0;
+  if(top.idx>=1 && top.idx<ac.length-1){
+    const yL=ac[top.idx-1], yC=ac[top.idx], yR=ac[top.idx+1];
+    const denom=yL-2*yC+yR;
+    if(denom<0){ // must be concave-down at a true peak
+      frac=(yL-yR)/(2*denom);
+      if(frac>0.5)frac=0.5; else if(frac<-0.5)frac=-0.5;
+    }
+  }
+  const lag=top.idx+ml+frac;const raw=(60/lag)*ar;
   const bpm=rv(raw,100,175);
   const mxA=Math.max(...ac),mnA=Math.min(...ac),rng=mxA-mnA||1;
   const conf=Math.min(100,Math.round(((top.val-mnA)/rng)*100));
@@ -118,37 +242,132 @@ self.onmessage=function(e){
   dpBeats.reverse(); // now oldest→newest
 
   // ── KICK-FOCUSED onset for bar downbeat detection ────────────────────────────
-  // Use 40-120Hz (kick fundamental) to identify which DP beats are bar downbeats.
-  // Kick is strongest on beat 1 of every bar — so whichever of 4 consecutive DP beats
-  // accumulates the most kick energy across the track = the bar downbeat phase.
-  const fK=bp(mono,sr,40,120);for(let i=0;i<fK.length;i++)fK[i]=fK[i]>0?fK[i]:0;
+  // Two bands: kick fundamental (40-60 Hz) and punch/snare (100-200 Hz). The
+  // biquad's 12 dB/oct rolloff isn't sharp enough to fully reject snare sub-thump
+  // from the kick band alone, so we compute BOTH and score beats by their
+  // kick-EXCLUSIVE onset = max(0, onK - onP). Real kicks have high onK and low
+  // onP; snares/claps have both. This differentiates backbeats from kicks even
+  // when the snare has significant sub content, which otherwise anchored
+  // "downbeat" markers to the snare on Sunday-Sunrise-style tracks.
+  const fK=bp(mono,sr,40,60);for(let i=0;i<fK.length;i++)fK[i]=fK[i]>0?fK[i]:0;
   const envK=new Float32Array(nf);for(let i=0;i<nf;i++){let s=0;const st=i*hop,en=Math.min(st+hop,len);for(let j=st;j<en;j++)s+=fK[j]*fK[j];envK[i]=Math.sqrt(s/(en-st));}
   const onK=new Float32Array(nf);for(let i=1;i<nf;i++){const d=envK[i]-envK[i-1];onK[i]=d>0?d:0;}
   const mnK=onK.reduce((s,v)=>s+v,0)/nf;const sdK=Math.sqrt(onK.reduce((s,v)=>s+(v-mnK)**2,0)/nf)||1;
   for(let i=0;i<nf;i++)onK[i]=(onK[i]-mnK)/sdK;
+  const fP=bp(mono,sr,100,200);for(let i=0;i<fP.length;i++)fP[i]=fP[i]>0?fP[i]:0;
+  const envP=new Float32Array(nf);for(let i=0;i<nf;i++){let s=0;const st=i*hop,en=Math.min(st+hop,len);for(let j=st;j<en;j++)s+=fP[j]*fP[j];envP[i]=Math.sqrt(s/(en-st));}
+  const onP=new Float32Array(nf);for(let i=1;i<nf;i++){const d=envP[i]-envP[i-1];onP[i]=d>0?d:0;}
+  const mnP=onP.reduce((s,v)=>s+v,0)/nf;const sdP=Math.sqrt(onP.reduce((s,v)=>s+(v-mnP)**2,0)/nf)||1;
+  for(let i=0;i<nf;i++)onP[i]=(onP[i]-mnP)/sdP;
 
-  // Find the first AUDIBLE beat (skip silence intro)
-  let onMx=0;for(let i=0;i<nf;i++)if(on[i]>onMx)onMx=on[i];
-  const onTh=onMx*0.25;
-  let firstBeatDpIdx=0;
-  for(let i=0;i<dpBeats.length;i++){if(Math.max(0,on[dpBeats[i]])>onTh){firstBeatDpIdx=i;break;}}
+  // Find the first KICK-audible beat. Using onK (40-60 Hz kick band) instead of
+  // on (broadband) prevents latching onto pad/arpeggio onsets during ambient
+  // intros. Onset peaks are narrow (1-2 frames wide) and DP beat positions are
+  // approximate — reading onK at a single frame often misses a real kick. A ±3
+  // frame (±15 ms) windowed max around each DP beat gives a robust kick-presence
+  // measure. Threshold 0.30 of peak kick onset ensures we wait for a real kick.
+  // Two windowed readouts around each DP beat frame (±3 frames = ±15 ms, robust
+  // to small DP placement offsets from the true onset peak):
+  //   onKAt  — raw kick-band onset, used for first-beat detection (threshold
+  //            scaled to onK peak, so we need the same feature here).
+  //   kickExAt — kick-EXCLUSIVE onset = max(0, onK - onP). Rewards beats whose
+  //            40-60 Hz attack isn't matched by a 100-200 Hz punch, which is
+  //            how kicks look and how snares/claps DON'T. Used only for phase
+  //            scoring, where we need to distinguish kicks from backbeats.
+  const onKAt=(frame)=>{
+    const s=frame-3<0?0:frame-3, e=frame+3>=nf?nf-1:frame+3;
+    let mx=0; for(let j=s;j<=e;j++) if(onK[j]>mx) mx=onK[j];
+    return mx;
+  };
+  const kickExAt=(frame)=>{
+    const s=frame-3<0?0:frame-3, e=frame+3>=nf?nf-1:frame+3;
+    let mK=0,mP=0;
+    for(let j=s;j<=e;j++){ if(onK[j]>mK) mK=onK[j]; if(onP[j]>mP) mP=onP[j]; }
+    return mK-mP>0?mK-mP:0;
+  };
+  let onKMx=0;for(let i=0;i<nf;i++)if(onK[i]>onKMx)onKMx=onK[i];
+  const onKTh=onKMx*0.3;
+  let firstBeatDpIdx=-1;
+  for(let i=0;i<dpBeats.length;i++){if(onKAt(dpBeats[i])>onKTh){firstBeatDpIdx=i;break;}}
+  // Fallback for tracks with no distinct kicks (pure ambient, drumless).
+  if(firstBeatDpIdx<0){
+    let onMx=0;for(let i=0;i<nf;i++)if(on[i]>onMx)onMx=on[i];
+    const onTh=onMx*0.25;
+    firstBeatDpIdx=0;
+    for(let i=0;i<dpBeats.length;i++){if(Math.max(0,on[dpBeats[i]])>onTh){firstBeatDpIdx=i;break;}}
+  }
 
   // Determine BAR PHASE: which of 4 beats is the bar downbeat (beat 1)?
   // Score each of 4 phase offsets (0,1,2,3) against kick onset across all dpBeats.
   // The offset with the highest cumulative kick strength = bar downbeat phase.
+  // Phase scoring: kick-exclusive onset (onK minus onP) per beat. A kick has
+  // strong 40-60 Hz attack with little 100-200 Hz content → high score. A
+  // snare/clap has 40-60 Hz BLEED plus strong 100-200 Hz punch → subtraction
+  // zeros most of it. So the "bar 1 is the kick" hypothesis wins robustly even
+  // when the snare's sub-bleed is large enough to beat a raw kick-band reading.
+  //
+  // Scoring across ALL dpBeats (from index 0), NOT from firstBeatDpIdx. This
+  // way bestPh is DIRECTLY the DP-index-mod-4 of bar-1 positions, so anchoring
+  // on dpBeats[bestPh] gives the earliest bar-1 in the sequence. Previously
+  // we offset from firstBeatDpIdx, which shifted the anchor by (firstBeatDpIdx
+  // mod 4) beats — landing the red marker on kick #3 instead of kick #1 on
+  // tracks like Sunday Sunrise.
   const phSc=[0,0,0,0];
-  for(let i=firstBeatDpIdx;i<dpBeats.length;i++){
-    phSc[(i-firstBeatDpIdx)%4]+=Math.max(0,onK[dpBeats[i]]);
+  for(let i=0;i<dpBeats.length;i++){
+    phSc[i%4]+=kickExAt(dpBeats[i]);
   }
   let bestPh=0,bestPhSc=-1;
   for(let k=0;k<4;k++){if(phSc[k]>bestPhSc){bestPhSc=phSc[k];bestPh=k;}}
+  // Ambiguity guard: if phase scores are near-tied (spread < 25% of peak),
+  // the scoring isn't reliably picking bar-1 — typical of tracks with even
+  // 4-on-the-floor kicks where every beat carries roughly the same kick
+  // energy. Observed on Sunday Sunrise: scores [66.4, 65.3, 70.9, 61.0],
+  // bucket 2 wins by a 7% margin and anchors on kick #3 instead of kick #1.
+  // Fall back to phase 0 so the anchor lands on the earliest DP beat. Only
+  // keep the detected phase when one bucket dominates cleanly — that's where
+  // bar-phase info is actually trustworthy.
+  const phMax=Math.max(phSc[0],phSc[1],phSc[2],phSc[3]);
+  const phMin=Math.min(phSc[0],phSc[1],phSc[2],phSc[3]);
+  if(phMax>0 && (phMax-phMin)/phMax < 0.25) bestPh=0;
+  // Diagnostic — remove once Issue 1 is closed.
+  console.log('[phase] phSc:',phSc.map(x=>x.toFixed(2)),'bestPh:',bestPh,
+    'firstBeatDpIdx:',firstBeatDpIdx,
+    'dpBeats.length:',dpBeats.length,
+    'dpBeats[0..3] secs:',[dpBeats[0],dpBeats[1],dpBeats[2],dpBeats[3]].map(f=>f==null?'-':(f/ar).toFixed(4)));
 
-  // First bar downbeat = firstBeatDpIdx + bestPh in dpBeats
-  // beatPhaseFrac: position of first BAR DOWNBEAT in beats from track start.
-  // This ensures bi=0 in AnimatedZoomedWF lands on a real bar-1 kick.
-  const barDownbeatFrame=dpBeats[Math.min(dpBeats.length-1,firstBeatDpIdx+bestPh)]||0;
-  const beatPhaseFrac=adjLag>0?barDownbeatFrame/adjLag:0;
-  self.postMessage({id,bpm,confidence:conf,candidates:cands,beatPhaseFrac});
+  // Precise beat period from DP-tracked beats — mean interval across all detected beats.
+  // Avoids the rounding drift that comes from using bpm (rv rounds to 0.1 BPM).
+  // Over a 5-min track this is accurate to under 0.1ms per beat vs ~100ms+ from rounded bpm.
+  // Computed BEFORE the bar-1 anchor so we can extrapolate the anchor backward by bars.
+  const beatPeriodSec=dpBeats.length>=2
+    ?(dpBeats[dpBeats.length-1]-dpBeats[0])/(dpBeats.length-1)/ar
+    :(60/bChk);
+
+  // First bar-1 downbeat anchor. Strategy: the kick-exclusive phase scoring
+  // locks which of every 4 DP beats is bar-1. Then we walk BACKWARD through
+  // the bar grid in whole-bar jumps, past the first detected DP beat, until
+  // we hit the earliest bar-1 position still inside the track (frame ≥ 0).
+  //
+  // This matters because the DP tracker can miss the first 1-2 kicks entirely
+  // on tracks with soft intros (Anjunadeep-style buildups) — dpBeats[0] is
+  // already a few beats into the track, so we can't rely on DP to place the
+  // anchor in the intro. But we don't need DP once the period and phase are
+  // locked: we can extrapolate bar positions back indefinitely using
+  // beatPeriodSec × ar × 4 frames per bar.
+  // bestPh is already the bar-1 phase in dpBeats-index-mod-4 terms (scoring
+  // ran from i=0, so no firstBeatDpIdx offset needed).
+  const earliestDpIdx=Math.min(bestPh,dpBeats.length-1);
+  const barFrames=beatPeriodSec*ar*4;
+  let barDownbeatFrame=dpBeats[earliestDpIdx]||0;
+  while(barDownbeatFrame-barFrames>=0) barDownbeatFrame-=barFrames;
+
+  // beatPhaseFrac is the anchor's beat-index from track start. Using beatPeriodSec
+  // keeps firstDownbeatSec = beatPhaseFrac × beatPeriodSec = barDownbeatFrame/ar
+  // exactly, which is what the grid draw loop needs.
+  const beatPhaseFrac=beatPeriodSec>0?(barDownbeatFrame/ar)/beatPeriodSec:0;
+  // Full-sample-rate phase detection via dphase (used by AnimatedZoomedWF)
+  const dphaseResult=bpm?dphase(mono,sr,bpm):{beatPhaseSec:0};
+  self.postMessage({id,bpm,confidence:conf,candidates:cands,beatPhaseFrac,beatPeriodSec,beatPhaseSec:dphaseResult.beatPhaseSec});
 };`;
 
 function createBPMWorker() {
@@ -161,11 +380,11 @@ function useBPM() {
   useEffect(() => {
     worker.current = createBPMWorker();
     worker.current.onmessage = (e) => {
-      const { id, bpm, confidence, candidates, beatPhaseFrac, error, _debug } = e.data;
+      const { id, bpm, confidence, candidates, beatPhaseFrac, beatPeriodSec, beatPhaseSec, error, _debug } = e.data;
       if (id === '__err') { console.error('[BPM Worker global error]', e.data.error); return; }
       if (error) console.error('[BPM Worker caught error]', error);
-      console.log('[BPM result] id='+id+' bpm='+bpm+' bpf='+beatPhaseFrac+' debug='+JSON.stringify(_debug));
-      setResults(prev => ({ ...prev, [id]: { bpm, confidence, candidates, beatPhaseFrac: beatPhaseFrac||0, analyzing: false } }));
+      console.log('[BPM result] id='+id+' bpm='+bpm+' bpf='+beatPhaseFrac+' bps='+beatPeriodSec+' bphs='+beatPhaseSec+' debug='+JSON.stringify(_debug));
+      setResults(prev => ({ ...prev, [id]: { bpm, confidence, candidates, beatPhaseFrac: beatPhaseFrac||0, beatPeriodSec: beatPeriodSec||null, beatPhaseSec: beatPhaseSec??null, analyzing: false } }));
     };
     worker.current.onerror = (e) => { console.error('[BPM Worker onerror]', e.message, e.lineno); };
     return () => worker.current?.terminate();
@@ -302,7 +521,7 @@ self.onmessage=function(e){
 function createLibWorker(){return new Worker(URL.createObjectURL(new Blob([LIB_WORKER],{type:"application/javascript"})));}
 
 // ── Energy color map ──────────────────────────────────────────
-const ENERGY_COLOR={"Ambient":"#4A90D9","Warm-Up":"#22c55e","Build":"#f59e0b","Peak Hour":"#ff6b35","Hard":"#ef4444"};
+const ENERGY_COLOR={"Ambient":"#4A90D9","Warm-Up":"#22C55E","Build":"#F59E0B","Peak Hour":"#FF6B35","Hard":"#EF4444"};
 
 // ── Shared IndexedDB helpers (cm_music_library — same DB as standalone library app) ──
 const CM_DB_NAME="cm_music_library", CM_DB_VER=4;
@@ -680,6 +899,36 @@ function useLibrary(){
     }catch{return null;}
   },[]);
 
+  // Re-scan ID3 APIC artwork for every track currently missing an artwork blob.
+  // Reads the first 1MB of the source file, parses ID3v2, pulls the APIC frame
+  // as a base64 data URL, and persists it back to the IDB track record.
+  const scanArtwork=useCallback(async()=>{
+    setAnalyzing(true);
+    const toProcess=(library||[]).filter(t=>!t.artwork);
+    for(const track of toProcess){
+      let file=null;
+      try{file=await getFile(track.id);}catch{}
+      if(!file)continue;
+      try{
+        const sl=file.slice(0,1048576);
+        const tags=parseID3(await sl.arrayBuffer());
+        if(tags.artwork){
+          artworkCache.current[track.id]=tags.artwork;
+          try{
+            const existing=await cmDbGet("tracks",track.id);
+            if(existing){
+              await cmDbPut("tracks",{...existing,artwork:tags.artwork});
+              setLibrary(prev=>prev.map(t=>t.id===track.id?{...t,artwork:tags.artwork}:t));
+            }
+          }catch{}
+        }else{
+          artworkCache.current[track.id]=false;
+        }
+      }catch{}
+    }
+    setTimeout(()=>setAnalyzing(false),300);
+  },[library,getFile]);
+
   const clear=()=>{setLibrary([]);fileMap.current={};opfsClear();};
 
   const reload=useCallback(async()=>{
@@ -699,13 +948,13 @@ function useLibrary(){
     }catch{}
   },[]);
 
-  return{library,queue,crates,importing,importFiles,importFromPicker,getFile,clear,reload,setLibrary,fileMap,analyzing,analyzeAll,extractArtworkForTrack,artworkCache,reconnectFromFolder};
+  return{library,queue,crates,importing,importFiles,importFromPicker,getFile,clear,reload,setLibrary,fileMap,analyzing,analyzeAll,extractArtworkForTrack,artworkCache,reconnectFromFolder,scanArtwork};
 }
 
 // ── Library Panel UI ──────────────────────────────────────────
 
 // Avatar colour-hash for artwork placeholder
-const SES_AVATAR_COLORS=[["#8B5CF6","#6D28D9"],["#C8A96E","#A07840"],["#00d4ff","#0099bb"],["#22c55e","#16a34a"],["#f59e0b","#d97706"],["#ef4444","#dc2626"],["#ec4899","#db2777"],["#14b8a6","#0d9488"]];
+const SES_AVATAR_COLORS=[["#8B5CF6","#6D28D9"],["#C8A96E","#A07840"],["#C8A96E","#0099bb"],["#22c55e","#16a34a"],["#f59e0b","#d97706"],["#ef4444","#dc2626"],["#ec4899","#db2777"],["#14b8a6","#0d9488"]];
 function sesAvatarColor(str=""){let h=0;for(let i=0;i<str.length;i++)h=(h<<5)-h+str.charCodeAt(i);return SES_AVATAR_COLORS[Math.abs(h)%SES_AVATAR_COLORS.length];}
 
 function TrackRow({track, onLoadA, onLoadB, isRec, reasons, canLoad, previewTrackId, onPreview, onDelete, onRemoveFromPlaylist, onDragStart, extractArtwork}){
@@ -771,8 +1020,8 @@ function TrackRow({track, onLoadA, onLoadB, isRec, reasons, canLoad, previewTrac
         <div onMouseDown={e=>e.stopPropagation()} style={{position:"fixed",left:ctxMenu.x,top:ctxMenu.y,zIndex:9999,background:"#111118",border:"1px solid #252535",borderRadius:8,padding:"4px 0",minWidth:160,boxShadow:"0 12px 32px rgba(0,0,0,.9)"}}>
           <div style={{padding:"2px 14px 6px",fontSize:7,fontFamily:"'DM Mono',monospace",color:"#555562",letterSpacing:1.2}}>{track.title?.substring(0,24)||track.filename}</div>
           <div style={{height:1,background:"#1e1e28",margin:"0 0 4px"}}/>
-          {onLoadA&&<div onClick={()=>{onLoadA(track);setCtxMenu(null);}} style={{padding:"7px 14px",fontSize:10,fontFamily:"'DM Sans',sans-serif",color:"#00d4ff",cursor:"pointer",background:"transparent"}} onMouseEnter={e=>e.currentTarget.style.background="#00d4ff0e"} onMouseLeave={e=>e.currentTarget.style.background="transparent"}>▶ Load to Deck A</div>}
-          {onLoadB&&<div onClick={()=>{onLoadB(track);setCtxMenu(null);}} style={{padding:"7px 14px",fontSize:10,fontFamily:"'DM Sans',sans-serif",color:"#ff6b35",cursor:"pointer",background:"transparent"}} onMouseEnter={e=>e.currentTarget.style.background="#ff6b350e"} onMouseLeave={e=>e.currentTarget.style.background="transparent"}>▶ Load to Deck B</div>}
+          {onLoadA&&<div onClick={()=>{onLoadA(track);setCtxMenu(null);}} style={{padding:"7px 14px",fontSize:10,fontFamily:"'DM Sans',sans-serif",color:"#7B61FF",cursor:"pointer",background:"transparent"}} onMouseEnter={e=>e.currentTarget.style.background="#7B61FF0e"} onMouseLeave={e=>e.currentTarget.style.background="transparent"}>▶ Load to Deck A</div>}
+          {onLoadB&&<div onClick={()=>{onLoadB(track);setCtxMenu(null);}} style={{padding:"7px 14px",fontSize:10,fontFamily:"'DM Sans',sans-serif",color:"#00BFA5",cursor:"pointer",background:"transparent"}} onMouseEnter={e=>e.currentTarget.style.background="#00BFA50e"} onMouseLeave={e=>e.currentTarget.style.background="transparent"}>▶ Load to Deck B</div>}
           {onPreview&&<div onClick={()=>{onPreview(track);setCtxMenu(null);}} style={{padding:"7px 14px",fontSize:10,fontFamily:"'DM Sans',sans-serif",color:"#888898",cursor:"pointer",background:"transparent"}} onMouseEnter={e=>e.currentTarget.style.background="#18182299"} onMouseLeave={e=>e.currentTarget.style.background="transparent"}>{isPreviewing?"⏸ Stop Preview":"▶ Preview"}</div>}
           <div style={{height:1,background:"#1e1e28",margin:"4px 0"}}/>
           {onRemoveFromPlaylist&&<div onClick={()=>{onRemoveFromPlaylist(track.id);setCtxMenu(null);}} style={{padding:"7px 14px",fontSize:10,fontFamily:"'DM Sans',sans-serif",color:"#C8A96E",cursor:"pointer",background:"transparent"}} onMouseEnter={e=>e.currentTarget.style.background="#C8A96E10"} onMouseLeave={e=>e.currentTarget.style.background="transparent"}>↩ Remove from Playlist</div>}
@@ -788,7 +1037,7 @@ function TrackRow({track, onLoadA, onLoadB, isRec, reasons, canLoad, previewTrac
             <div style={{fontSize:8,color:"#555562",fontFamily:"'DM Mono',monospace",padding:"2px 8px 6px",letterSpacing:1.2}}>LOAD TO DECK</div>
             <div style={{display:"flex",gap:4,padding:"0 4px"}}>
               {onLoadA&&<button onClick={e=>{e.stopPropagation();onLoadA(track);setShowDeckMenu(false);}} style={{flex:1,padding:"7px 4px",background:`${G}18`,border:`1px solid ${G}44`,color:G,borderRadius:7,cursor:"pointer",fontFamily:"'DM Mono',monospace",fontSize:11,fontWeight:700}}>▶ A</button>}
-              {onLoadB&&<button onClick={e=>{e.stopPropagation();onLoadB(track);setShowDeckMenu(false);}} style={{flex:1,padding:"7px 4px",background:"#00d4ff18",border:"1px solid #00d4ff44",color:"#00d4ff",borderRadius:7,cursor:"pointer",fontFamily:"'DM Mono',monospace",fontSize:11,fontWeight:700}}>▶ B</button>}
+              {onLoadB&&<button onClick={e=>{e.stopPropagation();onLoadB(track);setShowDeckMenu(false);}} style={{flex:1,padding:"7px 4px",background:"#C8A96E18",border:"1px solid #C8A96E44",color:"#C8A96E",borderRadius:7,cursor:"pointer",fontFamily:"'DM Mono',monospace",fontSize:11,fontWeight:700}}>▶ B</button>}
             </div>
           </div>
         )}
@@ -796,7 +1045,7 @@ function TrackRow({track, onLoadA, onLoadB, isRec, reasons, canLoad, previewTrac
 
       {/* Artwork — click to preview */}
       <div onClick={e=>{e.stopPropagation();if(onPreview)onPreview(track);}} title={isPreviewing?"Stop preview":"Preview"}
-        style={{width:32,height:32,borderRadius:5,flexShrink:0,background:(artworkSrc||track.artwork)?`#000`:`linear-gradient(135deg,${ac},${ac2})`,display:"flex",alignItems:"center",justifyContent:"center",fontSize:12,fontWeight:700,color:"#fff",fontFamily:"'DM Sans',sans-serif",userSelect:"none",position:"relative",overflow:"hidden",cursor:"pointer",outline:isPreviewing?`2px solid ${G}`:"none",transition:"outline .1s"}}>
+        style={{width:36,height:36,borderRadius:4,flexShrink:0,background:(artworkSrc||track.artwork)?"#000":"#13122A",display:"flex",alignItems:"center",justifyContent:"center",fontSize:14,fontWeight:700,color:eColor,fontFamily:"'DM Sans',sans-serif",userSelect:"none",position:"relative",overflow:"hidden",cursor:"pointer",outline:isPreviewing?`2px solid ${G}`:"none",transition:"outline .1s"}}>
         {(artworkSrc||track.artwork)?<img src={artworkSrc||track.artwork} alt="" style={{width:"100%",height:"100%",objectFit:"cover",position:"absolute",inset:0}}/>:<span style={{position:"relative",zIndex:1}}>{initial}</span>}
         {isPreviewing&&<div style={{position:"absolute",inset:0,background:"rgba(0,0,0,.6)",display:"flex",alignItems:"center",justifyContent:"center",zIndex:2}}><span style={{fontSize:11}}>⏸</span></div>}
         {!isPreviewing&&hov&&<div style={{position:"absolute",inset:0,background:"rgba(0,0,0,.45)",display:"flex",alignItems:"center",justifyContent:"center",zIndex:2}}><span style={{fontSize:10,color:"#fff"}}>▶</span></div>}
@@ -816,29 +1065,24 @@ function TrackRow({track, onLoadA, onLoadB, isRec, reasons, canLoad, previewTrac
         {reasons?.length>0&&(<div style={{display:"flex",gap:3,marginTop:2}}>{reasons.map(r=><span key={r} style={{fontSize:7,fontFamily:"'DM Mono',monospace",color:"#22c55e",background:"#22c55e11",borderRadius:2,padding:"0 4px",letterSpacing:.5}}>{r}</span>)}</div>)}
       </div>
 
-      {/* BPM */}
-      <div style={{textAlign:"right"}}>
-        <div style={{fontSize:11,fontFamily:"'DM Mono',monospace",color:track.bpm?G:"#2a2a3a",fontWeight:500}}>{track.bpm?track.bpm.toFixed(1):"--"}</div>
-        <div style={{fontSize:7,color:"#555562",fontFamily:"'DM Mono',monospace",letterSpacing:1}}>BPM</div>
-      </div>
+      {/* BPM — single number, no label */}
+      <div style={{textAlign:"right",fontSize:12,fontFamily:"'DM Mono',monospace",color:track.bpm?"#C8A96E":"#2a2a3a",fontWeight:500}}>{track.bpm?track.bpm.toFixed(1):"--"}</div>
 
-      {/* Key */}
+      {/* Key — rounded pill, gold for major, violet for minor, white text */}
       <div style={{textAlign:"center"}}>
-        {camelot?(<><div style={{fontSize:9,fontFamily:"'DM Mono',monospace",color:keyColor,background:keyColor+"18",borderRadius:3,padding:"1px 4px",display:"inline-block"}}>{camelot}</div><div style={{fontSize:7,color:"#555562",fontFamily:"'DM Mono',monospace",marginTop:1}}>{track.key}</div></>):<div style={{fontSize:9,color:"#555562",fontFamily:"'DM Mono',monospace"}}>--</div>}
+        {camelot?<span style={{fontSize:9,fontFamily:"'DM Mono',monospace",color:"#ffffff",background:isMinor?"#7B61FF":"#C8A96E",borderRadius:4,padding:"2px 6px",display:"inline-block",letterSpacing:.3,fontWeight:500}}>{camelot}</span>:<span style={{fontSize:11,color:"#555562",fontFamily:"'DM Mono',monospace"}}>--</span>}
       </div>
 
-      {/* Energy */}
-      <div>
-        {track.energy?(<><div style={{height:3,background:"#0c0c18",borderRadius:2,marginBottom:3,overflow:"hidden"}}><div style={{height:"100%",width:`${track.energy.score}%`,background:eColor,borderRadius:2}}/></div><div style={{fontSize:7,fontFamily:"'DM Mono',monospace",color:eColor,letterSpacing:.5,whiteSpace:"nowrap"}}>{track.energy.label}</div></>):<div style={{fontSize:8,color:"#555562",fontFamily:"'DM Mono',monospace"}}>--</div>}
-      </div>
+      {/* Energy — colored text label, no bar */}
+      <div style={{fontSize:11,fontFamily:"'DM Mono',monospace",color:track.energy?eColor:"#555562",letterSpacing:.3,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{track.energy?track.energy.label:"--"}</div>
 
       {/* Duration */}
-      <div style={{fontSize:9,fontFamily:"'DM Mono',monospace",color:"#888898",textAlign:"right"}}>{fmt(track.duration)}</div>
+      <div style={{fontSize:11,fontFamily:"'DM Mono',monospace",color:"#888898",textAlign:"right"}}>{fmt(track.duration)}</div>
 
       {/* A / B load buttons */}
       <div style={{display:"flex",gap:3,opacity:hov&&canLoad?1:0,transition:"opacity .1s"}}>
         {onLoadA&&<button onClick={e=>{e.stopPropagation();onLoadA(track);}} style={{padding:"2px 8px",fontSize:9,fontFamily:"'DM Mono',monospace",background:`${G}12`,border:`1px solid ${G}2a`,color:G,borderRadius:4,cursor:"pointer",letterSpacing:.5}}>A</button>}
-        {onLoadB&&<button onClick={e=>{e.stopPropagation();onLoadB(track);}} style={{padding:"2px 8px",fontSize:9,fontFamily:"'DM Mono',monospace",background:"#00d4ff12",border:"1px solid #00d4ff2a",color:"#00d4ff",borderRadius:4,cursor:"pointer",letterSpacing:.5}}>B</button>}
+        {onLoadB&&<button onClick={e=>{e.stopPropagation();onLoadB(track);}} style={{padding:"2px 8px",fontSize:9,fontFamily:"'DM Mono',monospace",background:"#C8A96E12",border:"1px solid #C8A96E2a",color:"#C8A96E",borderRadius:4,cursor:"pointer",letterSpacing:.5}}>B</button>}
       </div>
     </div>
   );
@@ -977,7 +1221,7 @@ function LibraryPanel({lib, onLoad, playingTrack, previewTrackId, onPreview, onD
                   ?<span style={{color:"#555562",fontStyle:"italic",fontSize:8}}>— {m.msg} —</span>
                   :<>
                     <div style={{display:"flex",gap:4,alignItems:"baseline"}}>
-                      <span style={{color:m.self||m.from===me?"#00d4ff":"#ff6b35",fontWeight:500,fontSize:9}}>{m.from}</span>
+                      <span style={{color:m.self||m.from===me?"#C8A96E":"#00BFA5",fontWeight:500,fontSize:9}}>{m.from}</span>
                       <span style={{color:"#555562",fontSize:7}}>{m.time}</span>
                     </div>
                     <div style={{color:"#c0c0cc",marginTop:1,wordBreak:"break-word",lineHeight:1.4,fontSize:9}}>{m.msg}</div>
@@ -1007,6 +1251,8 @@ function LibraryPanel({lib, onLoad, playingTrack, previewTrackId, onPreview, onD
               <path d="M5.5 8L7.5 10L10.5 6.5" stroke="#C8A96E" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
             </svg>
           </button>
+          {/* SCAN ARTWORK — re-reads ID3 APIC for tracks missing artwork */}
+          <button title="Re-scan ID3 artwork for tracks missing cover art" disabled={lib.analyzing} onClick={()=>lib.scanArtwork?.()} style={{background:"transparent",border:"1px solid #C8A96E44",color:"#C8A96E",fontFamily:"'DM Mono',monospace",fontSize:8,letterSpacing:1,padding:"3px 6px",borderRadius:4,cursor:lib.analyzing?"default":"pointer",opacity:lib.analyzing?0.4:1,transition:"opacity 0.2s, border-color 0.2s"}} onMouseEnter={e=>{if(!lib.analyzing)e.currentTarget.style.borderColor="#C8A96E";}} onMouseLeave={e=>{e.currentTarget.style.borderColor="#C8A96E44";}}>SCAN ARTWORK</button>
           <button title={lib.analyzing?"Analyzing...":"Analyze library"} onClick={()=>lib.analyzeAll?.(lib.getFile)} style={{background:"none",border:"none",cursor:"pointer",padding:"2px 3px",borderRadius:4,opacity:lib.analyzing?0.5:1,transition:"opacity 0.2s",display:"flex",alignItems:"center"}}>
             <svg width="18" height="14" viewBox="0 0 18 14" fill="none" xmlns="http://www.w3.org/2000/svg">
               <rect x="0"  y="5"  width="2" height="4" rx="1" fill={lib.analyzing?"#C8A96E":"#888898"}/>
@@ -1380,7 +1626,7 @@ function LibraryPanel({lib, onLoad, playingTrack, previewTrackId, onPreview, onD
                 {/* load buttons */}
                 <div style={{display:"flex",gap:3,marginTop:5}}>
                   <button onClick={()=>onLoad(track,"A")} style={{flex:1,padding:"3px 0",fontSize:8,fontFamily:"'DM Mono',monospace",background:`${G}12`,border:`1px solid ${G}2a`,color:G,borderRadius:3,cursor:"pointer"}}>→ A</button>
-                  <button onClick={()=>onLoad(track,"B")} style={{flex:1,padding:"3px 0",fontSize:8,fontFamily:"'DM Mono',monospace",background:"#00d4ff10",border:"1px solid #00d4ff28",color:"#00d4ff",borderRadius:3,cursor:"pointer"}}>→ B</button>
+                  <button onClick={()=>onLoad(track,"B")} style={{flex:1,padding:"3px 0",fontSize:8,fontFamily:"'DM Mono',monospace",background:"#C8A96E10",border:"1px solid #C8A96E28",color:"#C8A96E",borderRadius:3,cursor:"pointer"}}>→ B</button>
                 </div>
               </div>
             );
@@ -1439,11 +1685,11 @@ function LibraryPanel({lib, onLoad, playingTrack, previewTrackId, onPreview, onD
                   <div style={{fontSize:9,fontFamily:"'DM Mono',monospace",color:G,letterSpacing:.5,marginBottom:4}}>HOW TO EXPORT FROM REKORDBOX</div>
                   {["1. Open Rekordbox on your computer","2. Go to File → Export Collection in xml format","3. Choose a save location and click Export","4. Click the button below to select the exported XML"].map((s,i)=>(
                     <div key={i} style={{fontSize:9,fontFamily:"'DM Sans',sans-serif",color:"#888898",display:"flex",gap:8,alignItems:"flex-start"}}>
-                      <span style={{color:"#ff6b35",fontFamily:"'DM Mono',monospace",fontSize:8,flexShrink:0,marginTop:1}}>{i+1}.</span>{s.slice(3)}
+                      <span style={{color:"#00BFA5",fontFamily:"'DM Mono',monospace",fontSize:8,flexShrink:0,marginTop:1}}>{i+1}.</span>{s.slice(3)}
                     </div>
                   ))}
                 </div>
-                <button onClick={()=>rekordboxRef.current?.click()} style={{padding:"10px",fontSize:10,fontFamily:"'DM Mono',monospace",background:"#ff6b3518",border:"1px solid #ff6b3544",color:"#ff6b35",borderRadius:7,cursor:"pointer",letterSpacing:.5}}>SELECT REKORDBOX XML FILE</button>
+                <button onClick={()=>rekordboxRef.current?.click()} style={{padding:"10px",fontSize:10,fontFamily:"'DM Mono',monospace",background:"#00BFA518",border:"1px solid #00BFA544",color:"#00BFA5",borderRadius:7,cursor:"pointer",letterSpacing:.5}}>SELECT REKORDBOX XML FILE</button>
               </div>
             )}
           </div>
@@ -1654,17 +1900,20 @@ function WF({ bands, peaks, freq, prog, onSeek, h=80, hotCues=[], loopStart=null
       // Overview: solid energy envelope — 2px bars, 1px gap → 3px step
       const BAR=2, GAP=1, STEP=BAR+GAP;
       for(let x=0;x<W;x+=STEP){
-        // Average samples across this bar's range for smoother overview
+        // Peak-hold per band across this bar's range so transients stay sharp.
         const i0=Math.floor(x*len/W), i1=Math.min(len-1,Math.floor((x+STEP)*len/W));
-        let bv=0,mv=0,hv=0,cnt=0;
-        for(let k=i0;k<=i1;k++){bv+=bArr[k]||0;mv+=mArr?mArr[k]||0:0;hv+=hArr?hArr[k]||0:0;cnt++;}
-        if(cnt>0){bv/=cnt;mv/=cnt;hv/=cnt;}
+        let bv=0,mv=0,hv=0;
+        for(let k=i0;k<=i1;k++){
+          const bk=bArr[k]||0; if(bk>bv)bv=bk;
+          const mk=mArr?mArr[k]||0:0; if(mk>mv)mv=mk;
+          const hk=hArr?hArr[k]||0:0; if(hk>hv)hv=hk;
+        }
 
         // Gamma correction for punch: quiet parts visible, loud parts dominant
         const amp=Math.pow(bv*0.55+mv*0.32+hv*0.13, 0.38);
         const totalH=Math.max(1.5, amp*(H-2));
 
-        const bw=bv*2.2, mw=mv*1.3, hw=hv*0.7;
+        const bw=bv*2.2, mw=mv*1.3, hw=hv*1.2;
         const sum=bw+mw+hw||1;
         const bH=Math.max(0,(bw/sum)*totalH);
         const mH=Math.max(0,(mw/sum)*totalH);
@@ -1676,59 +1925,12 @@ function WF({ bands, peaks, freq, prog, onSeek, h=80, hotCues=[], loopStart=null
         // Bass (blue)
         ctx.fillStyle=played?'#44aaff':'#1e5599';
         if(bH>0.5)ctx.fillRect(x,base-bH,BAR,bH);
-        // Mid (orange)
-        ctx.fillStyle=played?'#ffbb33':'#a87020';
+        // Mid (brand gold)
+        ctx.fillStyle=played?'#C8A96E':'#8A7548';
         if(mH>0.5)ctx.fillRect(x,base-bH-mH,BAR,mH);
-        // High (white)
-        ctx.fillStyle=played?'rgba(255,255,255,1)':'rgba(200,200,200,0.5)';
+        // High (off-white tips)
+        ctx.fillStyle=played?'#EDE8DF':'#8A857E';
         if(hH>0.5)ctx.fillRect(x,base-bH-mH-hH,BAR,hH);
-      }
-
-      // ── Beat grid overlay (Rekordbox-style, drawn directly on waveform) ──
-      // At overview zoom, individual beats are ~1px apart on a 7-min track — draw BAR markers only.
-      // Beat markers (every beat) appear in the zoomed AnimatedZoomedWF view.
-      if(bpm && dur > 0) {
-        const spb = 60 / bpm;
-        const spBar = spb * 4;  // bar = 4 beats
-        const phFrac = beatPhaseFrac || 0;
-        // phFrac * spb = absolute position of the first bar downbeat in seconds
-        // (beatPhaseFrac from worker now always points to a bar downbeat, not just any beat)
-        // Walk back by whole bars to find the first bar occurrence >= 0
-        const firstBarAbsSec = phFrac * spb;
-        const firstBarAligned = firstBarAbsSec - Math.floor(firstBarAbsSec / spBar) * spBar;
-        let bt = firstBarAligned;
-
-        // Draw beat markers first (dimmer, half height) — only visible if zoom is wide enough
-        const beatPxSpacing = (spb / dur) * W;
-        if(beatPxSpacing >= 3) {  // only draw beats if they're at least 3px apart
-          const firstBeatAligned = (phFrac % 1) * spb;
-          ctx.fillStyle = color;
-          ctx.globalAlpha = 0.18;
-          let btb = firstBeatAligned;
-          while(btb < dur) {
-            const gx = Math.floor((btb / dur) * W);
-            ctx.fillRect(gx, Math.floor(H * 0.3), 1, Math.floor(H * 0.7));
-            btb += spb;
-          }
-        }
-
-        // Draw bar markers (bright, full height, deck-colored) — always visible
-        ctx.fillStyle = color;
-        while(bt < dur) {
-          const gx = Math.floor((bt / dur) * W);
-          ctx.globalAlpha = 0.75;
-          ctx.fillRect(gx, 0, 1, H);
-          // Small downward triangle at top (like Rekordbox)
-          ctx.globalAlpha = 0.9;
-          ctx.beginPath();
-          ctx.moveTo(gx - 3, 0);
-          ctx.lineTo(gx + 4, 0);
-          ctx.lineTo(gx + 0.5, 5);
-          ctx.closePath();
-          ctx.fill();
-          bt += spBar;
-        }
-        ctx.globalAlpha = 1;
       }
 
       // ── Playhead marker ──
@@ -1746,7 +1948,7 @@ function WF({ bands, peaks, freq, prog, onSeek, h=80, hotCues=[], loopStart=null
       }
 
       // ── Hot cue markers ──
-      const CUE_CLR=["#00d4ff","#ef4444","#22c55e","#f59e0b"];
+      const CUE_CLR=["#C8A96E","#ef4444","#22c55e","#f59e0b"];
       hotCues.forEach((cue,ci)=>{
         if(cue===null)return;
         const cx=Math.floor(cue*W);
@@ -1768,72 +1970,49 @@ function WF({ bands, peaks, freq, prog, onSeek, h=80, hotCues=[], loopStart=null
   return <canvas ref={ref} onClick={onClick} style={{width:"100%",height:h,background:"#030306",cursor:onSeek?"crosshair":"default",display:"block"}}/>;
 }
 
-// ── AnimatedZoomedWF — smooth 60fps half-waveform with beat grid ──
-// Performance:
-//   Phase 1 (track load):  Math.pow() runs once per sample → totH/basH/higH Float32Arrays
-//   Phase 2 (every frame): zero pow() — just lerp+multiply+ImageData writes
-//   ResizeObserver watches canvas — RAF loop NEVER reads clientWidth (eliminates reflow stutter)
-function AnimatedZoomedWF({ bands, dur, progRef, onSeek, h=96, windowSec=16, bpm=null, beatPhaseFrac=null, hotCues=[], loopStart=null, loopEnd=null, loopActive=false }) {
+// ── AnimatedZoomedWF — Rekordbox-style zoomed waveform ──
+// Dense per-column rendering mirrored around a horizontal center line. Every
+// display column is drawn independently above and below center. GAMMA > 1
+// crushes quiet content toward zero so transients spike sharply out of a
+// near-silent baseline; FLOOR gates low-level hum entirely so intros/breakdowns
+// render as background instead of a uniform slab.
+//
+// Colors follow Rekordbox: deep blue bass body (drawn on top) with warm gold
+// mid/high envelope showing through above the bass whenever higher-freq
+// content exceeds bass at that instant. No white tips.
+//
+// 60fps RAF. ResizeObserver watches the canvas — the draw loop never reads
+// clientWidth.
+function AnimatedZoomedWF({ bands, dur, progRef, onSeek, h=96, windowSec=8, beatPhaseFrac=null, beatPeriodSec=null, gridOffsetMs=0, bpmNudge=0 }) {
   const ref=useRef(null);
   const raf=useRef(null);
-  const hRef=useRef(null);    // {totH,basH,higH:Float32Array(len), len}
-  const imgRef=useRef(null);  // {buf:ImageData, px, physW, physH}
-  const sizeRef=useRef({physW:0,physH:0,dirty:true}); // set by ResizeObserver, read in RAF
+  const colBufRef=useRef(null); // {bv, mv, hv: Float32Array, len} — per-column MAX scratch
+  const sizeRef=useRef({physW:0,physH:0,dirty:true});
   const durRef=useRef(dur);
-  const bpmRef=useRef(bpm);
-  const beatPhaseFracRef=useRef(beatPhaseFrac); // from 200fps worker analysis — overrides local detection
   const seekRef=useRef(onSeek);
-  const hotCuesRef=useRef(hotCues);
-  const loopRef=useRef({loopStart,loopEnd,loopActive});
+  // bands needs a ref too — the RAF useEffect only depends on [h, windowSec, progRef],
+  // so without this the draw loop closure would hold a stale (initial) bands value
+  // and never pick up new arrays when a track finishes analyzing.
+  const bandsRef=useRef(bands);
+  const beatPhaseFracRef=useRef(beatPhaseFrac);
+  const beatPeriodSecRef=useRef(beatPeriodSec);
+  const gridOffsetMsRef=useRef(gridOffsetMs);
+  const bpmNudgeRef=useRef(bpmNudge);
   useEffect(()=>{durRef.current=dur;},[dur]);
-  useEffect(()=>{bpmRef.current=bpm;},[bpm]);
-  useEffect(()=>{beatPhaseFracRef.current=beatPhaseFrac;},[beatPhaseFrac]);
   useEffect(()=>{seekRef.current=onSeek;},[onSeek]);
-  useEffect(()=>{hotCuesRef.current=hotCues;},[hotCues]);
-  useEffect(()=>{loopRef.current={loopStart,loopEnd,loopActive};},[loopStart,loopEnd,loopActive]);
+  useEffect(()=>{bandsRef.current=bands;},[bands]);
+  useEffect(()=>{beatPhaseFracRef.current=beatPhaseFrac;},[beatPhaseFrac]);
+  useEffect(()=>{beatPeriodSecRef.current=beatPeriodSec;},[beatPeriodSec]);
+  useEffect(()=>{gridOffsetMsRef.current=gridOffsetMs;},[gridOffsetMs]);
+  useEffect(()=>{bpmNudgeRef.current=bpmNudge;},[bpmNudge]);
 
-  // ── Phase 1: precompute normalized heights once per track (all pow() lives here) ──
   useEffect(()=>{
-    if(!bands?.bass?.length||!dur){hRef.current=null;imgRef.current=null;return;}
-    const len=bands.bass.length;
-    const bArr=bands.bass,mArr=bands.mid,hArr=bands.high;
-    const totH=new Float32Array(len);
-    const basH=new Float32Array(len);
-    const higH=new Float32Array(len);
-    for(let x=0;x<len;x++){
-      const bv=bArr[x]||0,mv=mArr[x]||0,hv=hArr[x]||0;
-      // Bass-forward energy → kicks punch hard, breakdowns go flat
-      const energy=bv*0.72+mv*0.23+hv*0.05;
-      if(energy<=0)continue;
-      const tot=Math.pow(energy,0.80);          // 0..1, strong dynamic range
-      const bas=Math.min(tot*0.80,Math.pow(bv,0.65)); // 0..1, bass inner layer
-      // White tips: threshold at 0.28 catches hi-hats & snares, skips silence
-      // Max 0.22 of maxH → bright visible tip without overwhelming the bar color
-      const hi=hv>0.28?Math.pow((hv-0.28)/0.72,0.80)*0.22:0;
-      totH[x]=tot; basH[x]=bas; higH[x]=Math.min(hi,bas);
-    }
-    // Onset strength: captures ATTACK of each kick (rate of rise in bass energy)
-    // Gives sharp spikes at beat transients even when bassline is sustained between kicks
-    // This is much more reliable for phase detection than raw bass energy
-    const onH=new Float32Array(len);
-    for(let x=1;x<len;x++){const d=basH[x]-basH[x-1];if(d>0)onH[x]=d;}
-    hRef.current={totH,basH,higH,onH,len};
-    imgRef.current=null;
-  },[bands,dur]);
-
-  // ── Phase 2: 60fps draw — zero clientWidth reads via ResizeObserver ──
-  useEffect(()=>{
-    const canvas=ref.current; if(!canvas)return;
+    const canvas=ref.current; if(!canvas) return;
     let physW=0,physH=0,ctx=null;
-    let tots=new Int32Array(4096);
-    let bass=new Int32Array(4096);
-    let higs=new Int32Array(4096);
-
-    // ResizeObserver: fires when canvas CSS size changes, never from inside RAF
-    // This is the key fix — no more layout-reflow forced by clientWidth reads every frame
     const dpr=window.devicePixelRatio||1;
+
     const ro=new ResizeObserver(entries=>{
-      const e=entries[0]; if(!e)return;
+      const e=entries[0]; if(!e) return;
       const pw=Math.round(e.contentRect.width*dpr);
       const ph=Math.round(e.contentRect.height*dpr);
       sizeRef.current={physW:pw,physH:ph,dirty:true};
@@ -1843,226 +2022,169 @@ function AnimatedZoomedWF({ bands, dur, progRef, onSeek, h=96, windowSec=16, bpm
     const draw=()=>{
       raf.current=requestAnimationFrame(draw);
 
-      // Apply pending canvas resize (set by ResizeObserver, not by reading clientWidth)
       const sz=sizeRef.current;
       if(sz.dirty||physW===0){
         sz.dirty=false;
-        const newPW=sz.physW||(Math.round((canvas.offsetWidth||1200)*dpr));
-        const newPH=sz.physH||(Math.round(h*dpr));
+        const newPW=sz.physW||Math.round((canvas.offsetWidth||1200)*dpr);
+        const newPH=sz.physH||Math.round(h*dpr);
         if(newPW!==physW||newPH!==physH){
           physW=newPW; physH=newPH;
           canvas.width=physW; canvas.height=physH;
           ctx=canvas.getContext('2d');
-          imgRef.current=null;
-          if(physW>tots.length){
-            tots=new Int32Array(physW+256);
-            bass=new Int32Array(physW+256);
-            higs=new Int32Array(physW+256);
-          }
+          colBufRef.current=null; // force realloc on next frame
         }
       }
-      if(!ctx)return;
+      if(!ctx) return;
 
-      if(!imgRef.current||imgRef.current.physW!==physW||imgRef.current.physH!==physH){
-        const buf=ctx.createImageData(physW,physH);
-        imgRef.current={buf,px:buf.data,physW,physH};
-      }
-      const{buf,px}=imgRef.current;
-      px.fill(3);
+      const dur2=durRef.current;
+      const prog2=progRef?.current??0;
+      const center=physH>>1;
+      // maxH leaves row `center` reserved for the hairline and stays in bounds
+      // for even physH (top: 0..center-1, bottom: center+1..physH-1).
+      const maxH=Math.min(center,physH-1-center);
+      const bands=bandsRef.current;
 
-      const hd=hRef.current, dur2=durRef.current, prog2=progRef?.current??0;
-      // Half-waveform baseline at 85% → bars rise upward, max visual height
-      const baseline=Math.round(physH*0.85);
-      const maxH=baseline-2;
+      ctx.fillStyle='#030308';
+      ctx.fillRect(0,0,physW,physH);
 
-      if(hd&&dur2&&maxH>0){
-        const{totH,basH,higH,len}=hd;
-        const viewPx=windowSec/dur2*len;
+      if(bands&&bands.bass&&bands.bass.length&&dur2&&maxH>0){
+        const bArr=bands.bass, mArr=bands.mid, hArr=bands.high;
+        const len=bArr.length;
+        const viewPx=(windowSec/dur2)*len;
         const srcX=prog2*len-viewPx/2;
         const spp=viewPx/physW;
 
-        // ── Pass 1: lerp precomputed heights for each display column ──
+        if(!colBufRef.current||colBufRef.current.len<physW){
+          colBufRef.current={
+            bv:new Float32Array(physW+64),
+            mv:new Float32Array(physW+64),
+            hv:new Float32Array(physW+64),
+            len:physW+64,
+          };
+        }
+        const {bv:colB,mv:colM,hv:colH}=colBufRef.current;
+
+        // ── Pass 1: MAX amplitude per column. For sub-sample zoom (spp<1),
+        // nearest-neighbor replication keeps the source peaks visible. ──
         for(let dx=0;dx<physW;dx++){
-          const frac=srcX+dx*spp;
-          let tv=0,bv=0,hv=0;
-          if(spp>=1){
-            const s0=Math.max(0,frac|0);
-            const s1=Math.min(len-1,(frac+spp)|0);
-            if(s0>=len){tots[dx]=0;continue;}
-            let cnt=0;
-            for(let k=s0;k<=s1;k++){tv+=totH[k];bv+=basH[k];hv+=higH[k];cnt++;}
-            if(cnt){tv/=cnt;bv/=cnt;hv/=cnt;}
-          } else {
-            const si0=frac|0;
-            if(si0<0||si0>=len){tots[dx]=0;continue;}
-            const si1=si0+1<len?si0+1:si0;
-            const tf=frac-si0;
-            tv=totH[si0]+(totH[si1]-totH[si0])*tf;
-            bv=basH[si0]+(basH[si1]-basH[si0])*tf;
-            hv=higH[si0]+(higH[si1]-higH[si0])*tf;
-          }
-          tots[dx]=(tv*maxH)|0;
-          bass[dx]=(bv*maxH)|0;
-          higs[dx]=(hv*maxH)|0;
-        }
-
-        // ── Pass 2: row-major half-waveform pixel fill ──
-        for(let y=0;y<baseline;y++){
-          const dy=baseline-y;
-          const row=y*physW*4;
-          for(let dx=0;dx<physW;dx++){
-            const tot=tots[dx];
-            if(dy>tot)continue;
-            const i=row+dx*4;
-            if(tot-dy<=higs[dx]&&higs[dx]>0){
-              // White — bright high-freq transient TIP (at bar top, not base)
-              px[i]=240;px[i+1]=240;px[i+2]=255;px[i+3]=230;
-            } else if(dy<=bass[dx]){
-              // Electric blue — bass body
-              px[i]=20;px[i+1]=160;px[i+2]=255;px[i+3]=255;
-            } else {
-              // Orange — outer total-amplitude envelope
-              px[i]=255;px[i+1]=130;px[i+2]=15;px[i+3]=255;
+          const f0=srcX+dx*spp;
+          const f1=f0+spp;
+          const i0=f0|0, i1=f1|0;
+          const s0=i0<0?0:(i0>=len?len-1:i0);
+          const s1=i1<s0?s0:(i1>=len?len-1:i1);
+          let b=0,m=0,hh=0;
+          if(f1>=0&&f0<len){
+            for(let k=s0;k<=s1;k++){
+              const bk=bArr[k]; if(bk>b)b=bk;
+              const mk=mArr[k]; if(mk>m)m=mk;
+              const hk=hArr[k]; if(hk>hh)hh=hk;
             }
           }
+          colB[dx]=b; colM[dx]=m; colH[dx]=hh;
         }
 
-        // Baseline hairline
-        const bRow=baseline*physW*4;
-        for(let dx=0;dx<physW;dx++){const i=bRow+dx*4;px[i]=55;px[i+1]=55;px[i+2]=68;px[i+3]=255;}
+        // ── Pass 2: continuous dense render. Every column with signal draws a
+        // 1px-wide mirrored spike. GAMMA=2.0 supplies the dynamic range —
+        // squaring amplitudes pushes quiet content down sharply (env=0.2 → 4%
+        // height) while loud content stays tall (env=0.9 → 81%). MIN_H=2
+        // guarantees any column with any signal is visible as at least a 2px
+        // pip, so the waveform reads as a continuous silhouette with no gaps.
+        const GAMMA=2.5;
+        const BOOST=1.2;
+        const MIN_H=4;
+        const GOLD='#E8A340';
+        const BLUE='#2A7FE8';
+        for(let dx=0;dx<physW;dx++){
+          const bv=colB[dx], mv=colM[dx], hv=colH[dx];
+          const env=bv>mv?(bv>hv?bv:hv):(mv>hv?mv:hv);
+          if(env<=0) continue;
+          const envH=Math.min(maxH,Math.max(MIN_H,Math.round(Math.pow(env,GAMMA)*BOOST*maxH)));
+          const bassH=bv<=0?0:Math.min(envH,Math.max(MIN_H,Math.round(Math.pow(bv,GAMMA)*BOOST*maxH)));
 
-        ctx.putImageData(buf,0,0);
-
-        // ── Beat grid (after putImageData) ──
-        const bpm2=bpmRef.current;
-        if(bpm2&&bpm2>0&&hd){
-          const beatSamples=(60/bpm2)/dur2*len;
-
-          // Phase detection: full-track bass energy maximization.
-          // For each candidate phase offset p in [0, bs), sum basH at every
-          // beat position p, p+bs, p+2*bs... across the whole track.
-          // The phase with the highest total = best alignment with actual beats.
-          // This is more reliable than onset detection because it uses ALL beats,
-          // not just the first spike (which might be noise or a non-beat transient).
-          // Use 200fps worker phase when available (much more accurate than local detection).
-          // The worker runs on the full audio signal with proper bandpass filtering.
-          // beatPhaseFrac is a 0..1 fraction of the beat period — convert to waveform frame offset.
-          const workerPhase=beatPhaseFracRef.current;
-          if(workerPhase!==null&&workerPhase!==undefined){
-            // Worker phase available: use directly, clear any local cache so it doesn't fight
-            hd.beatPhase=workerPhase*beatSamples;
-            hd.cachedBpm=bpm2; // mark as cached so we don't re-run local detection
-          } else if(hd.cachedBpm!==bpm2){
-            // Fallback: local onset-strength phase detection in waveform frame space
-            hd.cachedBpm=bpm2;
-            const bs=Math.max(1,Math.round(beatSamples));
-            const numBeats=Math.floor(len/beatSamples);
-            const onH=hd.onH;
-            let bestPhase=0,bestScore=-1;
-            for(let p=0;p<bs;p++){
-              let score=0;
-              for(let k=0;k<numBeats;k++){
-                const center=Math.round(p+k*beatSamples);
-                const c0=center>0?center-1:0;
-                const c1=center+1<len?center+1:len-1;
-                if(center<len)score+=onH[c0]*0.5+onH[center]+onH[c1]*0.5;
-              }
-              if(score>bestScore){bestScore=score;bestPhase=p;}
-            }
-            hd.beatPhase=bestPhase;
-          }
-
-          const phase=hd.beatPhase||0;
-          const firstBeatIdx=Math.ceil((srcX-phase)/beatSamples);
-          // DEBUG: log scroll state once per second so we can verify beats are
-          // scrolling with the music (srcX should advance, first-beat sx should
-          // walk leftward). Remove after confirming behavior.
-          if(!hd._lastLog||performance.now()-hd._lastLog>1000){
-            hd._lastLog=performance.now();
-            const firstBeatSrc=phase+firstBeatIdx*beatSamples;
-            const firstBeatSx=(firstBeatSrc-srcX)/viewPx*physW;
-            console.log('[beatgrid] prog=',prog2.toFixed(4),'srcX=',srcX.toFixed(1),'phase=',phase.toFixed(1),'beatSamp=',beatSamples.toFixed(2),'firstBeatSx=',firstBeatSx.toFixed(1));
-          }
-          for(let bi=firstBeatIdx;phase+bi*beatSamples<srcX+viewPx+beatSamples;bi++){
-            const beatSrc=phase+bi*beatSamples;
-            const sx=(beatSrc-srcX)/viewPx*physW;
-            if(sx<-6||sx>physW+6)continue;
-            const isBar=(((bi%4)+4)%4===0);
-            if(isBar){
-              // ── Bar 1 marker: bright red full-height line ──
-              ctx.fillStyle='rgba(220,38,38,0.85)';
-              ctx.fillRect(sx-0.5,0,1.5,physH);
-              // Top triangle (▼ downward, sits flush at top edge)
-              ctx.beginPath();
-              ctx.moveTo(sx-6,0);ctx.lineTo(sx+6,0);ctx.lineTo(sx,11);
-              ctx.fillStyle='#ef4444';ctx.fill();
-              // Bottom triangle (▲ upward, sits flush at bottom edge)
-              ctx.beginPath();
-              ctx.moveTo(sx-6,physH);ctx.lineTo(sx+6,physH);ctx.lineTo(sx,physH-11);
-              ctx.fillStyle='#ef4444';ctx.fill();
-            } else {
-              // ── Regular beat: thin white full-height line ──
-              ctx.fillStyle='rgba(255,255,255,0.45)';
-              ctx.fillRect(sx-0.5,0,1,physH);
-              // Small grey notch ticks at top and bottom
-              ctx.fillStyle='rgba(210,210,220,0.75)';
-              ctx.fillRect(sx-1,0,2,5);
-              ctx.fillRect(sx-1,physH-5,2,5);
-            }
+          ctx.fillStyle=GOLD;
+          ctx.fillRect(dx,center-envH,1,envH); // top
+          ctx.fillRect(dx,center+1,1,envH);    // bottom — same height, symmetric
+          if(bassH>0){
+            ctx.fillStyle=BLUE;
+            ctx.fillRect(dx,center-bassH,1,bassH);
+            ctx.fillRect(dx,center+1,1,bassH);
           }
         }
-      } else {
-        ctx.putImageData(buf,0,0);
+
+        // Faint center hairline.
+        ctx.fillStyle='rgba(255,255,255,0.06)';
+        ctx.fillRect(0,center,physW,1);
       }
 
-      // ── Overlays: loop, hot cues, playhead ──
-      const hd2=hRef.current, dur2b=durRef.current, prog2b=progRef?.current??0;
-      const len2=hd2?.len||1;
-      const viewPx2=hd2&&dur2b?windowSec/dur2b*len2:1;
-      const srcX2=prog2b*len2-viewPx2/2;
-      const toSX=p=>(p*len2-srcX2)/viewPx2*physW;
-      const bl=Math.round(physH*0.85);
-
-      const{loopStart:ls,loopEnd:le,loopActive:la}=loopRef.current;
-      if(ls!==null&&le!==null){
-        const lx1=toSX(ls),lx2=toSX(le);
-        if(lx2>0&&lx1<physW){
-          ctx.fillStyle=la?'rgba(200,169,110,0.18)':'rgba(200,169,110,0.07)';
-          ctx.fillRect(Math.max(0,lx1),0,Math.min(physW,lx2)-Math.max(0,lx1),bl);
-          ctx.fillStyle=la?'#C8A96Ecc':'#C8A96E55';
-          if(lx1>=0&&lx1<physW)ctx.fillRect(lx1,0,2,bl);
-          if(lx2>=0&&lx2<physW)ctx.fillRect(Math.max(lx1+2,lx2-2),0,2,bl);
+      // ── Anchored beat grid — drawn on top of the bars, beneath the playhead.
+      // Uses worker-computed firstDownbeat (beatPhaseFrac * beatPeriodSec) and
+      // drift-free DP period. Skips silently if either value is missing so no
+      // fallback to rounded-BPM spacing (which drifts by beat-widths over a track).
+      const beatPhaseFrac=beatPhaseFracRef.current;
+      const beatPeriodSec=beatPeriodSecRef.current;
+      if(beatPhaseFrac!=null&&beatPeriodSec!=null&&dur2>0){
+        // Effective period for beat SPACING — factors in the user's BPM nudge.
+        // Position (firstDownbeatSec) is anchored off the original detected period
+        // so "shift grid start" and "tighten beat spacing" are independent knobs.
+        const bpmNudge=bpmNudgeRef.current;
+        const effectivePeriod=bpmNudge!==0
+          ?60/(60/beatPeriodSec+bpmNudge)
+          :beatPeriodSec;
+        const firstDownbeatSec=beatPhaseFrac*beatPeriodSec+gridOffsetMsRef.current/1000;
+        const currentTimeSec=prog2*dur2;
+        const pxPerSec=physW/windowSec;
+        const halfWinSec=windowSec/2;
+        const minTime=currentTimeSec-halfWinSec-effectivePeriod;
+        const maxTime=currentTimeSec+halfWinSec+effectivePeriod;
+        const startN=Math.ceil((minTime-firstDownbeatSec)/effectivePeriod);
+        const endN=Math.floor((Math.min(dur2,maxTime)-firstDownbeatSec)/effectivePeriod);
+        for(let n=startN;n<=endN;n++){
+          const beatTime=firstDownbeatSec+n*effectivePeriod;
+          if(beatTime<0) continue; // no grid before t=0 — audio doesn't exist there
+          const x=(physW>>1)+(beatTime-currentTimeSec)*pxPerSec;
+          if(x<0||x>physW) continue;
+          const isDownbeat=(n%4===0);
+          ctx.fillStyle=isDownbeat?'rgba(239,68,68,0.90)':'rgba(237,232,223,0.20)';
+          ctx.fillRect(Math.floor(x),0,isDownbeat?2:1,physH);
+          if(isDownbeat){
+            ctx.fillStyle='rgba(239,68,68,1.0)';
+            ctx.beginPath();
+            ctx.moveTo(Math.floor(x)-4,0);
+            ctx.lineTo(Math.floor(x)+5,0);
+            ctx.lineTo(Math.floor(x)+0.5,6);
+            ctx.closePath();
+            ctx.fill();
+          }
         }
       }
 
-      const CUE_CLR=['#00d4ff','#ef4444','#22c55e','#f59e0b'];
-      (hotCuesRef.current||[]).forEach((cue,ci)=>{
-        if(cue===null)return;
-        const cxm=toSX(cue);
-        if(cxm<-8||cxm>physW+8)return;
-        ctx.fillStyle=CUE_CLR[ci];ctx.shadowColor=CUE_CLR[ci];ctx.shadowBlur=10;
-        ctx.fillRect(cxm,0,2,bl);ctx.shadowBlur=0;
-      });
-
-      const cx=physW>>1;
-      ctx.fillStyle='rgba(0,0,0,0.55)';ctx.fillRect(cx-3,0,8,physH);
-      ctx.fillStyle='#ffffff';ctx.shadowColor='#ffffff';ctx.shadowBlur=20;
-      ctx.fillRect(cx-1,0,3,physH);ctx.shadowBlur=0;
+      // Playhead — FIXED at canvas center (physW/2). It does NOT move with progress;
+      // progress is encoded by the waveform scrolling LEFT as the track plays.
+      const cx=physW>>1; // physW/2
+      ctx.fillStyle='rgba(0,0,0,0.55)';
+      ctx.fillRect(cx-3,0,8,physH);
+      ctx.fillStyle='#ffffff';
+      ctx.shadowColor='#ffffff';
+      ctx.shadowBlur=16;
+      ctx.fillRect(cx-1,0,3,physH);
+      ctx.shadowBlur=0;
     };
 
     draw();
-    return()=>{cancelAnimationFrame(raf.current);ro.disconnect();};
-  },[windowSec,h,progRef]);
+    return()=>{cancelAnimationFrame(raf.current); ro.disconnect();};
+  },[h,windowSec,progRef]);
 
   const onClick=e=>{
-    const hd=hRef.current;
-    if(!seekRef.current||!ref.current||!durRef.current||!hd)return;
-    const r=ref.current.getBoundingClientRect(),W=r.width,clickX=e.clientX-r.left;
-    const viewPx=windowSec/durRef.current*hd.len;
-    const srcX=(progRef?.current??0)*hd.len-viewPx/2;
-    seekRef.current(Math.max(0,Math.min(1,(srcX+clickX/W*viewPx)/hd.len)));
+    const canvas=ref.current;
+    const b=bandsRef.current;
+    if(!seekRef.current||!canvas||!durRef.current||!b?.bass?.length) return;
+    const r=canvas.getBoundingClientRect(), W=r.width, clickX=e.clientX-r.left;
+    const len=b.bass.length;
+    const viewPx=(windowSec/durRef.current)*len;
+    const srcX=(progRef?.current??0)*len-viewPx/2;
+    seekRef.current(Math.max(0,Math.min(1,(srcX+clickX/W*viewPx)/len)));
   };
-  return <canvas ref={ref} onClick={onClick} style={{width:'100%',height:h,background:'#030306',cursor:'crosshair',display:'block'}}/>;
+  return <canvas ref={ref} onClick={onClick} style={{width:'100%',height:h,background:'#030308',cursor:'crosshair',display:'block'}}/>;
 }
 
 // ── Scrolling zoomed waveform (Rekordbox-style) ───────────────
@@ -2190,7 +2312,7 @@ function ZoomedWF({ bands, peaks, freq, prog, dur, onSeek, h=72, hotCues=[], loo
     }
 
     // ── Hot cue markers ──
-    const CUE_CLR=["#00d4ff","#ef4444","#22c55e","#f59e0b"];
+    const CUE_CLR=["#C8A96E","#ef4444","#22c55e","#f59e0b"];
     hotCues.forEach((cue,ci)=>{
       if(cue===null)return;
       const cxm=Math.floor(((cue*len)-startSample)/samplesPerPx);
@@ -2264,7 +2386,7 @@ function BeatGrid({ bpm, dur, prog, color, beatPhaseFrac=null }) {
   return <canvas ref={ref} width={460} height={18} style={{width:"100%",height:18,background:"#04040b",borderRadius:4}}/>;
 }
 
-function Knob({ v, set, min=-12, max=12, ctr=0, label, color="#00d4ff", size=38, off }) {
+function Knob({ v, set, min=-12, max=12, ctr=0, label, color="#C8A96E", size=38, off }) {
   const dr=useRef(false),sy=useRef(0),sv=useRef(0); const pct=(v-min)/(max-min);
   const md=(e)=>{ if(off)return; e.preventDefault();dr.current=true;sy.current=e.clientY;sv.current=v; const mm=(ev)=>{if(dr.current)set(Math.max(min,Math.min(max,sv.current+(sy.current-ev.clientY)/100*(max-min))));};const mu=()=>{dr.current=false;window.removeEventListener("mousemove",mm);window.removeEventListener("mouseup",mu);};window.addEventListener("mousemove",mm);window.addEventListener("mouseup",mu); };
   return (
@@ -2278,7 +2400,7 @@ function Knob({ v, set, min=-12, max=12, ctr=0, label, color="#00d4ff", size=38,
 }
 
 // ── Deck ─────────────────────────────────────────────────────
-const HOT_CUE_COLORS=["#00d4ff","#ef4444","#22c55e","#f59e0b"];
+const HOT_CUE_COLORS=["#C8A96E","#ef4444","#22c55e","#f59e0b"];
 
 function Deck({ id, ch, ctx:ac, color, local, remote, onChange, midi:mt, bpmResult, bpmAnalyze, eqHi=0, eqMid=0, eqLo=0, chanVol=1, loadFromLibrary=null, onTrackInfo=null, onSync=null, onLibraryTrackDrop=null, onProgUpdate=null, onWaveform=null }) {
   const [buf,setBuf]=useState(null),[name,setName]=useState(null),[play,setPlay]=useState(false);
@@ -2412,8 +2534,10 @@ function Deck({ id, ch, ctx:ac, color, local, remote, onChange, midi:mt, bpmResu
     // If from library, report track info for recommendations
     if(trackMeta) onTrackInfo?.(id, trackMeta);
     else onTrackInfo?.(id, null);
-    // Compute 3-band waveform (Rekordbox-style: bass/mid/high) via IIR filters
-    const WF_W=12000; // high-res for sharp zoomed waveform detail
+    // Compute 3-band waveform (Rekordbox-style: bass/mid/high) via IIR filters.
+    // 48000 frames → ~4ms resolution per WF sample on a 3-min track, enough for
+    // individual transients to land on a single display column even at 4s zoom.
+    const WF_W=48000;
     const sr=d.sampleRate;
     // One-pole IIR lowpass coefficients: bass<300Hz, bass+mid<3500Hz
     const aB=Math.exp(-2*Math.PI*300/sr);
@@ -2421,7 +2545,14 @@ function Deck({ id, ch, ctx:ac, color, local, remote, onChange, midi:mt, bpmResu
     const bassArr=new Float32Array(WF_W);
     const midArr=new Float32Array(WF_W);
     const highArr=new Float32Array(WF_W);
-    const step=Math.max(1,Math.floor(d.length/WF_W));
+    // Float step — flooring here quantized away the tail ~0.25% of coverage at
+    // 44.1 kHz (step=165 → bands cover 179.6 s of a 180 s track). That made the
+    // effective bands frame-rate (sr/step) exceed the renderer's assumed rate
+    // (WF_W/dur), so the waveform drifted visually from the grid by ~200 ms
+    // mid-track on a 3-min track. Float step makes each band frame cover
+    // exactly dur/WF_W seconds, so renderer's math (len/dur frames/sec) is
+    // dead-on. Math.floor(i/step) still returns integer indices.
+    const step=Math.max(1,d.length/WF_W);
     for(let ch=0;ch<d.numberOfChannels;ch++){
       const data=d.getChannelData(ch);
       let lpB=0,lpM=0;
@@ -2443,7 +2574,7 @@ function Deck({ id, ch, ctx:ac, color, local, remote, onChange, midi:mt, bpmResu
     const bN=normBand(bassArr),mN=normBand(midArr),hN=normBand(highArr);
     setWfBass(bN);setWfMid(mN);setWfHigh(hN);
     onChange?.("waveformBass",bN);onChange?.("waveformMid",mN);onChange?.("waveformHigh",hN);
-    onWaveform?.({bass:bN,mid:mN,high:hN,dur:d.duration});
+    onWaveform?.({bass:bN,mid:mN,high:hN,dur:d.duration,name:n});
   };
 
   // Handle library load trigger from parent
@@ -2658,7 +2789,7 @@ function SyncPanel({ bpmA, bpmB, rateA, rateB, onSyncB, onSyncA }) {
   return (
     <div style={{padding:10,display:"flex",flexDirection:"column",gap:8}}>
       <div style={{display:"flex",gap:8,justifyContent:"space-around",background:"#0a0a12",borderRadius:8,padding:"10px",border:"1px solid #1e1e28"}}>
-        {[["A","#00d4ff",effA,rateA],["B","#ff6b35",effB,rateB]].map(([id,c,eff,r])=>(
+        {[["A","#7B61FF",effA,rateA],["B","#00BFA5",effB,rateB]].map(([id,c,eff,r])=>(
           <div key={id} style={{textAlign:"center"}}>
             <div style={{fontSize:7,fontFamily:"'DM Mono',monospace",color:c+"44",letterSpacing:2}}>DECK {id}</div>
             <div style={{fontSize:20,fontFamily:"'DM Mono',monospace",fontWeight:700,color:eff?c:"#555562"}}>{eff?eff.toFixed(1):"—"}</div>
@@ -2668,8 +2799,8 @@ function SyncPanel({ bpmA, bpmB, rateA, rateB, onSyncB, onSyncA }) {
       </div>
       {diff&&<div style={{textAlign:"center",fontSize:8,fontFamily:"'DM Mono',monospace",color:inSync?"#22c55e":"#555562"}}>Δ{diff} BPM {inSync?"✓ IN SYNC":""}</div>}
       <div style={{display:"flex",gap:5}}>
-        <button onClick={onSyncB} disabled={!bpmA||!bpmB} style={{flex:1,...sBtn("#00d4ff")}}>SYNC B→A</button>
-        <button onClick={onSyncA} disabled={!bpmA||!bpmB} style={{flex:1,...sBtn("#ff6b35")}}>SYNC A→B</button>
+        <button onClick={onSyncB} disabled={!bpmA||!bpmB} style={{flex:1,...sBtn("#C8A96E")}}>SYNC B→A</button>
+        <button onClick={onSyncA} disabled={!bpmA||!bpmB} style={{flex:1,...sBtn("#00BFA5")}}>SYNC A→B</button>
       </div>
       {(!bpmA||!bpmB)&&<div style={{fontSize:7,fontFamily:"'DM Mono',monospace",color:"#555562",textAlign:"center",lineHeight:1.9}}>Load tracks to detect BPM<br/>Analysis runs automatically</div>}
     </div>
@@ -2683,7 +2814,7 @@ function RTCPanel({ rtc, partner, syncOk }) {
     <div style={{padding:10,display:"flex",flexDirection:"column",gap:8}}>
       <div style={{display:"flex",justifyContent:"space-between"}}><span style={{fontSize:8,fontFamily:"'DM Mono',monospace",color:"#888898",letterSpacing:1}}>P2P AUDIO</span><span style={{fontSize:7,fontFamily:"'DM Mono',monospace",color:s.c}}>{s.l}</span></div>
       {live&&<div style={{display:"flex",gap:2,height:16,alignItems:"center",justifyContent:"center"}}>{Array.from({length:12}).map((_,i)=><div key={i} style={{width:3,borderRadius:2,background:"#22c55e",height:"100%",animation:`wave ${.4+(i%4)*.1}s ease-in-out ${i*.06}s infinite`,transformOrigin:"bottom"}}/>)}</div>}
-      <div style={{fontSize:7,fontFamily:"'DM Mono',monospace",color:"#888898",display:"flex",justifyContent:"space-between"}}><span>PARTNER</span><span style={{color:partner?"#ff6b35":"#555562"}}>{partner||"—"}</span></div>
+      <div style={{fontSize:7,fontFamily:"'DM Mono',monospace",color:"#888898",display:"flex",justifyContent:"space-between"}}><span>PARTNER</span><span style={{color:partner?"#00BFA5":"#555562"}}>{partner||"—"}</span></div>
       <div style={{display:"flex",flexDirection:"column",gap:2}}><div style={{display:"flex",justifyContent:"space-between",fontSize:7,fontFamily:"'DM Mono',monospace",color:"#888898"}}><span>PARTNER VOL</span><span style={{color:"#22c55e"}}>{Math.round(rtc.remVol*100)}%</span></div><input type="range" min={0} max={1.5} step={.01} value={rtc.remVol} onChange={e=>rtc.setRemVol(Number(e.target.value))} style={{width:"100%",cursor:"pointer",accentColor:"#22c55e"}}/></div>
       <div style={{display:"flex",gap:5}}>
         {canCall&&<button onClick={rtc.startCall} style={{flex:1,...sBtn("#22c55e"),fontWeight:700}}>▶ START STREAM</button>}
@@ -2716,7 +2847,7 @@ function RecPanel({ rec, ready }) {
           {rec.recs.map(r=>(
             <div key={r.id} style={{background:"#07070f",border:"1px solid #0f0f1e",borderRadius:7,padding:"6px 9px",display:"flex",justifyContent:"space-between",alignItems:"center"}}>
               <div><div style={{fontSize:9,fontFamily:"'DM Mono',monospace",color:"#d8d8e2"}}>{r.label}</div><div style={{fontSize:7,fontFamily:"'DM Mono',monospace",color:"#555562"}}>{fsz(r.size)} · {r.ext}</div></div>
-              <div style={{display:"flex",gap:4}}><button onClick={()=>rec.dl(r)} style={{...sBtn("#00d4ff"),padding:"2px 7px",fontSize:7}}>↓</button><button onClick={()=>rec.del(r.id)} style={{...sBtn("#ef4444"),padding:"2px 6px",fontSize:7}}>✕</button></div>
+              <div style={{display:"flex",gap:4}}><button onClick={()=>rec.dl(r)} style={{...sBtn("#C8A96E"),padding:"2px 7px",fontSize:7}}>↓</button><button onClick={()=>rec.del(r.id)} style={{...sBtn("#ef4444"),padding:"2px 6px",fontSize:7}}>✕</button></div>
             </div>
           ))}
         </div>
@@ -2733,12 +2864,12 @@ function MidiPanel({ midi }) {
     <div style={{display:"flex",flexDirection:"column",height:"100%"}}>
       <div style={{display:"flex",borderBottom:"1px solid #0f0f1e",flexShrink:0}}>
         {[["dev","DEV"],["map",`MAP(${mc})`]].map(([id,l])=>(
-          <button key={id} onClick={()=>setTab(id)} style={{flex:1,padding:"6px 3px",fontSize:7,fontFamily:"'DM Mono',monospace",background:tab===id?"#0d0d20":"transparent",color:tab===id?"#00d4ff":"#555562",border:"none",borderBottom:`1px solid ${tab===id?"#00d4ff":"transparent"}`,cursor:"pointer",outline:"none"}}>{l}</button>
+          <button key={id} onClick={()=>setTab(id)} style={{flex:1,padding:"6px 3px",fontSize:7,fontFamily:"'DM Mono',monospace",background:tab===id?"#0d0d20":"transparent",color:tab===id?"#C8A96E":"#555562",border:"none",borderBottom:`1px solid ${tab===id?"#C8A96E":"transparent"}`,cursor:"pointer",outline:"none"}}>{l}</button>
         ))}
       </div>
       <div style={{flex:1,overflowY:"auto",padding:7}}>
-        {tab==="dev"&&(<div style={{display:"flex",flexDirection:"column",gap:5}}>{!midi.granted?<button onClick={midi.request} style={{...sBtn("#f59e0b"),width:"100%",justifyContent:"center",padding:"7px"}}>ENABLE MIDI ACCESS</button>:<>{midi.devices.length===0&&<div style={{fontSize:7,color:"#555562",fontFamily:"'DM Mono',monospace",textAlign:"center",padding:"10px 0"}}>No MIDI devices found.<br/>Plug in your controller.</div>}{midi.devices.map(d=><div key={d.id} onClick={()=>midi.connect(d.id)} style={{padding:"5px 7px",borderRadius:5,cursor:"pointer",background:midi.active?.id===d.id?"#00d4ff0d":"#07070f",border:`1px solid ${midi.active?.id===d.id?"#00d4ff33":"#0f0f1e"}`}}><div style={{fontSize:8,color:"#d8d8e2",fontFamily:"'DM Mono',monospace"}}>{d.name}</div>{midi.active?.id===d.id&&<div style={{fontSize:6,color:"#00d4ff",fontFamily:"'DM Mono',monospace"}}>● ACTIVE</div>}</div>)}</> }</div>)}
-        {tab==="map"&&(<div style={{display:"flex",flexDirection:"column",gap:2}}>{midi.learning&&<div style={{fontSize:7,fontFamily:"'DM Mono',monospace",color:"#00d4ff",background:"#00d4ff0a",border:"1px solid #00d4ff22",borderRadius:4,padding:"4px 7px",marginBottom:3,animation:"pulse .8s infinite"}}>● Move a control on your controller...<button onClick={()=>midi.setLearning(null)} style={{float:"right",background:"none",border:"none",color:"#00d4ff",cursor:"pointer",fontSize:8}}>✕</button></div>}{ACTS.map(ak=>{const mp=Object.entries(midi.mappings).find(([,v])=>v===ak);const il=midi.learning===ak;return(<div key={ak} style={{display:"flex",gap:3,alignItems:"center",padding:"2px 3px",borderRadius:3,background:il?"#00d4ff08":"transparent"}}><span style={{flex:1,fontSize:7,fontFamily:"'DM Mono',monospace",color:mp?"#8888aa":"#555562",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{ak.replace(/_/g," ")}</span>{mp&&<span style={{fontSize:5,color:"#00d4ff44",fontFamily:"'DM Mono',monospace"}}>{mp[0].slice(0,6)}</span>}<button onClick={()=>midi.setLearning(il?null:ak)} style={{padding:"1px 4px",fontSize:5,fontFamily:"'DM Mono',monospace",background:il?"#00d4ff22":"#0a0a18",border:`1px solid ${il?"#00d4ff44":"#141424"}`,color:il?"#00d4ff":"#555562",borderRadius:3,cursor:"pointer"}}>{il?"●":"LRN"}</button></div>);})}</div>)}
+        {tab==="dev"&&(<div style={{display:"flex",flexDirection:"column",gap:5}}>{!midi.granted?<button onClick={midi.request} style={{...sBtn("#f59e0b"),width:"100%",justifyContent:"center",padding:"7px"}}>ENABLE MIDI ACCESS</button>:<>{midi.devices.length===0&&<div style={{fontSize:7,color:"#555562",fontFamily:"'DM Mono',monospace",textAlign:"center",padding:"10px 0"}}>No MIDI devices found.<br/>Plug in your controller.</div>}{midi.devices.map(d=><div key={d.id} onClick={()=>midi.connect(d.id)} style={{padding:"5px 7px",borderRadius:5,cursor:"pointer",background:midi.active?.id===d.id?"#C8A96E0d":"#07070f",border:`1px solid ${midi.active?.id===d.id?"#C8A96E33":"#0f0f1e"}`}}><div style={{fontSize:8,color:"#d8d8e2",fontFamily:"'DM Mono',monospace"}}>{d.name}</div>{midi.active?.id===d.id&&<div style={{fontSize:6,color:"#C8A96E",fontFamily:"'DM Mono',monospace"}}>● ACTIVE</div>}</div>)}</> }</div>)}
+        {tab==="map"&&(<div style={{display:"flex",flexDirection:"column",gap:2}}>{midi.learning&&<div style={{fontSize:7,fontFamily:"'DM Mono',monospace",color:"#C8A96E",background:"#C8A96E0a",border:"1px solid #C8A96E22",borderRadius:4,padding:"4px 7px",marginBottom:3,animation:"pulse .8s infinite"}}>● Move a control on your controller...<button onClick={()=>midi.setLearning(null)} style={{float:"right",background:"none",border:"none",color:"#C8A96E",cursor:"pointer",fontSize:8}}>✕</button></div>}{ACTS.map(ak=>{const mp=Object.entries(midi.mappings).find(([,v])=>v===ak);const il=midi.learning===ak;return(<div key={ak} style={{display:"flex",gap:3,alignItems:"center",padding:"2px 3px",borderRadius:3,background:il?"#C8A96E08":"transparent"}}><span style={{flex:1,fontSize:7,fontFamily:"'DM Mono',monospace",color:mp?"#8888aa":"#555562",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{ak.replace(/_/g," ")}</span>{mp&&<span style={{fontSize:5,color:"#C8A96E44",fontFamily:"'DM Mono',monospace"}}>{mp[0].slice(0,6)}</span>}<button onClick={()=>midi.setLearning(il?null:ak)} style={{padding:"1px 4px",fontSize:5,fontFamily:"'DM Mono',monospace",background:il?"#C8A96E22":"#0a0a18",border:`1px solid ${il?"#C8A96E44":"#141424"}`,color:il?"#C8A96E":"#555562",borderRadius:3,cursor:"pointer"}}>{il?"●":"LRN"}</button></div>);})}</div>)}
       </div>
     </div>
   );
@@ -2752,12 +2883,12 @@ function ChatPanel({ log, send, me }) {
     <div style={{display:"flex",flexDirection:"column",height:"100%"}}>
       <div style={{flex:1,overflowY:"auto",padding:"7px 9px",display:"flex",flexDirection:"column",gap:3}}>
         {log.length===0&&<div style={{fontSize:8,color:"#555562",fontFamily:"'DM Mono',monospace",textAlign:"center",marginTop:20}}>Chat with your partner here</div>}
-        {log.map((m,i)=><div key={i} style={{fontSize:9,fontFamily:"'DM Mono',monospace"}}>{m.type==="system"?<span style={{color:"#555562",fontStyle:"italic"}}>— {m.msg} —</span>:<><span style={{color:"#555562",fontSize:6}}>{m.time} </span><span style={{color:m.self||m.from===me?"#00d4ff":"#ff6b35",fontWeight:700}}>{m.from}: </span><span style={{color:"#c0c0cc"}}>{m.msg}</span></>}</div>)}
+        {log.map((m,i)=><div key={i} style={{fontSize:9,fontFamily:"'DM Mono',monospace"}}>{m.type==="system"?<span style={{color:"#555562",fontStyle:"italic"}}>— {m.msg} —</span>:<><span style={{color:"#555562",fontSize:6}}>{m.time} </span><span style={{color:m.self||m.from===me?"#C8A96E":"#00BFA5",fontWeight:700}}>{m.from}: </span><span style={{color:"#c0c0cc"}}>{m.msg}</span></>}</div>)}
         <div ref={end}/>
       </div>
       <div style={{display:"flex",gap:5,padding:"5px 7px",borderTop:"1px solid #0f0f1e"}}>
         <input value={input} onChange={e=>setInput(e.target.value)} onKeyDown={e=>e.key==="Enter"&&go()} placeholder="Message your partner..." style={{flex:1,background:"#07070f",border:"1px solid #141424",color:"#e8e8f0",borderRadius:5,padding:"4px 7px",fontSize:9,fontFamily:"'DM Mono',monospace",outline:"none"}}/>
-        <button onClick={go} style={{...sBtn("#00d4ff"),padding:"4px 9px",fontSize:10}}>→</button>
+        <button onClick={go} style={{...sBtn("#C8A96E"),padding:"4px 9px",fontSize:10}}>→</button>
       </div>
     </div>
   );
@@ -2782,7 +2913,7 @@ function ChatBar({ log, send, me }) {
                 <div key={i} style={{ fontSize:9, fontFamily:"'DM Mono',monospace" }}>
                   {m.type==="system"
                     ? <span style={{ color:"#555562", fontStyle:"italic" }}>— {m.msg} —</span>
-                    : <><span style={{ color:"#555562", fontSize:7 }}>{m.time} </span><span style={{ color:m.self||m.from===me?"#00d4ff":"#ff6b35", fontWeight:500 }}>{m.from}: </span><span style={{ color:"#888898" }}>{m.msg}</span></>
+                    : <><span style={{ color:"#555562", fontSize:7 }}>{m.time} </span><span style={{ color:m.self||m.from===me?"#C8A96E":"#00BFA5", fontWeight:500 }}>{m.from}: </span><span style={{ color:"#888898" }}>{m.msg}</span></>
                   }
                 </div>
               ))
@@ -2797,7 +2928,7 @@ function ChatBar({ log, send, me }) {
         </button>
         {!expanded && (() => { const last=log.filter(m=>m.type!=="system").slice(-1)[0]; return last ? (
           <span style={{ fontSize:8, fontFamily:"'DM Mono',monospace", color:"#555562", overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap", flex:1 }}>
-            <span style={{ color:last.from===me?"#00d4ff55":"#ff6b3555" }}>{last.from}: </span>{last.msg}
+            <span style={{ color:last.from===me?"#C8A96E55":"#00BFA555" }}>{last.from}: </span>{last.msg}
           </span>
         ) : <span style={{ flex:1, fontSize:8, fontFamily:"'DM Mono',monospace", color:"#555562" }}>Message your partner...</span>; })()}
         {expanded && <div style={{ flex:1 }}/>}
@@ -2834,23 +2965,23 @@ function Landing({ onEnter }) {
         @keyframes glow  { 0%,100%{opacity:.4} 50%{opacity:.9} }
         @keyframes slide { from{opacity:0;transform:translateY(24px)} to{opacity:1;transform:translateY(0)} }
         @keyframes spin  { to{transform:rotate(360deg)} }
-        .feat-card:hover { border-color: #00d4ff44 !important; transform: translateY(-3px); box-shadow: 0 8px 30px rgba(0,212,255,.08) !important; }
+        .feat-card:hover { border-color: #C8A96E44 !important; transform: translateY(-3px); box-shadow: 0 8px 30px rgba(0,212,255,.08) !important; }
         .feat-card { transition: all .2s ease !important; }
-        .cta-btn:hover { box-shadow: 0 0 40px #00d4ff55, 0 0 80px #00d4ff22 !important; transform: scale(1.02); }
+        .cta-btn:hover { box-shadow: 0 0 40px #C8A96E55, 0 0 80px #C8A96E22 !important; transform: scale(1.02); }
         .cta-btn { transition: all .2s ease !important; }
-        .nav-link:hover { color: #00d4ff !important; }
+        .nav-link:hover { color: #C8A96E !important; }
         .nav-link { transition: color .15s !important; }
       `}</style>
       <link href="https://fonts.googleapis.com/css2?family=Barlow:wght@300;400;600;700&family=Barlow+Condensed:wght@600;700;800;900&display=swap" rel="stylesheet"/>
 
       {/* NAV */}
       <nav style={{ position:"fixed", top:0, left:0, right:0, zIndex:100, padding:"14px 40px", display:"flex", justifyContent:"space-between", alignItems:"center", background:"linear-gradient(180deg,#020208ee,transparent)", backdropFilter:"blur(8px)" }}>
-        <div style={{ fontFamily:"'DM Mono',monospace", fontWeight:900, fontSize:22, letterSpacing:3, background:"linear-gradient(90deg,#00d4ff,#ff6b35)", WebkitBackgroundClip:"text", WebkitTextFillColor:"transparent" }}>COLLAB//MIX</div>
+        <div style={{ fontFamily:"'DM Mono',monospace", fontWeight:900, fontSize:22, letterSpacing:3, background:"linear-gradient(90deg,#C8A96E,#00BFA5)", WebkitBackgroundClip:"text", WebkitTextFillColor:"transparent" }}>MIX//SYNC</div>
         <div style={{ display:"flex", gap:28, alignItems:"center" }}>
           {["Features","How It Works","Get Started"].map(l=>(
             <span key={l} className="nav-link" style={{ fontSize:11, fontFamily:"'DM Mono',monospace", color:"#888898", letterSpacing:1, cursor:"pointer" }}>{l.toUpperCase()}</span>
           ))}
-          <button onClick={onEnter} className="cta-btn" style={{ padding:"8px 20px", background:"linear-gradient(135deg,#00d4ff,#0099bb)", border:"none", color:"#000", fontFamily:"'DM Mono',monospace", fontWeight:800, fontSize:12, letterSpacing:2, borderRadius:6, cursor:"pointer" }}>
+          <button onClick={onEnter} className="cta-btn" style={{ padding:"8px 20px", background:"linear-gradient(135deg,#C8A96E,#0099bb)", border:"none", color:"#000", fontFamily:"'DM Mono',monospace", fontWeight:800, fontSize:12, letterSpacing:2, borderRadius:6, cursor:"pointer" }}>
             LAUNCH APP →
           </button>
         </div>
@@ -2860,23 +2991,23 @@ function Landing({ onEnter }) {
       <section style={{ minHeight:"100vh", display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"center", textAlign:"center", padding:"100px 40px 60px", position:"relative", overflow:"hidden" }}>
 
         {/* Background glow orbs */}
-        <div style={{ position:"absolute", top:"20%", left:"15%", width:400, height:400, borderRadius:"50%", background:"radial-gradient(circle,#00d4ff08,transparent 70%)", animation:"glow 4s ease-in-out infinite", pointerEvents:"none" }}/>
-        <div style={{ position:"absolute", top:"30%", right:"10%", width:300, height:300, borderRadius:"50%", background:"radial-gradient(circle,#ff6b3508,transparent 70%)", animation:"glow 5s ease-in-out 1s infinite", pointerEvents:"none" }}/>
+        <div style={{ position:"absolute", top:"20%", left:"15%", width:400, height:400, borderRadius:"50%", background:"radial-gradient(circle,#C8A96E08,transparent 70%)", animation:"glow 4s ease-in-out infinite", pointerEvents:"none" }}/>
+        <div style={{ position:"absolute", top:"30%", right:"10%", width:300, height:300, borderRadius:"50%", background:"radial-gradient(circle,#00BFA508,transparent 70%)", animation:"glow 5s ease-in-out 1s infinite", pointerEvents:"none" }}/>
         <div style={{ position:"absolute", bottom:"20%", left:"40%", width:500, height:200, borderRadius:"50%", background:"radial-gradient(circle,#a855f706,transparent 70%)", animation:"glow 6s ease-in-out 2s infinite", pointerEvents:"none" }}/>
 
         {/* Animated grid lines */}
         <div style={{ position:"absolute", inset:0, backgroundImage:"linear-gradient(#ffffff04 1px,transparent 1px),linear-gradient(90deg,#ffffff04 1px,transparent 1px)", backgroundSize:"60px 60px", pointerEvents:"none" }}/>
 
         <div style={{ animation:"slide .8s ease forwards", maxWidth:760 }}>
-          <div style={{ fontSize:10, fontFamily:"'DM Mono',monospace", color:"#00d4ff", letterSpacing:4, marginBottom:20, display:"flex", alignItems:"center", justifyContent:"center", gap:10 }}>
-            <div style={{ width:20, height:1, background:"#00d4ff" }}/>
+          <div style={{ fontSize:10, fontFamily:"'DM Mono',monospace", color:"#C8A96E", letterSpacing:4, marginBottom:20, display:"flex", alignItems:"center", justifyContent:"center", gap:10 }}>
+            <div style={{ width:20, height:1, background:"#C8A96E" }}/>
             THE FUTURE OF REMOTE DJing
-            <div style={{ width:20, height:1, background:"#00d4ff" }}/>
+            <div style={{ width:20, height:1, background:"#C8A96E" }}/>
           </div>
 
           <h1 style={{ fontFamily:"'DM Mono',monospace", fontWeight:900, fontSize:"clamp(48px,8vw,96px)", lineHeight:.95, letterSpacing:-1, margin:"0 0 24px" }}>
             <span style={{ display:"block", background:"linear-gradient(135deg,#ffffff,#aaaacc)", WebkitBackgroundClip:"text", WebkitTextFillColor:"transparent" }}>MIX TOGETHER.</span>
-            <span style={{ display:"block", background:"linear-gradient(135deg,#00d4ff,#0066ff)", WebkitBackgroundClip:"text", WebkitTextFillColor:"transparent" }}>ANYWHERE.</span>
+            <span style={{ display:"block", background:"linear-gradient(135deg,#C8A96E,#0066ff)", WebkitBackgroundClip:"text", WebkitTextFillColor:"transparent" }}>ANYWHERE.</span>
           </h1>
 
           <p style={{ fontSize:16, color:"#8888aa", lineHeight:1.7, maxWidth:520, margin:"0 auto 40px", fontWeight:300 }}>
@@ -2884,7 +3015,7 @@ function Landing({ onEnter }) {
           </p>
 
           <div style={{ display:"flex", gap:12, justifyContent:"center", flexWrap:"wrap" }}>
-            <button onClick={onEnter} className="cta-btn" style={{ padding:"16px 40px", background:"linear-gradient(135deg,#00d4ff,#0077cc)", border:"none", color:"#000", fontFamily:"'DM Mono',monospace", fontWeight:800, fontSize:15, letterSpacing:2, borderRadius:8, cursor:"pointer", boxShadow:"0 0 30px #00d4ff33" }}>
+            <button onClick={onEnter} className="cta-btn" style={{ padding:"16px 40px", background:"linear-gradient(135deg,#C8A96E,#0077cc)", border:"none", color:"#000", fontFamily:"'DM Mono',monospace", fontWeight:800, fontSize:15, letterSpacing:2, borderRadius:8, cursor:"pointer", boxShadow:"0 0 30px #C8A96E33" }}>
               START A SESSION FREE →
             </button>
             <button style={{ padding:"16px 32px", background:"transparent", border:"1px solid #ffffff22", color:"#888", fontFamily:"'DM Mono',monospace", fontWeight:700, fontSize:14, letterSpacing:2, borderRadius:8, cursor:"pointer" }}>
@@ -2900,7 +3031,7 @@ function Landing({ onEnter }) {
         {/* Floating mixer preview */}
         <div style={{ marginTop:60, width:"100%", maxWidth:860, animation:"float 6s ease-in-out infinite", position:"relative" }}>
           <div style={{ background:"linear-gradient(150deg,#0d0d22,#07070f)", border:"1px solid #1a1a30", borderRadius:16, padding:"20px 24px", boxShadow:"0 40px 80px rgba(0,0,0,.6), 0 0 60px rgba(0,212,255,.06)", display:"grid", gridTemplateColumns:"1fr 80px 1fr", gap:16, alignItems:"center" }}>
-            {["#00d4ff","#ff6b35"].map((c,i)=>(
+            {["#C8A96E","#00BFA5"].map((c,i)=>(
               <div key={i} style={{ background:"#06060f", borderRadius:10, padding:12, border:`1px solid ${c}22` }}>
                 <div style={{ display:"flex", justifyContent:"space-between", marginBottom:8 }}>
                   <span style={{ fontSize:9, fontFamily:"'DM Mono',monospace", color:c, letterSpacing:2 }}>DECK {i===0?"A":"B"}</span>
@@ -2916,7 +3047,7 @@ function Landing({ onEnter }) {
             ))}
             <div style={{ display:"flex", flexDirection:"column", alignItems:"center", gap:8 }}>
               <div style={{ fontSize:7, fontFamily:"'DM Mono',monospace", color:"#888898", letterSpacing:1 }}>XF</div>
-              <div style={{ width:"100%", height:4, background:"linear-gradient(90deg,#00d4ff,#ff6b35)", borderRadius:2, position:"relative" }}>
+              <div style={{ width:"100%", height:4, background:"linear-gradient(90deg,#C8A96E,#00BFA5)", borderRadius:2, position:"relative" }}>
                 <div style={{ position:"absolute", left:"calc(50% - 8px)", top:-6, width:16, height:16, background:"#e8e8f0", borderRadius:3, boxShadow:"0 0 8px rgba(255,255,255,.3)" }}/>
               </div>
               <div style={{ fontSize:7, fontFamily:"'DM Mono',monospace", color:"#22c55e" }}>124.0 BPM</div>
@@ -2930,7 +3061,7 @@ function Landing({ onEnter }) {
       {/* FEATURES */}
       <section style={{ padding:"80px 40px", maxWidth:1100, margin:"0 auto" }}>
         <div style={{ textAlign:"center", marginBottom:56 }}>
-          <div style={{ fontSize:9, fontFamily:"'DM Mono',monospace", color:"#00d4ff", letterSpacing:4, marginBottom:14 }}>WHAT'S INSIDE</div>
+          <div style={{ fontSize:9, fontFamily:"'DM Mono',monospace", color:"#C8A96E", letterSpacing:4, marginBottom:14 }}>WHAT'S INSIDE</div>
           <h2 style={{ fontFamily:"'DM Mono',monospace", fontWeight:900, fontSize:"clamp(32px,5vw,52px)", letterSpacing:-1, margin:0, color:"#e8e8f0" }}>EVERYTHING A DJ NEEDS</h2>
         </div>
         <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(280px,1fr))", gap:16 }}>
@@ -2947,7 +3078,7 @@ function Landing({ onEnter }) {
       {/* HOW IT WORKS */}
       <section style={{ padding:"80px 40px", background:"linear-gradient(180deg,transparent,#0a0a1800,transparent)" }}>
         <div style={{ maxWidth:800, margin:"0 auto", textAlign:"center" }}>
-          <div style={{ fontSize:9, fontFamily:"'DM Mono',monospace", color:"#00d4ff", letterSpacing:4, marginBottom:14 }}>SIMPLE AS IT GETS</div>
+          <div style={{ fontSize:9, fontFamily:"'DM Mono',monospace", color:"#C8A96E", letterSpacing:4, marginBottom:14 }}>SIMPLE AS IT GETS</div>
           <h2 style={{ fontFamily:"'DM Mono',monospace", fontWeight:900, fontSize:"clamp(28px,4vw,46px)", letterSpacing:-1, marginBottom:48, color:"#e8e8f0" }}>THREE STEPS TO GO LIVE</h2>
           <div style={{ display:"grid", gridTemplateColumns:"repeat(3,1fr)", gap:24 }}>
             {[
@@ -2956,7 +3087,7 @@ function Landing({ onEnter }) {
               { n:"03", title:"Start Mixing", desc:"Load your tracks, hit play. You're live. Your mix streams to their ears in real time." },
             ].map((s,i)=>(
               <div key={i} style={{ textAlign:"center" }}>
-                <div style={{ fontSize:40, fontFamily:"'DM Mono',monospace", fontWeight:900, color:"#00d4ff11", letterSpacing:-2, marginBottom:12 }}>{s.n}</div>
+                <div style={{ fontSize:40, fontFamily:"'DM Mono',monospace", fontWeight:900, color:"#C8A96E11", letterSpacing:-2, marginBottom:12 }}>{s.n}</div>
                 <div style={{ fontFamily:"'DM Mono',monospace", fontWeight:800, fontSize:18, color:"#e8e8f0", marginBottom:8 }}>{s.title}</div>
                 <div style={{ fontSize:11, color:"#888898", lineHeight:1.7 }}>{s.desc}</div>
               </div>
@@ -2974,15 +3105,15 @@ function Landing({ onEnter }) {
           <p style={{ fontSize:13, color:"#888898", marginBottom:32, lineHeight:1.7 }}>
             Invite a friend, load up your tracks, and start playing together right now. No credit card. No software.
           </p>
-          <button onClick={onEnter} className="cta-btn" style={{ padding:"18px 48px", background:"linear-gradient(135deg,#00d4ff,#0077cc)", border:"none", color:"#000", fontFamily:"'DM Mono',monospace", fontWeight:900, fontSize:16, letterSpacing:3, borderRadius:8, cursor:"pointer", boxShadow:"0 0 40px #00d4ff33" }}>
-            LAUNCH COLLAB//MIX →
+          <button onClick={onEnter} className="cta-btn" style={{ padding:"18px 48px", background:"linear-gradient(135deg,#C8A96E,#0077cc)", border:"none", color:"#000", fontFamily:"'DM Mono',monospace", fontWeight:900, fontSize:16, letterSpacing:3, borderRadius:8, cursor:"pointer", boxShadow:"0 0 40px #C8A96E33" }}>
+            LAUNCH MIX//SYNC →
           </button>
         </div>
       </section>
 
       {/* FOOTER */}
       <footer style={{ borderTop:"1px solid #0f0f1e", padding:"24px 40px", display:"flex", justifyContent:"space-between", alignItems:"center" }}>
-        <div style={{ fontFamily:"'DM Mono',monospace", fontWeight:800, fontSize:14, letterSpacing:3, background:"linear-gradient(90deg,#00d4ff,#ff6b35)", WebkitBackgroundClip:"text", WebkitTextFillColor:"transparent" }}>COLLAB//MIX</div>
+        <div style={{ fontFamily:"'DM Mono',monospace", fontWeight:800, fontSize:14, letterSpacing:3, background:"linear-gradient(90deg,#C8A96E,#00BFA5)", WebkitBackgroundClip:"text", WebkitTextFillColor:"transparent" }}>MIX//SYNC</div>
         <div style={{ fontSize:8, fontFamily:"'DM Mono',monospace", color:"#555562" }}>Built for DJs who refuse to be in the same room.</div>
         <div style={{ fontSize:8, fontFamily:"'DM Mono',monospace", color:"#555562" }}>Chrome & Edge · HTTPS required for MIDI + WebRTC</div>
       </footer>
@@ -3039,7 +3170,7 @@ function Lobby({ onJoin, djName = null }) {
         {/* Header — matches App.jsx logo */}
         <div style={{ textAlign:"center" }}>
           <div style={{ fontFamily:"'Cormorant Garamond',serif", fontWeight:700, fontSize:28, letterSpacing:-0.5, color:"#d8d8e2" }}>
-            Collab<span style={{ color:G }}>//</span>Mix
+            Mix<span style={{ color:G }}>//</span>Sync
           </div>
           <div style={{ fontSize:9, fontFamily:"'DM Mono',monospace", color:`${G}55`, letterSpacing:3, marginTop:6 }}>SET UP YOUR SESSION</div>
         </div>
@@ -3119,7 +3250,7 @@ export default function CollabMix({ initialPage = "landing", djName = null }) {
   const [wfA, setWfA] = useState(null); // {bass, mid, high, dur} — only updates on track load
   const [wfB, setWfB] = useState(null);
   const [wfZoom, setWfZoom] = useState(0); // 0=WIDE(16s) 1=MED(8s) 2=ZOOM(4s)
-  const WF_WINDOWS = [16, 8, 4];
+  const WF_WINDOWS = [16, 8, 4]; // seconds — WIDE / MED / ZOOM per spec
   const WF_ZOOM_LABELS = ["WIDE","MED","ZOOM"];
   const progRefA = useRef(0);
   const progRefB = useRef(0);
@@ -3129,6 +3260,37 @@ export default function CollabMix({ initialPage = "landing", djName = null }) {
   useEffect(() => {
     if (pA?.waveformBass) setWfB({ bass: pA.waveformBass, mid: pA.waveformMid, high: pA.waveformHigh, dur: pA.duration||0 });
   }, [pA?.waveformBass]);
+
+  // ── Per-track beat-grid manual adjustments ──
+  // Auto-detection isn't reliable on every track (reverb-heavy kicks, sub-bass
+  // bleed, unusual bar-1 emphasis). Two escape hatches, both keyed per-track:
+  //   gridOffset (ms) — shifts the first downbeat earlier/later. Fixes WHERE
+  //                     the grid starts. ±5 ms per click.
+  //   bpmNudge   (in 0.01-BPM units) — changes the SPACING between beats. Fixes
+  //                     tempo drift across the track when the detected period
+  //                     is slightly off. ±0.01 BPM per click.
+  // Keyed by track name (library title or filename minus extension).
+  const [gridOffsetA, setGridOffsetA] = useState(0); // milliseconds
+  const [bpmNudgeA, setBpmNudgeA] = useState(0);     // in 0.01-BPM clicks
+  useEffect(() => {
+    if (!wfA?.name) return;
+    const savedOff = localStorage.getItem(`gridOffset:${wfA.name}`);
+    const savedBpm = localStorage.getItem(`bpmNudge:${wfA.name}`);
+    setGridOffsetA(savedOff ? parseFloat(savedOff) : 0);
+    setBpmNudgeA(savedBpm ? parseInt(savedBpm, 10) : 0);
+  }, [wfA?.name]);
+  useEffect(() => {
+    if (!wfA?.name) return;
+    localStorage.setItem(`gridOffset:${wfA.name}`, String(gridOffsetA));
+  }, [gridOffsetA, wfA?.name]);
+  useEffect(() => {
+    if (!wfA?.name) return;
+    localStorage.setItem(`bpmNudge:${wfA.name}`, String(bpmNudgeA));
+  }, [bpmNudgeA, wfA?.name]);
+  const nudgeGridA = (deltaMs) => setGridOffsetA((v) => v + deltaMs);
+  const resetGridA = () => setGridOffsetA(0);
+  const nudgeBpmA = (deltaClicks) => setBpmNudgeA((v) => v + deltaClicks);
+  const resetBpmA = () => setBpmNudgeA(0);
 
   // Library: track which deck is playing + metadata for recommendations
   const [playingTrack, setPlayingTrack] = useState(null);
@@ -3312,7 +3474,7 @@ export default function CollabMix({ initialPage = "landing", djName = null }) {
 
   const leave = () => {
     rtc.endCall(); sync.disconnect();
-    setReady(false); setSession(null); setPage("lobby");
+    setReady(false); setSession(null); setPage("landing");
     eng.current = null; setRateA(1); setRateB(1);
     try { localStorage.removeItem("cm_session"); } catch {}
     window.history.replaceState({}, "", window.location.pathname);
@@ -3361,7 +3523,7 @@ export default function CollabMix({ initialPage = "landing", djName = null }) {
           <div style={{ width:28, height:28, borderRadius:7, border:`1px solid ${G}38`, display:"flex", alignItems:"center", justifyContent:"center", background:`${G}08` }}>
             <span style={{ fontFamily:"'DM Mono',monospace", fontSize:9, color:G }}>{"//"}</span>
           </div>
-          <span style={{ fontFamily:"'Cormorant Garamond',serif", fontSize:18, fontWeight:700, color:"#d8d8e2", letterSpacing:-0.3 }}>Collab<span style={{ color:G }}>//</span>Mix</span>
+          <span style={{ fontFamily:"'Cormorant Garamond',serif", fontSize:18, fontWeight:700, color:"#d8d8e2", letterSpacing:-0.3 }}>Mix<span style={{ color:G }}>//</span>Sync</span>
         </div>
         <div style={{ flex:1, display:"flex", gap:10, alignItems:"center" }}>
           <div style={{ display:"flex", gap:5, alignItems:"center", fontSize:7, fontFamily:"'DM Mono',monospace" }}>
@@ -3383,32 +3545,45 @@ export default function CollabMix({ initialPage = "landing", djName = null }) {
       </div>
 
       {/* MAIN CONTENT AREA */}
-      <div style={{ flex:1, display:"flex", flexDirection:"column", overflow:"hidden", minHeight:0 }}>
+      <div style={{ flex:1, display:"flex", flexDirection:"column", overflow:"visible", minHeight:0 }}>
 
       {/* ── FULL-WIDTH WAVEFORM SECTION (Rekordbox layout) ── */}
       <div style={{ flexShrink:0, background:"#020208", borderBottom:"1px solid #16161e" }}>
         {/* Deck A — blue, full screen width */}
-        <div style={{ position:"relative" }}>
+        <div style={{ position:"relative", minHeight:96, flexShrink:0 }}>
           <div style={{ position:"absolute", top:6, left:10, zIndex:2, display:"flex", gap:8, alignItems:"center", pointerEvents:"none" }}>
-            <div style={{ width:5, height:5, borderRadius:"50%", background:"#00d4ff", boxShadow:"0 0 6px #00d4ff" }}/>
-            <span style={{ fontSize:9, fontFamily:"'DM Mono',monospace", fontWeight:700, color:"#00d4ff88", letterSpacing:2 }}>A</span>
+            <div style={{ width:5, height:5, borderRadius:"50%", background:"#C8A96E", boxShadow:"0 0 6px #C8A96E" }}/>
+            <span style={{ fontSize:9, fontFamily:"'DM Mono',monospace", fontWeight:700, color:"#C8A96E88", letterSpacing:2 }}>A</span>
           </div>
-          {/* Zoom controls — top right */}
-          <div style={{ position:"absolute", top:6, right:10, zIndex:2, display:"flex", gap:3, alignItems:"center" }}>
+          {/* Zoom controls + grid nudges — top right */}
+          <div style={{ position:"absolute", top:6, right:10, zIndex:2, display:"flex", gap:6, alignItems:"center" }}>
+            {/* Position nudge: ← 5ms [offset] → 5ms. Double-click offset to reset. */}
+            <div style={{ display:"flex", gap:2, alignItems:"center", opacity:wfA?.name?1:0.35 }}>
+              <button onClick={()=>nudgeGridA(-5)} disabled={!wfA?.name} title="Shift grid 5ms earlier" style={{ height:18, width:18, padding:0, fontSize:10, fontFamily:"'DM Mono',monospace", background:"transparent", border:"1px solid #ffffff18", color:"#ffffff88", borderRadius:3, cursor:wfA?.name?"pointer":"default", outline:"none" }}>←</button>
+              <div onDoubleClick={resetGridA} title="Double-click to reset" style={{ minWidth:44, textAlign:"center", height:18, lineHeight:"18px", padding:"0 4px", fontSize:8, fontFamily:"'DM Mono',monospace", color: gridOffsetA===0 ? "#ffffff44" : "#ef4444", background: gridOffsetA===0 ? "transparent" : "#ef444411", border: `1px solid ${gridOffsetA===0 ? "#ffffff14" : "#ef444433"}`, borderRadius:3, userSelect:"none" }}>{gridOffsetA>0?"+":""}{gridOffsetA}ms</div>
+              <button onClick={()=>nudgeGridA(5)} disabled={!wfA?.name} title="Shift grid 5ms later" style={{ height:18, width:18, padding:0, fontSize:10, fontFamily:"'DM Mono',monospace", background:"transparent", border:"1px solid #ffffff18", color:"#ffffff88", borderRadius:3, cursor:wfA?.name?"pointer":"default", outline:"none" }}>→</button>
+            </div>
+            {/* BPM nudge: [BPM-] [delta] [BPM+]. Each click = 0.01 BPM. */}
+            <div style={{ display:"flex", gap:2, alignItems:"center", opacity:wfA?.name?1:0.35 }}>
+              <button onClick={()=>nudgeBpmA(-1)} disabled={!wfA?.name} title="Decrease BPM by 0.01 (stretches beat spacing)" style={{ height:18, padding:"0 4px", fontSize:8, fontFamily:"'DM Mono',monospace", background:"transparent", border:"1px solid #ffffff18", color:"#ffffff88", borderRadius:3, cursor:wfA?.name?"pointer":"default", outline:"none" }}>BPM−</button>
+              <div onDoubleClick={resetBpmA} title="Double-click to reset" style={{ minWidth:60, textAlign:"center", height:18, lineHeight:"18px", padding:"0 4px", fontSize:8, fontFamily:"'DM Mono',monospace", color: bpmNudgeA===0 ? "#ffffff44" : "#ef4444", background: bpmNudgeA===0 ? "transparent" : "#ef444411", border: `1px solid ${bpmNudgeA===0 ? "#ffffff14" : "#ef444433"}`, borderRadius:3, userSelect:"none" }}>{bpmNudgeA>0?"+":""}{(bpmNudgeA*0.01).toFixed(2)} BPM</div>
+              <button onClick={()=>nudgeBpmA(1)} disabled={!wfA?.name} title="Increase BPM by 0.01 (tightens beat spacing)" style={{ height:18, padding:"0 4px", fontSize:8, fontFamily:"'DM Mono',monospace", background:"transparent", border:"1px solid #ffffff18", color:"#ffffff88", borderRadius:3, cursor:wfA?.name?"pointer":"default", outline:"none" }}>BPM+</button>
+            </div>
+            <div style={{ width:1, height:12, background:"#ffffff18" }}/>
             {WF_ZOOM_LABELS.map((lbl,i)=>(
               <button key={i} onClick={()=>setWfZoom(i)} style={{ height:18, padding:"0 7px", fontSize:8, fontFamily:"'DM Mono',monospace", letterSpacing:.5, background:wfZoom===i?"#C8A96E22":"transparent", border:`1px solid ${wfZoom===i?"#C8A96E88":"#ffffff18"}`, color:wfZoom===i?"#C8A96E":"#ffffff44", borderRadius:4, cursor:"pointer", outline:"none" }}>{lbl}</button>
             ))}
           </div>
-          <AnimatedZoomedWF bands={wfA} dur={wfA?.dur||0} progRef={progRefA} onSeek={null} h={96} windowSec={WF_WINDOWS[wfZoom]} bpm={bpm.results["A"]?.bpm||null} beatPhaseFrac={bpm.results["A"]?.beatPhaseFrac??null}/>
+          <AnimatedZoomedWF bands={wfA} dur={wfA?.dur||0} progRef={progRefA} h={96} windowSec={WF_WINDOWS[wfZoom]} beatPhaseFrac={bpm.results["A"]?.beatPhaseFrac??null} beatPeriodSec={bpm.results["A"]?.beatPeriodSec??null} gridOffsetMs={gridOffsetA} bpmNudge={bpmNudgeA*0.01}/>
         </div>
         <div style={{ height:1, background:"#0d0d18" }}/>
         {/* Deck B — orange, full screen width */}
-        <div style={{ position:"relative" }}>
+        <div style={{ position:"relative", minHeight:96, flexShrink:0 }}>
           <div style={{ position:"absolute", top:6, left:10, zIndex:2, display:"flex", gap:8, alignItems:"center", pointerEvents:"none" }}>
-            <div style={{ width:5, height:5, borderRadius:"50%", background:"#ff6b35", boxShadow:"0 0 6px #ff6b35" }}/>
-            <span style={{ fontSize:9, fontFamily:"'DM Mono',monospace", fontWeight:700, color:"#ff6b3588", letterSpacing:2 }}>B</span>
+            <div style={{ width:5, height:5, borderRadius:"50%", background:"#00BFA5", boxShadow:"0 0 6px #00BFA5" }}/>
+            <span style={{ fontSize:9, fontFamily:"'DM Mono',monospace", fontWeight:700, color:"#00BFA588", letterSpacing:2 }}>B</span>
           </div>
-          <AnimatedZoomedWF bands={wfB} dur={wfB?.dur||0} progRef={progRefB} onSeek={null} h={96} windowSec={WF_WINDOWS[wfZoom]} bpm={bpm.results["B"]?.bpm||null} beatPhaseFrac={bpm.results["B"]?.beatPhaseFrac??null}/>
+          <AnimatedZoomedWF bands={wfB} dur={wfB?.dur||0} progRef={progRefB} h={96} windowSec={WF_WINDOWS[wfZoom]} beatPhaseFrac={pA?.beatPhaseFrac??null} beatPeriodSec={pA?.beatPeriodSec??null}/>
         </div>
       </div>
 
@@ -3418,12 +3593,12 @@ export default function CollabMix({ initialPage = "landing", djName = null }) {
         {/* ── DECK A (local) ── */}
         <div style={{ display:"flex", flexDirection:"column", minWidth:0, minHeight:0, overflow:"hidden", background:"#0c0c12", border:"1px solid #1e1e28", borderRadius:10 }}>
           <div style={{ display:"flex", gap:8, alignItems:"center", padding:"6px 12px", borderBottom:"1px solid #1e1e28", background:"#080810", flexShrink:0 }}>
-            <div style={{ width:6, height:6, borderRadius:"50%", background:"#00d4ff", boxShadow:"0 0 8px #00d4ff" }}/>
-            <span style={{ fontSize:11, fontFamily:"'DM Mono',monospace", fontWeight:700, color:"#00d4ff", letterSpacing:2 }}>DECK A</span>
-            <span style={{ fontSize:11, fontFamily:"'DM Sans',sans-serif", fontWeight:500, color:"#00d4ffaa", letterSpacing:.3 }}>{session.name}</span>
+            <div style={{ width:6, height:6, borderRadius:"50%", background:"#7B61FF", boxShadow:"0 0 8px #7B61FF" }}/>
+            <span style={{ fontSize:11, fontFamily:"'DM Mono',monospace", fontWeight:700, color:"#7B61FF", letterSpacing:2 }}>DECK A</span>
+            <span style={{ fontSize:11, fontFamily:"'DM Sans',sans-serif", fontWeight:500, color:"#7B61FFaa", letterSpacing:.3 }}>{session.name}</span>
           </div>
           <div style={{ flex:1, overflow:"hidden", minHeight:0 }}>
-            <Deck id="A" ch={eng.current?.A} ctx={eng.current?.ctx} color="#00d4ff" local onChange={dh("A")} midi={midiEvt} bpmResult={bpm.results["A"]} bpmAnalyze={bpm.analyze} eqHi={eqA.hi} eqMid={eqA.mid} eqLo={eqA.lo} chanVol={eqA.vol} loadFromLibrary={libLoadA} onTrackInfo={handleTrackInfo} onSync={()=>syncDecks("A",bpm.results["B"]?.bpm)} onLibraryTrackDrop={(trackId)=>{const t=lib.library.find(x=>x.id===trackId);if(t)handleLibLoad(t,"A");}} onProgUpdate={handleProgA} onWaveform={setWfA}/>
+            <Deck id="A" ch={eng.current?.A} ctx={eng.current?.ctx} color="#7B61FF" local onChange={dh("A")} midi={midiEvt} bpmResult={bpm.results["A"]} bpmAnalyze={bpm.analyze} eqHi={eqA.hi} eqMid={eqA.mid} eqLo={eqA.lo} chanVol={eqA.vol} loadFromLibrary={libLoadA} onTrackInfo={handleTrackInfo} onSync={()=>syncDecks("A",bpm.results["B"]?.bpm)} onLibraryTrackDrop={(trackId)=>{const t=lib.library.find(x=>x.id===trackId);if(t)handleLibLoad(t,"A");}} onProgUpdate={handleProgA} onWaveform={setWfA}/>
           </div>
         </div>
 
@@ -3447,23 +3622,23 @@ export default function CollabMix({ initialPage = "landing", djName = null }) {
             <div style={{ display:"flex", flexDirection:"column", borderRight:"1px solid #202028", overflow:"hidden" }}>
               {/* Header: label + VU inline */}
               <div style={{ padding:"3px 6px", background:"#0a0a10", borderBottom:"1px solid #202028", display:"flex", justifyContent:"space-between", alignItems:"center", flexShrink:0 }}>
-                <span style={{ fontFamily:"'DM Mono',monospace", fontSize:11, color:"#00d4ff", fontWeight:600, letterSpacing:1 }}>A</span>
-                <VU an={eng.current?.A?.an} color="#00d4ff" w={50}/>
+                <span style={{ fontFamily:"'DM Mono',monospace", fontSize:11, color:"#7B61FF", fontWeight:600, letterSpacing:1 }}>A</span>
+                <VU an={eng.current?.A?.an} color="#7B61FF" w={50}/>
               </div>
               {/* Channel fader LEFT, EQ knobs RIGHT — outer edge layout */}
               <div style={{ flex:1, display:"flex", flexDirection:"row", minHeight:0, overflow:"hidden" }}>
                 {/* Channel volume fader — far left (outer edge) */}
                 <div style={{ flexShrink:0, display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"center", padding:"5px 4px", borderRight:"1px solid #181820", gap:2 }}>
-                  <div style={{ fontSize:6, fontFamily:"'DM Mono',monospace", color:"#00d4ff55", letterSpacing:1 }}>VOL</div>
-                  <VerticalFader val={eqA.vol} set={v=>updateEqA("vol",v)} color="#00d4ff" h={150}/>
-                  <div style={{ fontSize:7, fontFamily:"'DM Mono',monospace", color:"#00d4ff88" }}>{(eqA.vol/1.5*100).toFixed(0)}%</div>
+                  <div style={{ fontSize:6, fontFamily:"'DM Mono',monospace", color:"#7B61FF55", letterSpacing:1 }}>VOL</div>
+                  <VerticalFader val={eqA.vol} set={v=>updateEqA("vol",v)} color="#7B61FF" h={150}/>
+                  <div style={{ fontSize:7, fontFamily:"'DM Mono',monospace", color:"#7B61FF88" }}>{(eqA.vol/1.5*100).toFixed(0)}%</div>
                 </div>
                 {/* Knobs column — inner side */}
                 <div style={{ flex:1, display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"space-evenly", padding:"5px 2px" }}>
-                  <Knob v={eqA.vol} set={v=>updateEqA("vol",v)} min={0} max={1.5} ctr={1} label="GAIN" color="#00d4ff" size={20}/>
-                  <Knob v={eqA.hi}  set={v=>updateEqA("hi",v)}  min={-12} max={12} ctr={0} label="HI"   color="#00d4ff" size={20}/>
-                  <Knob v={eqA.mid} set={v=>updateEqA("mid",v)} min={-12} max={12} ctr={0} label="MID"  color="#00d4ff" size={20}/>
-                  <Knob v={eqA.lo}  set={v=>updateEqA("lo",v)}  min={-12} max={12} ctr={0} label="LO"   color="#00d4ff" size={20}/>
+                  <Knob v={eqA.vol} set={v=>updateEqA("vol",v)} min={0} max={1.5} ctr={1} label="GAIN" color="#7B61FF" size={20}/>
+                  <Knob v={eqA.hi}  set={v=>updateEqA("hi",v)}  min={-12} max={12} ctr={0} label="HI"   color="#7B61FF" size={20}/>
+                  <Knob v={eqA.mid} set={v=>updateEqA("mid",v)} min={-12} max={12} ctr={0} label="MID"  color="#7B61FF" size={20}/>
+                  <Knob v={eqA.lo}  set={v=>updateEqA("lo",v)}  min={-12} max={12} ctr={0} label="LO"   color="#7B61FF" size={20}/>
                 </div>
               </div>
             </div>
@@ -3491,23 +3666,23 @@ export default function CollabMix({ initialPage = "landing", djName = null }) {
             <div style={{ display:"flex", flexDirection:"column", borderLeft:"1px solid #202028", overflow:"hidden" }}>
               {/* Header: label + VU inline */}
               <div style={{ padding:"3px 6px", background:"#0a0a10", borderBottom:"1px solid #202028", display:"flex", justifyContent:"space-between", alignItems:"center", flexShrink:0 }}>
-                <span style={{ fontFamily:"'DM Mono',monospace", fontSize:11, color:"#ff6b35", fontWeight:600, letterSpacing:1 }}>B</span>
-                <VU an={null} color="#ff6b35" w={50}/>
+                <span style={{ fontFamily:"'DM Mono',monospace", fontSize:11, color:"#00BFA5", fontWeight:600, letterSpacing:1 }}>B</span>
+                <VU an={null} color="#00BFA5" w={50}/>
               </div>
               {/* EQ knobs LEFT, channel fader RIGHT — outer edge layout */}
               <div style={{ flex:1, display:"flex", flexDirection:"row", minHeight:0, overflow:"hidden" }}>
                 {/* Knobs column — inner side */}
                 <div style={{ flex:1, display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"space-evenly", padding:"5px 2px" }}>
-                  <Knob v={pA?.vol||1.0} set={()=>{}} min={0} max={1.5} ctr={1} label="GAIN" color="#ff6b35" size={20} off={true}/>
-                  <Knob v={pA?.eqHi||0}  set={()=>{}} min={-12} max={12} ctr={0} label="HI"   color="#ff6b35" size={20} off={true}/>
-                  <Knob v={pA?.eqMid||0} set={()=>{}} min={-12} max={12} ctr={0} label="MID"  color="#ff6b35" size={20} off={true}/>
-                  <Knob v={pA?.eqLo||0}  set={()=>{}} min={-12} max={12} ctr={0} label="LO"   color="#ff6b35" size={20} off={true}/>
+                  <Knob v={pA?.vol||1.0} set={()=>{}} min={0} max={1.5} ctr={1} label="GAIN" color="#00BFA5" size={20} off={true}/>
+                  <Knob v={pA?.eqHi||0}  set={()=>{}} min={-12} max={12} ctr={0} label="HI"   color="#00BFA5" size={20} off={true}/>
+                  <Knob v={pA?.eqMid||0} set={()=>{}} min={-12} max={12} ctr={0} label="MID"  color="#00BFA5" size={20} off={true}/>
+                  <Knob v={pA?.eqLo||0}  set={()=>{}} min={-12} max={12} ctr={0} label="LO"   color="#00BFA5" size={20} off={true}/>
                 </div>
                 {/* Channel volume fader — far right (outer edge) */}
                 <div style={{ flexShrink:0, display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"center", padding:"5px 4px", borderLeft:"1px solid #181820", gap:2 }}>
-                  <div style={{ fontSize:6, fontFamily:"'DM Mono',monospace", color:"#ff6b3555", letterSpacing:1 }}>VOL</div>
-                  <VerticalFader val={pA?.vol||1} set={()=>{}} color="#ff6b35" h={150}/>
-                  <div style={{ fontSize:7, fontFamily:"'DM Mono',monospace", color:"#ff6b3588" }}>{((pA?.vol||1)/1.5*100).toFixed(0)}%</div>
+                  <div style={{ fontSize:6, fontFamily:"'DM Mono',monospace", color:"#00BFA555", letterSpacing:1 }}>VOL</div>
+                  <VerticalFader val={pA?.vol||1} set={()=>{}} color="#00BFA5" h={150}/>
+                  <div style={{ fontSize:7, fontFamily:"'DM Mono',monospace", color:"#00BFA588" }}>{((pA?.vol||1)/1.5*100).toFixed(0)}%</div>
                 </div>
               </div>
             </div>
@@ -3517,12 +3692,12 @@ export default function CollabMix({ initialPage = "landing", djName = null }) {
         {/* ── DECK B (partner) ── */}
         <div style={{ display:"flex", flexDirection:"column", minWidth:0, minHeight:0, overflow:"hidden", background:"#0c0c12", border:"1px solid #1e1e28", borderRadius:10 }}>
           <div style={{ display:"flex", gap:8, alignItems:"center", padding:"6px 12px", borderBottom:"1px solid #1e1e28", background:"#080810", flexShrink:0 }}>
-            <div style={{ width:6, height:6, borderRadius:"50%", background:sync.partner?"#ff6b35":"#282835", boxShadow:sync.partner?"0 0 8px #ff6b35":"none", transition:"all .3s" }}/>
-            <span style={{ fontSize:11, fontFamily:"'DM Mono',monospace", fontWeight:700, color:sync.partner?"#ff6b35":"#444454", letterSpacing:2 }}>DECK B</span>
-            {sync.partner&&<span style={{ fontSize:11, fontFamily:"'DM Sans',sans-serif", fontWeight:500, color:"#ff6b35aa", letterSpacing:.3 }}>{sync.partner}</span>}
+            <div style={{ width:6, height:6, borderRadius:"50%", background:sync.partner?"#00BFA5":"#282835", boxShadow:sync.partner?"0 0 8px #00BFA5":"none", transition:"all .3s" }}/>
+            <span style={{ fontSize:11, fontFamily:"'DM Mono',monospace", fontWeight:700, color:sync.partner?"#00BFA5":"#444454", letterSpacing:2 }}>DECK B</span>
+            {sync.partner&&<span style={{ fontSize:11, fontFamily:"'DM Sans',sans-serif", fontWeight:500, color:"#00BFA5aa", letterSpacing:.3 }}>{sync.partner}</span>}
           </div>
           <div style={{ flex:1, overflow:"hidden", minHeight:0 }}>
-            <Deck id="B" ch={null} ctx={null} color="#ff6b35" remote={pA} bpmResult={null} bpmAnalyze={null} eqHi={pA?.eqHi||0} eqMid={pA?.eqMid||0} eqLo={pA?.eqLo||0} chanVol={pA?.vol||1} onProgUpdate={handleProgB}/>
+            <Deck id="B" ch={null} ctx={null} color="#00BFA5" remote={pA} bpmResult={null} bpmAnalyze={null} eqHi={pA?.eqHi||0} eqMid={pA?.eqMid||0} eqLo={pA?.eqLo||0} chanVol={pA?.vol||1} onProgUpdate={handleProgB}/>
           </div>
         </div>
 
@@ -3548,17 +3723,17 @@ export default function CollabMix({ initialPage = "landing", djName = null }) {
         <div style={{ display:"flex", alignItems:"center", gap:8, padding:"4px 6px" }}>
           {/* invisible spacer matching CTR button width so slider is visually centered */}
           <button aria-hidden="true" tabIndex={-1} style={{ fontSize:7, height:16, padding:"0 8px", background:"transparent", border:"1px solid transparent", color:"transparent", borderRadius:3, cursor:"default", fontFamily:"'DM Mono',monospace", letterSpacing:.5, flexShrink:0, pointerEvents:"none", userSelect:"none" }}>CTR</button>
-          <span style={{ fontSize:11, fontFamily:"'DM Mono',monospace", color:"#00d4ff99", fontWeight:700, lineHeight:1, flexShrink:0 }}>A</span>
+          <span style={{ fontSize:11, fontFamily:"'DM Mono',monospace", color:"#C8A96E99", fontWeight:700, lineHeight:1, flexShrink:0 }}>A</span>
           <div style={{ flex:1, position:"relative", height:24, display:"flex", alignItems:"center" }}>
             <div style={{ width:"100%", height:6, borderRadius:4, background:"#030310", border:"1px solid #181828", boxShadow:"inset 0 1px 3px rgba(0,0,0,.7)" }}>
-              <div style={{ height:"100%", width:`${xf*100}%`, background:"linear-gradient(90deg,#00d4ff44,#ff6b3533)", borderRadius:4 }}/>
+              <div style={{ height:"100%", width:`${xf*100}%`, background:"linear-gradient(90deg,#C8A96E44,#00BFA533)", borderRadius:4 }}/>
             </div>
             <input type="range" min={0} max={1} step={.005} value={xf} onChange={e=>setXfLocal(Number(e.target.value))} style={{ position:"absolute", width:"100%", opacity:0, cursor:"pointer", height:24 }}/>
             <div style={{ position:"absolute", left:`calc(${xf*100}% - 13px)`, width:26, height:20, background:"linear-gradient(180deg,#2c2a3e,#16142a)", border:"1px solid #38364e", borderRadius:4, boxShadow:"0 2px 8px rgba(0,0,0,.8), inset 0 1px 0 rgba(255,255,255,.06)", pointerEvents:"none", display:"flex", alignItems:"center", justifyContent:"center" }}>
               <div style={{ width:2, height:10, background:"#C8A96E88", borderRadius:1 }}/>
             </div>
           </div>
-          <span style={{ fontSize:11, fontFamily:"'DM Mono',monospace", color:"#ff6b3599", fontWeight:700, lineHeight:1, flexShrink:0 }}>B</span>
+          <span style={{ fontSize:11, fontFamily:"'DM Mono',monospace", color:"#00BFA599", fontWeight:700, lineHeight:1, flexShrink:0 }}>B</span>
           <button onClick={()=>setXfLocal(.5)} style={{ fontSize:7, height:16, padding:"0 8px", background:"transparent", border:"1px solid #252535", color:"#555562", borderRadius:3, cursor:"pointer", fontFamily:"'DM Mono',monospace", letterSpacing:.5, flexShrink:0 }}>CTR</button>
         </div>
         <div/>{/* empty right */}
