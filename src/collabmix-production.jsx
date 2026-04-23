@@ -1088,6 +1088,634 @@ function TrackRow({track, onLoadA, onLoadB, isRec, reasons, canLoad, previewTrac
   );
 }
 
+// ── Library Panel V2 — redesigned three-column layout (PROTOTYPE) ──
+// Left rail: folders (smart + user crates) · Center: tabs + search + filter
+// pills + track list · Right rail: queue (top) + chat (bottom). Uses the same
+// props as LibraryPanel so the parent render site is a one-line swap. The old
+// LibraryPanel function is kept immediately below as a reference while we
+// iterate on this new layout — nothing else in the app references it directly
+// once the swap is made.
+function LibraryPanelV2({ lib, onLoad, playingTrack, previewTrackId, onPreview, onDelete, chat, onSendChat, me }) {
+  const G = "#C8A96E";
+  const BG = "#080810";
+  const BG2 = "#0D0C1A";
+  const BG3 = "#13122A";
+  const BORDER = "#1c1c24";
+  const TEXT = "#EDE8DF";
+  const SUBTLE = "#9B96B0";
+  const MUTED = "#555562";
+  const PARTNER = "#00BFA5";
+
+  // ── Mock data for empty library (prototype — replaced by real data on first import). ──
+  const MOCK_TRACKS = [
+    { id:"m1", title:"Brighter Days",     artist:"Lane 8",           album:"Colour in Nature",     label:"This Never Happened", genre:"Melodic Techno",  bpm:124.0, key:"8A",  energy:72, energyLabel:"Build",     duration:368, analyzed:true  },
+    { id:"m2", title:"Nova",              artist:"Yotto",            album:"Erased Dreams",        label:"Anjunadeep",          genre:"Melodic House",   bpm:122.0, key:"7A",  energy:65, energyLabel:"Warm-Up",   duration:412, analyzed:true  },
+    { id:"m3", title:"Elysium",           artist:"Tinlicker",        album:"In Another Life",      label:"Anjunadeep",          genre:"Melodic Techno",  bpm:123.5, key:"9B",  energy:68, energyLabel:"Build",     duration:395, analyzed:true  },
+    { id:"m4", title:"Velocity",          artist:"Jody Wisternoff",  album:"Olympia",              label:"Anjunadeep",          genre:"Progressive House", bpm:125.0, key:"6A",  energy:78, energyLabel:"Peak Hour", duration:342, analyzed:true  },
+    { id:"m5", title:"Submerged",         artist:"Cubicolor",        album:"Brainsugar",           label:"Anjunadeep",          genre:"Deep House",      bpm:120.0, key:"4A",  energy:55, energyLabel:"Warm-Up",   duration:428, analyzed:true  },
+    { id:"m6", title:"Solstice",          artist:"Ben Böhmer",       album:"Begin Again",          label:"Anjunadeep",          genre:"Melodic House",   bpm:118.0, key:"11A", energy:48, energyLabel:"Ambient",   duration:446, analyzed:true  },
+    { id:"m7", title:"Through the Lens",  artist:"Marsh",            album:"Lailonie",             label:"Anjunadeep",          genre:"Progressive House", bpm:121.5, key:"5A",  energy:70, energyLabel:"Build",     duration:384, analyzed:true  },
+    { id:"m8", title:"Afterglow",         artist:"Kasablanca",       album:"Stormchild",           label:"Anjunabeats",         genre:"Progressive House", bpm:126.0, key:"3B",  energy:82, energyLabel:"Peak Hour", duration:356, analyzed:true  },
+    { id:"m9", title:"Reverie",           artist:"Nils Hoffmann",    album:"A Romantic Notion",    label:"Poesie",              genre:"Melodic House",   bpm:null,  key:null,  energy:null, duration:null,         analyzed:false },
+    { id:"m10", title:"Drift Awake",      artist:"Luttrell",         album:"After All This Time",  label:"Anjunadeep",          genre:"Melodic House",   bpm:null,  key:null,  energy:null, duration:null,         analyzed:false },
+  ];
+  const MOCK_CRATES = [
+    { id:"mf1", name:"Saturday Set", trackIds:["m1","m2","m4","m7","m8"] },
+    { id:"mf2", name:"Warm-up",      trackIds:["m2","m5","m6","m3","m7","m1","m9","m10"] },
+  ];
+  const MOCK_QUEUE = ["m3","m4","m1"];
+
+  const realTracks = lib.library || [];
+  const realCrates = lib.crates || [];
+  const realQueue  = lib.queue   || [];
+  const useMock = realTracks.length === 0;
+  const allTracks = useMock ? MOCK_TRACKS : realTracks;
+  const crates    = useMock ? MOCK_CRATES : realCrates;
+  const queueIds  = useMock ? MOCK_QUEUE  : realQueue;
+  // Mock "loaded on deck" state so the row indicator can be visually demonstrated
+  // in the prototype. When real tracks are loaded this would come from the parent's
+  // deck-track state.
+  const deckATrackId = useMock ? "m2"  : (playingTrack?.id || null);
+  const deckBTrackId = useMock ? "m5"  : null;
+  const DECK_A_CLR = "#7B61FF"; // violet
+  const DECK_B_CLR = "#00BFA5"; // teal
+
+  // Suggestion source: prefer deck A, else deck B. Panel is disabled when neither loaded.
+  const suggestionSourceId = deckATrackId || deckBTrackId || null;
+  const suggestionSourceDeck = deckATrackId ? "A" : (deckBTrackId ? "B" : null);
+  const suggestionSource = suggestionSourceId ? allTracks.find(t => t.id === suggestionSourceId) : null;
+  const suggestions = suggestionSource ? recommendTracks(suggestionSource, allTracks, 10) : [];
+
+  // View state model:
+  //   kind = "tab"    — persistent dimension tabs (all / artists / labels / genres / energy).
+  //                     drill = null shows the group list; drill = <value> shows tracks in that group.
+  //   kind = "smart"  — sidebar smart section (smartId = "recent" | "session").
+  //   kind = "folder" — sidebar user folder/crate (folderId = crate.id).
+  // Tabs are ALWAYS visible; they slice the library by dimension. Sidebar clicks REPLACE the view
+  // (they do not open tabs). Search + filter pills refine whatever view is active.
+  const PERSISTENT_TABS = [
+    { id: "all",     label: "All Tracks" },
+    { id: "artists", label: "Artists" },
+    { id: "labels",  label: "Labels" },
+    { id: "genres",  label: "Genres" },
+    { id: "energy",  label: "Energy" },
+  ];
+  const [view, setView] = useState({ kind: "tab", tab: "all", drill: null });
+  const selectTab    = (tab) => setView({ kind: "tab", tab, drill: null });
+  const drillInto    = (value) => setView(v => ({ ...v, kind: "tab", drill: value }));
+  const clearDrill   = () => setView(v => ({ ...v, drill: null }));
+  const selectSmart  = (smartId) => setView({ kind: "smart", smartId });
+  const selectFolder = (folderId) => setView({ kind: "folder", folderId });
+
+  // Suggestions panel — slides in from the right. Source deck is whichever is
+  // currently loaded (A takes priority if both are loaded).
+  const [showSuggestions, setShowSuggestions] = useState(false);
+
+  // Queue/chat split — persisted fraction of the right rail devoted to the queue.
+  const [queueFraction, setQueueFraction] = useState(() => {
+    const saved = parseFloat(localStorage.getItem("queueFraction") || "");
+    return isFinite(saved) && saved >= 0.15 && saved <= 0.85 ? saved : 0.4;
+  });
+  const queueFractionRef = useRef(queueFraction);
+  useEffect(() => { queueFractionRef.current = queueFraction; }, [queueFraction]);
+  const startSplitDrag = (e) => {
+    e.preventDefault();
+    const col = e.currentTarget.parentElement;
+    const rect = col.getBoundingClientRect();
+    const onMove = (ev) => {
+      const frac = Math.max(0.15, Math.min(0.85, (ev.clientY - rect.top) / rect.height));
+      setQueueFraction(frac);
+    };
+    const onUp = () => {
+      document.removeEventListener("mousemove", onMove);
+      document.removeEventListener("mouseup", onUp);
+      localStorage.setItem("queueFraction", String(queueFractionRef.current));
+    };
+    document.addEventListener("mousemove", onMove);
+    document.addEventListener("mouseup", onUp);
+  };
+  const [search, setSearch] = useState("");
+  const [matchDeckA, setMatchDeckA] = useState(false);
+  const [chatInput, setChatInput] = useState("");
+  const [playedIds, setPlayedIds] = useState(() => new Set());
+  const chatEndRef = useRef(null);
+
+  useEffect(() => {
+    if (playingTrack?.id) setPlayedIds(prev => new Set(prev).add(playingTrack.id));
+  }, [playingTrack?.id]);
+
+  useEffect(() => { chatEndRef.current?.scrollIntoView({ behavior: "smooth" }); }, [chat]);
+
+  const fmtDur = s => s ? `${Math.floor(s/60)}:${String(Math.floor(s%60)).padStart(2,"0")}` : "—";
+
+  // Helper: extract the group-key for a track given a dimension tab.
+  const groupFieldFor = (t, tab) => {
+    if (tab === "artists") return t.artist || "Unknown Artist";
+    if (tab === "labels")  return t.label  || "Unknown Label";
+    if (tab === "genres")  return t.genre  || "Unknown Genre";
+    if (tab === "energy")  return t.energyLabel || "Unrated";
+    return null;
+  };
+
+  // Base universe for the current view. Filters and drill narrow this further below.
+  const baseTracks = (() => {
+    if (view.kind === "smart") return allTracks.filter(t => playedIds.has(t.id));
+    if (view.kind === "folder") {
+      const cr = crates.find(c => c.id === view.folderId);
+      return (cr?.trackIds || []).map(id => allTracks.find(t => t.id === id)).filter(Boolean);
+    }
+    return allTracks; // tab view — always starts from full library
+  })();
+
+  // Breadcrumb parts for the context header (label + optional clickable parent).
+  const headerParts = (() => {
+    if (view.kind === "smart") return [{ text: view.smartId === "recent" ? "Recently Played" : "Played This Session" }];
+    if (view.kind === "folder") { const cr = crates.find(c => c.id === view.folderId); return [{ text: cr?.name || "Folder" }]; }
+    if (view.tab === "all") return [{ text: "All Tracks" }];
+    const tabLabel = PERSISTENT_TABS.find(t => t.id === view.tab)?.label || view.tab;
+    const parts = [{ text: tabLabel, onClick: view.drill ? clearDrill : null }];
+    if (view.drill) parts.push({ text: view.drill });
+    return parts;
+  })();
+
+  const tabTracks = baseTracks; // keep name stable for existing search/filter code below
+
+  // Search parser: BPM (int or range), Camelot key (8A/12B), energy label, else text.
+  const parsed = (() => {
+    const f = { text: [], bpm: null, bpmRange: null, key: null, energy: null };
+    for (const tok of search.trim().split(/\s+/).filter(Boolean)) {
+      const mR = tok.match(/^(\d{2,3})-(\d{2,3})$/);
+      if (mR) { f.bpmRange = [parseInt(mR[1]), parseInt(mR[2])]; continue; }
+      if (/^\d{2,3}$/.test(tok)) { f.bpm = parseInt(tok); continue; }
+      if (/^([1-9]|1[0-2])[ab]$/i.test(tok)) { f.key = tok.toUpperCase(); continue; }
+      if (/^(low|mid|high|peak|ambient|warm|hard|build)$/i.test(tok)) { f.energy = tok.toLowerCase(); continue; }
+      f.text.push(tok.toLowerCase());
+    }
+    return f;
+  })();
+
+  const filteredUniverse = (() => {
+    let t = tabTracks;
+    if (parsed.text.length) {
+      const q = parsed.text.join(" ");
+      t = t.filter(x => ((x.title||"")+" "+(x.artist||"")+" "+(x.label||"")+" "+(x.album||"")+" "+(x.genre||"")).toLowerCase().includes(q));
+    }
+    if (parsed.bpm != null) t = t.filter(x => x.bpm && Math.abs(x.bpm - parsed.bpm) <= 2);
+    if (parsed.bpmRange) t = t.filter(x => x.bpm && x.bpm >= parsed.bpmRange[0] && x.bpm <= parsed.bpmRange[1]);
+    if (parsed.key) t = t.filter(x => x.key && x.key.toUpperCase() === parsed.key);
+    if (parsed.energy) t = t.filter(x => (x.energyLabel||"").toLowerCase().includes(parsed.energy));
+    if (matchDeckA && playingTrack?.bpm) {
+      t = t.filter(x => x.bpm && Math.abs(x.bpm - playingTrack.bpm) <= 4);
+      if (playingTrack.key && CAMELOT[playingTrack.key]) {
+        t = t.filter(x => !x.key || !CAMELOT[x.key] || camelotScore(CAMELOT[playingTrack.key], CAMELOT[x.key]) >= 3);
+      }
+    }
+    return t;
+  })();
+
+  // Decide: show group list or track list?
+  // Group list renders when viewing a dimension tab (artists/labels/genres/energy) without a drill.
+  // Drilled-in or "All Tracks"/smart/folder views show the track list directly.
+  const isDimensionTab = view.kind === "tab" && view.tab !== "all";
+  const showGroups = isDimensionTab && view.drill == null;
+  const groups = showGroups
+    ? (() => {
+        const m = new Map();
+        for (const t of filteredUniverse) {
+          const k = groupFieldFor(t, view.tab);
+          if (!m.has(k)) m.set(k, []);
+          m.get(k).push(t);
+        }
+        return [...m.entries()]
+          .map(([name, items]) => ({ name, items }))
+          .sort((a, b) => b.items.length - a.items.length);
+      })()
+    : [];
+  const tracks = showGroups
+    ? []
+    : (isDimensionTab && view.drill != null
+        ? filteredUniverse.filter(t => groupFieldFor(t, view.tab) === view.drill)
+        : filteredUniverse);
+
+  const queueTracks = queueIds.map(id => allTracks.find(t => t.id === id)).filter(Boolean);
+
+  const sendChat = () => { if (!chatInput.trim()) return; onSendChat(chatInput); setChatInput(""); };
+
+  const removeSearchToken = re => setSearch(s => s.replace(re, "").replace(/\s+/g," ").trim());
+
+  // Active-highlighting for sidebar items. Smart items match view.smartId; folder items
+  // match view.folderId; nothing in the sidebar highlights while a tab view is active.
+  const sidebarActive = (kind, id) => view.kind === kind && (view.smartId === id || view.folderId === id);
+  const FolderItem = ({ kind, id, label, count, onClick }) => {
+    const isActive = sidebarActive(kind, id);
+    return (
+      <div onClick={onClick} style={{
+        padding: "6px 10px 6px 9px", cursor: "pointer",
+        display: "flex", justifyContent: "space-between", alignItems: "center",
+        borderLeft: `3px solid ${isActive ? G : "transparent"}`,
+        background: isActive ? `${G}0e` : "transparent",
+        color: isActive ? TEXT : SUBTLE, fontSize: 12,
+      }}>
+        <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{label}</span>
+        <span style={{ fontSize: 10, color: MUTED, fontFamily: "'DM Mono',monospace", marginLeft: 6 }}>{count}</span>
+      </div>
+    );
+  };
+
+  const FilterPill = ({ children, onRemove }) => (
+    <span style={{
+      padding: "3px 4px 3px 9px", background: `${G}15`, border: `1px solid ${G}44`, color: G,
+      borderRadius: 12, fontSize: 10, fontFamily: "'DM Mono',monospace",
+      display: "inline-flex", alignItems: "center", gap: 2,
+    }}>
+      <span>{children}</span>
+      <span onClick={onRemove} style={{ cursor: "pointer", opacity: 0.7, padding: "0 4px" }}>×</span>
+    </span>
+  );
+
+  return (
+    <div style={{ display: "flex", height: "100%", background: BG, fontFamily: "'DM Sans',sans-serif", color: TEXT, position: "relative", overflow: "hidden" }}>
+
+      {/* ── LEFT RAIL ── */}
+      <div style={{ width: 180, flexShrink: 0, borderRight: `1px solid ${BORDER}`, display: "flex", flexDirection: "column" }}>
+        <div style={{ padding: "14px 10px 6px", fontSize: 9, letterSpacing: 2, color: MUTED, fontFamily: "'DM Mono',monospace" }}>SMART</div>
+        <FolderItem kind="smart" id="recent"  label="Recently Played"     count={playedIds.size} onClick={() => selectSmart("recent")} />
+        <FolderItem kind="smart" id="session" label="Played This Session" count={playedIds.size} onClick={() => selectSmart("session")} />
+        <div style={{ padding: "14px 10px 6px", fontSize: 9, letterSpacing: 2, color: MUTED, fontFamily: "'DM Mono',monospace" }}>FOLDERS</div>
+        <div style={{ flex: 1, overflowY: "auto" }}>
+          {crates.length === 0
+            ? <div style={{ padding: "8px 12px", color: MUTED, fontSize: 11, fontStyle: "italic" }}>No folders yet</div>
+            : crates.map(c => <FolderItem key={c.id} kind="folder" id={c.id} label={c.name} count={c.trackIds?.length || 0} onClick={() => selectFolder(c.id)} />)}
+        </div>
+        <div style={{ padding: 10, borderTop: `1px solid ${BORDER}` }}>
+          <button style={{
+            width: "100%", height: 28, background: "transparent", border: `1px dashed ${BORDER}`,
+            color: SUBTLE, fontSize: 9, letterSpacing: 2, fontFamily: "'DM Mono',monospace",
+            borderRadius: 4, cursor: "pointer",
+          }}>+ NEW FOLDER</button>
+        </div>
+      </div>
+
+      {/* ── CENTER ── */}
+      <div style={{ flex: 1, minWidth: 0, display: "flex", flexDirection: "column" }}>
+
+        {/* Persistent tab strip — slices the library by dimension. Always visible. */}
+        <div style={{ display: "flex", padding: "0 8px", gap: 0, borderBottom: `1px solid ${BORDER}`, alignItems: "stretch", background: BG, height: 38 }}>
+          {PERSISTENT_TABS.map(tab => {
+            const active = view.kind === "tab" && view.tab === tab.id;
+            return (
+              <div key={tab.id} onClick={() => selectTab(tab.id)}
+                onMouseEnter={e => { if (!active) e.currentTarget.style.color = TEXT; }}
+                onMouseLeave={e => { if (!active) e.currentTarget.style.color = MUTED; }}
+                style={{
+                  padding: "0 14px", cursor: "pointer",
+                  display: "flex", alignItems: "center",
+                  color: active ? TEXT : MUTED,
+                  borderBottom: active ? `2px solid ${G}` : "2px solid transparent",
+                  marginBottom: -1,
+                  fontSize: 11, fontFamily: "'DM Mono',monospace", letterSpacing: 1.5,
+                  fontWeight: active ? 700 : 500,
+                  textTransform: "uppercase",
+                  transition: "color 0.12s",
+                }}>
+                {tab.label}
+              </div>
+            );
+          })}
+        </div>
+
+        {/* Context header — breadcrumb path + count. */}
+        <div style={{ padding: "10px 14px 0", display: "flex", alignItems: "baseline", gap: 8 }}>
+          {headerParts.map((p, i) => {
+            const isLast = i === headerParts.length - 1;
+            return (
+              <span key={i} style={{ display: "inline-flex", alignItems: "baseline", gap: 8 }}>
+                {i > 0 && <span style={{ color: MUTED, fontSize: 13 }}>/</span>}
+                <span onClick={p.onClick || undefined} style={{
+                  fontSize: 15,
+                  color: isLast ? TEXT : SUBTLE,
+                  fontWeight: isLast ? 600 : 500,
+                  cursor: p.onClick ? "pointer" : "default",
+                  textDecoration: p.onClick ? "none" : "none",
+                }}>{p.text}</span>
+              </span>
+            );
+          })}
+          <span style={{ fontSize: 11, color: MUTED, fontFamily: "'DM Mono',monospace" }}>
+            · {showGroups ? `${groups.length} group${groups.length === 1 ? "" : "s"}` : `${tracks.length} track${tracks.length === 1 ? "" : "s"}`}
+          </span>
+        </div>
+
+        {/* Search */}
+        <div style={{ padding: "12px 14px 8px", background: BG2, borderBottom: `1px solid ${BORDER}` }}>
+          <input value={search} onChange={e => setSearch(e.target.value)}
+            placeholder="Search tracks, artists, labels…  or  '124 8a high'"
+            style={{
+              width: "100%", padding: "9px 12px", background: BG, border: `1px solid ${BORDER}`,
+              color: TEXT, fontFamily: "'DM Sans',sans-serif", fontSize: 12, borderRadius: 6, outline: "none",
+              boxShadow: "inset 0 1px 0 rgba(0,0,0,0.4)",
+            }} />
+          <div style={{ marginTop: 8, display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap", minHeight: 22 }}>
+            {parsed.bpm != null && <FilterPill onRemove={() => removeSearchToken(/\b\d{2,3}\b/)}>BPM ±2 of {parsed.bpm}</FilterPill>}
+            {parsed.bpmRange && <FilterPill onRemove={() => removeSearchToken(/\b\d{2,3}-\d{2,3}\b/)}>BPM {parsed.bpmRange.join("–")}</FilterPill>}
+            {parsed.key && <FilterPill onRemove={() => removeSearchToken(/\b([1-9]|1[0-2])[ab]\b/i)}>Key {parsed.key}</FilterPill>}
+            {parsed.energy && <FilterPill onRemove={() => removeSearchToken(/\b(low|mid|high|peak|ambient|warm|hard|build)\b/i)}>Energy: {parsed.energy}</FilterPill>}
+            <button onClick={() => setShowSuggestions(v => !v)} disabled={!suggestionSource}
+              title={suggestionSource ? `Suggestions for Deck ${suggestionSourceDeck}` : "Load a track to see suggestions."}
+              style={{
+                marginLeft: "auto",
+                padding: "4px 10px", height: 22,
+                background: showSuggestions ? `${G}22` : "transparent",
+                border: `1px solid ${showSuggestions ? G : BORDER}`,
+                color: showSuggestions ? G : (suggestionSource ? SUBTLE : MUTED),
+                borderRadius: 4, cursor: suggestionSource ? "pointer" : "not-allowed",
+                fontFamily: "'DM Mono',monospace", fontSize: 10, letterSpacing: 1, outline: "none",
+                display: "flex", alignItems: "center", gap: 5,
+              }}>
+              <span style={{ fontSize: 12 }}>✦</span> SUGGESTIONS
+            </button>
+          </div>
+        </div>
+
+        {/* Track list or group list depending on view */}
+        <div style={{ flex: 1, overflowY: "auto", padding: "4px 6px" }}>
+          {showGroups && (
+            <>
+              {groups.length === 0 && (
+                <div style={{ padding: 48, textAlign: "center", color: MUTED, fontSize: 12 }}>
+                  No {view.tab} match these filters.
+                </div>
+              )}
+              {groups.map(g => (
+                <div key={g.name} onClick={() => drillInto(g.name)}
+                  onMouseEnter={e => e.currentTarget.style.background = BG2}
+                  onMouseLeave={e => e.currentTarget.style.background = "transparent"}
+                  style={{
+                    display: "flex", alignItems: "center", justifyContent: "space-between",
+                    padding: "12px 16px", cursor: "pointer",
+                    borderRadius: 4, marginBottom: 2,
+                    borderLeft: `3px solid transparent`,
+                  }}>
+                  <span style={{ fontSize: 14, color: TEXT, fontWeight: 500, letterSpacing: 0.2 }}>{g.name}</span>
+                  <span style={{ display: "flex", gap: 12, alignItems: "center" }}>
+                    <span style={{ fontSize: 10, color: MUTED, fontFamily: "'DM Mono',monospace" }}>
+                      {g.items.length} track{g.items.length === 1 ? "" : "s"}
+                    </span>
+                    <span style={{ color: MUTED, fontSize: 16, lineHeight: 1 }}>›</span>
+                  </span>
+                </div>
+              ))}
+            </>
+          )}
+          {!showGroups && tracks.length === 0 && (
+            <div style={{ padding: 48, textAlign: "center", color: MUTED, fontSize: 12 }}>
+              {allTracks.length === 0 ? "Your library is empty. Drop some tracks in." : "No tracks match these filters."}
+            </div>
+          )}
+          {tracks.map(t => {
+            const played = playedIds.has(t.id);
+            const artwork = lib.artworkCache?.[t.id] || t.artwork;
+            const onDeckA = t.id === deckATrackId;
+            const onDeckB = t.id === deckBTrackId;
+            const deckClr = onDeckA ? DECK_A_CLR : onDeckB ? DECK_B_CLR : null;
+            const baseBg = deckClr ? `${deckClr}12` : "transparent";
+            return (
+              <div key={t.id} onClick={() => onLoad(t, "A")}
+                onMouseEnter={e => e.currentTarget.style.background = deckClr ? `${deckClr}22` : BG2}
+                onMouseLeave={e => e.currentTarget.style.background = baseBg}
+                style={{
+                  display: "flex", alignItems: "center", gap: 10,
+                  padding: "6px 10px 6px 7px", cursor: "pointer", opacity: played && !deckClr ? 0.55 : 1,
+                  borderRadius: 4, marginBottom: 1,
+                  background: baseBg,
+                  borderLeft: `3px solid ${deckClr || "transparent"}`,
+                }}>
+                {/* Deck badge (replaces analysis dot when loaded on a deck), else analysis dot. */}
+                {deckClr ? (
+                  <div title={`Loaded on Deck ${onDeckA ? "A" : "B"}`} style={{
+                    width: 18, height: 18, borderRadius: 3, flexShrink: 0,
+                    background: deckClr, color: "#0a0a10",
+                    display: "flex", alignItems: "center", justifyContent: "center",
+                    fontSize: 10, fontFamily: "'DM Mono',monospace", fontWeight: 700,
+                    boxShadow: `0 0 8px ${deckClr}88`,
+                  }}>{onDeckA ? "A" : "B"}</div>
+                ) : (
+                  <div title={t.analyzed ? "Analyzed" : "Metadata only"} style={{
+                    width: 6, height: 6, borderRadius: 3, flexShrink: 0,
+                    background: t.analyzed ? G : MUTED,
+                    boxShadow: t.analyzed ? `0 0 6px ${G}55` : "none",
+                    opacity: t.analyzed ? 1 : 0.55,
+                    marginLeft: 6, marginRight: 6,
+                  }} />
+                )}
+                <div style={{
+                  width: 32, height: 32, background: BG3, borderRadius: 3, flexShrink: 0,
+                  backgroundImage: artwork ? `url(${artwork})` : undefined,
+                  backgroundSize: "cover", backgroundPosition: "center",
+                  display: "flex", alignItems: "center", justifyContent: "center",
+                }}>
+                  {!artwork && <span style={{ fontSize: 11, color: MUTED }}>♪</span>}
+                </div>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ fontSize: 13, color: TEXT, display: "flex", alignItems: "center", gap: 6, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                    {played && <span style={{ color: G, fontSize: 10 }}>✓</span>}
+                    <span style={{ overflow: "hidden", textOverflow: "ellipsis" }}>{t.title || "(untitled)"}</span>
+                  </div>
+                  <div style={{ fontSize: 11, color: SUBTLE, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{t.artist || ""}</div>
+                </div>
+                <div style={{ width: 52, textAlign: "right", fontFamily: "'DM Mono',monospace", fontSize: 11, color: t.bpm ? G : MUTED }}>
+                  {t.bpm ? t.bpm.toFixed(1) : "—"}
+                </div>
+                <div style={{ width: 38, display: "flex", justifyContent: "center" }}>
+                  {t.key && <span style={{ fontSize: 9, padding: "2px 5px", background: `${G}15`, border: `1px solid ${G}33`, color: G, borderRadius: 3, fontFamily: "'DM Mono',monospace", letterSpacing: 0.5 }}>{t.key}</span>}
+                </div>
+                <div style={{ width: 50 }}>
+                  {t.energy != null && (
+                    <div style={{ height: 4, background: BG3, borderRadius: 2, overflow: "hidden" }}>
+                      <div style={{ width: `${Math.min(100, t.energy)}%`, height: "100%", background: G }} />
+                    </div>
+                  )}
+                </div>
+                <div style={{ width: 42, textAlign: "right", fontFamily: "'DM Mono',monospace", fontSize: 10, color: MUTED }}>
+                  {fmtDur(t.duration)}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      </div>
+
+      {/* ── RIGHT RAIL ── split ratio persisted via queueFraction (default 0.4) ── */}
+      <div style={{ width: 280, flexShrink: 0, borderLeft: `1px solid ${BORDER}`, display: "flex", flexDirection: "column" }}>
+
+        {/* QUEUE (top) */}
+        <div style={{ flex: `${queueFraction} 1 0`, minHeight: 80, display: "flex", flexDirection: "column" }}>
+          <div style={{ padding: "10px 14px", fontSize: 10, letterSpacing: 2, fontFamily: "'DM Mono',monospace", color: G, borderBottom: `1px solid ${BORDER}`, display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+            <span>QUEUE</span>
+            <span style={{ color: MUTED, fontSize: 9 }}>{queueTracks.length} up next</span>
+          </div>
+          <div style={{ flex: 1, overflowY: "auto", padding: 6 }}>
+            {queueTracks.length === 0
+              ? <div style={{ padding: 28, textAlign: "center", color: MUTED, fontSize: 11, lineHeight: 1.5 }}>Drag tracks from library<br/>to queue them up</div>
+              : queueTracks.slice(0, 8).map(t => (
+                  <div key={t.id} onClick={() => onLoad(t, "B")}
+                    onMouseEnter={e => e.currentTarget.style.background = BG2}
+                    onMouseLeave={e => e.currentTarget.style.background = "transparent"}
+                    style={{ display: "flex", alignItems: "center", gap: 8, padding: "5px 8px", cursor: "pointer", borderRadius: 3 }}>
+                    <div style={{ width: 26, height: 26, background: BG3, borderRadius: 2, flexShrink: 0,
+                      backgroundImage: (lib.artworkCache?.[t.id] || t.artwork) ? `url(${lib.artworkCache?.[t.id] || t.artwork})` : undefined,
+                      backgroundSize: "cover", backgroundPosition: "center",
+                      display: "flex", alignItems: "center", justifyContent: "center", fontSize: 10, color: MUTED,
+                    }}>{!(lib.artworkCache?.[t.id] || t.artwork) && "♪"}</div>
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <div style={{ fontSize: 11, color: TEXT, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{t.title}</div>
+                      <div style={{ fontSize: 10, color: SUBTLE, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{t.artist}</div>
+                    </div>
+                    <div style={{ fontSize: 10, color: G, fontFamily: "'DM Mono',monospace" }}>{t.bpm?.toFixed(0) || "—"}</div>
+                  </div>
+                ))}
+          </div>
+        </div>
+
+        {/* Drag handle — resize queue/chat split. Persists on mouseup. */}
+        <div onMouseDown={startSplitDrag}
+          style={{
+            height: 6, cursor: "ns-resize", flexShrink: 0,
+            background: BORDER, position: "relative",
+            transition: "background 0.1s",
+          }}
+          onMouseEnter={e => e.currentTarget.style.background = `${G}44`}
+          onMouseLeave={e => e.currentTarget.style.background = BORDER}>
+          <div style={{ position: "absolute", top: 2, left: "50%", transform: "translateX(-50%)", width: 24, height: 2, background: MUTED, borderRadius: 1 }} />
+        </div>
+
+        {/* CHAT (bottom) */}
+        <div style={{ flex: `${1 - queueFraction} 1 0`, minHeight: 120, display: "flex", flexDirection: "column" }}>
+          <div style={{ padding: "10px 14px", fontSize: 10, letterSpacing: 2, fontFamily: "'DM Mono',monospace", color: G, borderBottom: `1px solid ${BORDER}`, display: "flex", alignItems: "center", gap: 8 }}>
+            <span>CHAT</span>
+            <div style={{ width: 6, height: 6, borderRadius: 3, background: "#22c55e", boxShadow: "0 0 6px #22c55e88" }} />
+            <span style={{ color: MUTED, fontSize: 9, fontFamily: "'DM Sans',sans-serif", letterSpacing: 0, textTransform: "none" }}>partner online</span>
+          </div>
+          <div style={{ flex: 1, overflowY: "auto", padding: "8px 12px" }}>
+            {(!chat || chat.length === 0)
+              ? <div style={{ color: MUTED, fontSize: 11, fontStyle: "italic", textAlign: "center", padding: 16 }}>No messages yet.</div>
+              : chat.map((m, i) => (
+                  <div key={i} style={{ fontSize: 11, marginBottom: 4, lineHeight: 1.4 }}>
+                    {m.type === "system"
+                      ? <span style={{ color: MUTED, fontStyle: "italic" }}>— {m.msg} —</span>
+                      : <>
+                          <span style={{ color: m.self || m.from === me ? G : PARTNER, fontWeight: 600 }}>{m.from}: </span>
+                          <span style={{ color: TEXT }}>{m.msg}</span>
+                        </>}
+                  </div>
+                ))}
+            <div ref={chatEndRef} />
+          </div>
+          <div style={{ padding: 8, display: "flex", gap: 6, borderTop: `1px solid ${BORDER}` }}>
+            <input value={chatInput} onChange={e => setChatInput(e.target.value)}
+              onKeyDown={e => e.key === "Enter" && sendChat()} placeholder="Message…"
+              style={{
+                flex: 1, height: 28, padding: "0 10px", background: BG2, border: `1px solid ${BORDER}`,
+                color: TEXT, fontFamily: "'DM Sans',sans-serif", fontSize: 11, borderRadius: 4, outline: "none",
+              }} />
+            <button onClick={sendChat} style={{
+              height: 28, width: 32, background: `${G}18`, border: `1px solid ${G}33`, color: G,
+              borderRadius: 4, cursor: "pointer", fontFamily: "'DM Mono',monospace", fontSize: 13, outline: "none",
+            }}>→</button>
+          </div>
+        </div>
+
+      </div>
+
+      {/* ── SUGGESTIONS PANEL — slides in from the right over the queue/chat column ── */}
+      <div onClick={() => setShowSuggestions(false)}
+        style={{
+          position: "absolute", inset: 0,
+          background: "rgba(0,0,0,0.5)",
+          opacity: showSuggestions ? 1 : 0,
+          pointerEvents: showSuggestions ? "auto" : "none",
+          transition: "opacity 0.18s",
+          zIndex: 9,
+        }} />
+      <div style={{
+        position: "absolute", top: 0, right: 0, width: 320, height: "100%",
+        background: BG2, borderLeft: `1px solid ${BORDER}`,
+        transform: showSuggestions ? "translateX(0)" : "translateX(100%)",
+        transition: "transform 0.22s ease-out",
+        zIndex: 10,
+        display: "flex", flexDirection: "column",
+        boxShadow: showSuggestions ? "-10px 0 28px rgba(0,0,0,0.5)" : "none",
+      }}>
+        <div style={{ padding: "14px 16px", borderBottom: `1px solid ${BORDER}`, display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+          <div>
+            <div style={{ fontSize: 9, letterSpacing: 2, color: MUTED, fontFamily: "'DM Mono',monospace", marginBottom: 2 }}>SUGGESTIONS FOR</div>
+            <div style={{ fontSize: 14, color: TEXT, fontWeight: 600, display: "flex", alignItems: "center", gap: 8 }}>
+              <span style={{
+                width: 18, height: 18, borderRadius: 3,
+                background: suggestionSourceDeck === "A" ? DECK_A_CLR : DECK_B_CLR,
+                color: "#0a0a10", display: "flex", alignItems: "center", justifyContent: "center",
+                fontSize: 10, fontFamily: "'DM Mono',monospace", fontWeight: 700,
+              }}>{suggestionSourceDeck || "—"}</span>
+              <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                {suggestionSource?.title || "—"}
+              </span>
+            </div>
+          </div>
+          <button onClick={() => setShowSuggestions(false)} aria-label="Close"
+            style={{ width: 24, height: 24, background: "transparent", border: "none", color: SUBTLE, cursor: "pointer", fontSize: 18, outline: "none" }}>×</button>
+        </div>
+        <div style={{ flex: 1, overflowY: "auto", padding: 6 }}>
+          {suggestions.length === 0 && (
+            <div style={{ padding: 32, textAlign: "center", color: MUTED, fontSize: 11, lineHeight: 1.5 }}>
+              No compatible tracks in the library yet.
+            </div>
+          )}
+          {suggestions.map(t => {
+            const targetDeck = deckATrackId && !deckBTrackId ? "B" : (!deckATrackId && deckBTrackId ? "A" : "A");
+            const artwork = lib.artworkCache?.[t.id] || t.artwork;
+            return (
+              <div key={t.id} onClick={() => { onLoad(t, targetDeck); setShowSuggestions(false); }}
+                onMouseEnter={e => e.currentTarget.style.background = BG3}
+                onMouseLeave={e => e.currentTarget.style.background = "transparent"}
+                style={{
+                  display: "flex", alignItems: "center", gap: 10, padding: "8px 10px",
+                  cursor: "pointer", borderRadius: 4, marginBottom: 2,
+                }}>
+                <div style={{
+                  width: 36, height: 36, background: BG3, borderRadius: 3, flexShrink: 0,
+                  backgroundImage: artwork ? `url(${artwork})` : undefined,
+                  backgroundSize: "cover", backgroundPosition: "center",
+                  display: "flex", alignItems: "center", justifyContent: "center",
+                }}>{!artwork && <span style={{ fontSize: 11, color: MUTED }}>♪</span>}</div>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ fontSize: 12, color: TEXT, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", fontWeight: 500 }}>{t.title}</div>
+                  <div style={{ fontSize: 10, color: SUBTLE, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{t.artist}</div>
+                  {t.reasons && t.reasons.length > 0 && (
+                    <div style={{ marginTop: 3, display: "flex", gap: 4, flexWrap: "wrap" }}>
+                      {t.reasons.map(r => (
+                        <span key={r} style={{
+                          fontSize: 8, padding: "1px 5px", background: "#22c55e14",
+                          border: "1px solid #22c55e33", color: "#22c55e",
+                          borderRadius: 3, fontFamily: "'DM Mono',monospace", letterSpacing: 0.3,
+                        }}>{r}</span>
+                      ))}
+                    </div>
+                  )}
+                </div>
+                <div style={{ fontSize: 10, color: G, fontFamily: "'DM Mono',monospace", textAlign: "right" }}>
+                  {t.bpm ? t.bpm.toFixed(1) : "—"}
+                  {t.key && <div style={{ fontSize: 9, color: SUBTLE, marginTop: 2 }}>{t.key}</div>}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      </div>
+
+    </div>
+  );
+}
+
 function LibraryPanel({lib, onLoad, playingTrack, previewTrackId, onPreview, onDelete, chat, onSendChat, me}){
   const [filter,setFilter]=useState("");
   const [sortBy,setSortBy]=useState("addedAt");
@@ -2607,18 +3235,31 @@ function Deck({ id, ch, ctx:ac, color, local, remote, onChange, midi:mt, bpmResu
             onDragOver={e=>{e.preventDefault();e.stopPropagation();setDragOver(true);}}
             onDragLeave={()=>setDragOver(false)}
             onDrop={e=>{e.preventDefault();e.stopPropagation();setDragOver(false);const f=e.dataTransfer.files[0];if(f&&f.type.startsWith("audio/")){load(f);return;}try{const d=JSON.parse(e.dataTransfer.getData("application/json"));if(d?.trackId&&onLibraryTrackDrop)onLibraryTrackDrop(d.trackId);}catch{}}}
-            style={{flex:1, padding:"0 14px", cursor:"pointer", display:"flex", flexDirection:"column", justifyContent:"center", background:dragOver?color+"08":"transparent", transition:"background .12s", minWidth:0}}>
+            style={{flex:1, padding: buf ? "0 14px" : "6px 10px", cursor:"pointer", display:"flex", flexDirection:"column", justifyContent:"center", background:dragOver?color+"08":"transparent", transition:"background .12s", minWidth:0}}>
             {buf?(
               <>
                 <div style={{fontSize:13, fontWeight:500, color:"#d8d8e2", fontFamily:"'DM Sans',sans-serif", whiteSpace:"nowrap", overflow:"hidden", textOverflow:"ellipsis"}}>{name}</div>
                 <div style={{fontSize:9, color:"#888898", fontFamily:"'DM Mono',monospace", marginTop:3, letterSpacing:.3}}>{fmt(dur)} · {(buf.sampleRate/1000).toFixed(1)}kHz · {buf.numberOfChannels===2?"STEREO":"MONO"}</div>
               </>
             ):(
-              <div style={{display:"flex", alignItems:"center", gap:10}}>
-                <div style={{width:32, height:32, borderRadius:"50%", border:`1px solid ${dragOver?color:color+"33"}`, display:"flex", alignItems:"center", justifyContent:"center", color:dragOver?color:color+"44", fontSize:18, flexShrink:0}}>+</div>
+              <div style={{
+                display:"flex", alignItems:"center", gap:12, padding:"8px 12px",
+                border:`1.5px dashed ${dragOver?color:color+"44"}`,
+                borderRadius:8,
+                background: dragOver ? color+"10" : "transparent",
+                transition:"all .12s",
+              }}>
+                <div style={{
+                  width:36, height:36, borderRadius:"50%",
+                  border:`1.5px solid ${dragOver?color:color+"66"}`,
+                  display:"flex", alignItems:"center", justifyContent:"center",
+                  color:dragOver?color:color+"cc",
+                  fontSize:22, fontWeight:300, flexShrink:0,
+                  background: dragOver ? color+"22" : "transparent",
+                }}>+</div>
                 <div>
-                  <div style={{fontSize:11, fontWeight:500, color:dragOver?color:"#555562", fontFamily:"'DM Mono',monospace", letterSpacing:1}}>{dragOver?"DROP HERE":"LOAD TRACK"}</div>
-                  <div style={{fontSize:9, color:"#555562", marginTop:2, fontFamily:"'DM Mono',monospace", letterSpacing:.3}}>click or drag · mp3 wav flac aac</div>
+                  <div style={{fontSize:12, fontWeight:600, color:dragOver?color:color+"dd", fontFamily:"'DM Mono',monospace", letterSpacing:1.5}}>{dragOver?"DROP HERE":"LOAD TRACK"}</div>
+                  <div style={{fontSize:9, color:"#555562", marginTop:2, fontFamily:"'DM Mono',monospace", letterSpacing:.5}}>click or drag · mp3 wav flac aac</div>
                 </div>
               </div>
             )}
@@ -2644,11 +3285,11 @@ function Deck({ id, ch, ctx:ac, color, local, remote, onChange, midi:mt, bpmResu
             <div style={{fontSize:7,color:"#888898",fontFamily:"'DM Mono',monospace",letterSpacing:1}}>{deckKey}</div>
           </div>
         ):null;})()}
-        <div style={{flexShrink:0, padding:"0 10px", borderLeft:BD, display:"flex", flexDirection:"column", alignItems:"flex-end", justifyContent:"center", gap:4, minWidth:68}}>
+        <div style={{flexShrink:0, padding:"0 14px", borderLeft:BD, display:"flex", flexDirection:"column", alignItems:"flex-end", justifyContent:"center", gap:4, minWidth:96}}>
           {bpmResult?.analyzing&&<div style={{fontSize:7,color:"#f59e0b",fontFamily:"'DM Mono',monospace",animation:"pulse .8s infinite"}}>ANA...</div>}
           <div style={{textAlign:"right"}}>
-            <div style={{fontSize:20, fontFamily:"'DM Mono',monospace", fontWeight:500, color, lineHeight:1, letterSpacing:0}}>{bpmResult?.bpm?(bpmResult.bpm*rate).toFixed(1):"—"}</div>
-            <div style={{fontSize:7, color:"#888898", fontFamily:"'DM Mono',monospace", letterSpacing:2}}>BPM</div>
+            <div style={{fontSize:32, fontFamily:"'DM Mono',monospace", fontWeight:600, color:bpmResult?.bpm?"#C8A96E":"#2a2a3a", lineHeight:0.95, letterSpacing:-0.5, textShadow:bpmResult?.bpm?"0 0 18px #C8A96E22":"none"}}>{bpmResult?.bpm?(bpmResult.bpm*rate).toFixed(1):"—"}</div>
+            <div style={{fontSize:7, color:"#888898", fontFamily:"'DM Mono',monospace", letterSpacing:2.5, marginTop:2}}>BPM</div>
           </div>
           <VU an={ch?.an} color={color}/>
         </div>
@@ -2711,16 +3352,16 @@ function Deck({ id, ch, ctx:ac, color, local, remote, onChange, midi:mt, bpmResu
       {/* ── LCD TIME ── */}
       <div style={{display:"flex", alignItems:"center", justifyContent:"space-between", padding:"6px 14px", background:"#08080e", borderBottom:BD}}>
         <div>
-          <div style={{fontFamily:"'DM Mono',monospace", fontWeight:500, fontSize:20, color, letterSpacing:1, lineHeight:1, textShadow:`0 0 14px ${color}55`}}>{fmt(cur)}</div>
-          <div style={{fontSize:7, color:"#555562", fontFamily:"'DM Mono',monospace", letterSpacing:2, marginTop:3, textTransform:"uppercase"}}>Elapsed</div>
+          <div style={{fontFamily:"'DM Mono',monospace", fontWeight:600, fontSize:22, color, letterSpacing:0.5, lineHeight:1, textShadow:`0 0 16px ${color}55`, fontVariantNumeric:"tabular-nums"}}>{fmt(cur)}</div>
+          <div style={{fontSize:7, color:"#555562", fontFamily:"'DM Mono',monospace", letterSpacing:2.5, marginTop:4, textTransform:"uppercase"}}>Elapsed</div>
         </div>
         <div style={{display:"flex", flexDirection:"column", alignItems:"center", gap:3}}>
           {play&&<div style={{width:5,height:5,borderRadius:"50%",background:color,boxShadow:`0 0 8px ${color}`,animation:"pulse .7s infinite"}}/>}
           <div style={{fontSize:9, color:"#888898", fontFamily:"'DM Mono',monospace"}}>{buf?`${(prog*100).toFixed(0)}%`:""}</div>
         </div>
         <div style={{textAlign:"right"}}>
-          <div style={{fontFamily:"'DM Mono',monospace", fontWeight:500, fontSize:20, color:"#383848", letterSpacing:1, lineHeight:1}}>-{fmt(Math.max(0,dur-cur))}</div>
-          <div style={{fontSize:7, color:"#555562", fontFamily:"'DM Mono',monospace", letterSpacing:2, marginTop:3, textTransform:"uppercase"}}>Remain</div>
+          <div style={{fontFamily:"'DM Mono',monospace", fontWeight:600, fontSize:22, color:"#383848", letterSpacing:0.5, lineHeight:1, fontVariantNumeric:"tabular-nums"}}>-{fmt(Math.max(0,dur-cur))}</div>
+          <div style={{fontSize:7, color:"#555562", fontFamily:"'DM Mono',monospace", letterSpacing:2.5, marginTop:4, textTransform:"uppercase"}}>Remain</div>
         </div>
       </div>
 
@@ -3547,48 +4188,61 @@ export default function CollabMix({ initialPage = "landing", djName = null }) {
       {/* MAIN CONTENT AREA */}
       <div style={{ flex:1, display:"flex", flexDirection:"column", overflow:"visible", minHeight:0 }}>
 
-      {/* ── FULL-WIDTH WAVEFORM SECTION (Rekordbox layout) ── */}
-      <div style={{ flexShrink:0, background:"#020208", borderBottom:"1px solid #16161e" }}>
-        {/* Deck A — blue, full screen width */}
-        <div style={{ position:"relative", minHeight:96, flexShrink:0 }}>
-          <div style={{ position:"absolute", top:6, left:10, zIndex:2, display:"flex", gap:8, alignItems:"center", pointerEvents:"none" }}>
-            <div style={{ width:5, height:5, borderRadius:"50%", background:"#C8A96E", boxShadow:"0 0 6px #C8A96E" }}/>
-            <span style={{ fontSize:9, fontFamily:"'DM Mono',monospace", fontWeight:700, color:"#C8A96E88", letterSpacing:2 }}>A</span>
-          </div>
-          {/* Zoom controls + grid nudges — top right */}
-          <div style={{ position:"absolute", top:6, right:10, zIndex:2, display:"flex", gap:6, alignItems:"center" }}>
-            {/* Position nudge: ← 5ms [offset] → 5ms. Double-click offset to reset. */}
-            <div style={{ display:"flex", gap:2, alignItems:"center", opacity:wfA?.name?1:0.35 }}>
-              <button onClick={()=>nudgeGridA(-5)} disabled={!wfA?.name} title="Shift grid 5ms earlier" style={{ height:18, width:18, padding:0, fontSize:10, fontFamily:"'DM Mono',monospace", background:"transparent", border:"1px solid #ffffff18", color:"#ffffff88", borderRadius:3, cursor:wfA?.name?"pointer":"default", outline:"none" }}>←</button>
-              <div onDoubleClick={resetGridA} title="Double-click to reset" style={{ minWidth:44, textAlign:"center", height:18, lineHeight:"18px", padding:"0 4px", fontSize:8, fontFamily:"'DM Mono',monospace", color: gridOffsetA===0 ? "#ffffff44" : "#ef4444", background: gridOffsetA===0 ? "transparent" : "#ef444411", border: `1px solid ${gridOffsetA===0 ? "#ffffff14" : "#ef444433"}`, borderRadius:3, userSelect:"none" }}>{gridOffsetA>0?"+":""}{gridOffsetA}ms</div>
-              <button onClick={()=>nudgeGridA(5)} disabled={!wfA?.name} title="Shift grid 5ms later" style={{ height:18, width:18, padding:0, fontSize:10, fontFamily:"'DM Mono',monospace", background:"transparent", border:"1px solid #ffffff18", color:"#ffffff88", borderRadius:3, cursor:wfA?.name?"pointer":"default", outline:"none" }}>→</button>
+      {/* ── FULL-WIDTH WAVEFORM SECTION — dynamic heights based on how many decks are loaded ── */}
+      {(() => {
+        const hasA = !!wfA?.bass;
+        const hasB = !!wfB?.bass;
+        if (!hasA && !hasB) {
+          return (
+            <div style={{ flexShrink:0, height:40, background:"#020208", borderBottom:"1px solid #16161e", display:"flex", alignItems:"center", justifyContent:"center", color:"#4a4a5a", fontSize:9, fontFamily:"'DM Mono',monospace", letterSpacing:3, textTransform:"uppercase" }}>
+              No track loaded — drop tracks below to start
             </div>
-            {/* BPM nudge: [BPM-] [delta] [BPM+]. Each click = 0.01 BPM. */}
-            <div style={{ display:"flex", gap:2, alignItems:"center", opacity:wfA?.name?1:0.35 }}>
-              <button onClick={()=>nudgeBpmA(-1)} disabled={!wfA?.name} title="Decrease BPM by 0.01 (stretches beat spacing)" style={{ height:18, padding:"0 4px", fontSize:8, fontFamily:"'DM Mono',monospace", background:"transparent", border:"1px solid #ffffff18", color:"#ffffff88", borderRadius:3, cursor:wfA?.name?"pointer":"default", outline:"none" }}>BPM−</button>
-              <div onDoubleClick={resetBpmA} title="Double-click to reset" style={{ minWidth:60, textAlign:"center", height:18, lineHeight:"18px", padding:"0 4px", fontSize:8, fontFamily:"'DM Mono',monospace", color: bpmNudgeA===0 ? "#ffffff44" : "#ef4444", background: bpmNudgeA===0 ? "transparent" : "#ef444411", border: `1px solid ${bpmNudgeA===0 ? "#ffffff14" : "#ef444433"}`, borderRadius:3, userSelect:"none" }}>{bpmNudgeA>0?"+":""}{(bpmNudgeA*0.01).toFixed(2)} BPM</div>
-              <button onClick={()=>nudgeBpmA(1)} disabled={!wfA?.name} title="Increase BPM by 0.01 (tightens beat spacing)" style={{ height:18, padding:"0 4px", fontSize:8, fontFamily:"'DM Mono',monospace", background:"transparent", border:"1px solid #ffffff18", color:"#ffffff88", borderRadius:3, cursor:wfA?.name?"pointer":"default", outline:"none" }}>BPM+</button>
-            </div>
-            <div style={{ width:1, height:12, background:"#ffffff18" }}/>
-            {WF_ZOOM_LABELS.map((lbl,i)=>(
-              <button key={i} onClick={()=>setWfZoom(i)} style={{ height:18, padding:"0 7px", fontSize:8, fontFamily:"'DM Mono',monospace", letterSpacing:.5, background:wfZoom===i?"#C8A96E22":"transparent", border:`1px solid ${wfZoom===i?"#C8A96E88":"#ffffff18"}`, color:wfZoom===i?"#C8A96E":"#ffffff44", borderRadius:4, cursor:"pointer", outline:"none" }}>{lbl}</button>
-            ))}
+          );
+        }
+        const wfH = (hasA && hasB) ? 110 : 140; // 1 deck loaded → 140; both → 110 each
+        return (
+          <div style={{ flexShrink:0, background:"#020208", borderBottom:"1px solid #16161e" }}>
+            {hasA && (
+              <div style={{ position:"relative", minHeight:wfH, flexShrink:0 }}>
+                <div style={{ position:"absolute", top:6, left:10, zIndex:2, display:"flex", gap:8, alignItems:"center", pointerEvents:"none" }}>
+                  <div style={{ width:5, height:5, borderRadius:"50%", background:"#C8A96E", boxShadow:"0 0 6px #C8A96E" }}/>
+                  <span style={{ fontSize:9, fontFamily:"'DM Mono',monospace", fontWeight:700, color:"#C8A96E88", letterSpacing:2 }}>A</span>
+                </div>
+                <div style={{ position:"absolute", top:6, right:10, zIndex:2, display:"flex", gap:6, alignItems:"center" }}>
+                  <div style={{ display:"flex", gap:2, alignItems:"center", opacity:wfA?.name?1:0.35 }}>
+                    <button onClick={()=>nudgeGridA(-5)} disabled={!wfA?.name} title="Shift grid 5ms earlier" style={{ height:18, width:18, padding:0, fontSize:10, fontFamily:"'DM Mono',monospace", background:"transparent", border:"1px solid #ffffff18", color:"#ffffff88", borderRadius:3, cursor:wfA?.name?"pointer":"default", outline:"none" }}>←</button>
+                    <div onDoubleClick={resetGridA} title="Double-click to reset" style={{ minWidth:44, textAlign:"center", height:18, lineHeight:"18px", padding:"0 4px", fontSize:8, fontFamily:"'DM Mono',monospace", color: gridOffsetA===0 ? "#ffffff44" : "#ef4444", background: gridOffsetA===0 ? "transparent" : "#ef444411", border: `1px solid ${gridOffsetA===0 ? "#ffffff14" : "#ef444433"}`, borderRadius:3, userSelect:"none" }}>{gridOffsetA>0?"+":""}{gridOffsetA}ms</div>
+                    <button onClick={()=>nudgeGridA(5)} disabled={!wfA?.name} title="Shift grid 5ms later" style={{ height:18, width:18, padding:0, fontSize:10, fontFamily:"'DM Mono',monospace", background:"transparent", border:"1px solid #ffffff18", color:"#ffffff88", borderRadius:3, cursor:wfA?.name?"pointer":"default", outline:"none" }}>→</button>
+                  </div>
+                  <div style={{ display:"flex", gap:2, alignItems:"center", opacity:wfA?.name?1:0.35 }}>
+                    <button onClick={()=>nudgeBpmA(-1)} disabled={!wfA?.name} title="Decrease BPM by 0.01" style={{ height:18, padding:"0 4px", fontSize:8, fontFamily:"'DM Mono',monospace", background:"transparent", border:"1px solid #ffffff18", color:"#ffffff88", borderRadius:3, cursor:wfA?.name?"pointer":"default", outline:"none" }}>BPM−</button>
+                    <div onDoubleClick={resetBpmA} title="Double-click to reset" style={{ minWidth:60, textAlign:"center", height:18, lineHeight:"18px", padding:"0 4px", fontSize:8, fontFamily:"'DM Mono',monospace", color: bpmNudgeA===0 ? "#ffffff44" : "#ef4444", background: bpmNudgeA===0 ? "transparent" : "#ef444411", border: `1px solid ${bpmNudgeA===0 ? "#ffffff14" : "#ef444433"}`, borderRadius:3, userSelect:"none" }}>{bpmNudgeA>0?"+":""}{(bpmNudgeA*0.01).toFixed(2)} BPM</div>
+                    <button onClick={()=>nudgeBpmA(1)} disabled={!wfA?.name} title="Increase BPM by 0.01" style={{ height:18, padding:"0 4px", fontSize:8, fontFamily:"'DM Mono',monospace", background:"transparent", border:"1px solid #ffffff18", color:"#ffffff88", borderRadius:3, cursor:wfA?.name?"pointer":"default", outline:"none" }}>BPM+</button>
+                  </div>
+                  <div style={{ width:1, height:12, background:"#ffffff18" }}/>
+                  {WF_ZOOM_LABELS.map((lbl,i)=>(
+                    <button key={i} onClick={()=>setWfZoom(i)} style={{ height:18, padding:"0 7px", fontSize:8, fontFamily:"'DM Mono',monospace", letterSpacing:.5, background:wfZoom===i?"#C8A96E22":"transparent", border:`1px solid ${wfZoom===i?"#C8A96E88":"#ffffff18"}`, color:wfZoom===i?"#C8A96E":"#ffffff44", borderRadius:4, cursor:"pointer", outline:"none" }}>{lbl}</button>
+                  ))}
+                </div>
+                <AnimatedZoomedWF bands={wfA} dur={wfA?.dur||0} progRef={progRefA} h={wfH} windowSec={WF_WINDOWS[wfZoom]} beatPhaseFrac={bpm.results["A"]?.beatPhaseFrac??null} beatPeriodSec={bpm.results["A"]?.beatPeriodSec??null} gridOffsetMs={gridOffsetA} bpmNudge={bpmNudgeA*0.01}/>
+              </div>
+            )}
+            {hasA && hasB && <div style={{ height:1, background:"#0d0d18" }}/>}
+            {hasB && (
+              <div style={{ position:"relative", minHeight:wfH, flexShrink:0 }}>
+                <div style={{ position:"absolute", top:6, left:10, zIndex:2, display:"flex", gap:8, alignItems:"center", pointerEvents:"none" }}>
+                  <div style={{ width:5, height:5, borderRadius:"50%", background:"#00BFA5", boxShadow:"0 0 6px #00BFA5" }}/>
+                  <span style={{ fontSize:9, fontFamily:"'DM Mono',monospace", fontWeight:700, color:"#00BFA588", letterSpacing:2 }}>B</span>
+                </div>
+                <AnimatedZoomedWF bands={wfB} dur={wfB?.dur||0} progRef={progRefB} h={wfH} windowSec={WF_WINDOWS[wfZoom]} beatPhaseFrac={pA?.beatPhaseFrac??null} beatPeriodSec={pA?.beatPeriodSec??null}/>
+              </div>
+            )}
           </div>
-          <AnimatedZoomedWF bands={wfA} dur={wfA?.dur||0} progRef={progRefA} h={96} windowSec={WF_WINDOWS[wfZoom]} beatPhaseFrac={bpm.results["A"]?.beatPhaseFrac??null} beatPeriodSec={bpm.results["A"]?.beatPeriodSec??null} gridOffsetMs={gridOffsetA} bpmNudge={bpmNudgeA*0.01}/>
-        </div>
-        <div style={{ height:1, background:"#0d0d18" }}/>
-        {/* Deck B — orange, full screen width */}
-        <div style={{ position:"relative", minHeight:96, flexShrink:0 }}>
-          <div style={{ position:"absolute", top:6, left:10, zIndex:2, display:"flex", gap:8, alignItems:"center", pointerEvents:"none" }}>
-            <div style={{ width:5, height:5, borderRadius:"50%", background:"#00BFA5", boxShadow:"0 0 6px #00BFA5" }}/>
-            <span style={{ fontSize:9, fontFamily:"'DM Mono',monospace", fontWeight:700, color:"#00BFA588", letterSpacing:2 }}>B</span>
-          </div>
-          <AnimatedZoomedWF bands={wfB} dur={wfB?.dur||0} progRef={progRefB} h={96} windowSec={WF_WINDOWS[wfZoom]} beatPhaseFrac={pA?.beatPhaseFrac??null} beatPeriodSec={pA?.beatPeriodSec??null}/>
-        </div>
-      </div>
+        );
+      })()}
 
       {/* DECKS + MIXER ROW */}
-      <div style={{ flexShrink:0, display:"grid", gridTemplateColumns:"1fr 260px 1fr", gap:8, padding:"8px 12px 0", height:"288px", overflow:"hidden" }}>
+      <div style={{ flexShrink:0, display:"grid", gridTemplateColumns:"1fr 260px 1fr", gap:8, padding:"8px 12px 0", height:"228px", overflow:"hidden" }}>
 
         {/* ── DECK A (local) ── */}
         <div style={{ display:"flex", flexDirection:"column", minWidth:0, minHeight:0, overflow:"hidden", background:"#0c0c12", border:"1px solid #1e1e28", borderRadius:10 }}>
@@ -3741,7 +4395,7 @@ export default function CollabMix({ initialPage = "landing", djName = null }) {
 
       {/* ── EMBEDDED LIBRARY — fills remaining space below decks ── */}
       <div style={{ flex:1, overflow:"hidden", borderTop:"1px solid #1c1c24", background:"#080810", minHeight:0 }}>
-        <LibraryPanel
+        <LibraryPanelV2
           lib={lib}
           onLoad={handleLibLoad}
           playingTrack={playingTrack}
