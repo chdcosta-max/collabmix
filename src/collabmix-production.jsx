@@ -3030,7 +3030,7 @@ function Knob({ v, set, min=-12, max=12, ctr=0, label, color="#C8A96E", size=38,
 // ── Deck ─────────────────────────────────────────────────────
 const HOT_CUE_COLORS=["#C8A96E","#ef4444","#22c55e","#f59e0b"];
 
-function Deck({ id, ch, ctx:ac, color, local, remote, onChange, midi:mt, bpmResult, bpmAnalyze, eqHi=0, eqMid=0, eqLo=0, chanVol=1, loadFromLibrary=null, onTrackInfo=null, onSync=null, onLibraryTrackDrop=null, onProgUpdate=null, onWaveform=null }) {
+function Deck({ id, ch, ctx:ac, color, local, remote, onChange, midi:mt, bpmResult, bpmAnalyze, eqHi=0, eqMid=0, eqLo=0, chanVol=1, loadFromLibrary=null, onTrackInfo=null, onSync=null, onLibraryTrackDrop=null, onProgUpdate=null, onWaveform=null, onSeekReady=null, remoteSeek=null, onToggleReady=null, onCueReady=null, remoteToggle=null, remoteCue=null }) {
   const [buf,setBuf]=useState(null),[name,setName]=useState(null),[play,setPlay]=useState(false);
   const [prog,setProg]=useState(0),[dur,setDur]=useState(0);
   const progRef=useRef(0); // mirror of prog for parent AnimatedZoomedWF without 60fps setState
@@ -3074,9 +3074,12 @@ function Deck({ id, ch, ctx:ac, color, local, remote, onChange, midi:mt, bpmResu
   // Apply EQ and channel vol from props
   useEffect(()=>{if(ch){ch.hi.gain.value=eqHi;ch.mid.gain.value=eqMid;ch.lo.gain.value=eqLo;ch.vol.gain.value=chanVol;}},[ch,eqHi,eqMid,eqLo,chanVol]);
 
-  // Mirror remote state + smooth interpolation for playhead
+  // Mirror remote state + smooth interpolation for playhead.
+  // Shared-decks (Option C): mirror whenever there's no LOCAL audio loaded —
+  // partner's actions paint our visual until we load a track ourselves, then
+  // local state takes over. Last-write-wins.
   useEffect(()=>{
-    if(!remote||local)return;
+    if(!remote||buf)return;
     const wasPlaying=play; const nowPlaying=remote.playing||false;
     setPlay(nowPlaying);
     // EQ values now come from parent props when remote is true
@@ -3097,6 +3100,8 @@ function Deck({ id, ch, ctx:ac, color, local, remote, onChange, midi:mt, bpmResu
       remProgRef.current=remote.progress;
       remTimeRef.current=now;
       setProg(remote.progress);
+      progRef.current=remote.progress;
+      onProgUpdate?.(remote.progress);
     }
     // Start/stop smooth interpolation RAF
     cancelAnimationFrame(remRaf.current);
@@ -3110,7 +3115,7 @@ function Deck({ id, ch, ctx:ac, color, local, remote, onChange, midi:mt, bpmResu
       remRaf.current=requestAnimationFrame(animate);
     }
     return()=>cancelAnimationFrame(remRaf.current);
-  },[remote,local]);
+  },[remote,local,buf]);
 
   // MIDI routing — EQ now handled by parent component when local
   const sfx=`DECK_${id}`;
@@ -3141,8 +3146,16 @@ function Deck({ id, ch, ctx:ac, color, local, remote, onChange, midi:mt, bpmResu
     }; tick(); };
 
   const toggle=useCallback(()=>{ if(!buf)return; if(play){off.current=Math.min(buf.duration,off.current+(ac.currentTime-st.current));stop_();setPlay(false);onChange?.("playing",false);}else{play_(off.current);setPlay(true);onChange?.("playing",true);} },[buf,play,ac,rate]);
-  const seek  =useCallback((p)=>{ const o=p*(buf?.duration||0);off.current=o;if(play)play_(o);else setProg(p);onChange?.("progress",p); },[buf,play,rate]);
-  const cue   =useCallback(()=>{ off.current=0;setProg(0);if(play){stop_();setPlay(false);onChange?.("playing",false);}onChange?.("progress",0); },[play]);
+  const seek  =useCallback((p)=>{ const o=p*(buf?.duration||0);off.current=o;if(play)play_(o);else{setProg(p);progRef.current=p;onProgUpdate?.(p);}onChange?.("progress",p); },[buf,play,rate]);
+  const cue   =useCallback(()=>{ off.current=0;setProg(0);progRef.current=0;onProgUpdate?.(0);if(play){stop_();setPlay(false);onChange?.("playing",false);}onChange?.("progress",0); },[play]);
+  useEffect(()=>{onSeekReady?.(seek);},[seek,onSeekReady]);
+  useEffect(()=>{onToggleReady?.(toggle);},[toggle,onToggleReady]);
+  useEffect(()=>{onCueReady?.(cue);},[cue,onCueReady]);
+  // Mirror remote `playing` state for Deck B button glyph
+  const remotePlaying=remote?.playing||false;
+  const playVisual=local?play:remotePlaying;
+  const enabled=local||!!remoteToggle;
+  const cueEnabled=local||!!remoteCue;
 
   // Load a file, optionally with library track metadata
   const load=async(f, trackMeta=null)=>{
@@ -3230,52 +3243,39 @@ function Deck({ id, ch, ctx:ac, color, local, remote, onChange, midi:mt, bpmResu
           {play&&<div style={{width:4,height:4,borderRadius:"50%",background:color,boxShadow:`0 0 8px ${color}`,animation:"blink 1s infinite"}}/>}
         </div>
 
-        {local?(
-          <div onClick={()=>fr.current?.click()}
-            onDragOver={e=>{e.preventDefault();e.stopPropagation();setDragOver(true);}}
-            onDragLeave={()=>setDragOver(false)}
-            onDrop={e=>{e.preventDefault();e.stopPropagation();setDragOver(false);const f=e.dataTransfer.files[0];if(f&&f.type.startsWith("audio/")){load(f);return;}try{const d=JSON.parse(e.dataTransfer.getData("application/json"));if(d?.trackId&&onLibraryTrackDrop)onLibraryTrackDrop(d.trackId);}catch{}}}
-            style={{flex:1, padding: buf ? "0 14px" : "6px 10px", cursor:"pointer", display:"flex", flexDirection:"column", justifyContent:"center", background:dragOver?color+"08":"transparent", transition:"background .12s", minWidth:0}}>
-            {buf?(
-              <>
-                <div style={{fontSize:13, fontWeight:500, color:"#d8d8e2", fontFamily:"'DM Sans',sans-serif", whiteSpace:"nowrap", overflow:"hidden", textOverflow:"ellipsis"}}>{name}</div>
-                <div style={{fontSize:9, color:"#888898", fontFamily:"'DM Mono',monospace", marginTop:3, letterSpacing:.3}}>{fmt(dur)} · {(buf.sampleRate/1000).toFixed(1)}kHz · {buf.numberOfChannels===2?"STEREO":"MONO"}</div>
-              </>
-            ):(
+        <div onClick={()=>fr.current?.click()}
+          onDragOver={e=>{e.preventDefault();e.stopPropagation();setDragOver(true);}}
+          onDragLeave={()=>setDragOver(false)}
+          onDrop={e=>{e.preventDefault();e.stopPropagation();setDragOver(false);const f=e.dataTransfer.files[0];if(f&&f.type.startsWith("audio/")){load(f);return;}try{const d=JSON.parse(e.dataTransfer.getData("application/json"));if(d?.trackId&&onLibraryTrackDrop)onLibraryTrackDrop(d.trackId);}catch{}}}
+          style={{flex:1, padding: buf ? "0 14px" : "6px 10px", cursor:"pointer", display:"flex", flexDirection:"column", justifyContent:"center", background:dragOver?color+"08":"transparent", transition:"background .12s", minWidth:0}}>
+          {buf?(
+            <>
+              <div style={{fontSize:13, fontWeight:500, color:"#d8d8e2", fontFamily:"'DM Sans',sans-serif", whiteSpace:"nowrap", overflow:"hidden", textOverflow:"ellipsis"}}>{name}</div>
+              <div style={{fontSize:9, color:"#888898", fontFamily:"'DM Mono',monospace", marginTop:3, letterSpacing:.3}}>{fmt(dur)} · {(buf.sampleRate/1000).toFixed(1)}kHz · {buf.numberOfChannels===2?"STEREO":"MONO"}</div>
+            </>
+          ):(
+            <div style={{
+              display:"flex", alignItems:"center", gap:12, padding:"8px 12px",
+              border:`1.5px dashed ${dragOver?color:color+"44"}`,
+              borderRadius:8,
+              background: dragOver ? color+"10" : "transparent",
+              transition:"all .12s",
+            }}>
               <div style={{
-                display:"flex", alignItems:"center", gap:12, padding:"8px 12px",
-                border:`1.5px dashed ${dragOver?color:color+"44"}`,
-                borderRadius:8,
-                background: dragOver ? color+"10" : "transparent",
-                transition:"all .12s",
-              }}>
-                <div style={{
-                  width:36, height:36, borderRadius:"50%",
-                  border:`1.5px solid ${dragOver?color:color+"66"}`,
-                  display:"flex", alignItems:"center", justifyContent:"center",
-                  color:dragOver?color:color+"cc",
-                  fontSize:22, fontWeight:300, flexShrink:0,
-                  background: dragOver ? color+"22" : "transparent",
-                }}>+</div>
-                <div>
-                  <div style={{fontSize:12, fontWeight:600, color:dragOver?color:color+"dd", fontFamily:"'DM Mono',monospace", letterSpacing:1.5}}>{dragOver?"DROP HERE":"LOAD TRACK"}</div>
-                  <div style={{fontSize:9, color:"#555562", marginTop:2, fontFamily:"'DM Mono',monospace", letterSpacing:.5}}>click or drag · mp3 wav flac aac</div>
-                </div>
+                width:36, height:36, borderRadius:"50%",
+                border:`1.5px solid ${dragOver?color:color+"66"}`,
+                display:"flex", alignItems:"center", justifyContent:"center",
+                color:dragOver?color:color+"cc",
+                fontSize:22, fontWeight:300, flexShrink:0,
+                background: dragOver ? color+"22" : "transparent",
+              }}>+</div>
+              <div>
+                <div style={{fontSize:12, fontWeight:600, color:dragOver?color:color+"dd", fontFamily:"'DM Mono',monospace", letterSpacing:1.5}}>{dragOver?"DROP HERE":"LOAD TRACK"}</div>
+                <div style={{fontSize:9, color:"#555562", marginTop:2, fontFamily:"'DM Mono',monospace", letterSpacing:.5}}>click or drag · mp3 wav flac aac</div>
               </div>
-            )}
-          </div>
-        ):(
-          <div style={{flex:1, padding:"0 14px", display:"flex", flexDirection:"column", justifyContent:"center", minWidth:0}}>
-            {name?(
-              <>
-                <div style={{fontSize:13, fontWeight:500, color:color+"cc", fontFamily:"'DM Sans',sans-serif", whiteSpace:"nowrap", overflow:"hidden", textOverflow:"ellipsis"}}>{name}</div>
-                <div style={{fontSize:9, color:"#888898", fontFamily:"'DM Mono',monospace", marginTop:3, letterSpacing:.3}}>{fmt(dur)}</div>
-              </>
-            ):(
-              <div style={{fontSize:9, color:"#555562", fontFamily:"'DM Mono',monospace", letterSpacing:2}}>WAITING FOR PARTNER</div>
-            )}
-          </div>
-        )}
+            </div>
+          )}
+        </div>
         <input ref={fr} type="file" accept="audio/*" style={{display:"none"}} onChange={e=>e.target.files[0]&&load(e.target.files[0])}/>
 
         {/* KEY display */}
@@ -3297,7 +3297,7 @@ function Deck({ id, ch, ctx:ac, color, local, remote, onChange, midi:mt, bpmResu
 
       {/* ── OVERVIEW STRIP — full track structure ── */}
       <div style={{borderTop:BD, borderBottom:BD, background:"#03030a"}}>
-        <WF bands={wfBass?{bass:wfBass,mid:wfMid,high:wfHigh}:null} peaks={wfPeaks} freq={wfFreq} prog={prog} onSeek={local?seek:null} h={40} hotCues={hotCues} loopStart={loopStart} loopEnd={loopEnd} loopActive={loopActive} bpm={bpmResult?.bpm?(bpmResult.bpm*rate):null} dur={dur} beatPhaseFrac={bpmResult?.beatPhaseFrac??null} color={color}/>
+        <WF bands={wfBass?{bass:wfBass,mid:wfMid,high:wfHigh}:null} peaks={wfPeaks} freq={wfFreq} prog={prog} onSeek={local?seek:remoteSeek} h={40} hotCues={hotCues} loopStart={loopStart} loopEnd={loopEnd} loopActive={loopActive} bpm={bpmResult?.bpm?(bpmResult.bpm*rate):null} dur={dur} beatPhaseFrac={bpmResult?.beatPhaseFrac??null} color={color}/>
       </div>
 
       {/* ── HOT CUES + LOOP CONTROLS ── */}
@@ -3366,14 +3366,14 @@ function Deck({ id, ch, ctx:ac, color, local, remote, onChange, midi:mt, bpmResu
       </div>
 
       {/* ── TRANSPORT ── */}
-      <div style={{display:"flex", alignItems:"center", gap:5, padding:"8px 12px", borderBottom:BD}}>
-        <button onClick={local?cue:undefined} disabled={!local} style={{height:32,padding:"0 10px",background:"#111118",border:"1px solid #1e1e28",color:local?"#888898":"#2a2a38",borderRadius:6,cursor:local?"pointer":"default",fontFamily:"'DM Mono',monospace",fontSize:11,letterSpacing:0,outline:"none",flexShrink:0}}>⏮</button>
-        <button onClick={local?()=>seek(Math.max(0,prog-.005)):undefined} disabled={!local} style={{height:32,width:34,background:"#111118",border:"1px solid #1e1e28",color:local?"#888898":"#2a2a38",borderRadius:6,cursor:local?"pointer":"default",fontFamily:"'DM Mono',monospace",fontSize:13,outline:"none"}}>◂◂</button>
-        <button onClick={local?toggle:undefined} disabled={!local} style={{flex:1,height:40,background:play?color+"1e":"#141420",border:`1px solid ${play?color+"66":color+"1a"}`,color:play?color:color+"44",borderRadius:7,cursor:local?"pointer":"default",fontSize:20,display:"flex",alignItems:"center",justifyContent:"center",boxShadow:play?`0 0 20px ${color}28`:"",outline:"none",transition:"all .15s"}}>
-          {play?"⏸":"▶"}
+      <div style={{display:"flex", alignItems:"center", gap:6, padding:"8px 12px", borderBottom:BD}}>
+        <button onClick={local?cue:(remoteCue||undefined)} disabled={!cueEnabled} style={{height:48,padding:"0 12px",background:"#111118",border:`1px solid ${cueEnabled?"#2a2a38":"#1e1e28"}`,color:cueEnabled?"#C8A96E":"#2a2a38",borderRadius:7,cursor:cueEnabled?"pointer":"default",fontFamily:"'DM Mono',monospace",fontSize:10,fontWeight:700,letterSpacing:1.5,outline:"none",flexShrink:0}}>CUE</button>
+        <button onClick={local?()=>seek(Math.max(0,prog-.005)):undefined} disabled={!local} style={{height:48,width:36,background:"#111118",border:"1px solid #1e1e28",color:local?"#888898":"#2a2a38",borderRadius:6,cursor:local?"pointer":"default",fontFamily:"'DM Mono',monospace",fontSize:13,outline:"none"}}>◂◂</button>
+        <button onClick={local?toggle:(remoteToggle||undefined)} disabled={!enabled} style={{flex:1,height:48,background:playVisual?color+"33":(enabled?"#1a1a26":"#141420"),border:`2px solid ${playVisual?color:(enabled?color+"66":color+"22")}`,color:playVisual?color:(enabled?color:color+"44"),borderRadius:8,cursor:enabled?"pointer":"default",fontSize:24,fontWeight:600,display:"flex",alignItems:"center",justifyContent:"center",boxShadow:playVisual?`0 0 24px ${color}55`:"none",outline:"none",transition:"all .15s"}}>
+          {playVisual?"⏸":"▶"}
         </button>
-        <button onClick={local?()=>seek(Math.min(1,prog+.005)):undefined} disabled={!local} style={{height:32,width:34,background:"#111118",border:"1px solid #1e1e28",color:local?"#888898":"#2a2a38",borderRadius:6,cursor:local?"pointer":"default",fontFamily:"'DM Mono',monospace",fontSize:13,outline:"none"}}>▸▸</button>
-        {onSync&&<button onClick={onSync} disabled={!buf||!bpmResult?.bpm} style={{height:32,padding:"0 9px",background:buf&&bpmResult?.bpm?"#22c55e12":"transparent",border:`1px solid ${buf&&bpmResult?.bpm?"#22c55e44":"#22c55e18"}`,color:buf&&bpmResult?.bpm?"#22c55e":"#22c55e30",borderRadius:6,cursor:buf&&bpmResult?.bpm?"pointer":"default",fontFamily:"'DM Mono',monospace",fontSize:9,letterSpacing:.5,outline:"none",flexShrink:0}}>SYNC</button>}
+        <button onClick={local?()=>seek(Math.min(1,prog+.005)):undefined} disabled={!local} style={{height:48,width:36,background:"#111118",border:"1px solid #1e1e28",color:local?"#888898":"#2a2a38",borderRadius:6,cursor:local?"pointer":"default",fontFamily:"'DM Mono',monospace",fontSize:13,outline:"none"}}>▸▸</button>
+        {onSync&&<button onClick={onSync} disabled={!buf||!bpmResult?.bpm} style={{height:48,padding:"0 10px",background:buf&&bpmResult?.bpm?"#22c55e18":"transparent",border:`1px solid ${buf&&bpmResult?.bpm?"#22c55e66":"#22c55e22"}`,color:buf&&bpmResult?.bpm?"#22c55e":"#22c55e44",borderRadius:7,cursor:buf&&bpmResult?.bpm?"pointer":"default",fontFamily:"'DM Mono',monospace",fontSize:10,fontWeight:700,letterSpacing:1.5,outline:"none",flexShrink:0}}>SYNC</button>}
       </div>
 
       <div style={{display:"none"}} data-set-rate={id} ref={el=>{if(el)el._setRate=setRate;}}/>
@@ -3861,7 +3861,7 @@ export default function CollabMix({ initialPage = "landing", djName = null }) {
   const [page, setPage]         = useState("session"); // "landing"|"lobby"|"session"
   const eng                     = useRef(null);
   const [ready, setReady]       = useState(true);
-  const [session, setSession]   = useState({ url:"wss://localhost:8080", room:"preview", name:"DJ Preview" });
+  const [session, setSession]   = useState({ url:SERVER_URL, room:"preview", name:"DJ Preview" });
   const [xf, setXf]             = useState(.5);
   const [mvol, setMvol]         = useState(.85);
   const [chat, setChat]         = useState([]);
@@ -3873,6 +3873,7 @@ export default function CollabMix({ initialPage = "landing", djName = null }) {
   const [rateA, setRateA]       = useState(1);
   const [rateB, setRateB]       = useState(1);
   const [eqA, setEqA]           = useState({hi:0, mid:0, lo:0, vol:1.0, filter:0});
+  const [eqB, setEqB]           = useState({hi:0, mid:0, lo:0, vol:1.0, filter:0});
   const lsRef                   = useRef({ deckA:{}, deckB:{}, xfade:.5 });
   const rateARef                = useRef(null); // DOM refs to call setRate on Deck
   const rateBRef                = useRef(null);
@@ -3897,10 +3898,27 @@ export default function CollabMix({ initialPage = "landing", djName = null }) {
   const progRefB = useRef(0);
   const handleProgA = useCallback((p) => { progRefA.current = p; }, []);
   const handleProgB = useCallback((p) => { progRefB.current = p; }, []);
-  // Sync wfB from remote player data (pA contains waveform arrays from WS)
+  const seekFnsRef = useRef({ A:null, B:null });
+  const toggleFnsRef = useRef({ A:null, B:null });
+  const cueFnsRef = useRef({ A:null, B:null });
+  const onDeckASeekReady = useCallback((fn) => { seekFnsRef.current.A = fn; }, []);
+  const onDeckBSeekReady = useCallback((fn) => { seekFnsRef.current.B = fn; }, []);
+  const onDeckAToggleReady = useCallback((fn) => { toggleFnsRef.current.A = fn; }, []);
+  const onDeckACueReady = useCallback((fn) => { cueFnsRef.current.A = fn; }, []);
+  const onDeckBToggleReady = useCallback((fn) => { toggleFnsRef.current.B = fn; }, []);
+  const onDeckBCueReady = useCallback((fn) => { cueFnsRef.current.B = fn; }, []);
+  const seekDeckA = useCallback((p) => { seekFnsRef.current.A?.(p); }, []);
+  const seekDeckB = useCallback((p) => { seekFnsRef.current.B?.(p); }, []);
+  // Partner-mirror waveforms — when a deck_update from partner brings
+  // waveform arrays for THEIR loaded track, paint them into wfA/wfB so the
+  // top zoomed waveform shows what they're playing. Local loads on the
+  // same deck override (the local Deck's onWaveform fires AFTER, last-write-wins).
   useEffect(() => {
-    if (pA?.waveformBass) setWfB({ bass: pA.waveformBass, mid: pA.waveformMid, high: pA.waveformHigh, dur: pA.duration||0 });
+    if (pA?.waveformBass) setWfA({ bass: pA.waveformBass, mid: pA.waveformMid, high: pA.waveformHigh, dur: pA.duration||0, name: pA.trackName });
   }, [pA?.waveformBass]);
+  useEffect(() => {
+    if (pB?.waveformBass) setWfB({ bass: pB.waveformBass, mid: pB.waveformMid, high: pB.waveformHigh, dur: pB.duration||0, name: pB.trackName });
+  }, [pB?.waveformBass]);
 
   // ── Per-track beat-grid manual adjustments ──
   // Auto-detection isn't reliable on every track (reverb-heavy kicks, sub-bass
@@ -4048,10 +4066,27 @@ export default function CollabMix({ initialPage = "landing", djName = null }) {
     }
   },[]);
   useEffect(()=>{ if(ready) applyFilter("A",eqA.filter); },[eqA.filter,ready]);
+  useEffect(()=>{ if(ready) applyFilter("B",eqB.filter); },[eqB.filter,ready]);
 
   const handleWS = useCallback((m) => {
     if (m.type==="joined")        { if(m.partnerState?.deckA)setPA(m.partnerState.deckA); if(m.partnerState?.deckB)setPB(m.partnerState.deckB); }
-    if (m.type==="deck_update")    (m.deckId==="A"?setPA:setPB)(p=>({...(p||{}),[m.field]:m.value}));
+    if (m.type==="deck_update")    {
+      // 1) Mirror partner's deck state for visuals
+      (m.deckId==="A"?setPA:setPB)(p=>({...(p||{}),[m.field]:m.value}));
+      // 2) Shared mixer (Option C): apply EQ / vol / filter changes to MY local
+      // engine too, so partner's knob moves alter audio on both browsers.
+      // Field names used over the wire: eqHi/eqMid/eqLo/vol/filter.
+      // Local eq state keys: hi/mid/lo/vol/filter (vol+filter share names).
+      const FIELD_MAP = { eqHi:"hi", eqMid:"mid", eqLo:"lo", vol:"vol", filter:"filter" };
+      const localKey = FIELD_MAP[m.field];
+      if (localKey != null) {
+        if (m.deckId==="A") setEqA(e=>({...e,[localKey]:m.value}));
+        else if (m.deckId==="B") setEqB(e=>({...e,[localKey]:m.value}));
+      }
+    }
+    if (m.type==="seek_request")   seekFnsRef.current[m.deckId]?.(m.value);
+    if (m.type==="toggle_request") toggleFnsRef.current[m.deckId]?.();
+    if (m.type==="cue_request")    cueFnsRef.current[m.deckId]?.();
     if (m.type==="xfade_update")   { setXf(m.value); applyXF(m.value); }
     if (m.type==="chat")           setChat(p=>[...p,m]);
     if (m.type==="partner_joined") setChat(p=>[...p,{type:"system",msg:`${m.djName} joined the session`}]);
@@ -4064,6 +4099,23 @@ export default function CollabMix({ initialPage = "landing", djName = null }) {
 
   const sync = useSync({ url: SERVER_URL, onMsg: handleWS });
   const rtc  = useRTC({ engineRef: eng, send: sync.send });
+
+  // Auto-connect WebSocket on session mount. The original flow opened the
+  // socket from <Lobby>'s join() call, but the landing-page bypass shortcut
+  // (initial page="session") skipped Lobby entirely. Without this effect,
+  // sync.connect() was never invoked and partner sync silently no-op'd.
+  // Honors ?room= URL param so two browser windows can land on the same room.
+  useEffect(() => {
+    if (page !== "session") return;
+    if (sync.status !== "disconnected") return;
+    const params = new URLSearchParams(window.location.search);
+    const roomFromUrl = params.get("room");
+    const roomId = roomFromUrl || session.room;
+    sync.connect(roomId, session.name);
+    return () => { sync.disconnect(); };
+    // sync.connect/disconnect are stable useCallbacks; depending only on page
+    // ensures we open one socket per session entry, cleanly torn down on leave.
+  }, [page]);
 
   const handleMidi = useCallback(({actionKey,value}) => {
     setMidiEvt({actionKey,value,ts:Date.now()});
@@ -4095,6 +4147,13 @@ export default function CollabMix({ initialPage = "landing", djName = null }) {
     const wsField = field==="vol"?"vol":field==="filter"?"filter":`eq${field.charAt(0).toUpperCase()+field.slice(1)}`;
     lsRef.current.deckA = {...(lsRef.current.deckA||{}), [wsField]:val};
     sync.send({type:"deck_update", deckId:"A", field:wsField, value:val});
+  }, []);
+
+  const updateEqB = useCallback((field, val) => {
+    setEqB(e => ({...e, [field]:val}));
+    const wsField = field==="vol"?"vol":field==="filter"?"filter":`eq${field.charAt(0).toUpperCase()+field.slice(1)}`;
+    lsRef.current.deckB = {...(lsRef.current.deckB||{}), [wsField]:val};
+    sync.send({type:"deck_update", deckId:"B", field:wsField, value:val});
   }, []);
 
   const dh = (id) => (field, value) => {
@@ -4224,7 +4283,7 @@ export default function CollabMix({ initialPage = "landing", djName = null }) {
                     <button key={i} onClick={()=>setWfZoom(i)} style={{ height:18, padding:"0 7px", fontSize:8, fontFamily:"'DM Mono',monospace", letterSpacing:.5, background:wfZoom===i?"#C8A96E22":"transparent", border:`1px solid ${wfZoom===i?"#C8A96E88":"#ffffff18"}`, color:wfZoom===i?"#C8A96E":"#ffffff44", borderRadius:4, cursor:"pointer", outline:"none" }}>{lbl}</button>
                   ))}
                 </div>
-                <AnimatedZoomedWF bands={wfA} dur={wfA?.dur||0} progRef={progRefA} h={wfH} windowSec={WF_WINDOWS[wfZoom]} beatPhaseFrac={bpm.results["A"]?.beatPhaseFrac??null} beatPeriodSec={bpm.results["A"]?.beatPeriodSec??null} gridOffsetMs={gridOffsetA} bpmNudge={bpmNudgeA*0.01}/>
+                <AnimatedZoomedWF bands={wfA} dur={wfA?.dur||0} progRef={progRefA} onSeek={seekDeckA} h={wfH} windowSec={WF_WINDOWS[wfZoom]} beatPhaseFrac={bpm.results["A"]?.beatPhaseFrac??null} beatPeriodSec={bpm.results["A"]?.beatPeriodSec??null} gridOffsetMs={gridOffsetA} bpmNudge={bpmNudgeA*0.01}/>
               </div>
             )}
             {hasA && hasB && <div style={{ height:1, background:"#0d0d18" }}/>}
@@ -4234,7 +4293,7 @@ export default function CollabMix({ initialPage = "landing", djName = null }) {
                   <div style={{ width:5, height:5, borderRadius:"50%", background:"#00BFA5", boxShadow:"0 0 6px #00BFA5" }}/>
                   <span style={{ fontSize:9, fontFamily:"'DM Mono',monospace", fontWeight:700, color:"#00BFA588", letterSpacing:2 }}>B</span>
                 </div>
-                <AnimatedZoomedWF bands={wfB} dur={wfB?.dur||0} progRef={progRefB} h={wfH} windowSec={WF_WINDOWS[wfZoom]} beatPhaseFrac={pA?.beatPhaseFrac??null} beatPeriodSec={pA?.beatPeriodSec??null}/>
+                <AnimatedZoomedWF bands={wfB} dur={wfB?.dur||0} progRef={progRefB} onSeek={seekDeckB} h={wfH} windowSec={WF_WINDOWS[wfZoom]} beatPhaseFrac={pA?.beatPhaseFrac??null} beatPeriodSec={pA?.beatPeriodSec??null}/>
               </div>
             )}
           </div>
@@ -4242,7 +4301,7 @@ export default function CollabMix({ initialPage = "landing", djName = null }) {
       })()}
 
       {/* DECKS + MIXER ROW */}
-      <div style={{ flexShrink:0, display:"grid", gridTemplateColumns:"1fr 260px 1fr", gap:8, padding:"8px 12px 0", height:"228px", overflow:"hidden" }}>
+      <div style={{ flexShrink:0, display:"grid", gridTemplateColumns:"1fr 260px 1fr", gap:8, padding:"8px 12px 0", height:"288px", overflow:"hidden" }}>
 
         {/* ── DECK A (local) ── */}
         <div style={{ display:"flex", flexDirection:"column", minWidth:0, minHeight:0, overflow:"hidden", background:"#0c0c12", border:"1px solid #1e1e28", borderRadius:10 }}>
@@ -4252,7 +4311,7 @@ export default function CollabMix({ initialPage = "landing", djName = null }) {
             <span style={{ fontSize:11, fontFamily:"'DM Sans',sans-serif", fontWeight:500, color:"#7B61FFaa", letterSpacing:.3 }}>{session.name}</span>
           </div>
           <div style={{ flex:1, overflow:"hidden", minHeight:0 }}>
-            <Deck id="A" ch={eng.current?.A} ctx={eng.current?.ctx} color="#7B61FF" local onChange={dh("A")} midi={midiEvt} bpmResult={bpm.results["A"]} bpmAnalyze={bpm.analyze} eqHi={eqA.hi} eqMid={eqA.mid} eqLo={eqA.lo} chanVol={eqA.vol} loadFromLibrary={libLoadA} onTrackInfo={handleTrackInfo} onSync={()=>syncDecks("A",bpm.results["B"]?.bpm)} onLibraryTrackDrop={(trackId)=>{const t=lib.library.find(x=>x.id===trackId);if(t)handleLibLoad(t,"A");}} onProgUpdate={handleProgA} onWaveform={setWfA}/>
+            <Deck id="A" ch={eng.current?.A} ctx={eng.current?.ctx} color="#7B61FF" local remote={pA} onChange={dh("A")} midi={midiEvt} bpmResult={bpm.results["A"]} bpmAnalyze={bpm.analyze} eqHi={eqA.hi} eqMid={eqA.mid} eqLo={eqA.lo} chanVol={eqA.vol} loadFromLibrary={libLoadA} onTrackInfo={handleTrackInfo} onSync={()=>syncDecks("A",bpm.results["B"]?.bpm)} onLibraryTrackDrop={(trackId)=>{const t=lib.library.find(x=>x.id===trackId);if(t)handleLibLoad(t,"A");}} onProgUpdate={handleProgA} onWaveform={setWfA} onSeekReady={onDeckASeekReady} onToggleReady={onDeckAToggleReady} onCueReady={onDeckACueReady}/>
           </div>
         </div>
 
@@ -4316,27 +4375,27 @@ export default function CollabMix({ initialPage = "landing", djName = null }) {
               </div>
             </div>
 
-            {/* ─── CH B STRIP (partner — read-only) ─── */}
+            {/* ─── CH B STRIP (local) ─── */}
             <div style={{ display:"flex", flexDirection:"column", borderLeft:"1px solid #202028", overflow:"hidden" }}>
               {/* Header: label + VU inline */}
               <div style={{ padding:"3px 6px", background:"#0a0a10", borderBottom:"1px solid #202028", display:"flex", justifyContent:"space-between", alignItems:"center", flexShrink:0 }}>
                 <span style={{ fontFamily:"'DM Mono',monospace", fontSize:11, color:"#00BFA5", fontWeight:600, letterSpacing:1 }}>B</span>
-                <VU an={null} color="#00BFA5" w={50}/>
+                <VU an={eng.current?.B?.an} color="#00BFA5" w={50}/>
               </div>
               {/* EQ knobs LEFT, channel fader RIGHT — outer edge layout */}
               <div style={{ flex:1, display:"flex", flexDirection:"row", minHeight:0, overflow:"hidden" }}>
                 {/* Knobs column — inner side */}
                 <div style={{ flex:1, display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"space-evenly", padding:"5px 2px" }}>
-                  <Knob v={pA?.vol||1.0} set={()=>{}} min={0} max={1.5} ctr={1} label="GAIN" color="#00BFA5" size={20} off={true}/>
-                  <Knob v={pA?.eqHi||0}  set={()=>{}} min={-12} max={12} ctr={0} label="HI"   color="#00BFA5" size={20} off={true}/>
-                  <Knob v={pA?.eqMid||0} set={()=>{}} min={-12} max={12} ctr={0} label="MID"  color="#00BFA5" size={20} off={true}/>
-                  <Knob v={pA?.eqLo||0}  set={()=>{}} min={-12} max={12} ctr={0} label="LO"   color="#00BFA5" size={20} off={true}/>
+                  <Knob v={eqB.vol} set={v=>updateEqB("vol",v)} min={0} max={1.5} ctr={1} label="GAIN" color="#00BFA5" size={20}/>
+                  <Knob v={eqB.hi}  set={v=>updateEqB("hi",v)}  min={-12} max={12} ctr={0} label="HI"   color="#00BFA5" size={20}/>
+                  <Knob v={eqB.mid} set={v=>updateEqB("mid",v)} min={-12} max={12} ctr={0} label="MID"  color="#00BFA5" size={20}/>
+                  <Knob v={eqB.lo}  set={v=>updateEqB("lo",v)}  min={-12} max={12} ctr={0} label="LO"   color="#00BFA5" size={20}/>
                 </div>
                 {/* Channel volume fader — far right (outer edge) */}
                 <div style={{ flexShrink:0, display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"center", padding:"5px 4px", borderLeft:"1px solid #181820", gap:2 }}>
                   <div style={{ fontSize:6, fontFamily:"'DM Mono',monospace", color:"#00BFA555", letterSpacing:1 }}>VOL</div>
-                  <VerticalFader val={pA?.vol||1} set={()=>{}} color="#00BFA5" h={150}/>
-                  <div style={{ fontSize:7, fontFamily:"'DM Mono',monospace", color:"#00BFA588" }}>{((pA?.vol||1)/1.5*100).toFixed(0)}%</div>
+                  <VerticalFader val={eqB.vol} set={v=>updateEqB("vol",v)} color="#00BFA5" h={150}/>
+                  <div style={{ fontSize:7, fontFamily:"'DM Mono',monospace", color:"#00BFA588" }}>{(eqB.vol/1.5*100).toFixed(0)}%</div>
                 </div>
               </div>
             </div>
@@ -4351,7 +4410,7 @@ export default function CollabMix({ initialPage = "landing", djName = null }) {
             {sync.partner&&<span style={{ fontSize:11, fontFamily:"'DM Sans',sans-serif", fontWeight:500, color:"#00BFA5aa", letterSpacing:.3 }}>{sync.partner}</span>}
           </div>
           <div style={{ flex:1, overflow:"hidden", minHeight:0 }}>
-            <Deck id="B" ch={null} ctx={null} color="#00BFA5" remote={pA} bpmResult={null} bpmAnalyze={null} eqHi={pA?.eqHi||0} eqMid={pA?.eqMid||0} eqLo={pA?.eqLo||0} chanVol={pA?.vol||1} onProgUpdate={handleProgB}/>
+            <Deck id="B" ch={eng.current?.B} ctx={eng.current?.ctx} color="#00BFA5" local remote={pB} onChange={dh("B")} midi={midiEvt} bpmResult={bpm.results["B"]} bpmAnalyze={bpm.analyze} eqHi={eqB.hi} eqMid={eqB.mid} eqLo={eqB.lo} chanVol={eqB.vol} loadFromLibrary={libLoadB} onTrackInfo={handleTrackInfo} onSync={()=>syncDecks("B",bpm.results["A"]?.bpm)} onLibraryTrackDrop={(trackId)=>{const t=lib.library.find(x=>x.id===trackId);if(t)handleLibLoad(t,"B");}} onProgUpdate={handleProgB} onWaveform={setWfB} onSeekReady={onDeckBSeekReady} onToggleReady={onDeckBToggleReady} onCueReady={onDeckBCueReady}/>
           </div>
         </div>
 
