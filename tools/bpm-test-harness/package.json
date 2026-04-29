@@ -1,0 +1,13 @@
+{
+  "name": "bpm-test-harness",
+  "version": "1.0.0",
+  "type": "module",
+  "private": true,
+  "description": "Node test harness for the Mix//Sync BPM analyzer",
+  "scripts": {
+    "test": "node analyze.mjs"
+  },
+  "dependencies": {
+    "audio-decode": "^3.10.1"
+  }
+}

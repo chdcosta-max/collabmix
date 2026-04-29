@@ -1,3 +1,8 @@
 node_modules/
 .DS_Store
 dist/
+.vercel
+.env*.local
+tools/bpm-test-harness/tracks/*
+!tools/bpm-test-harness/tracks/.gitkeep
+tools/bpm-test-harness/node_modules/

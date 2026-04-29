@@ -1,0 +1,10 @@
+{
+  "_comment": "Ground truth for analyzer accuracy testing. Each track is keyed by filename in ./tracks/. Get bpm and firstDownbeatSec from rekordbox or Traktor. firstDownbeatSec is the time in seconds where bar 1 begins (where the first downbeat / structural anchor lands). Delete _comment and _example before adding real entries — keys starting with _ are ignored by the harness.",
+  "_example": {
+    "Starseed.mp3": {
+      "bpm": 121,
+      "firstDownbeatSec": 0.0651,
+      "notes": "rekordbox source"
+    }
+  }
+}
