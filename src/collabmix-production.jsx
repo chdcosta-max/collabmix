@@ -343,13 +343,6 @@ self.onmessage=function(e){
   const phMax=Math.max(phSc[0],phSc[1],phSc[2],phSc[3]);
   const phMin=Math.min(phSc[0],phSc[1],phSc[2],phSc[3]);
   if(phMax>0 && (phMax-phMin)/phMax < 0.25) bestPh=0;
-  // Diagnostic — remove once Issue 1 is closed.
-  console.log('[phase] phSc:',phSc.map(x=>x.toFixed(4)),'bestPh:',bestPh,
-    'spread/peak:',(phSc.length?((Math.max(...phSc)-Math.min(...phSc))/(Math.max(...phSc)||1)).toFixed(3):'NA'),
-    'firstBeatDpIdx:',firstBeatDpIdx,
-    'dpBeats.length:',dpBeats.length,
-    'dpBeats[0..3] secs:',[dpBeats[0],dpBeats[1],dpBeats[2],dpBeats[3]].map(f=>f==null?'-':(f/ar).toFixed(4)));
-
   // Precise beat period from DP-tracked beats — mean interval across all detected beats.
   // Avoids the rounding drift that comes from using bpm (rv rounds to 0.1 BPM).
   // Over a 5-min track this is accurate to under 0.1ms per beat vs ~100ms+ from rounded bpm.
@@ -357,6 +350,33 @@ self.onmessage=function(e){
   const beatPeriodSec=dpBeats.length>=2
     ?(dpBeats[dpBeats.length-1]-dpBeats[0])/(dpBeats.length-1)/ar
     :(60/bChk);
+
+  // BPM snap: when detection is stable AND close to integer, snap both
+  // bpm and beatPeriodSec to clean integer values. Modern EDM is produced
+  // at integer BPMs, but precision detectors land slightly off (e.g. 121.2
+  // when track is 121). Without this, grids visibly drift over a long track.
+  // Gated on DP-mean agreeing with autocorrelation BPM within 0.05 — drifting
+  // tracks (live recordings, etc.) fail this gate and are NOT snapped.
+  const bpmFromPeriod = beatPeriodSec > 0 ? 60 / beatPeriodSec : null;
+  const intBpm = Math.round(bpm);
+  const stableEnough = bpmFromPeriod !== null && Math.abs(bpmFromPeriod - bpm) < 0.05;
+  const closeEnough = Math.abs(bpm - intBpm) < 0.3;
+  let finalBpm = bpm;
+  let finalPeriod = beatPeriodSec;
+  let snapped = false;
+  if (stableEnough && closeEnough) {
+    finalBpm = intBpm;
+    finalPeriod = 60 / intBpm;
+    snapped = true;
+  }
+
+  // Diagnostic — remove once Issue 1 is closed.
+  console.log('[phase] phSc:',phSc.map(x=>x.toFixed(4)),'bestPh:',bestPh,
+    'spread/peak:',(phSc.length?((Math.max(...phSc)-Math.min(...phSc))/(Math.max(...phSc)||1)).toFixed(3):'NA'),
+    'firstBeatDpIdx:',firstBeatDpIdx,
+    'dpBeats.length:',dpBeats.length,
+    'dpBeats[0..3] secs:',[dpBeats[0],dpBeats[1],dpBeats[2],dpBeats[3]].map(f=>f==null?'-':(f/ar).toFixed(4)),
+    'snapped:',snapped);
 
   // First bar-1 downbeat anchor. Strategy: the kick-exclusive phase scoring
   // locks which of every 4 DP beats is bar-1. Then we walk BACKWARD through
@@ -379,10 +399,10 @@ self.onmessage=function(e){
   // beatPhaseFrac is the anchor's beat-index from track start. Using beatPeriodSec
   // keeps firstDownbeatSec = beatPhaseFrac × beatPeriodSec = barDownbeatFrame/ar
   // exactly, which is what the grid draw loop needs.
-  const beatPhaseFrac=beatPeriodSec>0?(barDownbeatFrame/ar)/beatPeriodSec:0;
+  const beatPhaseFrac=finalPeriod>0?(barDownbeatFrame/ar)/finalPeriod:0;
   // Full-sample-rate phase detection via dphase (used by AnimatedZoomedWF)
-  const dphaseResult=bpm?dphase(mono,sr,bpm):{beatPhaseSec:0};
-  self.postMessage({id,bpm,confidence:conf,candidates:cands,beatPhaseFrac,beatPeriodSec,beatPhaseSec:dphaseResult.beatPhaseSec});
+  const dphaseResult=finalBpm?dphase(mono,sr,finalBpm):{beatPhaseSec:0};
+  self.postMessage({id,bpm:finalBpm,confidence:conf,candidates:cands,beatPhaseFrac,beatPeriodSec:finalPeriod,beatPhaseSec:dphaseResult.beatPhaseSec,snapped});
 };`;
 
 function createBPMWorker() {
@@ -395,10 +415,10 @@ function useBPM() {
   useEffect(() => {
     worker.current = createBPMWorker();
     worker.current.onmessage = (e) => {
-      const { id, bpm, confidence, candidates, beatPhaseFrac, beatPeriodSec, beatPhaseSec, error, _debug } = e.data;
+      const { id, bpm, confidence, candidates, beatPhaseFrac, beatPeriodSec, beatPhaseSec, snapped, error, _debug } = e.data;
       if (id === '__err') { console.error('[BPM Worker global error]', e.data.error); return; }
       if (error) console.error('[BPM Worker caught error]', error);
-      console.log('[BPM result] id='+id+' bpm='+bpm+' bpf='+beatPhaseFrac+' bps='+beatPeriodSec+' bphs='+beatPhaseSec+' debug='+JSON.stringify(_debug));
+      console.log('[BPM result] id='+id+' bpm='+bpm+' bpf='+beatPhaseFrac+' bps='+beatPeriodSec+' bphs='+beatPhaseSec+' snapped='+(snapped??false)+' debug='+JSON.stringify(_debug));
       setResults(prev => ({ ...prev, [id]: { bpm, confidence, candidates, beatPhaseFrac: beatPhaseFrac||0, beatPeriodSec: beatPeriodSec||null, beatPhaseSec: beatPhaseSec??null, analyzing: false } }));
     };
     worker.current.onerror = (e) => { console.error('[BPM Worker onerror]', e.message, e.lineno); };
@@ -1188,7 +1208,9 @@ function LibraryPanelV2({ lib, onLoad, playingTrack, previewTrackId, onPreview, 
 
   // Queue/chat split — persisted fraction of the right rail devoted to the queue.
   const [queueFraction, setQueueFraction] = useState(() => {
-    const saved = parseFloat(localStorage.getItem("queueFraction") || "");
+    let raw = "";
+    try { raw = localStorage.getItem("queueFraction") || ""; } catch (e) { console.warn('localStorage.getItem failed', 'queueFraction', e); }
+    const saved = parseFloat(raw);
     return isFinite(saved) && saved >= 0.15 && saved <= 0.85 ? saved : 0.4;
   });
   const queueFractionRef = useRef(queueFraction);
@@ -1204,7 +1226,7 @@ function LibraryPanelV2({ lib, onLoad, playingTrack, previewTrackId, onPreview, 
     const onUp = () => {
       document.removeEventListener("mousemove", onMove);
       document.removeEventListener("mouseup", onUp);
-      localStorage.setItem("queueFraction", String(queueFractionRef.current));
+      try { localStorage.setItem("queueFraction", String(queueFractionRef.current)); } catch (e) { console.warn('localStorage.setItem failed', 'queueFraction', e); }
     };
     document.addEventListener("mousemove", onMove);
     document.addEventListener("mouseup", onUp);
@@ -1994,7 +2016,7 @@ function LibraryPanel({lib, onLoad, playingTrack, previewTrackId, onPreview, onD
                   });
                   const tx = db.transaction("handles", "readwrite");
                   tx.objectStore("handles").put(dirHandle, "folder");
-                  localStorage.setItem("mm_folder", dirHandle.name);
+                  try { localStorage.setItem("mm_folder", dirHandle.name); } catch (e) { console.warn('localStorage.setItem failed', 'mm_folder', e); }
                 } catch {}
                 // Recursively collect all audio files
                 const files = [];
@@ -3952,18 +3974,19 @@ export default function CollabMix({ initialPage = "landing", djName = null }) {
   const [bpmNudgeA, setBpmNudgeA] = useState(0);     // in 0.01-BPM clicks
   useEffect(() => {
     if (!wfA?.name) return;
-    const savedOff = localStorage.getItem(`gridOffset:${wfA.name}`);
-    const savedBpm = localStorage.getItem(`bpmNudge:${wfA.name}`);
+    let savedOff = null, savedBpm = null;
+    try { savedOff = localStorage.getItem(`gridOffset:${wfA.name}`); } catch (e) { console.warn('localStorage.getItem failed', `gridOffset:${wfA.name}`, e); }
+    try { savedBpm = localStorage.getItem(`bpmNudge:${wfA.name}`); } catch (e) { console.warn('localStorage.getItem failed', `bpmNudge:${wfA.name}`, e); }
     setGridOffsetA(savedOff ? parseFloat(savedOff) : 0);
     setBpmNudgeA(savedBpm ? parseInt(savedBpm, 10) : 0);
   }, [wfA?.name]);
   useEffect(() => {
     if (!wfA?.name) return;
-    localStorage.setItem(`gridOffset:${wfA.name}`, String(gridOffsetA));
+    try { localStorage.setItem(`gridOffset:${wfA.name}`, String(gridOffsetA)); } catch (e) { console.warn('localStorage.setItem failed', `gridOffset:${wfA.name}`, e); }
   }, [gridOffsetA, wfA?.name]);
   useEffect(() => {
     if (!wfA?.name) return;
-    localStorage.setItem(`bpmNudge:${wfA.name}`, String(bpmNudgeA));
+    try { localStorage.setItem(`bpmNudge:${wfA.name}`, String(bpmNudgeA)); } catch (e) { console.warn('localStorage.setItem failed', `bpmNudge:${wfA.name}`, e); }
   }, [bpmNudgeA, wfA?.name]);
   const nudgeGridA = (deltaMs) => setGridOffsetA((v) => v + deltaMs);
   const resetGridA = () => setGridOffsetA(0);
@@ -3974,18 +3997,19 @@ export default function CollabMix({ initialPage = "landing", djName = null }) {
   const [bpmNudgeB, setBpmNudgeB] = useState(0);     // in 0.01-BPM clicks
   useEffect(() => {
     if (!wfB?.name) return;
-    const savedOff = localStorage.getItem(`gridOffset:${wfB.name}`);
-    const savedBpm = localStorage.getItem(`bpmNudge:${wfB.name}`);
+    let savedOff = null, savedBpm = null;
+    try { savedOff = localStorage.getItem(`gridOffset:${wfB.name}`); } catch (e) { console.warn('localStorage.getItem failed', `gridOffset:${wfB.name}`, e); }
+    try { savedBpm = localStorage.getItem(`bpmNudge:${wfB.name}`); } catch (e) { console.warn('localStorage.getItem failed', `bpmNudge:${wfB.name}`, e); }
     setGridOffsetB(savedOff ? parseFloat(savedOff) : 0);
     setBpmNudgeB(savedBpm ? parseInt(savedBpm, 10) : 0);
   }, [wfB?.name]);
   useEffect(() => {
     if (!wfB?.name) return;
-    localStorage.setItem(`gridOffset:${wfB.name}`, String(gridOffsetB));
+    try { localStorage.setItem(`gridOffset:${wfB.name}`, String(gridOffsetB)); } catch (e) { console.warn('localStorage.setItem failed', `gridOffset:${wfB.name}`, e); }
   }, [gridOffsetB, wfB?.name]);
   useEffect(() => {
     if (!wfB?.name) return;
-    localStorage.setItem(`bpmNudge:${wfB.name}`, String(bpmNudgeB));
+    try { localStorage.setItem(`bpmNudge:${wfB.name}`, String(bpmNudgeB)); } catch (e) { console.warn('localStorage.setItem failed', `bpmNudge:${wfB.name}`, e); }
   }, [bpmNudgeB, wfB?.name]);
 
   // Library: track which deck is playing + metadata for recommendations
