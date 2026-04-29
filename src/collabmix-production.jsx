@@ -312,9 +312,23 @@ self.onmessage=function(e){
   // we offset from firstBeatDpIdx, which shifted the anchor by (firstBeatDpIdx
   // mod 4) beats — landing the red marker on kick #3 instead of kick #1 on
   // tracks like Sunday Sunrise.
+  // Onset-gated sub-bass scoring. Real kicks have BOTH a sharp onset AND
+  // sustained sub-bass body. Mid-band syncopation (vocal chops, stabs) has
+  // an onset but weak body. Sustained sub without attack has body but no
+  // onset. Multiplying onK * envK selects beats with both — i.e., real kicks.
+  // Window is ±5 frames (~25ms) to capture the kick body without bleeding
+  // into the next beat (~250+ frames apart at 124 BPM).
   const phSc=[0,0,0,0];
+  const phScWin=5;
   for(let i=0;i<dpBeats.length;i++){
-    phSc[i%4]+=kickExAt(dpBeats[i]);
+    const f=dpBeats[i];
+    const s=f-phScWin<0?0:f-phScWin, e=f+phScWin>=nf?nf-1:f+phScWin;
+    let acc=0;
+    for(let k=s;k<=e;k++){
+      const ok=onK[k]>0?onK[k]:0;
+      acc+=ok*envK[k];
+    }
+    phSc[i%4]+=acc;
   }
   let bestPh=0,bestPhSc=-1;
   for(let k=0;k<4;k++){if(phSc[k]>bestPhSc){bestPhSc=phSc[k];bestPh=k;}}
@@ -330,7 +344,8 @@ self.onmessage=function(e){
   const phMin=Math.min(phSc[0],phSc[1],phSc[2],phSc[3]);
   if(phMax>0 && (phMax-phMin)/phMax < 0.25) bestPh=0;
   // Diagnostic — remove once Issue 1 is closed.
-  console.log('[phase] phSc:',phSc.map(x=>x.toFixed(2)),'bestPh:',bestPh,
+  console.log('[phase] phSc:',phSc.map(x=>x.toFixed(4)),'bestPh:',bestPh,
+    'spread/peak:',(phSc.length?((Math.max(...phSc)-Math.min(...phSc))/(Math.max(...phSc)||1)).toFixed(3):'NA'),
     'firstBeatDpIdx:',firstBeatDpIdx,
     'dpBeats.length:',dpBeats.length,
     'dpBeats[0..3] secs:',[dpBeats[0],dpBeats[1],dpBeats[2],dpBeats[3]].map(f=>f==null?'-':(f/ar).toFixed(4)));
@@ -2399,7 +2414,7 @@ function useSync({ url, onMsg }) {
       w.onmessage = (e) => {
         let m; try{m=JSON.parse(e.data);}catch{return;}
         if(m.type==="joined"){setPartner(m.partnerName);}
-        if(m.type==="partner_joined"){setPartner(m.djName);sync.send({type:"sync_request"});}
+        if(m.type==="partner_joined"){setPartner(m.djName);send({type:"sync_request"});}
         if(m.type==="partner_left")  setPartner(null);
         if(m.type==="pong")          setPing(Date.now()-m.clientTime);
         if(m.type==="error")         setConnErr(m.msg);
@@ -3914,11 +3929,15 @@ export default function CollabMix({ initialPage = "landing", djName = null }) {
   // top zoomed waveform shows what they're playing. Local loads on the
   // same deck override (the local Deck's onWaveform fires AFTER, last-write-wins).
   useEffect(() => {
-    if (pA?.waveformBass) setWfA({ bass: pA.waveformBass, mid: pA.waveformMid, high: pA.waveformHigh, dur: pA.duration||0, name: pA.trackName });
-  }, [pA?.waveformBass]);
+    if (pA?.waveformBass && pA?.waveformMid && pA?.waveformHigh) {
+      setWfA({ bass: pA.waveformBass, mid: pA.waveformMid, high: pA.waveformHigh, dur: pA.duration||0, name: pA.trackName });
+    }
+  }, [pA?.waveformBass, pA?.waveformMid, pA?.waveformHigh]);
   useEffect(() => {
-    if (pB?.waveformBass) setWfB({ bass: pB.waveformBass, mid: pB.waveformMid, high: pB.waveformHigh, dur: pB.duration||0, name: pB.trackName });
-  }, [pB?.waveformBass]);
+    if (pB?.waveformBass && pB?.waveformMid && pB?.waveformHigh) {
+      setWfB({ bass: pB.waveformBass, mid: pB.waveformMid, high: pB.waveformHigh, dur: pB.duration||0, name: pB.trackName });
+    }
+  }, [pB?.waveformBass, pB?.waveformMid, pB?.waveformHigh]);
 
   // ── Per-track beat-grid manual adjustments ──
   // Auto-detection isn't reliable on every track (reverb-heavy kicks, sub-bass
@@ -3950,6 +3969,24 @@ export default function CollabMix({ initialPage = "landing", djName = null }) {
   const resetGridA = () => setGridOffsetA(0);
   const nudgeBpmA = (deltaClicks) => setBpmNudgeA((v) => v + deltaClicks);
   const resetBpmA = () => setBpmNudgeA(0);
+
+  const [gridOffsetB, setGridOffsetB] = useState(0); // milliseconds
+  const [bpmNudgeB, setBpmNudgeB] = useState(0);     // in 0.01-BPM clicks
+  useEffect(() => {
+    if (!wfB?.name) return;
+    const savedOff = localStorage.getItem(`gridOffset:${wfB.name}`);
+    const savedBpm = localStorage.getItem(`bpmNudge:${wfB.name}`);
+    setGridOffsetB(savedOff ? parseFloat(savedOff) : 0);
+    setBpmNudgeB(savedBpm ? parseInt(savedBpm, 10) : 0);
+  }, [wfB?.name]);
+  useEffect(() => {
+    if (!wfB?.name) return;
+    localStorage.setItem(`gridOffset:${wfB.name}`, String(gridOffsetB));
+  }, [gridOffsetB, wfB?.name]);
+  useEffect(() => {
+    if (!wfB?.name) return;
+    localStorage.setItem(`bpmNudge:${wfB.name}`, String(bpmNudgeB));
+  }, [bpmNudgeB, wfB?.name]);
 
   // Library: track which deck is playing + metadata for recommendations
   const [playingTrack, setPlayingTrack] = useState(null);
@@ -4293,7 +4330,7 @@ export default function CollabMix({ initialPage = "landing", djName = null }) {
                   <div style={{ width:5, height:5, borderRadius:"50%", background:"#00BFA5", boxShadow:"0 0 6px #00BFA5" }}/>
                   <span style={{ fontSize:9, fontFamily:"'DM Mono',monospace", fontWeight:700, color:"#00BFA588", letterSpacing:2 }}>B</span>
                 </div>
-                <AnimatedZoomedWF bands={wfB} dur={wfB?.dur||0} progRef={progRefB} onSeek={seekDeckB} h={wfH} windowSec={WF_WINDOWS[wfZoom]} beatPhaseFrac={pA?.beatPhaseFrac??null} beatPeriodSec={pA?.beatPeriodSec??null}/>
+                <AnimatedZoomedWF bands={wfB} dur={wfB?.dur||0} progRef={progRefB} onSeek={seekDeckB} h={wfH} windowSec={WF_WINDOWS[wfZoom]} beatPhaseFrac={bpm.results["B"]?.beatPhaseFrac??null} beatPeriodSec={bpm.results["B"]?.beatPeriodSec??null} gridOffsetMs={gridOffsetB} bpmNudge={bpmNudgeB*0.01}/>
               </div>
             )}
           </div>
