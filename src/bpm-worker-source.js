@@ -282,20 +282,30 @@ self.onmessage=function(e){
     ?(dpBeats[dpBeats.length-1]-dpBeats[0])/(dpBeats.length-1)/ar
     :(60/bChk);
 
-  // BPM snap: when detection is stable AND close to integer, snap both
-  // bpm and beatPeriodSec to clean integer values. Modern EDM is produced
-  // at integer BPMs, but precision detectors land slightly off (e.g. 121.2
-  // when track is 121). Without this, grids visibly drift over a long track.
-  // Gated on DP-mean agreeing with autocorrelation BPM within 0.05 — drifting
-  // tracks (live recordings, etc.) fail this gate and are NOT snapped.
+  // BPM snap: snap bpm and beatPeriodSec to clean integer values when we have
+  // strong evidence the track is integer-tempo'd. Modern EDM is produced at
+  // integer BPMs, but precision detectors land slightly off (e.g. 121.2 when
+  // track is 121). Without snap, grids visibly drift over a long track.
+  // Two independent evidence paths, gated by a conservative outer guard.
   const bpmFromPeriod = beatPeriodSec > 0 ? 60 / beatPeriodSec : null;
   const intBpm = Math.round(bpm);
-  const stableEnough = bpmFromPeriod !== null && Math.abs(bpmFromPeriod - bpm) < 0.05;
-  const closeEnough = Math.abs(bpm - intBpm) < 0.3;
+  // Branch 1: period is mathematically integer-locked (DP-mean evidence).
+  // DP-mean averages over hundreds of beats — when it lands within 0.05 of an
+  // integer, the track is genuinely integer-tempo'd.
+  const periodIntegerLocked = bpmFromPeriod !== null && Math.abs(bpmFromPeriod - intBpm) < 0.05;
+  // Branch 2: two independent estimators converge near integer.
+  // For tracks where DP-mean is slightly off (e.g. Starseed at 121.155) but
+  // both DP-mean and autocorrelation agree closely AND both are near integer,
+  // we have strong evidence the track is integer-tempo'd despite estimator noise.
+  const crossValidated = bpmFromPeriod !== null
+    && Math.abs(bpm - intBpm) < 0.25
+    && Math.abs(bpm - bpmFromPeriod) < 0.07;
+  // Outer guard: never snap if autocorrelation BPM is more than 0.5 from integer.
+  const withinOuterGuard = Math.abs(bpm - intBpm) < 0.5;
   let finalBpm = bpm;
   let finalPeriod = beatPeriodSec;
   let snapped = false;
-  if (stableEnough && closeEnough) {
+  if ((periodIntegerLocked || crossValidated) && withinOuterGuard) {
     finalBpm = intBpm;
     finalPeriod = 60 / intBpm;
     snapped = true;
@@ -307,7 +317,16 @@ self.onmessage=function(e){
     'firstBeatDpIdx:',firstBeatDpIdx,
     'dpBeats.length:',dpBeats.length,
     'dpBeats[0..3] secs:',[dpBeats[0],dpBeats[1],dpBeats[2],dpBeats[3]].map(f=>f==null?'-':(f/ar).toFixed(4)),
-    'snapped:',snapped);
+    'snapped:',snapped,
+    'snap-debug:','bpm:',bpm,
+    'bpmFromPeriod:',bpmFromPeriod==null?'-':bpmFromPeriod.toFixed(3),
+    'intBpm:',intBpm,
+    '|bpmFromPeriod-intBpm|:',bpmFromPeriod==null?'-':Math.abs(bpmFromPeriod-intBpm).toFixed(3),
+    '|bpm-intBpm|:',Math.abs(bpm-intBpm).toFixed(3),
+    '|bpm-bpmFromPeriod|:',bpmFromPeriod==null?'-':Math.abs(bpm-bpmFromPeriod).toFixed(3),
+    'periodIntegerLocked:',periodIntegerLocked,
+    'crossValidated:',crossValidated,
+    'withinOuterGuard:',withinOuterGuard);
 
   // First bar-1 downbeat anchor. Strategy: the kick-exclusive phase scoring
   // locks which of every 4 DP beats is bar-1. Then we walk BACKWARD through
