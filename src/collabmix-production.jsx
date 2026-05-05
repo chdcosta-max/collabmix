@@ -2990,7 +2990,7 @@ function Deck({ id, ch, ctx:ac, color, local, remote, onChange, midi:mt, bpmResu
             </div>
           )}
         </div>
-        <input ref={fr} type="file" accept="audio/*" style={{display:"none"}} onChange={e=>e.target.files[0]&&load(e.target.files[0])}/>
+        <input ref={fr} type="file" accept="audio/*" style={{display:"none"}} onChange={e=>{ const f=e.target.files[0]; e.target.value=""; if(f) load(f); }}/>
 
         {/* KEY display */}
         {(()=>{const ck=deckKey?CAMELOT[deckKey]:null;const km=ck?.endsWith("A");return ck?(
