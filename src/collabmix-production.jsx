@@ -109,6 +109,18 @@ function useBPM() {
 const CAMELOT = {
   "C":"8B","G":"9B","D":"10B","A":"11B","E":"12B","B":"1B","F#":"2B","Db":"3B","Ab":"4B","Eb":"5B","Bb":"6B","F":"7B",
   "Am":"8A","Em":"9A","Bm":"10A","F#m":"11A","C#m":"12A","G#m":"1A","D#m":"2A","A#m":"3A","Fm":"4A","Cm":"5A","Gm":"6A","Dm":"7A",
+  // Synonyms — alternate spellings DJ tools (rekordbox, Mixed In Key, Beatport) emit.
+  // Majors:
+  "Cmaj":"8B","Gmaj":"9B","Dmaj":"10B","Amaj":"11B","Emaj":"12B","Bmaj":"1B",
+  "F#maj":"2B","Gb":"2B","Gbmaj":"2B","Dbmaj":"3B","C#maj":"3B","Abmaj":"4B","G#maj":"4B",
+  "Ebmaj":"5B","D#maj":"5B","Bbmaj":"6B","A#maj":"6B","Fmaj":"7B",
+  // Minors (CAMELOT canonical uses sharps; map flat synonyms in):
+  "Amin":"8A","Emin":"9A","Bmin":"10A","Fmin":"4A","Cmin":"5A","Gmin":"6A","Dmin":"7A",
+  "F#min":"11A","Gbm":"11A","Gbmin":"11A",
+  "C#min":"12A","Dbm":"12A","Dbmin":"12A",
+  "G#min":"1A","Abm":"1A","Abmin":"1A",
+  "D#min":"2A","Ebm":"2A","Ebmin":"2A",
+  "A#min":"3A","Bbm":"3A","Bbmin":"3A",
 };
 function camelotScore(a,b){
   if(!a||!b)return 0; if(a===b)return 1;
@@ -2748,6 +2760,7 @@ function Deck({ id, ch, ctx:ac, color, local, remote, onChange, midi:mt, bpmResu
   const [wfBass,setWfBass]=useState(null),[wfMid,setWfMid]=useState(null),[wfHigh,setWfHigh]=useState(null);
   // Hot cues + loop
   const [deckKey,setDeckKey]=useState(null);
+  const [trackArtist,setTrackArtist]=useState(null);
   const [hotCues,setHotCues]=useState([null,null,null,null]);
   const [loopActive,setLoopActive]=useState(false);
   const [loopStart,setLoopStart]=useState(null);
@@ -2866,6 +2879,7 @@ function Deck({ id, ch, ctx:ac, color, local, remote, onChange, midi:mt, bpmResu
   useEffect(()=>{onSeekReady?.(seek);},[seek,onSeekReady]);
   useEffect(()=>{onToggleReady?.(toggle);},[toggle,onToggleReady]);
   useEffect(()=>{onCueReady?.(cue);},[cue,onCueReady]);
+  useEffect(()=>{ if(bpmResult?.bpm!=null) onChange?.("bpm", bpmResult.bpm); },[bpmResult?.bpm,onChange]);
   // Mirror remote `playing` state for Deck B button glyph
   const remotePlaying=remote?.playing||false;
   const playVisual=local?play:remotePlaying;
@@ -2880,6 +2894,9 @@ function Deck({ id, ch, ctx:ac, color, local, remote, onChange, midi:mt, bpmResu
     setBuf(d);setDur(d.duration);onChange?.("duration",d.duration);
     const n=(trackMeta?.title)||f.name.replace(/\.[^.]+$/,"");
     setName(n);onChange?.("trackName",n);
+    setTrackArtist(trackMeta?.artist||null);
+    onChange?.("artist", trackMeta?.artist || null);
+    onChange?.("key", trackMeta?.key || null);
     // Extract key from metadata or ID3
     setDeckKey(trackMeta?.key||null);
     // Reset hot cues + loop on new track load
@@ -2963,10 +2980,10 @@ function Deck({ id, ch, ctx:ac, color, local, remote, onChange, midi:mt, bpmResu
           onDragLeave={()=>setDragOver(false)}
           onDrop={e=>{e.preventDefault();e.stopPropagation();setDragOver(false);const f=e.dataTransfer.files[0];if(f&&f.type.startsWith("audio/")){load(f);return;}try{const d=JSON.parse(e.dataTransfer.getData("application/json"));if(d?.trackId&&onLibraryTrackDrop)onLibraryTrackDrop(d.trackId);}catch{}}}
           style={{flex:1, padding: buf ? "0 14px" : "6px 10px", cursor:"pointer", display:"flex", flexDirection:"column", justifyContent:"center", background:dragOver?color+"08":"transparent", transition:"background .12s", minWidth:0}}>
-          {buf?(
+          {(buf||remote?.trackName)?(
             <>
-              <div style={{fontSize:13, fontWeight:500, color:"#d8d8e2", fontFamily:"'DM Sans',sans-serif", whiteSpace:"nowrap", overflow:"hidden", textOverflow:"ellipsis"}}>{name}</div>
-              <div style={{fontSize:9, color:"#888898", fontFamily:"'DM Mono',monospace", marginTop:3, letterSpacing:.3}}>{fmt(dur)} · {(buf.sampleRate/1000).toFixed(1)}kHz · {buf.numberOfChannels===2?"STEREO":"MONO"}</div>
+              <div style={{fontSize:13, fontWeight:500, color:"#d8d8e2", fontFamily:"'DM Sans',sans-serif", whiteSpace:"nowrap", overflow:"hidden", textOverflow:"ellipsis"}}>{name||remote?.trackName||"—"}</div>
+              <div style={{fontSize:9, color:"#888898", fontFamily:"'DM Mono',monospace", marginTop:3, letterSpacing:.3}}>{buf?`${fmt(dur)} · ${trackArtist||`${(buf.sampleRate/1000).toFixed(1)}kHz · ${buf.numberOfChannels===2?"STEREO":"MONO"}`}`:`${fmt(remote?.duration||0)} · ${remote?.artist||"—"}`}</div>
             </>
           ):(
             <div style={{
@@ -2994,16 +3011,18 @@ function Deck({ id, ch, ctx:ac, color, local, remote, onChange, midi:mt, bpmResu
         <input ref={fr} type="file" accept="audio/*" style={{display:"none"}} onChange={e=>{ const f=e.target.files[0]; e.target.value=""; if(f) load(f); }}/>
 
         {/* KEY display */}
-        {(()=>{const ck=deckKey?CAMELOT[deckKey]:null;const km=ck?.endsWith("A");return ck?(
+        {(()=>{const effectiveKey=deckKey||remote?.key;const ck=effectiveKey?CAMELOT[effectiveKey]:null;const km=ck?.endsWith("A");return ck?(
           <div style={{flexShrink:0,padding:"0 10px",borderLeft:BD,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",gap:2,minWidth:52}}>
             <div style={{fontSize:11,fontFamily:"'DM Mono',monospace",fontWeight:500,color:km?"#9B7EC8":color,background:(km?"#9B7EC8":color)+"18",borderRadius:4,padding:"2px 6px",letterSpacing:.5}}>{ck}</div>
-            <div style={{fontSize:7,color:"#888898",fontFamily:"'DM Mono',monospace",letterSpacing:1}}>{deckKey}</div>
+            <div style={{fontSize:7,color:"#888898",fontFamily:"'DM Mono',monospace",letterSpacing:1}}>{effectiveKey}</div>
           </div>
         ):null;})()}
         <div style={{flexShrink:0, padding:"0 14px", borderLeft:BD, display:"flex", flexDirection:"column", alignItems:"flex-end", justifyContent:"center", gap:4, minWidth:96}}>
           {bpmResult?.analyzing&&<div style={{fontSize:7,color:"#f59e0b",fontFamily:"'DM Mono',monospace",animation:"pulse .8s infinite"}}>ANA...</div>}
           <div style={{textAlign:"right"}}>
-            <div style={{fontSize:32, fontFamily:"'DM Mono',monospace", fontWeight:600, color:bpmResult?.bpm?"#C8A96E":"#2a2a3a", lineHeight:0.95, letterSpacing:-0.5, textShadow:bpmResult?.bpm?"0 0 18px #C8A96E22":"none"}}>{bpmResult?.bpm?(bpmResult.bpm*rate).toFixed(1):"—"}</div>
+            {(()=>{const effectiveBpm=bpmResult?.bpm??remote?.bpm;return(
+            <div style={{fontSize:32, fontFamily:"'DM Mono',monospace", fontWeight:600, color:effectiveBpm?"#C8A96E":"#2a2a3a", lineHeight:0.95, letterSpacing:-0.5, textShadow:effectiveBpm?"0 0 18px #C8A96E22":"none"}}>{effectiveBpm?(effectiveBpm*(bpmResult?.bpm?rate:1)).toFixed(1):"—"}</div>
+            );})()}
             <div style={{fontSize:7, color:"#888898", fontFamily:"'DM Mono',monospace", letterSpacing:2.5, marginTop:2}}>BPM</div>
           </div>
           <VU an={ch?.an} color={color}/>
