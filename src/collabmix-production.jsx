@@ -2865,7 +2865,22 @@ function Deck({ id, ch, ctx:ac, color, local, remote, onChange, midi:mt, bpmResu
       if(elapsed<buf.duration||lr2.active) raf.current=requestAnimationFrame(tick);
     }; tick(); };
 
-  const toggle=useCallback((fromRemote=false)=>{ if(!buf)return; if(!fromRemote) onTransportFire?.({type:"toggle_request", deckId:id}); if(play){off.current=Math.min(buf.duration,off.current+(ac.currentTime-st.current));stop_();setPlay(false);onChange?.("playing",false);}else{play_(off.current);setPlay(true);onChange?.("playing",true);} },[buf,play,ac,rate,id,onTransportFire]);
+  const toggle=useCallback((fromRemote=false)=>{
+    // (A) Broadcast — always when local user clicked, regardless of buf
+    if(!fromRemote) onTransportFire?.({type:"toggle_request", deckId:id});
+    // (B) Spectator path — no local audio buffer
+    if(!buf){
+      if(!fromRemote) setPlay(p=>!p); // optimistic UI; mirror effect corrects if wrong
+      return;
+    }
+    // (C) Owner path — local buf exists, drive audio engine
+    if(play){
+      off.current=Math.min(buf.duration,off.current+(ac.currentTime-st.current));
+      stop_();setPlay(false);onChange?.("playing",false);
+    } else {
+      play_(off.current);setPlay(true);onChange?.("playing",true);
+    }
+  },[buf,play,ac,rate,id,onTransportFire]);
   const seek  =useCallback((p, fromRemote=false)=>{
     // Clamp to [0, 1] — guards against unclamped callers (small WF onClick,
     // network seek_request) feeding negative or >1 fractions. Without this,
@@ -3101,9 +3116,9 @@ function Deck({ id, ch, ctx:ac, color, local, remote, onChange, midi:mt, bpmResu
 
       {/* ── TRANSPORT ── */}
       <div style={{display:"flex", alignItems:"center", gap:6, padding:"8px 12px", borderBottom:BD}}>
-        <button onClick={local?cue:(remoteCue||undefined)} disabled={!cueEnabled} style={{height:48,padding:"0 12px",background:"#111118",border:`1px solid ${cueEnabled?"#2a2a38":"#1e1e28"}`,color:cueEnabled?"#C8A96E":"#2a2a38",borderRadius:7,cursor:cueEnabled?"pointer":"default",fontFamily:"'DM Mono',monospace",fontSize:10,fontWeight:700,letterSpacing:1.5,outline:"none",flexShrink:0}}>CUE</button>
+        <button onClick={(e)=>{ if(local&&cue) cue(); else if(remoteCue) remoteCue(); }} disabled={!cueEnabled} style={{height:48,padding:"0 12px",background:"#111118",border:`1px solid ${cueEnabled?"#2a2a38":"#1e1e28"}`,color:cueEnabled?"#C8A96E":"#2a2a38",borderRadius:7,cursor:cueEnabled?"pointer":"default",fontFamily:"'DM Mono',monospace",fontSize:10,fontWeight:700,letterSpacing:1.5,outline:"none",flexShrink:0}}>CUE</button>
         <button onClick={local?()=>seek(Math.max(0,prog-.005)):undefined} disabled={!local} style={{height:48,width:36,background:"#111118",border:"1px solid #1e1e28",color:local?"#888898":"#2a2a38",borderRadius:6,cursor:local?"pointer":"default",fontFamily:"'DM Mono',monospace",fontSize:13,outline:"none"}}>◂◂</button>
-        <button onClick={local?toggle:(remoteToggle||undefined)} disabled={!enabled} style={{flex:1,height:48,background:playVisual?color+"33":(enabled?"#1a1a26":"#141420"),border:`2px solid ${playVisual?color:(enabled?color+"66":color+"22")}`,color:playVisual?color:(enabled?color:color+"44"),borderRadius:8,cursor:enabled?"pointer":"default",fontSize:24,fontWeight:600,display:"flex",alignItems:"center",justifyContent:"center",boxShadow:playVisual?`0 0 24px ${color}55`:"none",outline:"none",transition:"all .15s"}}>
+        <button onClick={(e)=>{ if(local&&toggle) toggle(); else if(remoteToggle) remoteToggle(); }} disabled={!enabled} style={{flex:1,height:48,background:playVisual?color+"33":(enabled?"#1a1a26":"#141420"),border:`2px solid ${playVisual?color:(enabled?color+"66":color+"22")}`,color:playVisual?color:(enabled?color:color+"44"),borderRadius:8,cursor:enabled?"pointer":"default",fontSize:24,fontWeight:600,display:"flex",alignItems:"center",justifyContent:"center",boxShadow:playVisual?`0 0 24px ${color}55`:"none",outline:"none",transition:"all .15s"}}>
           {playVisual?"⏸":"▶"}
         </button>
         <button onClick={local?()=>seek(Math.min(1,prog+.005)):undefined} disabled={!local} style={{height:48,width:36,background:"#111118",border:"1px solid #1e1e28",color:local?"#888898":"#2a2a38",borderRadius:6,cursor:local?"pointer":"default",fontFamily:"'DM Mono',monospace",fontSize:13,outline:"none"}}>▸▸</button>
