@@ -2853,7 +2853,14 @@ function Deck({ id, ch, ctx:ac, color, local, remote, onChange, midi:mt, bpmResu
     }; tick(); };
 
   const toggle=useCallback(()=>{ if(!buf)return; if(play){off.current=Math.min(buf.duration,off.current+(ac.currentTime-st.current));stop_();setPlay(false);onChange?.("playing",false);}else{play_(off.current);setPlay(true);onChange?.("playing",true);} },[buf,play,ac,rate]);
-  const seek  =useCallback((p)=>{ const o=p*(buf?.duration||0);off.current=o;if(play)play_(o);else{setProg(p);progRef.current=p;onProgUpdate?.(p);}onChange?.("progress",p); },[buf,play,rate]);
+  const seek  =useCallback((p)=>{
+    // Clamp to [0, 1] — guards against unclamped callers (small WF onClick,
+    // network seek_request) feeding negative or >1 fractions. Without this,
+    // negative p stores a negative off.current that crashes the next play_()
+    // with "AudioBufferSourceNode.start: offset less than minimum bound (0)".
+    const pc=Math.max(0,Math.min(1,p));
+    const o=pc*(buf?.duration||0);off.current=o;if(play)play_(o);else{setProg(pc);progRef.current=pc;onProgUpdate?.(pc);}onChange?.("progress",pc);
+  },[buf,play,rate]);
   const cue   =useCallback(()=>{ off.current=0;setProg(0);progRef.current=0;onProgUpdate?.(0);if(play){stop_();setPlay(false);onChange?.("playing",false);}onChange?.("progress",0); },[play]);
   useEffect(()=>{onSeekReady?.(seek);},[seek,onSeekReady]);
   useEffect(()=>{onToggleReady?.(toggle);},[toggle,onToggleReady]);
