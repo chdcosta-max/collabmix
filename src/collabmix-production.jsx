@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useCallback } from "react";
+import { useState, useEffect, useRef, useCallback, useMemo } from "react";
 import { WORKER_SRC } from "./bpm-worker-source.js";
 
 // ═══════════════════════════════════════════════════════════════
@@ -24,9 +24,12 @@ function getOrCreateRoomId() {
   return `${w1}-${w2}-${num}`;
 }
 
-function buildInviteLink(roomId) {
+function buildInviteLink(roomId, mixName) {
   const base = window.location.origin + window.location.pathname;
-  return `${base}?room=${roomId}`;
+  const params = new URLSearchParams();
+  params.set("room", roomId);
+  if (mixName) params.set("mix", mixName);
+  return `${base}?${params.toString()}`;
 }
 
 const ICE = { iceServers: [
@@ -3416,7 +3419,7 @@ function Landing({ onEnter }) {
             <span key={l} className="nav-link" style={{ fontSize:11, fontFamily:"'DM Mono',monospace", color:"#888898", letterSpacing:1, cursor:"pointer" }}>{l.toUpperCase()}</span>
           ))}
           <button onClick={onEnter} className="cta-btn" style={{ padding:"8px 20px", background:"linear-gradient(135deg,#C8A96E,#0099bb)", border:"none", color:"#000", fontFamily:"'DM Mono',monospace", fontWeight:800, fontSize:12, letterSpacing:2, borderRadius:6, cursor:"pointer" }}>
-            LAUNCH APP →
+            START A MIX →
           </button>
         </div>
       </nav>
@@ -3450,7 +3453,7 @@ function Landing({ onEnter }) {
 
           <div style={{ display:"flex", gap:12, justifyContent:"center", flexWrap:"wrap" }}>
             <button onClick={onEnter} className="cta-btn" style={{ padding:"16px 40px", background:"linear-gradient(135deg,#C8A96E,#0077cc)", border:"none", color:"#000", fontFamily:"'DM Mono',monospace", fontWeight:800, fontSize:15, letterSpacing:2, borderRadius:8, cursor:"pointer", boxShadow:"0 0 30px #C8A96E33" }}>
-              START A SESSION FREE →
+              START A MIX →
             </button>
             <button style={{ padding:"16px 32px", background:"transparent", border:"1px solid #ffffff22", color:"#888", fontFamily:"'DM Mono',monospace", fontWeight:700, fontSize:14, letterSpacing:2, borderRadius:8, cursor:"pointer" }}>
               WATCH DEMO ▶
@@ -3540,7 +3543,7 @@ function Landing({ onEnter }) {
             Invite a friend, load up your tracks, and start playing together right now. No credit card. No software.
           </p>
           <button onClick={onEnter} className="cta-btn" style={{ padding:"18px 48px", background:"linear-gradient(135deg,#C8A96E,#0077cc)", border:"none", color:"#000", fontFamily:"'DM Mono',monospace", fontWeight:900, fontSize:16, letterSpacing:3, borderRadius:8, cursor:"pointer", boxShadow:"0 0 40px #C8A96E33" }}>
-            LAUNCH MIX//SYNC →
+            START A MIX →
           </button>
         </div>
       </section>
@@ -3556,10 +3559,10 @@ function Landing({ onEnter }) {
 }
 
 // ── Share Button (used in session top bar) ───────────────────
-function ShareButton({ room }) {
+function ShareButton({ room, mixName }) {
   const [copied, setCopied] = useState(false);
   const copy = () => {
-    navigator.clipboard.writeText(buildInviteLink(room)).then(() => {
+    navigator.clipboard.writeText(buildInviteLink(room, mixName)).then(() => {
       setCopied(true);
       setTimeout(() => setCopied(false), 2500);
     });
@@ -3575,14 +3578,21 @@ function ShareButton({ room }) {
 function Lobby({ onJoin, djName = null }) {
   const [room] = useState(() => getOrCreateRoomId());
   const [name, setName] = useState(djName || "DJ " + ["Apex","Nova","Flux","Orbit","Prism","Echo"][Math.floor(Math.random()*6)]);
+  const [mixName, setMixName] = useState(() => {
+    const params = new URLSearchParams(window.location.search);
+    return params.get("mix") || "";
+  });
   const [copied, setCopied] = useState(false);
+  const isJoining = useMemo(() => {
+    return new URLSearchParams(window.location.search).has("room");
+  }, []);
 
   // Auto-join immediately if a name was passed in from the landing page
   useEffect(() => {
-    if (djName) onJoin({ url: SERVER_URL, room, name: djName });
+    if (djName) onJoin({ url: SERVER_URL, room, name: djName, mixName: mixName || "Untitled Mix" });
   }, []);
 
-  const inviteLink = buildInviteLink(room);
+  const inviteLink = buildInviteLink(room, mixName);
 
   const copyLink = () => {
     navigator.clipboard.writeText(inviteLink).then(() => {
@@ -3606,7 +3616,22 @@ function Lobby({ onJoin, djName = null }) {
           <div style={{ fontFamily:"'Cormorant Garamond',serif", fontWeight:700, fontSize:28, letterSpacing:-0.5, color:"#d8d8e2" }}>
             Mix<span style={{ color:G }}>//</span>Sync
           </div>
-          <div style={{ fontSize:9, fontFamily:"'DM Mono',monospace", color:`${G}55`, letterSpacing:3, marginTop:6 }}>SET UP YOUR SESSION</div>
+          <div style={{ fontSize:9, fontFamily:"'DM Mono',monospace", color:`${G}55`, letterSpacing:3, marginTop:6 }}>{isJoining?"JOIN MIX":"START A MIX"}</div>
+        </div>
+
+        {/* Mix Name */}
+        <div style={{ display:"flex", flexDirection:"column", gap:7 }}>
+          <label style={{ fontSize:8, fontFamily:"'DM Mono',monospace", color:`${G}77`, letterSpacing:2 }}>{isJoining?"JOINING MIX":"MIX NAME"}</label>
+          {isJoining ? (
+            <div style={{ fontFamily:"'Cormorant Garamond',serif", fontWeight:700, fontSize:22, letterSpacing:0.5, color:"#d8d8e2", padding:"6px 0" }}>{mixName || "Untitled Mix"}</div>
+          ) : (
+            <input
+              value={mixName}
+              onChange={e => setMixName(e.target.value)}
+              placeholder="e.g., Saturday Late Night"
+              style={{ background:"#080710", border:`1px solid ${G}33`, color:"#d8d8e2", borderRadius:8, padding:"11px 14px", fontSize:16, fontFamily:"'DM Sans',sans-serif", fontWeight:500, outline:"none" }}
+            />
+          )}
         </div>
 
         {/* DJ Name */}
@@ -3619,26 +3644,26 @@ function Lobby({ onJoin, djName = null }) {
           />
         </div>
 
-        {/* Room Code */}
+        {/* Mix Code */}
         <div style={{ background:"#080710", border:`1px solid ${G}18`, borderRadius:12, padding:16, display:"flex", flexDirection:"column", gap:8 }}>
-          <div style={{ fontSize:8, fontFamily:"'DM Mono',monospace", color:`${G}55`, letterSpacing:2 }}>YOUR ROOM CODE</div>
+          <div style={{ fontSize:8, fontFamily:"'DM Mono',monospace", color:`${G}55`, letterSpacing:2 }}>MIX CODE</div>
           <div style={{ fontFamily:"'Cormorant Garamond',serif", fontWeight:700, fontSize:22, letterSpacing:1, color:"#d8d8e2" }}>{room}</div>
           <div style={{ fontSize:8, fontFamily:"'DM Mono',monospace", color:"#555562", wordBreak:"break-all" }}>{inviteLink}</div>
           <button
             onClick={copyLink}
             style={{ background: copied ? "#22c55e14" : `${G}14`, border: copied ? "1px solid #22c55e33" : `1px solid ${G}33`, color: copied ? "#22c55e" : G, fontFamily:"'DM Mono',monospace", fontWeight:500, fontSize:10, letterSpacing:2, padding:"10px 16px", borderRadius:8, cursor:"pointer", transition:"all .3s", textAlign:"center" }}
           >
-            {copied ? "✓ LINK COPIED!" : "⎘ COPY INVITE LINK"}
+            {copied ? "✓ LINK COPIED!" : "⎘ COPY MIX LINK"}
           </button>
-          <div style={{ fontSize:8, fontFamily:"'DM Sans',sans-serif", color:"#888898", lineHeight:1.6, fontWeight:300 }}>Send this link to your partner — they'll join the same room instantly.</div>
+          <div style={{ fontSize:8, fontFamily:"'DM Sans',sans-serif", color:"#888898", lineHeight:1.6, fontWeight:300 }}>Send this link to your partner — they'll join the same mix instantly.</div>
         </div>
 
         {/* Join button — matches App.jsx btn-gold */}
         <button
-          onClick={() => onJoin({ url: SERVER_URL, room, name })}
+          onClick={() => onJoin({ url: SERVER_URL, room, name, mixName: mixName || "Untitled Mix" })}
           style={{ background:G, border:"none", color:"#080710", fontFamily:"'DM Mono',monospace", fontWeight:500, fontSize:12, letterSpacing:2, padding:"15px", borderRadius:10, cursor:"pointer", boxShadow:`0 0 32px ${G}30, 0 8px 20px rgba(0,0,0,.4)`, transition:"all .2s" }}
         >
-          OPEN THE ROOM →
+          {isJoining?"JOIN MIX →":"START MIX →"}
         </button>
 
         <div style={{ fontSize:8, fontFamily:"'DM Mono',monospace", color:"#555562", textAlign:"center", letterSpacing:1 }}>
@@ -3651,7 +3676,7 @@ function Lobby({ onJoin, djName = null }) {
 
 // ── MAIN APP ─────────────────────────────────────────────────
 export default function CollabMix({ initialPage = "landing", djName = null }) {
-  const [page, setPage]         = useState("session"); // "landing"|"lobby"|"session"
+  const [page, setPage]         = useState(initialPage); // "landing"|"lobby"|"session"
   const eng                     = useRef(null);
   const [ready, setReady]       = useState(true);
   const [session, setSession]   = useState({ url:SERVER_URL, room:"preview", name:"DJ Preview" });
@@ -4002,9 +4027,10 @@ export default function CollabMix({ initialPage = "landing", djName = null }) {
     const params = new URLSearchParams(window.location.search);
     const paramRoom = params.get("room");
     const paramName = params.get("name");
+    const paramMix  = params.get("mix");
     if (paramRoom && paramName) {
       window.history.replaceState({}, "", window.location.pathname);
-      join({ room: paramRoom, name: paramName });
+      join({ room: paramRoom, name: paramName, mixName: paramMix || "Untitled Mix" });
     }
   }, []);
 
@@ -4056,7 +4082,7 @@ export default function CollabMix({ initialPage = "landing", djName = null }) {
         </div>
         <div style={{ display:"flex", gap:8, alignItems:"center" }}>
           <span style={{ fontSize:9, fontFamily:"'DM Mono',monospace", color:"#888898", letterSpacing:.5 }}>{session.name}</span>
-          <ShareButton room={session.room}/>
+          <ShareButton room={session.room} mixName={session.mixName}/>
           <button onClick={leave} style={{ height:24, padding:"0 10px", background:"transparent", border:"1px solid #ef444433", color:"#ef4444", borderRadius:6, cursor:"pointer", fontFamily:"'DM Mono',monospace", fontSize:9, letterSpacing:.5 }}>LEAVE</button>
         </div>
       </div>
