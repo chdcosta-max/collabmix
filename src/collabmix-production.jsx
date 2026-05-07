@@ -326,6 +326,44 @@ async function opfsClear(){
   }catch{}
 }
 
+// Strip extension + leading "01 " / "01-" / "1. " / "01) " track-number prefix.
+function cleanFilename(filename) {
+  let name = filename;
+  name = name.replace(/\.(mp3|wav|flac|aac|ogg|m4a)$/i, "");
+  name = name.replace(/^[\s\-_]*\d+[\s\.\-_\)]+/, "");
+  return name.trim();
+}
+
+// "Artist - Title" → { artist, title }. Keeps trailing " - (Mix)" parts in title.
+function parseArtistTitle(cleanedName) {
+  const parts = cleanedName.split(/\s+-\s+/);
+  if (parts.length >= 2) {
+    return { artist: parts[0].trim(), title: parts.slice(1).join(" - ").trim() };
+  }
+  return { artist: null, title: cleanedName };
+}
+
+// Normalize artist/title for duplicate detection (case-insensitive, punctuation-stripped).
+function normalizeForDedupe(str) {
+  if (!str) return "";
+  return String(str)
+    .toLowerCase()
+    .trim()
+    .replace(/\s+/g, " ")          // collapse whitespace
+    .replace(/[^\w\s]/g, "")        // strip punctuation
+    .replace(/\s*\(.*?\)\s*/g, "")  // strip parenthetical (extended mix), (original mix), etc.
+    .trim();
+}
+
+// Two tracks match for dedupe purposes if normalized artist+title both match.
+// Tracks without artist OR title are never considered dupes (keep all empties).
+function tracksMatch(t1, t2) {
+  if (!t1.artist && !t1.title) return false;
+  if (!t2.artist && !t2.title) return false;
+  return normalizeForDedupe(t1.artist) === normalizeForDedupe(t2.artist)
+      && normalizeForDedupe(t1.title) === normalizeForDedupe(t2.title);
+}
+
 // ── useLibrary hook — reads from shared cm_music_library IDB ─────────────────
 function useLibrary(){
   const [library,setLibrary]=useState([]);
@@ -355,27 +393,11 @@ function useLibrary(){
             libFingerprintRef.current=fp;
             setLibrary(tracks);
           }
-          // On first load, auto-queue any unanalyzed tracks from OPFS
-          if(!hasAutoQueued.current){
-            hasAutoQueued.current=true;
-            const unanalyzed=tracks.filter(t=>!t.analyzed&&!t.error);
-            if(unanalyzed.length>0){
-              (async()=>{
-                for(const t of unanalyzed){
-                  const file=await opfsGet(t.id);
-                  if(file){
-                    fileMap.current[t.id]=file;
-                    queueRef.current.push({id:t.id,file,skipBPM:!!t.bpm,skipKey:!!t.key});
-                  } else {
-                    // File not in OPFS — mark analyzed to stop spinner, keep any existing tag data
-                    setLibrary(prev=>prev.map(x=>x.id===t.id?{...x,analyzed:true}:x));
-                    cmDbPut("tracks",{...t,analyzed:true}).catch(()=>{});
-                  }
-                }
-                processQRef.current?.();
-              })();
-            }
-          }
+          // Library-side analysis is now deferred until handleLibLoad triggers
+          // queueAnalysis on user track-load. Auto-queueing every unanalyzed
+          // track on app mount caused OOM on 300+ track libraries — each File
+          // reference pinned its underlying blob (~5-15 MB) for the lifetime
+          // of the analyzer queue, totaling multiple GB of RAM pressure.
         }
         const q=await cmDbAll("queue");
         const qfp=q.map(r=>r.trackId+'|'+r.order).join(',');
@@ -433,30 +455,93 @@ function useLibrary(){
   // Keep ref current so startup effect (which has empty deps) can call processQ
   useEffect(()=>{ processQRef.current=processQ; },[processQ]);
 
-  // Core import logic — works with File objects or FileSystemFileHandle arrays
-  const _importFileObjects=useCallback(async(files,handles=[])=>{
+  // Core import logic — works with File objects or FileSystemFileHandle arrays.
+  // opts.skipDedup: when true, bypass internal artist+title dedup. Set this when
+  // the caller (e.g. commitImport after the preview modal) has already made the
+  // dedup decision and explicitly asked for the dupes to be imported anyway.
+  const _importFileObjects=useCallback(async(files,handles=[],opts={})=>{
     const audio=[...files].filter(f=>f.type.startsWith("audio/")||f.name.match(/\.(mp3|wav|flac|aac|ogg|m4a)$/i));
     if(!audio.length)return;
     setImporting(true);
+    let importedCount=0;
+    let skippedCount=0;
+    const batchAdded=[]; // tracks added in THIS batch — used for in-batch dedupe
     for(let i=0;i<audio.length;i++){
       const file=audio[i];
       const handle=handles[i]||null;
       const id=`t_${Date.now()}_${Math.random().toString(36).slice(2,6)}`;
       let tags={};
       try{const sl=file.slice(0,1048576);tags=parseID3(await sl.arrayBuffer());}catch{}
+      // Filename → clean + parse "Artist - Title" so messy library filenames produce nice titles
+      const cleaned=cleanFilename(file.name);
+      const parsed=parseArtistTitle(cleaned);
+      const title=tags.title||parsed.title;
+      const artist=tags.artist||parsed.artist||"Unknown Artist";
+      // Duplicate detection: skip if an existing or in-batch track matches normalized artist+title.
+      // Skipped when opts.skipDedup is true (user opted to import duplicates explicitly).
+      const candidate={artist,title};
+      const isDupe = !opts.skipDedup && (
+        library.some(existing=>tracksMatch(existing,candidate))
+        || batchAdded.some(prior=>tracksMatch(prior,candidate))
+      );
+      if(isDupe){skippedCount++;continue;}
       // Store artwork in both memory cache and track record so it survives page reloads
       if(tags.artwork){artworkCache.current[id]=tags.artwork;}
-      const track={id,filename:file.name.replace(/\.[^.]+$/,""),title:tags.title||file.name.replace(/\.[^.]+$/,""),artist:tags.artist||"",album:tags.album||"",genre:tags.genre||"",label:tags.label||"",bpm:tags.bpm?parseFloat(tags.bpm):null,key:tags.key||null,duration:null,energy:null,analyzed:false,error:false,addedAt:Date.now(),artwork:tags.artwork||null};
-      fileMap.current[id]=file;
+      const track={id,filename:file.name.replace(/\.[^.]+$/,""),title,artist,album:tags.album||"",genre:tags.genre||"",label:tags.label||"",bpm:tags.bpm?parseFloat(tags.bpm):null,key:tags.key||null,duration:null,energy:null,analyzed:false,error:false,addedAt:Date.now(),artwork:tags.artwork||null};
+      // Don't pin File in fileMap or queue for analysis — both retained the File
+      // reference for the whole session, and 300+ pinned blobs caused OOM. getFile
+      // will hit OPFS first; analysis is deferred to handleLibLoad → queueAnalysis.
       opfsStore(id,file); // background write to OPFS — no await, keeps import fast
       setLibrary(prev=>{if(prev.find(t=>t.filename===track.filename))return prev;return [...prev,track];});
+      batchAdded.push(track);
       // Persist metadata + handle to IDB so tracks survive page reloads
       try{await cmDbPut("tracks",track);}catch{}
       if(handle){try{await cmDbPutHandle(id,handle);}catch{}}
-      queueRef.current.push({id,file,skipBPM:!!track.bpm,skipKey:!!track.key});
+      importedCount++;
+    }
+    if(skippedCount>0){
+      console.log(`[library] Imported ${importedCount} tracks, skipped ${skippedCount} duplicate${skippedCount===1?"":"s"}`);
     }
     setImporting(false); processQ();
-  },[processQ]);
+  },[processQ,library]);
+
+  // Preview phase: parse files + detect duplicates against the existing library
+  // and within the batch itself. Does NOT commit anything. Used by the import
+  // confirmation modal so the user can decide what to do about duplicates.
+  const previewImport=useCallback(async(files)=>{
+    const audio=[...files].filter(f=>(f.type&&f.type.startsWith("audio/"))||/\.(mp3|wav|flac|aac|ogg|m4a)$/i.test(f.name));
+    const items=[];
+    const seenInBatch=[];
+    for(const file of audio){
+      let id3={};
+      try{const sl=file.slice(0,1048576);id3=parseID3(await sl.arrayBuffer());}catch{}
+      const cleaned=cleanFilename(file.name);
+      const parsed=parseArtistTitle(cleaned);
+      const title=id3.title||parsed.title;
+      const artist=id3.artist||parsed.artist||"Unknown Artist";
+      const candidate={artist,title};
+      const isDupeInLib=library.some(t=>tracksMatch(t,candidate));
+      const isDupeInBatch=seenInBatch.some(t=>tracksMatch(t,candidate));
+      const isDupe=isDupeInLib||isDupeInBatch;
+      if(!isDupe) seenInBatch.push(candidate);
+      items.push({file,title,artist,isDupe});
+    }
+    return items;
+  },[library]);
+
+  // Commit phase: take the preview items + a strategy and actually import.
+  // strategy: "skipDupes" filters out items.isDupe; "importAll" imports everything.
+  // Always calls _importFileObjects with skipDedup:true since the dedup decision
+  // has already been made by the caller (preview + user choice).
+  const commitImport=useCallback(async(previewItems,strategy)=>{
+    const toImport=strategy==="skipDupes"
+      ? previewItems.filter(item=>!item.isDupe)
+      : previewItems;
+    const filesToImport=toImport.map(item=>item.file);
+    if(filesToImport.length>0){
+      await _importFileObjects(filesToImport,[],{skipDedup:true});
+    }
+  },[_importFileObjects]);
 
   // Import via showOpenFilePicker (preferred — handles persist in IDB)
   const importFromPicker=useCallback(async()=>{
@@ -668,7 +753,18 @@ function useLibrary(){
     }catch{}
   },[]);
 
-  return{library,queue,crates,importing,importFiles,importFromPicker,getFile,clear,reload,setLibrary,fileMap,analyzing,analyzeAll,extractArtworkForTrack,artworkCache,reconnectFromFolder,scanArtwork};
+  // Lazy library-side analysis trigger. Called from handleLibLoad when the user
+  // actually loads a track to a deck — bounds analysis to user activity rather
+  // than bulk on import or app mount.
+  const queueAnalysis=useCallback((id,file)=>{
+    if(queueRef.current.some(q=>q.id===id))return; // already enqueued
+    const t=library.find(x=>x.id===id);
+    if(t?.analyzed)return; // already analyzed since handleLibLoad started
+    queueRef.current.push({id,file,skipBPM:!!t?.bpm,skipKey:!!t?.key});
+    processQ();
+  },[library,processQ]);
+
+  return{library,queue,crates,importing,importFiles,importFromPicker,previewImport,commitImport,queueAnalysis,getFile,clear,reload,setLibrary,fileMap,analyzing,analyzeAll,extractArtworkForTrack,artworkCache,reconnectFromFolder,scanArtwork};
 }
 
 // ── Library Panel UI ──────────────────────────────────────────
@@ -848,10 +944,12 @@ function LibraryPanelV2({ lib, onLoad, playingTrack, previewTrackId, onPreview, 
   const realTracks = lib.library || [];
   const realCrates = lib.crates || [];
   const realQueue  = lib.queue   || [];
-  const useMock = realTracks.length === 0;
-  const allTracks = useMock ? MOCK_TRACKS : realTracks;
-  const crates    = useMock ? MOCK_CRATES : realCrates;
-  const queueIds  = useMock ? MOCK_QUEUE  : realQueue;
+  // Mock library disabled — empty state CTA renders instead. MOCK_* constants
+  // above are kept in place for easy re-enable during testing.
+  const useMock = false;
+  const allTracks = realTracks;
+  const crates    = realCrates;
+  const queueIds  = realQueue;
   // Mock "loaded on deck" state so the row indicator can be visually demonstrated
   // in the prototype. When real tracks are loaded this would come from the parent's
   // deck-track state.
@@ -920,7 +1018,85 @@ function LibraryPanelV2({ lib, onLoad, playingTrack, previewTrackId, onPreview, 
   const [matchDeckA, setMatchDeckA] = useState(false);
   const [chatInput, setChatInput] = useState("");
   const [playedIds, setPlayedIds] = useState(() => new Set());
+  const [isDraggingOver, setIsDraggingOver] = useState(false);
+  const [importPreview, setImportPreview] = useState(null); // { items, dupeCount, newCount } | null
+  const fileInputRef = useRef(null);
   const chatEndRef = useRef(null);
+
+  // Preview-then-commit wrapper. Always parses + dedup-checks first; if any
+  // duplicates are found, surfaces a confirmation modal. Silent path when no dupes.
+  const handleImportFiles = async (files) => {
+    if (!files || files.length === 0) return;
+    const audioFiles = [...files].filter(f =>
+      /\.(mp3|wav|flac|aac|ogg|m4a)$/i.test(f.name) || (f.type && f.type.startsWith("audio/"))
+    );
+    if (audioFiles.length === 0) return;
+    const items = await lib.previewImport(audioFiles);
+    if (items.length === 0) return;
+    const dupeCount = items.filter(i => i.isDupe).length;
+    const newCount = items.length - dupeCount;
+    if (dupeCount === 0) {
+      await lib.commitImport(items, "skipDupes");
+    } else {
+      setImportPreview({ items, dupeCount, newCount });
+    }
+  };
+
+  const handleAddMusic = async () => {
+    try {
+      if (window.showOpenFilePicker) {
+        const handles = await window.showOpenFilePicker({
+          multiple: true,
+          types: [{
+            description: "Audio Files",
+            accept: { "audio/*": [".mp3",".wav",".flac",".aac",".ogg",".m4a"] }
+          }],
+        });
+        const files = await Promise.all(handles.map(h => h.getFile()));
+        await handleImportFiles(files);
+      } else {
+        // Fallback for browsers without File System Access API (Safari, Firefox)
+        fileInputRef.current?.click();
+      }
+    } catch (err) {
+      if (err.name !== "AbortError") console.error("Import error:", err);
+    }
+  };
+
+  // Recursively traverse dropped DataTransferItems (handles folders via webkitGetAsEntry)
+  const handleDroppedItems = async (items) => {
+    const allFiles = [];
+    const traverse = async (entry) => {
+      if (entry.isFile) {
+        return new Promise((resolve) => {
+          entry.file((file) => { allFiles.push(file); resolve(); },
+                     (err) => { console.warn("Could not read file:", entry.name, err); resolve(); });
+        });
+      } else if (entry.isDirectory) {
+        const reader = entry.createReader();
+        return new Promise((resolve) => {
+          const readBatch = () => {
+            reader.readEntries(async (entries) => {
+              if (entries.length === 0) { resolve(); return; }
+              for (const sub of entries) await traverse(sub);
+              readBatch(); // readEntries returns ≤100 at a time; keep reading until empty
+            }, (err) => { console.warn("Could not read directory:", entry.name, err); resolve(); });
+          };
+          readBatch();
+        });
+      }
+    };
+    const promises = [];
+    for (const item of items) {
+      const entry = item.webkitGetAsEntry();
+      if (entry) promises.push(traverse(entry));
+    }
+    await Promise.all(promises);
+    const audioFiles = allFiles.filter(f =>
+      /\.(mp3|wav|flac|aac|ogg|m4a)$/i.test(f.name) || f.type.startsWith("audio/")
+    );
+    if (audioFiles.length > 0) await handleImportFiles(audioFiles);
+  };
 
   useEffect(() => {
     if (playingTrack?.id) setPlayedIds(prev => new Set(prev).add(playingTrack.id));
@@ -1056,7 +1232,22 @@ function LibraryPanelV2({ lib, onLoad, playingTrack, previewTrackId, onPreview, 
   );
 
   return (
-    <div style={{ display: "flex", height: "100%", background: BG, fontFamily: "'DM Sans',sans-serif", color: TEXT, position: "relative", overflow: "hidden" }}>
+    <div
+      onDragOver={(e) => { e.preventDefault(); if (!isDraggingOver) setIsDraggingOver(true); }}
+      onDragLeave={(e) => { if (e.currentTarget === e.target) setIsDraggingOver(false); }}
+      onDrop={(e) => {
+        e.preventDefault();
+        setIsDraggingOver(false);
+        // items API gives directory traversal via webkitGetAsEntry
+        if (e.dataTransfer.items && e.dataTransfer.items.length > 0) {
+          handleDroppedItems([...e.dataTransfer.items]);
+        } else {
+          // Fallback: only flat files (no folders)
+          const files = [...e.dataTransfer.files];
+          if (files.length > 0) handleImportFiles(files);
+        }
+      }}
+      style={{ display: "flex", height: "100%", background: BG, fontFamily: "'DM Sans',sans-serif", color: TEXT, position: "relative", overflow: "hidden", outline: isDraggingOver ? `2px dashed ${G}` : "2px dashed transparent", outlineOffset: -2, transition: "outline-color .15s" }}>
 
       {/* ── LEFT RAIL ── */}
       <div style={{ width: 180, flexShrink: 0, borderRight: `1px solid ${BORDER}`, display: "flex", flexDirection: "column" }}>
@@ -1069,7 +1260,24 @@ function LibraryPanelV2({ lib, onLoad, playingTrack, previewTrackId, onPreview, 
             ? <div style={{ padding: "8px 12px", color: MUTED, fontSize: 11, fontStyle: "italic" }}>No folders yet</div>
             : crates.map(c => <FolderItem key={c.id} kind="folder" id={c.id} label={c.name} count={c.trackIds?.length || 0} onClick={() => selectFolder(c.id)} />)}
         </div>
-        <div style={{ padding: 10, borderTop: `1px solid ${BORDER}` }}>
+        <div style={{ padding: 10, borderTop: `1px solid ${BORDER}`, display: "flex", flexDirection: "column", gap: 6 }}>
+          <button onClick={handleAddMusic} style={{
+            width: "100%", height: 28, background: `${G}14`, border: `1px solid ${G}44`,
+            color: G, fontSize: 9, letterSpacing: 2, fontFamily: "'DM Mono',monospace",
+            borderRadius: 4, cursor: "pointer", fontWeight: 600,
+          }}>+ ADD MUSIC</button>
+          <input
+            ref={fileInputRef}
+            type="file"
+            multiple
+            accept="audio/*,.mp3,.wav,.flac,.aac,.ogg,.m4a"
+            style={{ display: "none" }}
+            onChange={(e) => {
+              const files = [...e.target.files];
+              e.target.value = "";
+              if (files.length > 0) handleImportFiles(files);
+            }}
+          />
           <button style={{
             width: "100%", height: 28, background: "transparent", border: `1px dashed ${BORDER}`,
             color: SUBTLE, fontSize: 9, letterSpacing: 2, fontFamily: "'DM Mono',monospace",
@@ -1161,6 +1369,31 @@ function LibraryPanelV2({ lib, onLoad, playingTrack, previewTrackId, onPreview, 
 
         {/* Track list or group list depending on view */}
         <div style={{ flex: 1, overflowY: "auto", padding: "4px 6px" }}>
+          {!showGroups && allTracks.length === 0 && (
+            <div
+              onClick={handleAddMusic}
+              style={{
+                margin: 24, padding: "60px 40px", textAlign: "center",
+                border: `2px dashed ${G}33`, borderRadius: 12, cursor: "pointer",
+                display: "flex", flexDirection: "column", alignItems: "center", gap: 10,
+                transition: "all .2s",
+              }}
+              onMouseEnter={e => { e.currentTarget.style.borderColor = `${G}66`; e.currentTarget.style.background = `${G}06`; }}
+              onMouseLeave={e => { e.currentTarget.style.borderColor = `${G}33`; e.currentTarget.style.background = "transparent"; }}
+            >
+              <div style={{ fontSize: 32, opacity: 0.35 }}>🎵</div>
+              <div style={{ fontSize: 14, fontFamily: "'DM Mono',monospace", color: G, letterSpacing: 1.5, fontWeight: 600 }}>ADD YOUR MUSIC</div>
+              <div style={{ fontSize: 11, fontFamily: "'DM Sans',sans-serif", color: SUBTLE, lineHeight: 1.6, fontWeight: 300 }}>
+                Drop tracks here or click to add
+              </div>
+              <div style={{ fontSize: 10, fontFamily: "'DM Sans',sans-serif", color: MUTED, lineHeight: 1.6, fontWeight: 300, marginTop: -4 }}>
+                Drag a folder for bulk import
+              </div>
+              <div style={{ fontSize: 9, fontFamily: "'DM Mono',monospace", color: MUTED, letterSpacing: 1, marginTop: 4 }}>
+                MP3 · WAV · FLAC · AAC · OGG · M4A
+              </div>
+            </div>
+          )}
           {showGroups && (
             <>
               {groups.length === 0 && (
@@ -1433,6 +1666,94 @@ function LibraryPanelV2({ lib, onLoad, playingTrack, previewTrackId, onPreview, 
           })}
         </div>
       </div>
+
+      {/* ── IMPORT PREVIEW MODAL ── shown only when duplicates are detected ── */}
+      {importPreview && (
+        <div
+          onClick={(e) => { if (e.target === e.currentTarget) setImportPreview(null); }}
+          style={{
+            position: "fixed", inset: 0, background: "rgba(4,3,12,0.78)",
+            display: "flex", alignItems: "center", justifyContent: "center",
+            zIndex: 9999, backdropFilter: "blur(6px)",
+            fontFamily: "'DM Sans',sans-serif",
+          }}
+        >
+          <div style={{
+            width: 460, maxWidth: "92%", background: "#0E0C1A",
+            border: `1px solid ${G}22`, borderRadius: 16, padding: 32,
+            display: "flex", flexDirection: "column", gap: 14,
+            boxShadow: `0 40px 80px rgba(0,0,0,.7), 0 0 0 1px #1C1830`,
+          }}>
+            <div style={{ textAlign: "center" }}>
+              <div style={{ fontFamily: "'Cormorant Garamond',serif", fontWeight: 700, fontSize: 22, letterSpacing: -0.3, color: TEXT }}>
+                Found {importPreview.items.length} {importPreview.items.length === 1 ? "track" : "tracks"}
+              </div>
+              <div style={{ fontSize: 9, fontFamily: "'DM Mono',monospace", color: `${G}55`, letterSpacing: 3, marginTop: 6 }}>READY TO IMPORT</div>
+            </div>
+
+            <div style={{ fontSize: 12, fontFamily: "'DM Sans',sans-serif", color: SUBTLE, lineHeight: 1.6, fontWeight: 300, textAlign: "center" }}>
+              {importPreview.dupeCount} {importPreview.dupeCount === 1 ? "is" : "are"} already in your library.
+              <br />What would you like to do?
+            </div>
+
+            {importPreview.dupeCount > 0 && importPreview.dupeCount <= 5 && (
+              <div style={{
+                background: "#080710", border: `1px solid ${G}14`, borderRadius: 8,
+                padding: "10px 14px", display: "flex", flexDirection: "column", gap: 4,
+              }}>
+                <div style={{ fontSize: 8, fontFamily: "'DM Mono',monospace", color: `${G}55`, letterSpacing: 2 }}>DUPLICATES</div>
+                {importPreview.items.filter(i => i.isDupe).map((item, i) => (
+                  <div key={i} style={{ fontSize: 11, color: TEXT, fontFamily: "'DM Sans',sans-serif", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                    {item.artist} — {item.title}
+                  </div>
+                ))}
+              </div>
+            )}
+
+            <div style={{ display: "flex", flexDirection: "column", gap: 8, marginTop: 4 }}>
+              <button
+                onClick={async () => {
+                  const items = importPreview.items;
+                  setImportPreview(null);
+                  await lib.commitImport(items, "skipDupes");
+                }}
+                style={{
+                  background: G, border: "none", color: "#080710",
+                  fontFamily: "'DM Mono',monospace", fontWeight: 500, fontSize: 11, letterSpacing: 2,
+                  padding: "13px 16px", borderRadius: 10, cursor: "pointer",
+                  boxShadow: `0 0 24px ${G}28`, transition: "all .2s",
+                }}
+              >
+                SKIP DUPLICATES (ADD {importPreview.newCount} NEW) →
+              </button>
+              <button
+                onClick={async () => {
+                  const items = importPreview.items;
+                  setImportPreview(null);
+                  await lib.commitImport(items, "importAll");
+                }}
+                style={{
+                  background: "transparent", border: `1px solid ${G}33`, color: G,
+                  fontFamily: "'DM Mono',monospace", fontWeight: 500, fontSize: 10, letterSpacing: 2,
+                  padding: "10px 16px", borderRadius: 8, cursor: "pointer", transition: "all .2s",
+                }}
+              >
+                IMPORT ALL (INCLUDING DUPLICATES)
+              </button>
+              <button
+                onClick={() => setImportPreview(null)}
+                style={{
+                  background: "transparent", border: "none", color: MUTED,
+                  fontFamily: "'DM Mono',monospace", fontWeight: 500, fontSize: 9, letterSpacing: 2,
+                  padding: "6px", borderRadius: 6, cursor: "pointer",
+                }}
+              >
+                CANCEL
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
     </div>
   );
@@ -3822,6 +4143,11 @@ export default function CollabMix({ initialPage = "landing", djName = null }) {
     if (deck === "A") setLibLoadA({ track, file, ts: Date.now() });
     else              setLibLoadB({ track, file, ts: Date.now() });
     setPlayingTrack(track);
+    // Defer library-side BPM/key analysis until track is loaded onto a deck.
+    // Prevents bulk decoding 100s of tracks at import time which causes OOM.
+    if (file && !track.analyzed && lib.queueAnalysis) {
+      lib.queueAnalysis(track.id, file);
+    }
   }, [lib]);
 
   // Delete track from local library (in-memory + IDB)
@@ -4011,7 +4337,13 @@ export default function CollabMix({ initialPage = "landing", djName = null }) {
     setReady(true); setSession(info); setPage("session");
     sync.connect(info.room, info.name);
     // Persist session so library app can link back and page reloads auto-rejoin
-    try { localStorage.setItem("cm_session", JSON.stringify({room: info.room, name: info.name})); } catch {}
+    try {
+      localStorage.setItem("cm_session", JSON.stringify({
+        room: info.room,
+        name: info.name,
+        mixName: info.mixName || "Untitled Mix",
+      }));
+    } catch {}
   };
 
   const leave = () => {
@@ -4022,7 +4354,11 @@ export default function CollabMix({ initialPage = "landing", djName = null }) {
     window.history.replaceState({}, "", window.location.pathname);
   };
 
-  // Auto-rejoin if library app (or any link) navigates back with ?room=X&name=Y
+  // Auto-rejoin on mount.
+  // Path 1: URL has both ?room and ?name (library app handoff) — use directly.
+  // Path 2: localStorage has cm_session from a previous join — refresh-during-session
+  //         should land back in the same Mix instead of bouncing to Landing.
+  // leave() clears cm_session, so post-leave refresh correctly returns to Landing.
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
     const paramRoom = params.get("room");
@@ -4031,6 +4367,24 @@ export default function CollabMix({ initialPage = "landing", djName = null }) {
     if (paramRoom && paramName) {
       window.history.replaceState({}, "", window.location.pathname);
       join({ room: paramRoom, name: paramName, mixName: paramMix || "Untitled Mix" });
+      return;
+    }
+    try {
+      const saved = localStorage.getItem("cm_session");
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        if (parsed?.room && parsed?.name) {
+          // Strip URL params (e.g., ?room= from invite link) — localStorage is source of truth
+          window.history.replaceState({}, "", window.location.pathname);
+          join({
+            room: parsed.room,
+            name: parsed.name,
+            mixName: parsed.mixName || "Untitled Mix",
+          });
+        }
+      }
+    } catch (err) {
+      console.warn("Could not parse cm_session:", err);
     }
   }, []);
 
