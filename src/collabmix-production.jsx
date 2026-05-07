@@ -2780,6 +2780,7 @@ function Deck({ id, ch, ctx:ac, color, local, remote, onChange, midi:mt, bpmResu
   const src=useRef(null),st=useRef(0),off=useRef(0),raf=useRef(null),fr=useRef(null);
   // EQ is now passed as props: eqHi, eqMid, eqLo, chanVol
   const remProgRef=useRef(0),remTimeRef=useRef(0),remRateRef=useRef(0),remRaf=useRef(null);
+  const lastProgBroadcastRef=useRef(0);
 
   // Keep loop ref in sync with state
   useEffect(()=>{loopRef.current={active:loopActive,start:loopStart,end:loopEnd};},[loopActive,loopStart,loopEnd]);
@@ -2824,15 +2825,38 @@ function Deck({ id, ch, ctx:ac, color, local, remote, onChange, midi:mt, bpmResu
     // Update interpolation refs when we get a new progress value
     if(remote.progress!=null){
       const now=performance.now();
-      if(remTimeRef.current>0&&remProgRef.current!=null){
-        const dt=now-remTimeRef.current;
-        if(dt>0) remRateRef.current=(remote.progress-remProgRef.current)/dt;
+      // Compute rate from track duration, not from packet arrivals.
+      // Packets arrive with variable network latency (2-200ms inter-arrival),
+      // making packet-derived rate too noisy. Using duration: rate = 1 / duration_in_ms
+      // gives a perfectly stable rate equal to real-time playback.
+      const trackDurSec=remote.duration||dur;
+      if(trackDurSec&&trackDurSec>0){
+        remRateRef.current=nowPlaying?(1/(trackDurSec*1000)):0;
       }
-      remProgRef.current=remote.progress;
-      remTimeRef.current=now;
-      setProg(remote.progress);
-      progRef.current=remote.progress;
-      onProgUpdate?.(remote.progress);
+      // Compute where our current interp would be RIGHT NOW
+      const elapsed=remTimeRef.current?(now-remTimeRef.current):0;
+      const currentInterp=remProgRef.current!=null
+        ?remProgRef.current+(remRateRef.current||0)*elapsed
+        :remote.progress;
+      const drift=remote.progress-currentInterp;
+      // First packet ever, or huge drift (e.g., scrub/seek): hard snap
+      const SNAP_THRESHOLD=0.005; // 0.5% of track = ~1.8s on a 6min track
+      if(remProgRef.current==null||Math.abs(drift)>SNAP_THRESHOLD){
+        // Hard snap — first time, or major position change (seek/scrub on B1)
+        remProgRef.current=remote.progress;
+        remTimeRef.current=now;
+      } else if(drift>0){
+        // Truth is slightly ahead — accept the correction (B2 was running slow)
+        remProgRef.current=remote.progress;
+        remTimeRef.current=now;
+      }
+      // Else: drift is small AND backward (B2 is slightly ahead of truth).
+      // Don't update — let the duration-based rate keep running. The next packet
+      // that catches up to current interp will resync. This eliminates the
+      // freeze-on-correction by letting B2 coast forward at the correct rate
+      // until truth catches up.
+      // DO NOT setProg here — the RAF interp loop below reads the refs and
+      // computes the visible position smoothly.
     }
     // Start/stop smooth interpolation RAF
     cancelAnimationFrame(remRaf.current);
@@ -2872,7 +2896,13 @@ function Deck({ id, ch, ctx:ac, color, local, remote, onChange, midi:mt, bpmResu
       } else {
         p=Math.min(1,(o+elapsed)/buf.duration);
       }
-      setProg(p); progRef.current=p; onChange?.("progress",p); onProgUpdate?.(p);
+      setProg(p); progRef.current=p; onProgUpdate?.(p);
+      // Throttle progress broadcasts to 10Hz to reduce network jitter on partner side
+      const nowMs=performance.now();
+      if(nowMs-lastProgBroadcastRef.current>=100){
+        onChange?.("progress",p);
+        lastProgBroadcastRef.current=nowMs;
+      }
       if(elapsed<buf.duration||lr2.active) raf.current=requestAnimationFrame(tick);
     }; tick(); };
 
@@ -2936,7 +2966,7 @@ function Deck({ id, ch, ctx:ac, color, local, remote, onChange, midi:mt, bpmResu
     // Compute 3-band waveform (Rekordbox-style: bass/mid/high) via IIR filters.
     // 48000 frames → ~4ms resolution per WF sample on a 3-min track, enough for
     // individual transients to land on a single display column even at 4s zoom.
-    const WF_W=48000;
+    const WF_W=24000;
     const sr=d.sampleRate;
     // One-pole IIR lowpass coefficients: bass<300Hz, bass+mid<3500Hz
     const aB=Math.exp(-2*Math.PI*300/sr);
@@ -2972,6 +3002,9 @@ function Deck({ id, ch, ctx:ac, color, local, remote, onChange, midi:mt, bpmResu
     const normBand=(arr)=>{let mx=0;for(let i=0;i<arr.length;i++)mx=Math.max(mx,arr[i]);if(mx<0.0001)return new Array(arr.length).fill(0);const out=new Array(arr.length);for(let i=0;i<arr.length;i++)out[i]=Math.round(arr[i]/mx*1000)/1000;return out;};
     const bN=normBand(bassArr),mN=normBand(midArr),hN=normBand(highArr);
     setWfBass(bN);setWfMid(mN);setWfHigh(hN);
+    // Broadcast at WF_W samples per band (24,000 → ~400KB total per track load).
+    // Original 48,000-sample resolution caused ~800KB and WebSocket backpressure
+    // that blocked progress packets for tens of seconds.
     onChange?.("waveformBass",bN);onChange?.("waveformMid",mN);onChange?.("waveformHigh",hN);
     onWaveform?.({bass:bN,mid:mN,high:hN,dur:d.duration,name:n});
   };
