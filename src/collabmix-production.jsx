@@ -2177,7 +2177,18 @@ function useRTC({ engineRef, send }) {
 
   const handleAnswer = useCallback(async({sdp})=>{ if(!pc.current)return; try{await pc.current.setRemoteDescription(new RTCSessionDescription(sdp)); for(const c of pend.current){try{await pc.current.addIceCandidate(new RTCIceCandidate(c));}catch{}} pend.current=[];}catch(e){console.error(e);} },[]);
   const handleIce   = useCallback(async({candidate})=>{ if(!candidate)return; if(pc.current?.remoteDescription){try{await pc.current.addIceCandidate(new RTCIceCandidate(candidate));}catch{}}else pend.current.push(candidate); },[]);
-  const endCall     = useCallback(()=>{ sRef.current({type:"rtc_hangup"}); pc.current?.close(); pc.current=null; try{engineRef.current?.master.disconnect(dest.current);}catch{} dest.current=null; if(remAudio.current)remAudio.current.srcObject=null; setState("idle"); },[engineRef]);
+  const endCall     = useCallback(()=>{
+    sRef.current({type:"rtc_hangup"});
+    pc.current?.close(); pc.current=null;
+    // Guard disconnect: passing null to AudioNode.disconnect() severs ALL outputs in Chrome,
+    // not just the named one. Only disconnect if we actually have a destination to sever.
+    if (dest.current && engineRef.current) {
+      try { engineRef.current.master.disconnect(dest.current); } catch {}
+    }
+    dest.current=null;
+    if(remAudio.current)remAudio.current.srcObject=null;
+    setState("idle");
+  },[engineRef]);
   const toggleMute  = useCallback(()=>{ dest.current?.stream.getTracks().forEach(t=>{t.enabled=muted;}); setMuted(m=>!m); },[muted]);
   const handleRtc   = useCallback((msg)=>{ switch(msg.type){case"rtc_offer":handleOffer(msg);break;case"rtc_answer":handleAnswer(msg);break;case"rtc_ice":handleIce(msg);break;case"rtc_hangup":endCall();break;} },[handleOffer,handleAnswer,handleIce,endCall]);
 
