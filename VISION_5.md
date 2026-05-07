@@ -1,4 +1,4 @@
-MIX//SYNC — RESUME BRIEF (May 6-7, 2026 — late Wednesday handoff)
+MIX//SYNC — RESUME BRIEF (May 6-7, 2026 — late marathon-session handoff)
 =================================================================
 
 HOW TO USE: Paste this entire note as your first message in a new Claude
@@ -22,7 +22,7 @@ PROJECT BASICS
 - Frontend: React + Vite on Vercel (collabmix.vercel.app)
 - Deploy: bash BUILD_AND_PUSH.command
 - GitHub: github.com/chdcosta-max/collabmix
-- Latest commit: 7781f83 (partner playhead jitter fix)
+- Latest commit: 63ac7f9 (Library import + refresh-rejoin + Mix Name UX)
 
 =================================================================
 SESSION HISTORY
@@ -66,7 +66,7 @@ MAY 4 EVENING — late (three commits, Phase 2 + Slices 1+2):
     - Play/CUE buttons use inline arrow onClick wrappers (workaround for
       ternary form failing to dispatch in spectator mode)
 
-MAY 6-7 EVENING (two commits, both major bugs unblocked):
+MAY 6-7 EVENING — early (two commits, both major bugs unblocked):
 14. Audio routing bug fix (commit 3268c2f)
     - Root cause: endCall() called master.disconnect(dest.current) where
       dest.current was null when WebRTC was never established. Chrome
@@ -76,7 +76,7 @@ MAY 6-7 EVENING (two commits, both major bugs unblocked):
       so endCall fired on every partner refresh. Even with no STREAM clicked.
     - Fix: guard the disconnect on dest.current actually being a real
       AudioNode (`if (dest.current && engineRef.current) ...`). ~4 lines.
-    - This unblocks two-browser sessions for the FIRST TIME — audio actually
+    - This unblocked two-browser sessions for the FIRST TIME — audio actually
       flows end-to-end. Was the May 4 BLOCKER.
 15. Partner playhead jitter fix (commit 7781f83)
     - Root cause: receiver computed playback rate from packet inter-arrival
@@ -97,6 +97,70 @@ MAY 6-7 EVENING (two commits, both major bugs unblocked):
          packet that catches up resyncs.
     - Also reduced WF_W from 48000 to 24000 for partner waveform broadcast
       (~800KB → ~400KB per track load — defensive, not the root cause).
+
+MAY 6-7 EVENING — late (three commits, UX + library import + OOM fix):
+16. Shareable invite links + Mix Name UX (commit 7a2fd25)
+    - Two DJs can now connect to a unique Mix via shareable URL — no more
+      hardcoded ?room=preview.
+    - Host flow: Landing → "Start a Mix" → Lobby with Mix Name input + DJ
+      Name input + auto-generated MIX CODE + COPY INVITE LINK button +
+      "Start Mix →" button.
+    - Invitee flow: opens invite URL → skips Landing → Lobby with read-only
+      "JOINING MIX: <name>" display + DJ Name input + "Join Mix →" button.
+    - Mix Name passed via URL ?mix= param. buildInviteLink now encodes both
+      ?room and ?mix.
+    - main.jsx fix: changed default mount from
+      `<CollabMix initialPage="session" djName="DJ Preview" />` to
+      `<CollabMix />` so the prop defaults are honored. URL-aware initialPage:
+      if ?room= is in URL, route directly to "lobby"; else "landing".
+    - Updated user-facing copy throughout: "Start a Mix", "Start Mix →",
+      "Join Mix →", "MIX CODE", "JOINING MIX:", etc. Variable names
+      (session.room, session.name) preserved as internal.
+17. VISION_5.md update (commit ec6d660) — captured commits 14-15.
+18. Library import + refresh-rejoin + dedup (commit 63ac7f9)
+    - Library import infrastructure was already built in useLibrary, just
+      unwired in V2. This commit wired it up:
+      a) ADD MUSIC button in left rail; clicking opens showOpenFilePicker
+         (or hidden <input> fallback for non-Chromium).
+      b) Drag-drop on outermost LibraryPanelV2 container — handles both
+         flat files and folders via webkitGetAsEntry recursive traversal.
+      c) Filename cleanup: strip leading track-number prefixes ("01 ",
+         "01-", "1. "), parse "Artist - Title" pattern when ID3 missing.
+      d) ID3 metadata extraction (title, artist, album, BPM, key, artwork).
+      e) Persists to OPFS (file bytes) + IndexedDB (metadata + handles).
+      f) Empty-state CTA replaces mock tracks ("Drop tracks here or click
+         to add" / "Drag a folder for bulk import" / "MP3 · WAV · FLAC ·
+         AAC · OGG · M4A").
+      g) MOCK_TRACKS / MOCK_CRATES / MOCK_QUEUE constants kept as dead code
+         for easy re-enable during testing.
+    - Duplicate detection on import: tracks normalized by artist+title match,
+      checked against existing library AND within-batch dupes. If any dupes
+      detected, surfaces a confirmation modal:
+      "SKIP DUPLICATES (ADD N NEW)" / "IMPORT ALL (INCLUDING DUPLICATES)"
+      / "CANCEL". Lists first ≤5 dupes so user can verify. Modal styling
+      matches Lobby aesthetic (Cormorant Garamond title, DM Mono labels,
+      gold primary button, dark panel background). Click-outside dismissal.
+    - Refresh-rejoin: hitting Cmd+R during a session now reads cm_session
+      from localStorage and auto-rejoins the same Mix instead of bouncing
+      to Landing. Critical for dogfooding where DJs may refresh accidentally.
+      Strips URL params and uses localStorage as source of truth. leave()
+      clears cm_session so post-leave refresh correctly returns to Landing.
+    - CRITICAL OOM FIX (within commit 63ac7f9):
+      Importing 322 tracks crashed Chrome with ~10GB memory. Root cause:
+      every imported track was queued for BPM/key analysis (queueRef.current
+      .push) AND pinned in fileMap.current[id]=file. With 322 tracks at
+      5-15MB each, that's 3-5GB of File blobs pinned simultaneously plus
+      the audio decode queue. Auto-queue on app load also re-queued every
+      unanalyzed track on every page load — re-OOM'd on each launch.
+      Fix:
+      • _importFileObjects no longer pushes to queueRef or pins fileMap.
+        Just parseID3 + opfsStore + cmDbPut.
+      • Auto-queue block on app mount removed entirely.
+      • New queueAnalysis(id, file) callback in useLibrary.
+      • handleLibLoad calls lib.queueAnalysis when track is loaded onto
+        a deck and not yet analyzed — bounded to user activity, never bulk.
+      • Tracks with ID3 BPM/key tags display those values immediately;
+        tracks without ID3 show "—" until loaded onto a deck.
 
 =================================================================
 ARCHITECTURE DECISIONS (May 4 + May 6-7)
@@ -122,6 +186,24 @@ Asymmetric handling (forward = accept, backward-within-tolerance = ignore)
 ensures B2 never gets pulled backward by a delayed packet, so motion stays
 strictly monotonic and visually smooth.
 
+Session routing & rejoin (May 6-7 late insight): the entry point is
+URL-driven and localStorage-backed. main.jsx Root computes initialPage
+from ?room= presence (lobby vs landing). After join() runs, cm_session
+is persisted. On any subsequent mount, the auto-rejoin useEffect checks
+URL params first (?room=&name= for library-app handoff), then localStorage
+(refresh-during-session). leave() clears cm_session so post-leave refresh
+returns to Landing as expected. URL params get stripped from the address
+bar after either path — localStorage becomes the source of truth once
+joined.
+
+Library import & analysis (May 6-7 late insight): import is intentionally
+shallow — parseID3, opfsStore, cmDbPut. Heavy work (decodeAudioData, BPM
+analysis, waveform peak generation) is deferred until a track is actually
+loaded onto a deck. This bounds memory pressure to one track at a time
+even with thousands in the library. The deck-side BPM analyzer runs in
+parallel with the library-side analyzer when a track loads — wasteful but
+correct, and bounded.
+
 =================================================================
 TESTING SCOREBOARD
 =================================================================
@@ -146,36 +228,73 @@ all display on partner's Deck panel after DJ loads.
 
 May 6-7 verified end-to-end TWO-BROWSER session for the first time:
 - Audio flows from DJ-A's local speakers
-- Both DJs see synchronized track metadata (title, artist, BPM, key, duration)
-- Both DJs see same waveform shape (rendered identically on owner and partner)
-- Either DJ can drive transport on either deck (play/pause/cue/scrub round-trip)
-- Visual playhead on partner side stays in time with B1 within network latency
+- Both DJs see synchronized track metadata
+- Both DJs see same waveform shape
+- Either DJ can drive transport on either deck
+- Visual playhead on partner side stays in time with B1
 - Smooth playhead motion, no visible stutter
 - Audio survives partner refresh / reconnect cycles
+
+May 6-7 late session also verified:
+- Invite-link flow: host creates Mix, copies link, invitee opens link →
+  joins same room as same Mix. Both browsers connect, audio works,
+  transport works, smooth playhead.
+- Refresh-rejoin: Cmd+R mid-session lands back in same Mix without bouncing
+  to Landing. LEAVE → Cmd+R correctly returns to Landing.
+- Library import (small batches): drag-drop files / folder, ADD MUSIC
+  button, ID3 extraction, filename cleanup, dedup detection + modal.
+- OOM fix: 322-track import no longer crashes Chrome (was crashing prior
+  to commit 63ac7f9).
 
 =================================================================
 KNOWN OPEN ISSUES
 =================================================================
 
-NEW (May 6-7):
+NEW (May 6-7 late session) — NEXT-SESSION HIGH PRIORITY:
+- **Library state↔IDB desync under load.** Bulk import of 200+ tracks
+  observed showing many tracks in library UI but only ~4 actually persisted
+  to IDB after the dust settled. Total IDB storage ~2.1KB suggests writes
+  weren't actually persisting at scale. Cause unclear — possibly:
+  • fire-and-forget opfsStore writes failing silently under concurrency
+  • setLibrary state setter races (multiple sequential state updates batched
+    in unexpected ways)
+  • Chrome quota silent eviction without persistent storage request
+  Needs isolated investigation: import small batches with instrumentation,
+  verify each track lands in BOTH OPFS and IDB before moving on. **HIGH
+  PRIORITY before any real dogfooding with a partner DJ who has hundreds
+  of tracks** — current state means the user could think they have 300
+  tracks imported but only 4 are actually saved.
+- **No persistent storage request** — Chrome may evict OPFS data under
+  quota pressure or general housekeeping. Should call
+  `navigator.storage.persist()` on first import to upgrade to persistent
+  storage that survives eviction. Small fix, high value, ~5 lines.
+- **Track list rendering not virtualized** — V2 LibraryPanel renders
+  every track row in DOM. 100+ tracks degrades scroll performance. Needs
+  windowing library (react-window or similar) before scaling to real DJ
+  libraries (5000+ tracks).
+- **No manual "Analyze Library" path** — auto-queue on app load was
+  removed (was the OOM cause). Currently legacy unanalyzed tracks only
+  get analyzed by being loaded onto a deck. Should add an explicit
+  "Analyze All" button so users can backfill BPM/key when they have time.
+  The `analyzeAll(getFileFn)` function in useLibrary already exists —
+  just needs a button + click handler.
+
+CARRIED FORWARD FROM EARLIER MAY 6-7:
 - Phantom loop on zoomed waveform clicks. Repro: while playback is active,
   click around on the zoomed waveform across both browsers a few times. At
   some point the deck enters a 1-second loop (e.g., 1:25 → 1:26). Pressing
-  play/pause doesn't break it. Hot cue buttons set cues but don't break the
-  loop. Workaround: hard refresh. Suspected: AnimatedZoomedWF onSeek/onClick
-  inadvertently sets lr2.start, lr2.end, and lr2.active in some interaction
-  sequence. Audit the onClick handler at AnimatedZoomedWF and any
-  loop-setting gestures (drag-to-set-loop?).
+  play/pause doesn't break it. Hot cue buttons set cues but don't break
+  the loop. Workaround: hard refresh. Suspected: AnimatedZoomedWF
+  onSeek/onClick inadvertently sets lr2.start, lr2.end, and lr2.active in
+  some interaction sequence.
 - Initial playhead sync has subtle warm-up — catches up over first few
-  seconds rather than syncing immediately. Likely the first packet's
-  hard-snap baseline sets, then RAF takes over with stale rate until the
-  duration-based rate stabilizes. Minor polish.
+  seconds rather than syncing immediately. Minor polish.
 - WF_W=24000 visible quality is acceptable but a bit blocky. User noted
-  "looks a little amateur." Revisit when polishing visuals; could go higher
-  (32000?) now that bandwidth is no longer suspect, or keep low and use
-  better rendering (smoothed bars).
+  "looks a little amateur." Now that we know jitter wasn't bandwidth-bound,
+  could go higher (32000 or 48000) safely, OR keep at 24000 and improve
+  render quality (smoothed bars).
 
-CARRIED FORWARD:
+CARRIED FORWARD FROM EARLIER SESSIONS:
 - Mirror effect noise — diagnostic logs showed setPlay firing 60+ times
   per second with the same value during playback. Performance opportunity:
   guard with `if (nowPlaying !== play)` before calling setPlay.
@@ -184,7 +303,7 @@ CARRIED FORWARD:
   play_state {playing: true|false} instead of toggle.
 - Mystery: onClick={local?toggle:(remoteToggle||undefined)} ternary form
   fails for partner-mode buttons; inline arrow wrapper works. Workaround
-  in place from May 4 session. Revisit if curious.
+  in place. Revisit if curious.
 - Hot cues can't be deleted from UI (state can be cleared via right-click
   context but no obvious delete button)
 - Kick body vs click visual offset on some tracks (acoustic physics)
@@ -193,8 +312,6 @@ CARRIED FORWARD:
 - Hot cues missing on zoomed waveform
 - Hot cues no number labels
 - Library defaults to "Recently Played" instead of "All Tracks"
-- Room IDs hardcoded as "preview" — no shareable invite links yet
-- Mock library data populates when empty
 - Pre-existing fontSize duplicate-key warning at line 1613 (build warning,
   non-blocking)
 
@@ -204,11 +321,15 @@ Strategic backlog:
   - Build out ground-truth.json from rekordbox values
 - Spectator artwork (broadcast small thumbnail data URL or content hash)
 
-RESOLVED THIS SESSION:
+RESOLVED THIS SESSION (May 6-7):
 - ✅ WebRTC audio routing — DJ's local speakers no longer silent on
   partner connect (was the May 4 BLOCKER, fixed in commit 3268c2f)
 - ✅ Catch-up jitter during continuous partner playback (was a Phase 2
   follow-up, fixed in commit 7781f83)
+- ✅ Hardcoded room IDs / no shareable invite links (fixed in 7a2fd25)
+- ✅ Mock library populates when empty (replaced by empty-state CTA in 63ac7f9)
+- ✅ Refresh-during-session bounces to Landing (fixed in 63ac7f9)
+- ✅ OOM on bulk import (fixed in 63ac7f9 — deferred analysis)
 
 =================================================================
 RECOMMENDED FIRST ACTIONS NEXT SESSION
@@ -216,28 +337,34 @@ RECOMMENDED FIRST ACTIONS NEXT SESSION
 
 In priority order:
 
-1. **Dogfood with another DJ.** Now that audio works AND visual sync is
-   smooth, the next biggest leverage move is real human use. 30 minutes
-   of B2B with a friend will reveal more than another night of solo
-   development. Test scenarios: track handoff between DJs, EQ matching
-   on incoming tracks, cue points and beat-grid alignment under live
-   conditions, network latency tolerance.
+1. **Fix library state↔IDB desync.** (HIGH — blocks dogfooding with real
+   libraries.) Import 50-100 tracks with instrumentation. Verify each
+   makes it into BOTH OPFS and IDB. Hypothesis ranking: silent opfsStore
+   failures > setLibrary races > Chrome quota eviction. Easiest first
+   step: await opfsStore + cmDbPut serially instead of fire-and-forget.
 
-2. **Investigate phantom loop bug** if it bothers anyone during dogfood.
-   Otherwise low priority — rare and easy to recover from.
+2. **Add navigator.storage.persist() request.** Small change (~5 lines),
+   high value. Upgrade to persistent OPFS so a real DJ library doesn't
+   get evicted. Best place: first time importFiles is called, before
+   the first opfsStore.
 
-3. **Connection flow / shareable invite links.** Rooms are hardcoded
-   "preview" today. For real dogfood beyond a one-off session, partners
-   need a link they can click. Something like collabmix.vercel.app/?room=abc.
-   Server already supports arbitrary room IDs.
+3. **Dogfood with another DJ on a small library** (~50 tracks). After
+   #1 and #2 land, real human use will surface what to fix next. Test
+   scenarios: track handoff, EQ matching on incoming tracks, cue points,
+   beat-grid alignment under live conditions, network latency tolerance.
 
-4. **Polish:** initial playhead warm-up, WF_W resolution decision, mirror
-   effect setPlay dedup. None blocking.
+4. **Track list virtualization** — once dogfooding reveals scale needs.
+   react-window is the go-to. Probably 1-2 hours including testing.
 
-5. **Strategic:** absolute play_state instead of toggle_request to fix
-   simultaneous-press hazard (1-2 hours), or bulk-test analyzer with 15-20
-   tracks (longer, builds confidence). Pick whichever feels more useful
-   after dogfood feedback.
+5. **Add "Analyze All" button** to library panel — wire to existing
+   `lib.analyzeAll(getFile)`. Quick addition, surfaces the existing
+   one-at-a-time analyzer to users for legacy tracks.
+
+6. **Phantom loop bug** — once stability is solid, audit
+   AnimatedZoomedWF click handlers and any drag-to-set-loop gestures.
+
+7. **WF_W resolution decision** — bump to 48000 for better partner-side
+   waveform quality, OR improve render with smoothed bars.
 
 =================================================================
 WORKING RULES
@@ -261,23 +388,32 @@ WORKING RULES
   source of truth before chasing precision bugs
 - For React event-handler bugs that defy code reading, instrument
   with console logs at the click site and the handler entry
-- For sync bugs, the BIGGEST insight from May 6-7: when both sides see
-  the same playing track, derive rate from track duration, NOT from
-  packet timing. Network latency is irrelevant to rate; it only affects
-  when to correct the baseline. Apply this pattern to any future
-  visible-position sync.
+- For sync bugs: when both sides see the same playing track, derive
+  rate from track duration, NOT from packet timing. Network latency
+  is irrelevant to rate; it only affects when to correct the baseline.
 - For WebSocket disconnect logic, ALWAYS guard cleanup operations on
   whether the resource was actually established. Chrome's silent
   disconnect-all behavior on null arguments is a sharp edge.
+- For library import / heavy per-track work: defer everything possible
+  until the user actually loads a track onto a deck. Don't queue 100s
+  of files for analysis at import time — File references pin blobs
+  in RAM until processed. Bulk decode at scale = OOM.
+- For storage that needs to survive: call navigator.storage.persist()
+  before relying on OPFS or IDB at scale. Default storage tier is
+  evictable.
 
 =================================================================
 INSTRUCTION FOR NEW CLAUDE
 =================================================================
 "Continuing work on Mix//Sync. Previous chat hit context limits.
-Please confirm you understand where we left off. The May 6-7 session
-unblocked two-DJ end-to-end use: audio routing bug fixed (commit
-3268c2f) and partner playhead jitter fixed (commit 7781f83). Two-browser
-session now works fully: audio + metadata + waveform + transport sync +
-smooth playhead. Next priority is dogfooding with another DJ — real
-human use will surface what to polish next. Phantom loop bug from
-zoomed-waveform clicks is the only new bug, low priority."
+Please confirm you understand where we left off. The May 6-7 marathon
+session shipped 5 commits: audio routing fix (3268c2f), partner playhead
+jitter fix (7781f83), shareable invite links + Mix Name UX (7a2fd25),
+VISION update (ec6d660), and library import + refresh-rejoin + OOM fix
+(63ac7f9). Two-DJ end-to-end works: invite link → both DJs join → audio
++ metadata + transport + smooth playhead. Library import works for small
+batches but has a critical state↔IDB desync issue under load (200+ tracks
+showed in UI but only ~4 actually persisted to IDB). NEXT priority is
+fixing that desync before any real dogfooding. Also: call
+navigator.storage.persist() before scaling, and add 'Analyze All' button
+for legacy tracks."
