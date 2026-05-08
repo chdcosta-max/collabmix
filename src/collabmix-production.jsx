@@ -223,6 +223,45 @@ function parseID3(buffer){
   return tags;
 }
 
+// Downscale artwork data URL to a 200x200 JPEG at quality 0.7. Cuts each
+// embedded ID3 APIC from ~500-666 KB to ~10-20 KB — ~35× memory reduction.
+// Returns null on failure; caller should keep the original in that case.
+async function downscaleArtwork(dataUrl) {
+  return new Promise((resolve) => {
+    try {
+      const img = new Image();
+      img.onload = () => {
+        try {
+          const canvas = document.createElement('canvas');
+          const SIZE = 200;
+          canvas.width = SIZE;
+          canvas.height = SIZE;
+          const ctx = canvas.getContext('2d');
+          // Cover-fit: fill the 200x200 square, crop overflow, center
+          const ratio = Math.max(SIZE / img.width, SIZE / img.height);
+          const dw = img.width * ratio;
+          const dh = img.height * ratio;
+          const dx = (SIZE - dw) / 2;
+          const dy = (SIZE - dh) / 2;
+          ctx.drawImage(img, dx, dy, dw, dh);
+          resolve(canvas.toDataURL('image/jpeg', 0.7));
+        } catch (err) {
+          console.warn('[ARTWORK-COMPRESS-FAIL]', err);
+          resolve(null);
+        }
+      };
+      img.onerror = () => {
+        console.warn('[ARTWORK-COMPRESS-FAIL] image load error');
+        resolve(null);
+      };
+      img.src = dataUrl;
+    } catch (err) {
+      console.warn('[ARTWORK-COMPRESS-FAIL]', err);
+      resolve(null);
+    }
+  });
+}
+
 // ── Library analysis worker ───────────────────────────────────
 const LIB_WORKER=`
 function bpf(s,sr,lo,hi){const o=new Float32Array(s.length);const rL=1/(2*Math.PI*hi/sr+1),rH=1/(2*Math.PI*lo/sr+1);let pi=0,po=0;const hp=new Float32Array(s.length);for(let i=0;i<s.length;i++){hp[i]=rH*(po+s[i]-pi);pi=s[i];po=hp[i];}let pv=0;for(let i=0;i<hp.length;i++){pv=o[i]=pv+(1-rL)*(hp[i]-pv);}return o;}
@@ -413,7 +452,11 @@ function useLibrary(){
       try{
         const tracks=await cmDbAll("tracks");
         if(tracks.length>0){
-          // Only call setLibrary when something actually changed — avoids 5s RAF stutter
+          // Only call setLibrary when something actually changed — avoids 5s RAF stutter.
+          // The freshly-deserialized tracks array (incl. artwork strings) is GC-eligible
+          // after this function returns when the fingerprint matches. With downscaled
+          // artwork (~15 KB per track), per-tick allocation is ~5 MB at 300 tracks
+          // instead of the ~177 MB it would be with full-res artwork.
           const fp=tracks.map(t=>t.id+'|'+(t.analyzed?1:0)+'|'+(t.bpm||0)).join(',');
           if(fp!==libFingerprintRef.current){
             libFingerprintRef.current=fp;
@@ -518,6 +561,13 @@ function useLibrary(){
       console.log('[IMPORT-ITER]',{index:i,total:audio.length,filename:file.name,id});
       let tags={};
       try{const sl=file.slice(0,1048576);tags=parseID3(await sl.arrayBuffer());}catch{}
+      // Downscale artwork to 200x200 JPEG @0.7 — keeps thumbnails visible while
+      // dropping per-track memory from ~666 KB to ~10-20 KB (~35× reduction).
+      // If compression fails, keep the original — better than losing artwork.
+      if (tags.artwork) {
+        const compressed = await downscaleArtwork(tags.artwork);
+        if (compressed) tags.artwork = compressed;
+      }
       // Filename → clean + parse "Artist - Title" so messy library filenames produce nice titles
       const cleaned=cleanFilename(file.name);
       const parsed=parseArtistTitle(cleaned);
