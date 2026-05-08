@@ -60,21 +60,64 @@ function createEngine() {
 }
 function xg(p) { const a = p * Math.PI / 2; return { a: Math.cos(a), b: Math.sin(a) }; }
 
-// ── Design tokens (Mix//Sync design system) ─────────────────────
-// Named TOK (not D) because an existing local `const D = "#0c0c14"` uses the D
-// identifier inside the Deck component scope. Future refactors can swap
-// hard-coded color literals for TOK.* references without a mass rename.
+// ── Design tokens — Direction D ─────────────────────────────────
+// Named TOK because an existing local `const D = "#0c0c14"` already lives
+// inside Deck's scope. New code should reference TOK.* and FONT.* directly
+// instead of hard-coded literals.
 const TOK = {
-  gold:   "#C8A96E", // primary brand, CTAs, accents
-  deckA:  "#7B61FF", // your deck — electric violet
-  deckB:  "#00BFA5", // partner deck — deep teal
-  bg:     "#07070F", // primary background (near-black w/ blue undertone)
-  bg2:    "#0D0C1A", // panels / cards
-  bg3:    "#13122A", // hover / active panels
-  border: "#1A1830", // borders, dividers
-  text:   "#EDE8DF", // primary text — warm off-white
-  subtle: "#9B96B0", // muted purple-grey (secondary text)
-  muted:  "#4A4560", // disabled / very muted
+  // Backgrounds
+  bgBase:    "#0A0B0D",
+  surface1:  "#131519",
+  surface2:  "#1A1D23",
+  surface3:  "#21252C",  // modals only
+  // Borders
+  borderSubtle:   "rgba(255,255,255,0.06)",
+  borderDefined:  "rgba(255,255,255,0.12)",
+  borderEmphasis: "rgba(255,255,255,0.20)",
+  // Text
+  text:        "#ECEEF1",
+  textSec:     "rgba(236,238,241,0.62)",
+  textMuted:   "rgba(236,238,241,0.36)",
+  // Identity (YOU vs PARTNER, not Deck A vs Deck B — see TODO at deck render)
+  you:         "#5B8FF9",
+  partner:     "#9B7BD9",
+  active:      "#ECEEF1",
+  youVibrant:     "#6E92D6",
+  partnerVibrant: "#8F7BC2",
+  // Status
+  connected: "#6BB36B",
+  warning:   "#C9A06B",
+  error:     "#B86060",
+  // Legacy aliases — kept so existing literals can still resolve via TOK
+  // during the gradual migration. New code must NOT use these.
+  gold:   "#C8A96E",
+  deckA:  "#5B8FF9",
+  deckB:  "#9B7BD9",
+  bg:     "#0A0B0D",
+  bg2:    "#131519",
+  bg3:    "#1A1D23",
+  border: "rgba(255,255,255,0.12)",
+  subtle: "rgba(236,238,241,0.62)",
+  muted:  "rgba(236,238,241,0.36)",
+};
+
+// Curated 8-cue palette — desaturated (~75% sat), not childish
+const CUE_PALETTE = [
+  "#5B8FF9", // 1 blue
+  "#6BB36B", // 2 sage
+  "#C9A06B", // 3 amber
+  "#B86C9A", // 4 rose
+  "#6B9FB3", // 5 teal
+  "#9B7BD9", // 6 violet
+  "#B89B6B", // 7 gold
+  "#B86060", // 8 oxblood
+];
+
+// Font roles
+const FONT = {
+  ui:    "'Inter','DM Sans',sans-serif",          // body, buttons, labels
+  display: "'Bricolage Grotesque','Cormorant Garamond',serif", // wordmark, deck titles
+  mono:  "'JetBrains Mono','DM Mono',monospace",  // BPM, time, key, codes
 };
 
 
@@ -1043,15 +1086,18 @@ function TrackRow({track, onLoadA, onLoadB, isRec, reasons, canLoad, previewTrac
 // iterate on this new layout — nothing else in the app references it directly
 // once the swap is made.
 function LibraryPanelV2({ lib, onLoad, playingTrack, previewTrackId, onPreview, onDelete, chat, onSendChat, me }) {
-  const G = "#C8A96E";
-  const BG = "#080810";
-  const BG2 = "#0D0C1A";
-  const BG3 = "#13122A";
-  const BORDER = "#1c1c24";
-  const TEXT = "#EDE8DF";
-  const SUBTLE = "#9B96B0";
-  const MUTED = "#555562";
-  const PARTNER = "#00BFA5";
+  // Direction D — library colors pulled from TOK so the panel matches the deck shell.
+  // `G` (gold) is preserved as accent for active tab + ADD MUSIC button so the
+  // library still has its own warm hit; everything else moves to neutral surfaces.
+  const G = TOK.you;        // active accent — was #C8A96E gold; now identity blue
+  const BG = TOK.bgBase;
+  const BG2 = TOK.surface1;
+  const BG3 = TOK.surface2;
+  const BORDER = TOK.borderSubtle;
+  const TEXT = TOK.text;
+  const SUBTLE = TOK.textSec;
+  const MUTED = TOK.textMuted;
+  const PARTNER = TOK.partner;
 
   // ── Mock data for empty library (prototype — replaced by real data on first import). ──
   const MOCK_TRACKS = [
@@ -2685,6 +2731,33 @@ function VU({ an, color, w=100 }) {
   return <canvas ref={ref} width={w} height={6} style={{width:"100%",borderRadius:2}}/>;
 }
 
+// Thin vertical level meter — 4px wide bar fills bottom-up with current audio level.
+// Top 2 LED bands warn (amber/red); body uses identity color.
+function VerticalLevelMeter({ an, color }) {
+  const ref=useRef(null),raf=useRef(null);
+  useEffect(()=>{
+    if(!an||!ref.current)return;
+    const el=ref.current;
+    const draw=()=>{
+      raf.current=requestAnimationFrame(draw);
+      const d=new Uint8Array(an.frequencyBinCount);
+      an.getByteFrequencyData(d);
+      const lv=d.reduce((s,v)=>s+v,0)/d.length/255;
+      const pct=Math.min(1,lv*1.4); // slight visual headroom
+      el.style.height=`${(pct*100).toFixed(1)}%`;
+      // Color shifts at peak
+      el.style.background = pct>0.92 ? "#B86060" : pct>0.78 ? "#C9A06B" : color;
+    };
+    draw();
+    return()=>cancelAnimationFrame(raf.current);
+  },[an,color]);
+  return (
+    <div style={{width:"100%",height:"100%",display:"flex",flexDirection:"column",justifyContent:"flex-end"}}>
+      <div ref={ref} style={{width:"100%",height:"0%",background:color,transition:"background .1s"}}/>
+    </div>
+  );
+}
+
 function WF({ bands, peaks, freq, prog, onSeek, h=80, hotCues=[], loopStart=null, loopEnd=null, loopActive=false, bpm=null, dur=0, beatPhaseFrac=null, color='#ffffff' }) {
   const ref=useRef(null);
   useEffect(()=>{
@@ -2735,14 +2808,13 @@ function WF({ bands, peaks, freq, prog, onSeek, h=80, hotCues=[], loopStart=null
         const played=x<px;
         const base=H;
 
-        // Bass (blue)
-        ctx.fillStyle=played?'#44aaff':'#1e5599';
+        // Identity-tinted: bass = full color, mid = color+alpha, tips = white.
+        // `color` prop (passed from Deck) selects the identity hue.
+        ctx.fillStyle=played?color:color+'4a';
         if(bH>0.5)ctx.fillRect(x,base-bH,BAR,bH);
-        // Mid (brand gold)
-        ctx.fillStyle=played?'#C8A96E':'#8A7548';
+        ctx.fillStyle=played?color+'cc':color+'33';
         if(mH>0.5)ctx.fillRect(x,base-bH-mH,BAR,mH);
-        // High (off-white tips)
-        ctx.fillStyle=played?'#EDE8DF':'#8A857E';
+        ctx.fillStyle=played?'#EDE8DF':'#5a5a6a';
         if(hH>0.5)ctx.fillRect(x,base-bH-mH-hH,BAR,hH);
       }
 
@@ -2761,7 +2833,7 @@ function WF({ bands, peaks, freq, prog, onSeek, h=80, hotCues=[], loopStart=null
       }
 
       // ── Hot cue markers ──
-      const CUE_CLR=["#C8A96E","#ef4444","#22c55e","#f59e0b"];
+      const CUE_CLR=["#5B8FF9","#6BB36B","#C9A06B","#B86C9A","#6B9FB3","#9B7BD9","#B89B6B","#B86060"];
       hotCues.forEach((cue,ci)=>{
         if(cue===null)return;
         const cx=Math.floor(cue*W);
@@ -2796,7 +2868,7 @@ function WF({ bands, peaks, freq, prog, onSeek, h=80, hotCues=[], loopStart=null
 //
 // 60fps RAF. ResizeObserver watches the canvas — the draw loop never reads
 // clientWidth.
-function AnimatedZoomedWF({ bands, dur, progRef, onSeek, h=96, windowSec=8, beatPhaseFrac=null, beatPeriodSec=null, gridOffsetMs=0, bpmNudge=0 }) {
+function AnimatedZoomedWF({ bands, dur, progRef, onSeek, h=96, windowSec=8, beatPhaseFrac=null, beatPeriodSec=null, gridOffsetMs=0, bpmNudge=0, peakColor='#E8A340', bassColor='#2A7FE8' }) {
   const ref=useRef(null);
   const raf=useRef(null);
   const colBufRef=useRef(null); // {bv, mv, hv: Float32Array, len} — per-column MAX scratch
@@ -2905,8 +2977,6 @@ function AnimatedZoomedWF({ bands, dur, progRef, onSeek, h=96, windowSec=8, beat
         const GAMMA=2.5;
         const BOOST=1.2;
         const MIN_H=4;
-        const GOLD='#E8A340';
-        const BLUE='#2A7FE8';
         for(let dx=0;dx<physW;dx++){
           const bv=colB[dx], mv=colM[dx], hv=colH[dx];
           const env=bv>mv?(bv>hv?bv:hv):(mv>hv?mv:hv);
@@ -2914,11 +2984,11 @@ function AnimatedZoomedWF({ bands, dur, progRef, onSeek, h=96, windowSec=8, beat
           const envH=Math.min(maxH,Math.max(MIN_H,Math.round(Math.pow(env,GAMMA)*BOOST*maxH)));
           const bassH=bv<=0?0:Math.min(envH,Math.max(MIN_H,Math.round(Math.pow(bv,GAMMA)*BOOST*maxH)));
 
-          ctx.fillStyle=GOLD;
+          ctx.fillStyle=peakColor;
           ctx.fillRect(dx,center-envH,1,envH); // top
           ctx.fillRect(dx,center+1,1,envH);    // bottom — same height, symmetric
           if(bassH>0){
-            ctx.fillStyle=BLUE;
+            ctx.fillStyle=bassColor;
             ctx.fillRect(dx,center-bassH,1,bassH);
             ctx.fillRect(dx,center+1,1,bassH);
           }
@@ -3215,7 +3285,7 @@ function Knob({ v, set, min=-12, max=12, ctr=0, label, color="#C8A96E", size=38,
 // ── Deck ─────────────────────────────────────────────────────
 const HOT_CUE_COLORS=["#C8A96E","#ef4444","#22c55e","#f59e0b"];
 
-function Deck({ id, ch, ctx:ac, color, local, remote, onChange, midi:mt, bpmResult, bpmAnalyze, eqHi=0, eqMid=0, eqLo=0, chanVol=1, loadFromLibrary=null, onTrackInfo=null, onSync=null, onLibraryTrackDrop=null, onProgUpdate=null, onWaveform=null, onSeekReady=null, remoteSeek=null, onToggleReady=null, onCueReady=null, remoteToggle=null, remoteCue=null, onTransportFire=null }) {
+function Deck({ id, ch, ctx:ac, color, vibrantColor=null, isYou=null, local, remote, onChange, midi:mt, bpmResult, bpmAnalyze, eqHi=0, eqMid=0, eqLo=0, chanVol=1, loadFromLibrary=null, onTrackInfo=null, onSync=null, onLibraryTrackDrop=null, onProgUpdate=null, onWaveform=null, onSeekReady=null, remoteSeek=null, onToggleReady=null, onCueReady=null, remoteToggle=null, remoteCue=null, onTransportFire=null }) {
   const [buf,setBuf]=useState(null),[name,setName]=useState(null),[play,setPlay]=useState(false);
   const [prog,setProg]=useState(0),[dur,setDur]=useState(0);
   const progRef=useRef(0); // mirror of prog for parent AnimatedZoomedWF without 60fps setState
@@ -3227,10 +3297,12 @@ function Deck({ id, ch, ctx:ac, color, local, remote, onChange, midi:mt, bpmResu
   // Hot cues + loop
   const [deckKey,setDeckKey]=useState(null);
   const [trackArtist,setTrackArtist]=useState(null);
-  const [hotCues,setHotCues]=useState([null,null,null,null]);
+  const [trackArtwork,setTrackArtwork]=useState(null);
+  const [hotCues,setHotCues]=useState([null,null,null,null,null,null,null,null]);
   const [loopActive,setLoopActive]=useState(false);
   const [loopStart,setLoopStart]=useState(null);
   const [loopEnd,setLoopEnd]=useState(null);
+  const [loopBars,setLoopBars]=useState(4);
   const loopRef=useRef({active:false,start:null,end:null});
   const src=useRef(null),st=useRef(0),off=useRef(0),raf=useRef(null),fr=useRef(null);
   // EQ is now passed as props: eqHi, eqMid, eqLo, chanVol
@@ -3406,13 +3478,14 @@ function Deck({ id, ch, ctx:ac, color, local, remote, onChange, midi:mt, bpmResu
     const n=(trackMeta?.title)||f.name.replace(/\.[^.]+$/,"");
     setName(n);onChange?.("trackName",n);
     setTrackArtist(trackMeta?.artist||null);
+    setTrackArtwork(trackMeta?.artwork||null);
     onChange?.("artist", trackMeta?.artist || null);
     onChange?.("key", trackMeta?.key || null);
     // Extract key from metadata or ID3
     setDeckKey(trackMeta?.key||null);
     // Reset hot cues + loop on new track load
-    setHotCues([null,null,null,null]);
-    setLoopActive(false);setLoopStart(null);setLoopEnd(null);
+    setHotCues([null,null,null,null,null,null,null,null]);
+    setLoopActive(false);setLoopStart(null);setLoopEnd(null);setLoopBars(4);
     loopRef.current={active:false,start:null,end:null};
     bpmAnalyze?.(d, id);
     // If from library, report track info for recommendations
@@ -3477,151 +3550,347 @@ function Deck({ id, ch, ctx:ac, color, local, remote, onChange, midi:mt, bpmResu
   const fmt=(s)=>`${String(Math.floor(Math.max(0,s)/60)).padStart(2,"0")}:${String(Math.floor(Math.max(0,s)%60)).padStart(2,"0")}`;
   const cur=prog*dur;
 
-  const D="#0c0c14", BD="1px solid #1e1e28";
-  return (
-    <div style={{background:D, border:`1px solid ${play?color+"44":"#1e1e28"}`, borderRadius:10, overflow:"hidden", display:"flex", flexDirection:"column", boxShadow:play?`0 0 24px ${color}14`:`0 2px 12px rgba(0,0,0,.5)`, transition:"all .3s"}}>
+  // TODO(deck-identity): Visual identity (YOU vs PARTNER) is currently passed in
+  // explicitly via the `isYou` prop, defaulting to whatever `local` says. Once
+  // host/invitee role wiring lands, derive isYou from session role at the call
+  // site so partner sees Deck A as PARTNER (violet) on their screen and we see
+  // it as YOU (blue) on ours, even though both browsers control both decks.
+  const isYouResolved = (isYou === null || isYou === undefined) ? local : isYou;
+  const accent = color;
+  const accentVibrant = vibrantColor || color;
+  const playVisualNow = local ? play : (remote?.playing || false);
+  const effectiveBpm = bpmResult?.bpm ?? remote?.bpm;
+  const effectiveKey = deckKey || remote?.key;
+  const effectiveTitle = name || remote?.trackName || null;
+  const effectiveArtist = trackArtist || remote?.artist || null;
+  const effectiveDur = dur || remote?.duration || 0;
+  const ck = effectiveKey ? CAMELOT[effectiveKey] : null;
+  const hasTrack = !!(buf || remote?.trackName);
 
-      {/* ── HEADER: badge | track | bpm ── */}
-      <div style={{display:"flex", alignItems:"stretch", minHeight:54, borderBottom:BD}}>
-        <div style={{width:52, flexShrink:0, background:`linear-gradient(180deg,${color}12,${color}06)`, borderRight:`1px solid ${color}22`, display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"center", gap:4}}>
-          <span style={{fontFamily:"'DM Mono',monospace", fontWeight:500, fontSize:24, color, lineHeight:1, letterSpacing:-1}}>{id}</span>
-          <span style={{fontSize:7, color:color+"88", fontFamily:"'DM Mono',monospace", fontWeight:500, letterSpacing:2}}>{local?"YOU":"PRTNR"}</span>
-          {play&&<div style={{width:4,height:4,borderRadius:"50%",background:color,boxShadow:`0 0 8px ${color}`,animation:"blink 1s infinite"}}/>}
+  return (
+    <div style={{
+      background: TOK.surface1,
+      border: `1px solid ${TOK.borderSubtle}`,
+      borderTop: `2px solid ${playVisualNow ? accent : accent + "55"}`,
+      borderRadius: 10,
+      padding: 16,
+      display: "flex",
+      flexDirection: "column",
+      gap: 14,
+      minHeight: 280,
+      boxShadow: playVisualNow
+        ? `0 -2px 12px ${accent}40, 0 4px 18px rgba(0,0,0,0.55)`
+        : `0 2px 8px rgba(0,0,0,0.45)`,
+      transition: "border-color .25s, box-shadow .25s",
+      position: "relative",
+    }}>
+      {/* ── Header ── */}
+      <div style={{display:"flex",alignItems:"center",gap:10}}>
+        <span style={{fontFamily:FONT.ui,fontSize:14,fontWeight:600,color:TOK.textSec}}>{id}</span>
+        <span style={{fontFamily:FONT.ui,fontSize:10,fontWeight:600,letterSpacing:1.4,color:accent,opacity:0.7,textTransform:"uppercase"}}>
+          {isYouResolved ? "YOU" : "PARTNER"}
+        </span>
+        {bpmResult?.analyzing && <span style={{fontFamily:FONT.mono,fontSize:9,color:TOK.warning,letterSpacing:1,animation:"pulse .8s infinite"}}>ANALYZING…</span>}
+        <div style={{flex:1}}/>
+        {effectiveBpm && (
+          <span style={{fontFamily:FONT.mono,fontSize:14,fontWeight:500,color:TOK.text,fontVariantNumeric:"tabular-nums"}}>
+            {(effectiveBpm*(bpmResult?.bpm?rate:1)).toFixed(1)}
+            <span style={{fontFamily:FONT.ui,fontSize:9,fontWeight:600,color:TOK.textMuted,letterSpacing:1.2,marginLeft:6}}>BPM</span>
+          </span>
+        )}
+        {playVisualNow && (
+          <div style={{width:6,height:6,borderRadius:"50%",background:accent,boxShadow:`0 0 8px ${accent}`,marginLeft:6}}/>
+        )}
+      </div>
+
+      {/* ── Track row: art | info+waveform ── */}
+      <div
+        onClick={local ? (()=>fr.current?.click()) : undefined}
+        onDragOver={local?(e=>{e.preventDefault();e.stopPropagation();setDragOver(true);}):undefined}
+        onDragLeave={local?(()=>setDragOver(false)):undefined}
+        onDrop={local?(e=>{
+          e.preventDefault();e.stopPropagation();setDragOver(false);
+          const f=e.dataTransfer.files[0];
+          if(f&&f.type.startsWith("audio/")){load(f);return;}
+          try{const d=JSON.parse(e.dataTransfer.getData("application/json"));if(d?.trackId&&onLibraryTrackDrop)onLibraryTrackDrop(d.trackId);}catch{}
+        }):undefined}
+        style={{
+          display:"flex",gap:14,alignItems:"flex-start",
+          cursor: local ? "pointer" : "default",
+          border: dragOver ? `1.5px dashed ${accent}` : "1.5px dashed transparent",
+          borderRadius:8,
+          padding: dragOver ? 4 : 0,
+          margin: dragOver ? -4 : 0,
+          transition:"border-color .15s",
+        }}>
+        {/* Album art */}
+        <div style={{
+          width:96,height:96,flexShrink:0,
+          background: trackArtwork ? "#000" : TOK.surface2,
+          border:`1px solid ${TOK.borderSubtle}`,
+          borderRadius:6,
+          overflow:"hidden",
+          display:"flex",alignItems:"center",justifyContent:"center",
+        }}>
+          {trackArtwork ? (
+            <img src={trackArtwork} alt="" style={{width:"100%",height:"100%",objectFit:"cover",display:"block"}}/>
+          ) : (
+            <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke={TOK.textMuted} strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/>
+            </svg>
+          )}
         </div>
 
-        <div onClick={()=>fr.current?.click()}
-          onDragOver={e=>{e.preventDefault();e.stopPropagation();setDragOver(true);}}
-          onDragLeave={()=>setDragOver(false)}
-          onDrop={e=>{e.preventDefault();e.stopPropagation();setDragOver(false);const f=e.dataTransfer.files[0];if(f&&f.type.startsWith("audio/")){load(f);return;}try{const d=JSON.parse(e.dataTransfer.getData("application/json"));if(d?.trackId&&onLibraryTrackDrop)onLibraryTrackDrop(d.trackId);}catch{}}}
-          style={{flex:1, padding: buf ? "0 14px" : "6px 10px", cursor:"pointer", display:"flex", flexDirection:"column", justifyContent:"center", background:dragOver?color+"08":"transparent", transition:"background .12s", minWidth:0}}>
-          {(buf||remote?.trackName)?(
+        {/* Info + waveform */}
+        <div style={{flex:1,minWidth:0,display:"flex",flexDirection:"column",gap:8}}>
+          {hasTrack ? (
             <>
-              <div style={{fontSize:13, fontWeight:500, color:"#d8d8e2", fontFamily:"'DM Sans',sans-serif", whiteSpace:"nowrap", overflow:"hidden", textOverflow:"ellipsis"}}>{name||remote?.trackName||"—"}</div>
-              <div style={{fontSize:9, color:"#888898", fontFamily:"'DM Mono',monospace", marginTop:3, letterSpacing:.3}}>{buf?`${fmt(dur)} · ${trackArtist||`${(buf.sampleRate/1000).toFixed(1)}kHz · ${buf.numberOfChannels===2?"STEREO":"MONO"}`}`:`${fmt(remote?.duration||0)} · ${remote?.artist||"—"}`}</div>
-            </>
-          ):(
-            <div style={{
-              display:"flex", alignItems:"center", gap:12, padding:"8px 12px",
-              border:`1.5px dashed ${dragOver?color:color+"44"}`,
-              borderRadius:8,
-              background: dragOver ? color+"10" : "transparent",
-              transition:"all .12s",
-            }}>
-              <div style={{
-                width:36, height:36, borderRadius:"50%",
-                border:`1.5px solid ${dragOver?color:color+"66"}`,
-                display:"flex", alignItems:"center", justifyContent:"center",
-                color:dragOver?color:color+"cc",
-                fontSize:22, fontWeight:300, flexShrink:0,
-                background: dragOver ? color+"22" : "transparent",
-              }}>+</div>
               <div>
-                <div style={{fontSize:12, fontWeight:600, color:dragOver?color:color+"dd", fontFamily:"'DM Mono',monospace", letterSpacing:1.5}}>{dragOver?"DROP HERE":"LOAD TRACK"}</div>
-                <div style={{fontSize:9, color:"#555562", marginTop:2, fontFamily:"'DM Mono',monospace", letterSpacing:.5}}>click or drag · mp3 wav flac aac</div>
+                <div style={{
+                  fontFamily:FONT.display,fontSize:22,fontWeight:700,
+                  color:TOK.text,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis",
+                  lineHeight:1.1,letterSpacing:-0.3,
+                }}>{effectiveTitle || "—"}</div>
+                <div style={{
+                  fontFamily:FONT.ui,fontSize:13,fontWeight:500,
+                  color:TOK.textSec,marginTop:5,
+                  whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis",
+                }}>
+                  {effectiveArtist || "—"}
+                  <span style={{color:TOK.textMuted}}> · </span>
+                  <span style={{fontFamily:FONT.mono,color:TOK.textSec}}>{fmt(effectiveDur)}</span>
+                  {ck && <>
+                    <span style={{color:TOK.textMuted}}> · </span>
+                    <span style={{fontFamily:FONT.mono,color:ck.endsWith("A")?TOK.partner:TOK.text,fontWeight:600}}>{ck}</span>
+                  </>}
+                </div>
+              </div>
+              <div style={{height:60,background:TOK.bgBase,border:`1px solid ${TOK.borderSubtle}`,borderRadius:4,overflow:"hidden",filter:`drop-shadow(0 0 4px ${accent}33)`}}>
+                <WF
+                  bands={wfBass?{bass:wfBass,mid:wfMid,high:wfHigh}:null}
+                  peaks={wfPeaks} freq={wfFreq}
+                  prog={prog} onSeek={local?seek:remoteSeek}
+                  h={60}
+                  hotCues={hotCues}
+                  loopStart={loopStart} loopEnd={loopEnd} loopActive={loopActive}
+                  bpm={bpmResult?.bpm?(bpmResult.bpm*rate):null}
+                  dur={dur}
+                  beatPhaseFrac={bpmResult?.beatPhaseFrac??null}
+                  color={accentVibrant}
+                />
+              </div>
+            </>
+          ) : (
+            <div style={{
+              flex:1,minHeight:96,
+              display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",gap:6,
+              color: dragOver ? accent : TOK.textMuted,
+              fontFamily:FONT.ui,
+            }}>
+              <div style={{fontSize:13,fontWeight:600,letterSpacing:0.3}}>
+                {dragOver ? "Drop track here" : (local ? "Click or drag to load track" : "Waiting for partner…")}
+              </div>
+              <div style={{fontSize:11,fontWeight:400,color:TOK.textMuted,letterSpacing:0.3}}>
+                MP3 · WAV · FLAC · AAC
               </div>
             </div>
           )}
         </div>
-        <input ref={fr} type="file" accept="audio/*" style={{display:"none"}} onChange={e=>{ const f=e.target.files[0]; e.target.value=""; if(f) load(f); }}/>
-
-        {/* KEY display */}
-        {(()=>{const effectiveKey=deckKey||remote?.key;const ck=effectiveKey?CAMELOT[effectiveKey]:null;const km=ck?.endsWith("A");return ck?(
-          <div style={{flexShrink:0,padding:"0 10px",borderLeft:BD,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",gap:2,minWidth:52}}>
-            <div style={{fontSize:11,fontFamily:"'DM Mono',monospace",fontWeight:500,color:km?"#9B7EC8":color,background:(km?"#9B7EC8":color)+"18",borderRadius:4,padding:"2px 6px",letterSpacing:.5}}>{ck}</div>
-            <div style={{fontSize:7,color:"#888898",fontFamily:"'DM Mono',monospace",letterSpacing:1}}>{effectiveKey}</div>
-          </div>
-        ):null;})()}
-        <div style={{flexShrink:0, padding:"0 14px", borderLeft:BD, display:"flex", flexDirection:"column", alignItems:"flex-end", justifyContent:"center", gap:4, minWidth:96}}>
-          {bpmResult?.analyzing&&<div style={{fontSize:7,color:"#f59e0b",fontFamily:"'DM Mono',monospace",animation:"pulse .8s infinite"}}>ANA...</div>}
-          <div style={{textAlign:"right"}}>
-            {(()=>{const effectiveBpm=bpmResult?.bpm??remote?.bpm;return(
-            <div style={{fontSize:32, fontFamily:"'DM Mono',monospace", fontWeight:600, color:effectiveBpm?"#C8A96E":"#2a2a3a", lineHeight:0.95, letterSpacing:-0.5, textShadow:effectiveBpm?"0 0 18px #C8A96E22":"none"}}>{effectiveBpm?(effectiveBpm*(bpmResult?.bpm?rate:1)).toFixed(1):"—"}</div>
-            );})()}
-            <div style={{fontSize:7, color:"#888898", fontFamily:"'DM Mono',monospace", letterSpacing:2.5, marginTop:2}}>BPM</div>
-          </div>
-          <VU an={ch?.an} color={color}/>
-        </div>
       </div>
 
-      {/* ── OVERVIEW STRIP — full track structure ── */}
-      <div style={{borderTop:BD, borderBottom:BD, background:"#03030a"}}>
-        <WF bands={wfBass?{bass:wfBass,mid:wfMid,high:wfHigh}:null} peaks={wfPeaks} freq={wfFreq} prog={prog} onSeek={local?seek:remoteSeek} h={40} hotCues={hotCues} loopStart={loopStart} loopEnd={loopEnd} loopActive={loopActive} bpm={bpmResult?.bpm?(bpmResult.bpm*rate):null} dur={dur} beatPhaseFrac={bpmResult?.beatPhaseFrac??null} color={color}/>
-      </div>
+      <input ref={fr} type="file" accept="audio/*" style={{display:"none"}} onChange={e=>{ const f=e.target.files[0]; e.target.value=""; if(f) load(f); }}/>
 
-      {/* ── HOT CUES + LOOP CONTROLS ── */}
-      <div style={{display:"flex",gap:3,padding:"5px 10px",background:"#08080e",borderBottom:"1px solid #141420",alignItems:"center"}}>
-          {/* Hot cue buttons 1-4 */}
-          {HOT_CUE_COLORS.map((c,i)=>(
-            <button key={i}
-              onClick={()=>{if(!buf)return;if(hotCues[i]!==null){seek(hotCues[i]);}else{setHotCues(p=>{const n=[...p];n[i]=prog;return n;});}}}
-              onContextMenu={e=>{e.preventDefault();if(buf)setHotCues(p=>{const n=[...p];n[i]=null;return n;});}}
-              title={hotCues[i]!==null?"Click:recall  Right-click:clear":"Click to set cue"}
-              style={{width:36,height:28,background:hotCues[i]!==null?`${c}30`:"#0e0e18",border:`1px solid ${hotCues[i]!==null?c+"88":c+"33"}`,color:hotCues[i]!==null?c:c+"66",borderRadius:5,cursor:"pointer",fontFamily:"'DM Mono',monospace",fontSize:11,fontWeight:700,transition:"all .1s",flexShrink:0,boxShadow:hotCues[i]!==null?`0 0 6px ${c}44`:"none"}}>
-              {i+1}
-            </button>
-          ))}
-          <div style={{width:1,height:22,background:"#252535",margin:"0 3px",flexShrink:0}}/>
-          {/* Beat loop buttons: 1, 2, 4, 8, 16 beats */}
-          {[[1,"1"],[2,"2"],[4,"4"],[8,"8"],[16,"16"]].map(([beats,label])=>(
-            <button key={beats}
+      {/* ── Transport row: controls | cue grid ── */}
+      <div style={{display:"flex",gap:14,alignItems:"flex-start",flex:1,minHeight:0}}>
+        <div style={{flex:1,display:"flex",flexDirection:"column",gap:12,minWidth:0}}>
+          {/* Buttons */}
+          <div style={{display:"flex",alignItems:"center",gap:10}}>
+            {/* CUE */}
+            <button
+              onClick={()=>{ if(local&&cue) cue(); else if(remoteCue) remoteCue(); }}
+              disabled={!cueEnabled}
+              onMouseEnter={e=>{ if(cueEnabled){e.currentTarget.style.borderColor=TOK.text;e.currentTarget.style.background=TOK.surface2;} }}
+              onMouseLeave={e=>{ e.currentTarget.style.borderColor=TOK.borderDefined;e.currentTarget.style.background="transparent"; }}
+              style={{
+                height:48,padding:"0 18px",minWidth:80,
+                background:"transparent",
+                border:`1px solid ${TOK.borderDefined}`,
+                color:cueEnabled?TOK.text:TOK.textMuted,
+                borderRadius:8,
+                fontFamily:FONT.ui,fontSize:13,fontWeight:600,letterSpacing:1,
+                cursor:cueEnabled?"pointer":"default",outline:"none",
+                transition:"all .15s",
+              }}>CUE</button>
+
+            {/* PLAY */}
+            <button
+              onClick={()=>{ if(local&&toggle) toggle(); else if(remoteToggle) remoteToggle(); }}
+              disabled={!enabled}
+              onMouseEnter={e=>{ if(enabled&&!playVisualNow){e.currentTarget.style.borderColor=TOK.text;e.currentTarget.style.transform="scale(1.03)";} }}
+              onMouseLeave={e=>{ if(!playVisualNow){e.currentTarget.style.borderColor=TOK.borderEmphasis;e.currentTarget.style.transform="scale(1)";} }}
+              style={{
+                width:52,height:52,borderRadius:"50%",
+                background:playVisualNow?TOK.active:"transparent",
+                border:`1.5px solid ${playVisualNow?TOK.active:TOK.borderEmphasis}`,
+                color:playVisualNow?TOK.bgBase:TOK.textSec,
+                cursor:enabled?"pointer":"default",
+                fontSize:18,fontWeight:500,
+                display:"flex",alignItems:"center",justifyContent:"center",
+                boxShadow:playVisualNow?`0 0 20px rgba(255,255,255,0.18)`:"none",
+                outline:"none",flexShrink:0,
+                transition:"all .2s",
+              }}>{playVisualNow?"❚❚":"▶"}</button>
+
+            {/* SYNC */}
+            {onSync && (
+              <button
+                onClick={onSync}
+                disabled={!buf||!bpmResult?.bpm}
+                onMouseEnter={e=>{ if(buf&&bpmResult?.bpm){e.currentTarget.style.borderColor=TOK.text;e.currentTarget.style.background=TOK.surface2;} }}
+                onMouseLeave={e=>{ e.currentTarget.style.borderColor=TOK.borderDefined;e.currentTarget.style.background="transparent"; }}
+                style={{
+                  height:48,padding:"0 18px",minWidth:80,
+                  background:"transparent",
+                  border:`1px solid ${TOK.borderDefined}`,
+                  color:buf&&bpmResult?.bpm?TOK.text:TOK.textMuted,
+                  borderRadius:8,
+                  fontFamily:FONT.ui,fontSize:13,fontWeight:600,letterSpacing:1,
+                  cursor:buf&&bpmResult?.bpm?"pointer":"default",outline:"none",
+                  transition:"all .15s",
+                }}>SYNC</button>
+            )}
+          </div>
+
+          {/* Loop control */}
+          <div style={{display:"flex",alignItems:"center",gap:8,height:28}}>
+            <button
               onClick={()=>{
-                if(!buf)return;
+                if(loopActive){
+                  setLoopActive(false);
+                  if(src.current) src.current.loop=false;
+                  return;
+                }
+                if(!buf) return;
                 const bps=(bpmResult?.bpm||120)/60;
-                const lDur=beats/bps;
+                const lDur=loopBars/bps;
                 const lStart=prog;
-                const lEnd=Math.min(1,lStart+lDur/(buf?.duration||1));
+                const lEnd=Math.min(1,lStart+lDur/(buf.duration||1));
                 setLoopStart(lStart);setLoopEnd(lEnd);setLoopActive(true);
               }}
-              style={{height:28,padding:"0 8px",background:"#0e0e18",border:"1px solid #C8A96E33",color:"#C8A96E88",borderRadius:4,cursor:"pointer",fontFamily:"'DM Mono',monospace",fontSize:10,fontWeight:600,letterSpacing:.3,flexShrink:0}}>
-              {label}
-            </button>
-          ))}
-          {/* Loop active toggle */}
-          {loopStart!==null&&(
+              disabled={!local || !buf}
+              style={{
+                fontFamily:FONT.ui,fontSize:11,fontWeight:600,letterSpacing:1,
+                color:loopActive?TOK.text:TOK.textSec,
+                background:"transparent",border:"none",
+                cursor:local&&buf?"pointer":"default",
+                padding:"0 4px",textTransform:"uppercase",outline:"none",
+              }}>LOOP</button>
+            <div style={{
+              minWidth:32,height:24,padding:"0 8px",
+              display:"flex",alignItems:"center",justifyContent:"center",
+              border:loopActive?`1px solid ${accent}`:`1px solid ${TOK.borderDefined}`,
+              background:loopActive?accent+"18":"transparent",
+              borderRadius:4,
+              fontFamily:FONT.mono,fontSize:14,fontWeight:500,
+              color:TOK.text,fontVariantNumeric:"tabular-nums",
+              boxShadow:loopActive?`0 0 8px ${accent}55`:"none",
+              transition:"all .15s",
+            }}>{loopBars<1?`1/${Math.round(1/loopBars)}`:loopBars}</div>
             <button
               onClick={()=>{
-                const nv=!loopActive;
-                setLoopActive(nv);
-                if(!nv&&src.current)src.current.loop=false;
+                const nv=Math.max(0.25,loopBars/2);
+                setLoopBars(nv);
+                if(loopActive&&buf){
+                  const bps=(bpmResult?.bpm||120)/60;
+                  const lDur=nv/bps;
+                  const lEnd=Math.min(1,(loopStart??prog)+lDur/(buf.duration||1));
+                  setLoopEnd(lEnd);
+                }
               }}
-              style={{height:24,padding:"0 8px",background:loopActive?"#C8A96E1e":"#08080e",border:`1px solid ${loopActive?"#C8A96E66":"#C8A96E1a"}`,color:loopActive?"#C8A96E":"#C8A96E44",borderRadius:4,cursor:"pointer",fontFamily:"'DM Mono',monospace",fontSize:9,fontWeight:loopActive?500:400}}>
-              {loopActive?"⟳ LOOP":"LOOP"}
-            </button>
-          )}
-          {loopStart!==null&&(
+              style={{
+                width:28,height:28,
+                background:"transparent",
+                border:`1px solid ${TOK.borderDefined}`,
+                color:TOK.textSec,borderRadius:4,
+                cursor:"pointer",fontSize:13,outline:"none",
+                display:"flex",alignItems:"center",justifyContent:"center",
+              }}>‹</button>
             <button
-              onClick={()=>{setLoopActive(false);setLoopStart(null);setLoopEnd(null);if(src.current)src.current.loop=false;}}
-              style={{height:26,width:26,background:"transparent",border:"1px solid #ef444422",color:"#ef444455",borderRadius:4,cursor:"pointer",fontSize:10}}>
-              ✕
-            </button>
-          )}
-      </div>
+              onClick={()=>{
+                const nv=Math.min(64,loopBars*2);
+                setLoopBars(nv);
+                if(loopActive&&buf){
+                  const bps=(bpmResult?.bpm||120)/60;
+                  const lDur=nv/bps;
+                  const lEnd=Math.min(1,(loopStart??prog)+lDur/(buf.duration||1));
+                  setLoopEnd(lEnd);
+                }
+              }}
+              style={{
+                width:28,height:28,
+                background:"transparent",
+                border:`1px solid ${TOK.borderDefined}`,
+                color:TOK.textSec,borderRadius:4,
+                cursor:"pointer",fontSize:13,outline:"none",
+                display:"flex",alignItems:"center",justifyContent:"center",
+              }}>›</button>
+          </div>
 
-      {/* ── LCD TIME ── */}
-      <div style={{display:"flex", alignItems:"center", justifyContent:"space-between", padding:"6px 14px", background:"#08080e", borderBottom:BD}}>
-        <div>
-          <div style={{fontFamily:"'DM Mono',monospace", fontWeight:600, fontSize:22, color, letterSpacing:0.5, lineHeight:1, textShadow:`0 0 16px ${color}55`, fontVariantNumeric:"tabular-nums"}}>{fmt(cur)}</div>
-          <div style={{fontSize:7, color:"#555562", fontFamily:"'DM Mono',monospace", letterSpacing:2.5, marginTop:4, textTransform:"uppercase"}}>Elapsed</div>
+          {/* Timer display */}
+          <div style={{display:"flex",alignItems:"flex-end",gap:32,marginTop:"auto"}}>
+            <div>
+              <div style={{fontFamily:FONT.mono,fontSize:16,fontWeight:400,color:TOK.text,letterSpacing:0.3,fontVariantNumeric:"tabular-nums",lineHeight:1}}>{fmt(cur)}</div>
+              <div style={{fontFamily:FONT.ui,fontSize:9,fontWeight:600,color:TOK.textMuted,letterSpacing:1.2,marginTop:5,textTransform:"uppercase"}}>Elapsed</div>
+            </div>
+            <div>
+              <div style={{fontFamily:FONT.mono,fontSize:16,fontWeight:400,color:TOK.textSec,letterSpacing:0.3,fontVariantNumeric:"tabular-nums",lineHeight:1}}>-{fmt(Math.max(0,effectiveDur-cur))}</div>
+              <div style={{fontFamily:FONT.ui,fontSize:9,fontWeight:600,color:TOK.textMuted,letterSpacing:1.2,marginTop:5,textTransform:"uppercase"}}>Remain</div>
+            </div>
+          </div>
         </div>
-        <div style={{display:"flex", flexDirection:"column", alignItems:"center", gap:3}}>
-          {play&&<div style={{width:5,height:5,borderRadius:"50%",background:color,boxShadow:`0 0 8px ${color}`,animation:"pulse .7s infinite"}}/>}
-          <div style={{fontSize:9, color:"#888898", fontFamily:"'DM Mono',monospace"}}>{buf?`${(prog*100).toFixed(0)}%`:""}</div>
-        </div>
-        <div style={{textAlign:"right"}}>
-          <div style={{fontFamily:"'DM Mono',monospace", fontWeight:600, fontSize:22, color:"#383848", letterSpacing:0.5, lineHeight:1, fontVariantNumeric:"tabular-nums"}}>-{fmt(Math.max(0,dur-cur))}</div>
-          <div style={{fontSize:7, color:"#555562", fontFamily:"'DM Mono',monospace", letterSpacing:2.5, marginTop:4, textTransform:"uppercase"}}>Remain</div>
-        </div>
-      </div>
 
-      {/* ── TRANSPORT ── */}
-      <div style={{display:"flex", alignItems:"center", gap:6, padding:"8px 12px", borderBottom:BD}}>
-        <button onClick={(e)=>{ if(local&&cue) cue(); else if(remoteCue) remoteCue(); }} disabled={!cueEnabled} style={{height:48,padding:"0 12px",background:"#111118",border:`1px solid ${cueEnabled?"#2a2a38":"#1e1e28"}`,color:cueEnabled?"#C8A96E":"#2a2a38",borderRadius:7,cursor:cueEnabled?"pointer":"default",fontFamily:"'DM Mono',monospace",fontSize:10,fontWeight:700,letterSpacing:1.5,outline:"none",flexShrink:0}}>CUE</button>
-        <button onClick={local?()=>seek(Math.max(0,prog-.005)):undefined} disabled={!local} style={{height:48,width:36,background:"#111118",border:"1px solid #1e1e28",color:local?"#888898":"#2a2a38",borderRadius:6,cursor:local?"pointer":"default",fontFamily:"'DM Mono',monospace",fontSize:13,outline:"none"}}>◂◂</button>
-        <button onClick={(e)=>{ if(local&&toggle) toggle(); else if(remoteToggle) remoteToggle(); }} disabled={!enabled} style={{flex:1,height:48,background:playVisual?color+"33":(enabled?"#1a1a26":"#141420"),border:`2px solid ${playVisual?color:(enabled?color+"66":color+"22")}`,color:playVisual?color:(enabled?color:color+"44"),borderRadius:8,cursor:enabled?"pointer":"default",fontSize:24,fontWeight:600,display:"flex",alignItems:"center",justifyContent:"center",boxShadow:playVisual?`0 0 24px ${color}55`:"none",outline:"none",transition:"all .15s"}}>
-          {playVisual?"⏸":"▶"}
-        </button>
-        <button onClick={local?()=>seek(Math.min(1,prog+.005)):undefined} disabled={!local} style={{height:48,width:36,background:"#111118",border:"1px solid #1e1e28",color:local?"#888898":"#2a2a38",borderRadius:6,cursor:local?"pointer":"default",fontFamily:"'DM Mono',monospace",fontSize:13,outline:"none"}}>▸▸</button>
-        {onSync&&<button onClick={onSync} disabled={!buf||!bpmResult?.bpm} style={{height:48,padding:"0 10px",background:buf&&bpmResult?.bpm?"#22c55e18":"transparent",border:`1px solid ${buf&&bpmResult?.bpm?"#22c55e66":"#22c55e22"}`,color:buf&&bpmResult?.bpm?"#22c55e":"#22c55e44",borderRadius:7,cursor:buf&&bpmResult?.bpm?"pointer":"default",fontFamily:"'DM Mono',monospace",fontSize:10,fontWeight:700,letterSpacing:1.5,outline:"none",flexShrink:0}}>SYNC</button>}
+        {/* Cue pad grid 2 cols × 4 rows = 8 pads. Visual: [1][5]/[2][6]/[3][7]/[4][8] */}
+        <div style={{
+          display:"grid",
+          gridTemplateColumns:"32px 32px",
+          gridAutoRows:"32px",
+          gap:4,flexShrink:0,
+        }}>
+          {[0,1,2,3,4,5,6,7].map(visualIdx=>{
+            const col = visualIdx >= 4 ? 1 : 0;
+            const row = visualIdx % 4;
+            const cueIdx = col*4 + row;
+            const padColor = CUE_PALETTE[cueIdx];
+            const isSet = hotCues[cueIdx] != null;
+            return (
+              <button
+                key={cueIdx}
+                onClick={()=>{
+                  if(!buf)return;
+                  if(hotCues[cueIdx]!==null){seek(hotCues[cueIdx]);}
+                  else{setHotCues(p=>{const n=[...p];n[cueIdx]=prog;return n;});}
+                }}
+                onContextMenu={e=>{e.preventDefault();if(buf)setHotCues(p=>{const n=[...p];n[cueIdx]=null;return n;});}}
+                title={isSet?"Click: recall  ·  Right-click: clear":"Click to set cue"}
+                style={{
+                  gridColumn: col+1, gridRow: row+1,
+                  width:32,height:32,
+                  background:isSet?padColor:TOK.surface2,
+                  border:`1px solid ${isSet?padColor:TOK.borderSubtle}`,
+                  color:isSet?TOK.bgBase:TOK.textSec,
+                  borderRadius:4,
+                  cursor:"pointer",
+                  fontFamily:FONT.ui,fontSize:11,fontWeight:600,
+                  boxShadow:isSet?`0 0 6px ${padColor}66`:"none",
+                  outline:"none",transition:"all .12s",
+                  display:"flex",alignItems:"center",justifyContent:"center",
+                  padding:0,
+                }}>
+                {cueIdx+1}
+              </button>
+            );
+          })}
+        </div>
       </div>
 
       <div style={{display:"none"}} data-set-rate={id} ref={el=>{if(el)el._setRate=setRate;}}/>
@@ -4020,8 +4289,19 @@ function ShareButton({ room, mixName }) {
     });
   };
   return (
-    <button onClick={copy} style={{ background: copied ? "#22c55e22" : "#C8A96E11", border: copied ? "1px solid #22c55e55" : "1px solid #C8A96E44", color: copied ? "#22c55e" : "#C8A96E", fontFamily:"'DM Mono',monospace", fontWeight:800, fontSize:7, letterSpacing:1, height:22, padding:"0 9px", borderRadius:5, cursor:"pointer", transition:"all .3s" }}>
-      {copied ? "✓ COPIED" : "⎘ INVITE"}
+    <button
+      onClick={copy}
+      onMouseEnter={e=>{ if(!copied){ e.currentTarget.style.borderColor=TOK.you; e.currentTarget.style.boxShadow=`0 0 12px ${TOK.you}40`; } }}
+      onMouseLeave={e=>{ if(!copied){ e.currentTarget.style.borderColor=TOK.borderDefined; e.currentTarget.style.boxShadow="none"; } }}
+      style={{
+        background: copied ? TOK.connected+"20" : TOK.surface2,
+        border: copied ? `1px solid ${TOK.connected}55` : `1px solid ${TOK.borderDefined}`,
+        color: copied ? TOK.connected : TOK.text,
+        fontFamily: FONT.ui, fontWeight:600, fontSize:13, letterSpacing:0.3,
+        height:32, padding:"0 16px", borderRadius:6,
+        cursor:"pointer", transition:"all .2s", outline:"none",
+      }}>
+      {copied ? "✓ Copied" : "Invite"}
     </button>
   );
 }
@@ -4559,214 +4839,170 @@ export default function CollabMix({ initialPage = "landing", djName = null }) {
   if (page==="landing") return <Landing onEnter={()=>setPage("lobby")}/>;
   if (page==="lobby")   return <Lobby onJoin={join} djName={djName}/>;
 
-  const G = "#C8A96E"; // gold accent — matches App.jsx landing
   return (
-    <div style={{ height:"100vh", overflow:"hidden", background:"#0a0a0f", fontFamily:"'DM Sans',sans-serif", color:"#d8d8e2", display:"flex", flexDirection:"column" }}>
+    <div style={{ height:"100vh", overflow:"hidden", background:TOK.bgBase, fontFamily:FONT.ui, color:TOK.text, display:"flex", flexDirection:"column", position:"relative" }}>
       <style>{`
         @keyframes blink{0%,100%{box-shadow:0 0 5px currentColor}50%{box-shadow:0 0 14px currentColor}}
         @keyframes pulse{0%,100%{opacity:1}50%{opacity:.4}}
         @keyframes wave{0%,100%{transform:scaleY(.3)}50%{transform:scaleY(1)}}
         @keyframes spin{to{transform:rotate(360deg)}}
         *{box-sizing:border-box}
-        ::-webkit-scrollbar{width:3px}::-webkit-scrollbar-track{background:#080808}::-webkit-scrollbar-thumb{background:#252530;border-radius:2px}
+        ::-webkit-scrollbar{width:6px;height:6px}::-webkit-scrollbar-track{background:transparent}::-webkit-scrollbar-thumb{background:rgba(255,255,255,0.10);border-radius:3px}::-webkit-scrollbar-thumb:hover{background:rgba(255,255,255,0.18)}
+        body{font-family:${FONT.ui}}
       `}</style>
       <link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:wght@600;700&family=DM+Sans:wght@300;400;500&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet"/>
 
-      {/* TOP BAR — matches App.jsx nav */}
-      <div style={{ background:"#08080cf0", backdropFilter:"blur(16px)", borderBottom:"1px solid #1c1c24", padding:"8px 18px", display:"flex", alignItems:"center", gap:12, flexShrink:0 }}>
-        <div onClick={()=>leave()} style={{ display:"flex", alignItems:"center", gap:8, cursor:"pointer" }}>
-          <div style={{ width:28, height:28, borderRadius:7, border:`1px solid ${G}38`, display:"flex", alignItems:"center", justifyContent:"center", background:`${G}08` }}>
-            <span style={{ fontFamily:"'DM Mono',monospace", fontSize:9, color:G }}>{"//"}</span>
-          </div>
-          <span style={{ fontFamily:"'Cormorant Garamond',serif", fontSize:18, fontWeight:700, color:"#d8d8e2", letterSpacing:-0.3 }}>Mix<span style={{ color:G }}>//</span>Sync</span>
+      {/* Subtle SVG noise overlay — kills flat-web feel */}
+      <div style={{ position:"fixed", inset:0, pointerEvents:"none", zIndex:1, opacity:0.018, mixBlendMode:"overlay",
+        backgroundImage:`url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='200' height='200'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2'/></filter><rect width='100%' height='100%' filter='url(%23n)' opacity='0.6'/></svg>")` }}/>
+
+      {/* TOP BAR */}
+      <div style={{ position:"relative", zIndex:2, background:TOK.surface1+"f0", backdropFilter:"blur(16px)", borderBottom:`1px solid ${TOK.borderSubtle}`, padding:"10px 18px", display:"flex", alignItems:"center", gap:14, flexShrink:0, height:50 }}>
+        {/* Wordmark */}
+        <div style={{ display:"flex", alignItems:"center", gap:6, fontFamily:FONT.display, fontSize:22, fontWeight:700, color:TOK.text, letterSpacing:-0.5, lineHeight:1 }}>
+          <span>Mix</span>
+          <span style={{ color:TOK.you, fontSize:24, lineHeight:1 }}>//</span>
+          <span>Sync</span>
         </div>
-        <div style={{ flex:1, display:"flex", gap:10, alignItems:"center" }}>
-          <div style={{ display:"flex", gap:5, alignItems:"center", fontSize:7, fontFamily:"'DM Mono',monospace" }}>
-            <div style={{ width:5, height:5, borderRadius:"50%", background:SC[sync.status], boxShadow:sync.status==="connected"?`0 0 8px ${SC[sync.status]}`:""}}/>
-            <span style={{ color:SC[sync.status], letterSpacing:1 }}>{sync.status.toUpperCase()}</span>
-            {sync.ping&&<span style={{ color:"#555562" }}>· {sync.ping}ms</span>}
-          </div>
-          {sync.connErr && <span style={{ fontSize:9, fontFamily:"'DM Mono',monospace", color:"#ef4444", background:"#ef444411", border:"1px solid #ef444422", borderRadius:4, padding:"1px 8px" }}>{sync.connErr}</span>}
-          {sync.partner&&<div style={{ fontSize:9, fontFamily:"'DM Mono',monospace", color:G, background:`${G}0e`, border:`1px solid ${G}28`, borderRadius:5, padding:"2px 10px", letterSpacing:.5 }}>⟺ {sync.partner}</div>}
-          {rtc.state==="connected"&&<div style={{ fontSize:9, fontFamily:"'DM Mono',monospace", color:"#22c55e", background:"#22c55e0d", border:"1px solid #22c55e28", borderRadius:5, padding:"2px 10px", letterSpacing:.5 }}>LIVE</div>}
-          {rec.state==="recording"&&<div style={{ fontSize:9, fontFamily:"'DM Mono',monospace", color:"#ef4444", background:"#ef444411", border:"1px solid #ef444428", borderRadius:5, padding:"2px 10px", animation:"pulse .8s infinite", letterSpacing:.5 }}>REC {String(Math.floor(rec.dur/60)).padStart(2,"0")}:{String(Math.floor(rec.dur%60)).padStart(2,"0")}</div>}
-          {midi.active&&<div style={{ fontSize:9, fontFamily:"'DM Mono',monospace", color:G, background:`${G}0d`, border:`1px solid ${G}28`, borderRadius:5, padding:"2px 10px", letterSpacing:.5 }}>MIDI</div>}
+        {/* Status pill */}
+        <div style={{ display:"flex", gap:8, alignItems:"center", padding:"4px 10px", background:TOK.surface1, border:`1px solid ${TOK.borderSubtle}`, borderRadius:12 }}>
+          <div style={{ width:7, height:7, borderRadius:"50%", background:SC[sync.status], boxShadow:sync.status==="connected"?`0 0 6px ${SC[sync.status]}`:"none" }}/>
+          {sync.ping ? (
+            <span style={{ fontFamily:FONT.mono, fontSize:11, color:TOK.textMuted, fontVariantNumeric:"tabular-nums" }}>{sync.ping}ms</span>
+          ) : (
+            <span style={{ fontFamily:FONT.ui, fontSize:11, color:TOK.textMuted, letterSpacing:0.3 }}>{sync.status}</span>
+          )}
         </div>
-        <div style={{ display:"flex", gap:8, alignItems:"center" }}>
-          <span style={{ fontSize:9, fontFamily:"'DM Mono',monospace", color:"#888898", letterSpacing:.5 }}>{session.name}</span>
-          <ShareButton room={session.room} mixName={session.mixName}/>
-          <button onClick={leave} style={{ height:24, padding:"0 10px", background:"transparent", border:"1px solid #ef444433", color:"#ef4444", borderRadius:6, cursor:"pointer", fontFamily:"'DM Mono',monospace", fontSize:9, letterSpacing:.5 }}>LEAVE</button>
-        </div>
+        {sync.connErr && <span style={{ fontSize:11, fontFamily:FONT.ui, color:TOK.error, background:TOK.error+"18", border:`1px solid ${TOK.error}40`, borderRadius:6, padding:"3px 10px" }}>{sync.connErr}</span>}
+        {sync.partner && <div style={{ fontSize:11, fontFamily:FONT.ui, fontWeight:500, color:TOK.partner, background:TOK.partner+"15", border:`1px solid ${TOK.partner}35`, borderRadius:12, padding:"3px 10px" }}>⟺ {sync.partner}</div>}
+        {rtc.state==="connected" && <div style={{ fontSize:11, fontFamily:FONT.ui, fontWeight:600, color:TOK.connected, background:TOK.connected+"15", border:`1px solid ${TOK.connected}35`, borderRadius:12, padding:"3px 10px", letterSpacing:0.4 }}>LIVE</div>}
+        {rec.state==="recording" && <div style={{ fontSize:11, fontFamily:FONT.ui, fontWeight:600, color:TOK.error, background:TOK.error+"18", border:`1px solid ${TOK.error}40`, borderRadius:12, padding:"3px 10px", animation:"pulse .8s infinite" }}>REC {String(Math.floor(rec.dur/60)).padStart(2,"0")}:{String(Math.floor(rec.dur%60)).padStart(2,"0")}</div>}
+        {midi.active && <div style={{ fontSize:11, fontFamily:FONT.ui, color:TOK.text, background:TOK.surface2, border:`1px solid ${TOK.borderSubtle}`, borderRadius:12, padding:"3px 10px" }}>MIDI</div>}
+        <div style={{ flex:1 }}/>
+        {/* DJ name */}
+        <span style={{ fontSize:14, fontFamily:FONT.ui, fontWeight:500, color:TOK.text }}>{session.name}</span>
+        {/* Mix code */}
+        {session.room && <span style={{ fontSize:11, fontFamily:FONT.mono, color:TOK.textMuted, letterSpacing:0.5 }}>· {session.room}</span>}
+        {/* Invite */}
+        <ShareButton room={session.room} mixName={session.mixName}/>
+        {/* Leave */}
+        <button onClick={leave} onMouseEnter={e=>e.currentTarget.style.color=TOK.error} onMouseLeave={e=>e.currentTarget.style.color=TOK.textSec} style={{ height:28, padding:"0 12px", background:"transparent", border:"none", color:TOK.textSec, cursor:"pointer", fontFamily:FONT.ui, fontSize:13, fontWeight:500, transition:"color .15s", outline:"none" }}>Leave</button>
       </div>
 
       {/* MAIN CONTENT AREA */}
       <div style={{ flex:1, display:"flex", flexDirection:"column", overflow:"visible", minHeight:0 }}>
 
-      {/* ── FULL-WIDTH WAVEFORM SECTION — dynamic heights based on how many decks are loaded ── */}
+      {/* ── TWIN STACKED WAVEFORM OVERVIEW — Mix//Sync brand element ──
+          YOU peaks dusty blue (top), PARTNER peaks dusty violet (bottom). */}
       {(() => {
         const hasA = !!wfA?.bass;
         const hasB = !!wfB?.bass;
         if (!hasA && !hasB) {
           return (
-            <div style={{ flexShrink:0, height:40, background:"#020208", borderBottom:"1px solid #16161e", display:"flex", alignItems:"center", justifyContent:"center", color:"#4a4a5a", fontSize:9, fontFamily:"'DM Mono',monospace", letterSpacing:3, textTransform:"uppercase" }}>
+            <div style={{ flexShrink:0, height:40, background:TOK.bgBase, borderBottom:`1px solid ${TOK.borderSubtle}`, display:"flex", alignItems:"center", justifyContent:"center", color:TOK.textMuted, fontSize:11, fontFamily:FONT.ui, letterSpacing:0.3 }}>
               No track loaded — drop tracks below to start
             </div>
           );
         }
-        const wfH = (hasA && hasB) ? 110 : 140; // 1 deck loaded → 140; both → 110 each
+        const wfH = (hasA && hasB) ? 55 : 110; // both loaded → 55 each (~110 stack); one → 110
+        const renderTopChrome = (label, accent, opacity, ctrl) => (
+          <div style={{ position:"absolute", top:5, left:10, zIndex:2, display:"flex", gap:8, alignItems:"center", pointerEvents:"none" }}>
+            <div style={{ width:5, height:5, borderRadius:"50%", background:accent, boxShadow:`0 0 6px ${accent}88`, opacity }}/>
+            <span style={{ fontSize:10, fontFamily:FONT.ui, fontWeight:600, color:accent, letterSpacing:1.4, opacity }}>{label}</span>
+          </div>
+        );
         return (
-          <div style={{ flexShrink:0, background:"#020208", borderBottom:"1px solid #16161e" }}>
+          <div style={{ flexShrink:0, background:TOK.bgBase, borderBottom:`1px solid ${TOK.borderSubtle}` }}>
             {hasA && (
               <div style={{ position:"relative", minHeight:wfH, flexShrink:0 }}>
-                <div style={{ position:"absolute", top:6, left:10, zIndex:2, display:"flex", gap:8, alignItems:"center", pointerEvents:"none" }}>
-                  <div style={{ width:5, height:5, borderRadius:"50%", background:"#C8A96E", boxShadow:"0 0 6px #C8A96E" }}/>
-                  <span style={{ fontSize:9, fontFamily:"'DM Mono',monospace", fontWeight:700, color:"#C8A96E88", letterSpacing:2 }}>A</span>
-                </div>
-                <div style={{ position:"absolute", top:6, right:10, zIndex:2, display:"flex", gap:6, alignItems:"center" }}>
+                {renderTopChrome("YOU", TOK.you, 0.85)}
+                <div style={{ position:"absolute", top:5, right:10, zIndex:2, display:"flex", gap:6, alignItems:"center" }}>
                   <div style={{ display:"flex", gap:2, alignItems:"center", opacity:wfA?.name?1:0.35 }}>
-                    <button onClick={()=>nudgeGridA(-5)} disabled={!wfA?.name} title="Shift grid 5ms earlier" style={{ height:18, width:18, padding:0, fontSize:10, fontFamily:"'DM Mono',monospace", background:"transparent", border:"1px solid #ffffff18", color:"#ffffff88", borderRadius:3, cursor:wfA?.name?"pointer":"default", outline:"none" }}>←</button>
-                    <div onDoubleClick={resetGridA} title="Double-click to reset" style={{ minWidth:44, textAlign:"center", height:18, lineHeight:"18px", padding:"0 4px", fontSize:8, fontFamily:"'DM Mono',monospace", color: gridOffsetA===0 ? "#ffffff44" : "#ef4444", background: gridOffsetA===0 ? "transparent" : "#ef444411", border: `1px solid ${gridOffsetA===0 ? "#ffffff14" : "#ef444433"}`, borderRadius:3, userSelect:"none" }}>{gridOffsetA>0?"+":""}{gridOffsetA}ms</div>
-                    <button onClick={()=>nudgeGridA(5)} disabled={!wfA?.name} title="Shift grid 5ms later" style={{ height:18, width:18, padding:0, fontSize:10, fontFamily:"'DM Mono',monospace", background:"transparent", border:"1px solid #ffffff18", color:"#ffffff88", borderRadius:3, cursor:wfA?.name?"pointer":"default", outline:"none" }}>→</button>
+                    <button onClick={()=>nudgeGridA(-5)} disabled={!wfA?.name} title="Shift grid 5ms earlier" style={{ height:18, width:18, padding:0, fontSize:10, fontFamily:FONT.mono, background:"transparent", border:`1px solid ${TOK.borderDefined}`, color:TOK.textSec, borderRadius:3, cursor:wfA?.name?"pointer":"default", outline:"none" }}>←</button>
+                    <div onDoubleClick={resetGridA} title="Double-click to reset" style={{ minWidth:42, textAlign:"center", height:18, lineHeight:"18px", padding:"0 4px", fontSize:9, fontFamily:FONT.mono, color: gridOffsetA===0 ? TOK.textMuted : TOK.error, background: gridOffsetA===0 ? "transparent" : TOK.error+"15", border: `1px solid ${gridOffsetA===0 ? TOK.borderSubtle : TOK.error+"40"}`, borderRadius:3, userSelect:"none" }}>{gridOffsetA>0?"+":""}{gridOffsetA}ms</div>
+                    <button onClick={()=>nudgeGridA(5)} disabled={!wfA?.name} title="Shift grid 5ms later" style={{ height:18, width:18, padding:0, fontSize:10, fontFamily:FONT.mono, background:"transparent", border:`1px solid ${TOK.borderDefined}`, color:TOK.textSec, borderRadius:3, cursor:wfA?.name?"pointer":"default", outline:"none" }}>→</button>
                   </div>
-                  <div style={{ display:"flex", gap:2, alignItems:"center", opacity:wfA?.name?1:0.35 }}>
-                    <button onClick={()=>nudgeBpmA(-1)} disabled={!wfA?.name} title="Decrease BPM by 0.01" style={{ height:18, padding:"0 4px", fontSize:8, fontFamily:"'DM Mono',monospace", background:"transparent", border:"1px solid #ffffff18", color:"#ffffff88", borderRadius:3, cursor:wfA?.name?"pointer":"default", outline:"none" }}>BPM−</button>
-                    <div onDoubleClick={resetBpmA} title="Double-click to reset" style={{ minWidth:60, textAlign:"center", height:18, lineHeight:"18px", padding:"0 4px", fontSize:8, fontFamily:"'DM Mono',monospace", color: bpmNudgeA===0 ? "#ffffff44" : "#ef4444", background: bpmNudgeA===0 ? "transparent" : "#ef444411", border: `1px solid ${bpmNudgeA===0 ? "#ffffff14" : "#ef444433"}`, borderRadius:3, userSelect:"none" }}>{bpmNudgeA>0?"+":""}{(bpmNudgeA*0.01).toFixed(2)} BPM</div>
-                    <button onClick={()=>nudgeBpmA(1)} disabled={!wfA?.name} title="Increase BPM by 0.01" style={{ height:18, padding:"0 4px", fontSize:8, fontFamily:"'DM Mono',monospace", background:"transparent", border:"1px solid #ffffff18", color:"#ffffff88", borderRadius:3, cursor:wfA?.name?"pointer":"default", outline:"none" }}>BPM+</button>
-                  </div>
-                  <div style={{ width:1, height:12, background:"#ffffff18" }}/>
+                  <div style={{ width:1, height:12, background:TOK.borderSubtle }}/>
                   {WF_ZOOM_LABELS.map((lbl,i)=>(
-                    <button key={i} onClick={()=>setWfZoom(i)} style={{ height:18, padding:"0 7px", fontSize:8, fontFamily:"'DM Mono',monospace", letterSpacing:.5, background:wfZoom===i?"#C8A96E22":"transparent", border:`1px solid ${wfZoom===i?"#C8A96E88":"#ffffff18"}`, color:wfZoom===i?"#C8A96E":"#ffffff44", borderRadius:4, cursor:"pointer", outline:"none" }}>{lbl}</button>
+                    <button key={i} onClick={()=>setWfZoom(i)} style={{ height:18, padding:"0 7px", fontSize:9, fontFamily:FONT.ui, fontWeight:600, letterSpacing:0.5, background:wfZoom===i?TOK.surface2:"transparent", border:`1px solid ${wfZoom===i?TOK.borderEmphasis:TOK.borderSubtle}`, color:wfZoom===i?TOK.text:TOK.textSec, borderRadius:4, cursor:"pointer", outline:"none" }}>{lbl}</button>
                   ))}
                 </div>
-                <AnimatedZoomedWF bands={wfA} dur={wfA?.dur||0} progRef={progRefA} onSeek={seekDeckA} h={wfH} windowSec={WF_WINDOWS[wfZoom]} beatPhaseFrac={bpm.results["A"]?.beatPhaseFrac??null} beatPeriodSec={bpm.results["A"]?.beatPeriodSec??null} gridOffsetMs={gridOffsetA} bpmNudge={bpmNudgeA*0.01}/>
+                <AnimatedZoomedWF bands={wfA} dur={wfA?.dur||0} progRef={progRefA} onSeek={seekDeckA} h={wfH} windowSec={WF_WINDOWS[wfZoom]} beatPhaseFrac={bpm.results["A"]?.beatPhaseFrac??null} beatPeriodSec={bpm.results["A"]?.beatPeriodSec??null} gridOffsetMs={gridOffsetA} bpmNudge={bpmNudgeA*0.01} peakColor={TOK.youVibrant} bassColor={TOK.you}/>
               </div>
             )}
-            {hasA && hasB && <div style={{ height:1, background:"#0d0d18" }}/>}
+            {hasA && hasB && <div style={{ height:1, background:TOK.borderSubtle }}/>}
             {hasB && (
               <div style={{ position:"relative", minHeight:wfH, flexShrink:0 }}>
-                <div style={{ position:"absolute", top:6, left:10, zIndex:2, display:"flex", gap:8, alignItems:"center", pointerEvents:"none" }}>
-                  <div style={{ width:5, height:5, borderRadius:"50%", background:"#00BFA5", boxShadow:"0 0 6px #00BFA5" }}/>
-                  <span style={{ fontSize:9, fontFamily:"'DM Mono',monospace", fontWeight:700, color:"#00BFA588", letterSpacing:2 }}>B</span>
-                </div>
-                <AnimatedZoomedWF bands={wfB} dur={wfB?.dur||0} progRef={progRefB} onSeek={seekDeckB} h={wfH} windowSec={WF_WINDOWS[wfZoom]} beatPhaseFrac={bpm.results["B"]?.beatPhaseFrac??null} beatPeriodSec={bpm.results["B"]?.beatPeriodSec??null} gridOffsetMs={gridOffsetB} bpmNudge={bpmNudgeB*0.01}/>
+                {renderTopChrome("PARTNER", TOK.partner, 0.85)}
+                <AnimatedZoomedWF bands={wfB} dur={wfB?.dur||0} progRef={progRefB} onSeek={seekDeckB} h={wfH} windowSec={WF_WINDOWS[wfZoom]} beatPhaseFrac={bpm.results["B"]?.beatPhaseFrac??null} beatPeriodSec={bpm.results["B"]?.beatPeriodSec??null} gridOffsetMs={gridOffsetB} bpmNudge={bpmNudgeB*0.01} peakColor={TOK.partnerVibrant} bassColor={TOK.partner}/>
               </div>
             )}
           </div>
         );
       })()}
 
-      {/* DECKS + MIXER ROW */}
-      <div style={{ flexShrink:0, display:"grid", gridTemplateColumns:"1fr 260px 1fr", gap:8, padding:"8px 12px 0", height:"288px", overflow:"hidden" }}>
+      {/* DECKS + MIXER ROW.
+          TODO(deck-identity): Deck A is hardcoded YOU (TOK.you / blue) and Deck B
+          is hardcoded PARTNER (TOK.partner / violet). Make this dynamic from
+          session role once host/invitee wiring lands. */}
+      <div style={{ flexShrink:0, display:"grid", gridTemplateColumns:"1fr 220px 1fr", gap:10, padding:"10px 14px 0", height:"288px", overflow:"hidden" }}>
 
-        {/* ── DECK A (local) ── */}
-        <div style={{ display:"flex", flexDirection:"column", minWidth:0, minHeight:0, overflow:"hidden", background:"#0c0c12", border:"1px solid #1e1e28", borderRadius:10 }}>
-          <div style={{ display:"flex", gap:8, alignItems:"center", padding:"6px 12px", borderBottom:"1px solid #1e1e28", background:"#080810", flexShrink:0 }}>
-            <div style={{ width:6, height:6, borderRadius:"50%", background:"#7B61FF", boxShadow:"0 0 8px #7B61FF" }}/>
-            <span style={{ fontSize:11, fontFamily:"'DM Mono',monospace", fontWeight:700, color:"#7B61FF", letterSpacing:2 }}>DECK A</span>
-            <span style={{ fontSize:11, fontFamily:"'DM Sans',sans-serif", fontWeight:500, color:"#7B61FFaa", letterSpacing:.3 }}>{session.name}</span>
-          </div>
-          <div style={{ flex:1, overflow:"hidden", minHeight:0 }}>
-            <Deck id="A" ch={eng.current?.A} ctx={eng.current?.ctx} color="#7B61FF" local remote={pA} onChange={dh("A")} midi={midiEvt} bpmResult={bpm.results["A"]} bpmAnalyze={bpm.analyze} eqHi={eqA.hi} eqMid={eqA.mid} eqLo={eqA.lo} chanVol={eqA.vol} loadFromLibrary={libLoadA} onTrackInfo={handleTrackInfo} onSync={()=>syncDecks("A",bpm.results["B"]?.bpm)} onLibraryTrackDrop={(trackId)=>{const t=lib.library.find(x=>x.id===trackId);if(t)handleLibLoad(t,"A");}} onProgUpdate={handleProgA} onWaveform={setWfA} onSeekReady={onDeckASeekReady} onToggleReady={onDeckAToggleReady} onCueReady={onDeckACueReady} onTransportFire={sync.send}/>
-          </div>
+        {/* ── DECK A (visually YOU; both decks remain locally controllable per shared-decks model) ── */}
+        <div style={{ display:"flex", flexDirection:"column", minWidth:0, minHeight:0, overflow:"hidden" }}>
+          <Deck id="A" ch={eng.current?.A} ctx={eng.current?.ctx} color={TOK.you} vibrantColor={TOK.youVibrant} isYou={true} local remote={pA} onChange={dh("A")} midi={midiEvt} bpmResult={bpm.results["A"]} bpmAnalyze={bpm.analyze} eqHi={eqA.hi} eqMid={eqA.mid} eqLo={eqA.lo} chanVol={eqA.vol} loadFromLibrary={libLoadA} onTrackInfo={handleTrackInfo} onSync={()=>syncDecks("A",bpm.results["B"]?.bpm)} onLibraryTrackDrop={(trackId)=>{const t=lib.library.find(x=>x.id===trackId);if(t)handleLibLoad(t,"A");}} onProgUpdate={handleProgA} onWaveform={setWfA} onSeekReady={onDeckASeekReady} onToggleReady={onDeckAToggleReady} onCueReady={onDeckACueReady} onTransportFire={sync.send}/>
         </div>
 
-        {/* ── CENTER MIXER ── */}
-        <div style={{ display:"flex", flexDirection:"column", background:"#0e0e14", border:"1px solid #222230", borderRadius:10, overflow:"hidden", minHeight:0, boxShadow:"0 8px 32px rgba(0,0,0,.8), inset 0 1px 0 #2a2a38" }}>
+        {/* ── CENTER MIXER (220px, vertical) ── */}
+        <div style={{ display:"flex", flexDirection:"column", background:TOK.surface1, border:`1px solid ${TOK.borderSubtle}`, borderRadius:10, overflow:"hidden", minHeight:0, boxShadow:"0 4px 18px rgba(0,0,0,0.45)" }}>
+          <div style={{ display:"grid", gridTemplateColumns:"1fr 76px 1fr", flex:1, minHeight:0, overflow:"hidden" }}>
 
-          {/* HEADER */}
-          <div style={{ padding:"5px 8px", background:"#0a0a10", borderBottom:"1px solid #202028", display:"flex", flexDirection:"column", alignItems:"center", gap:3, flexShrink:0 }}>
-            <VU an={eng.current?.masterAn} color="#C8A96E" w={80}/>
-            <div style={{ display:"flex", gap:6, alignItems:"center" }}>
-              <div style={{ fontSize:7, fontFamily:"'DM Mono',monospace", color:"#C8A96E", letterSpacing:1.5, fontWeight:600 }}>MASTER OUT</div>
-              <div style={{ width:1, height:8, background:"#2a2a38" }}/>
-              <div style={{ fontSize:7, fontFamily:"'DM Mono',monospace", color:"#555562", letterSpacing:1 }}>{session.room}</div>
-            </div>
-          </div>
-
-          {/* CHANNEL STRIPS — 3-column: [CH A] [CENTER] [CH B] */}
-          <div style={{ display:"grid", gridTemplateColumns:"1fr 78px 1fr", flex:1, minHeight:0, overflow:"hidden" }}>
-
-            {/* ─── CH A STRIP ─── */}
-            <div style={{ display:"flex", flexDirection:"column", borderRight:"1px solid #202028", overflow:"hidden" }}>
-              {/* Header: label + VU inline */}
-              <div style={{ padding:"3px 6px", background:"#0a0a10", borderBottom:"1px solid #202028", display:"flex", justifyContent:"space-between", alignItems:"center", flexShrink:0 }}>
-                <span style={{ fontFamily:"'DM Mono',monospace", fontSize:11, color:"#7B61FF", fontWeight:600, letterSpacing:1 }}>A</span>
-                <VU an={eng.current?.A?.an} color="#7B61FF" w={50}/>
-              </div>
-              {/* Channel fader LEFT, EQ knobs RIGHT — outer edge layout */}
-              <div style={{ flex:1, display:"flex", flexDirection:"row", minHeight:0, overflow:"hidden" }}>
-                {/* Channel volume fader — far left (outer edge) */}
-                <div style={{ flexShrink:0, display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"center", padding:"5px 4px", borderRight:"1px solid #181820", gap:2 }}>
-                  <div style={{ fontSize:6, fontFamily:"'DM Mono',monospace", color:"#7B61FF55", letterSpacing:1 }}>VOL</div>
-                  <VerticalFader val={eqA.vol} set={v=>updateEqA("vol",v)} color="#7B61FF" h={150}/>
-                  <div style={{ fontSize:7, fontFamily:"'DM Mono',monospace", color:"#7B61FF88" }}>{(eqA.vol/1.5*100).toFixed(0)}%</div>
-                </div>
-                {/* Knobs column — inner side */}
-                <div style={{ flex:1, display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"space-evenly", padding:"5px 2px" }}>
-                  <Knob v={eqA.vol} set={v=>updateEqA("vol",v)} min={0} max={1.5} ctr={1} label="GAIN" color="#7B61FF" size={20}/>
-                  <Knob v={eqA.hi}  set={v=>updateEqA("hi",v)}  min={-12} max={12} ctr={0} label="HI"   color="#7B61FF" size={20}/>
-                  <Knob v={eqA.mid} set={v=>updateEqA("mid",v)} min={-12} max={12} ctr={0} label="MID"  color="#7B61FF" size={20}/>
-                  <Knob v={eqA.lo}  set={v=>updateEqA("lo",v)}  min={-12} max={12} ctr={0} label="LO"   color="#7B61FF" size={20}/>
+            {/* ─── CHANNEL A ─── */}
+            <div style={{ display:"flex", flexDirection:"column", padding:"10px 4px 8px", gap:6, alignItems:"center", borderRight:`1px solid ${TOK.borderSubtle}` }}>
+              <span style={{ fontFamily:FONT.ui, fontSize:11, fontWeight:600, color:TOK.you, letterSpacing:1.4 }}>A</span>
+              <Knob v={eqA.vol} set={v=>updateEqA("vol",v)} min={0} max={1.5} ctr={1} label="GAIN" color={TOK.youVibrant} size={32}/>
+              <Knob v={eqA.hi}  set={v=>updateEqA("hi",v)}  min={-12} max={12} ctr={0} label="HI"   color={TOK.youVibrant} size={32}/>
+              <Knob v={eqA.mid} set={v=>updateEqA("mid",v)} min={-12} max={12} ctr={0} label="MID"  color={TOK.youVibrant} size={32}/>
+              <Knob v={eqA.lo}  set={v=>updateEqA("lo",v)}  min={-12} max={12} ctr={0} label="LOW"  color={TOK.youVibrant} size={32}/>
+              <div style={{ flex:1, display:"flex", alignItems:"flex-end", gap:6, paddingTop:4 }}>
+                <VerticalFader val={eqA.vol} set={v=>updateEqA("vol",v)} color={TOK.youVibrant} h={64}/>
+                <div style={{ width:4, height:64, background:TOK.surface2, borderRadius:2, overflow:"hidden" }}>
+                  <VerticalLevelMeter an={eng.current?.A?.an} color={TOK.youVibrant}/>
                 </div>
               </div>
             </div>
 
-            {/* ─── CENTER COLUMN ─── */}
-            <div style={{ display:"flex", flexDirection:"column", background:"#0a0a12", overflow:"hidden" }}>
-              {/* Master fader */}
-              <div style={{ flex:1, display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"center", gap:3, minHeight:0 }}>
-                <div style={{ fontSize:7, fontFamily:"'DM Mono',monospace", color:"#C8A96E99", letterSpacing:2 }}>MASTER</div>
-                <VerticalFader val={mvol} set={setMvol} color="#C8A96E" h={150}/>
-                <div style={{ fontSize:7, fontFamily:"'DM Mono',monospace", color:"#C8A96E99" }}>{(mvol/1.5*100).toFixed(0)}%</div>
+            {/* ─── MASTER ─── */}
+            <div style={{ display:"flex", flexDirection:"column", padding:"10px 4px 8px", gap:8, alignItems:"center", background:TOK.bgBase }}>
+              <span style={{ fontFamily:FONT.ui, fontSize:9, fontWeight:600, color:TOK.textSec, letterSpacing:1.4, textTransform:"uppercase" }}>Master</span>
+              <div style={{ flex:1, display:"flex", alignItems:"flex-end", gap:6 }}>
+                <VerticalFader val={mvol} set={setMvol} color={TOK.active} h={180}/>
+                <div style={{ width:4, height:180, background:TOK.surface2, borderRadius:2, overflow:"hidden" }}>
+                  <VerticalLevelMeter an={eng.current?.masterAn} color={TOK.active}/>
+                </div>
               </div>
-              {/* Session info */}
-              <div style={{ padding:"5px 6px 4px", borderTop:"1px solid #202028", flexShrink:0 }}>
-                {[["ROOM",session.room,"#C8A96E"],["PING",sync.ping?`${sync.ping}ms`:"—","#7a9aaa"],["NET",rtc.state==="connected"?"LIVE":"OFF",rtc.state==="connected"?"#22c55e":"#444454"]].map(([l,v,c])=>(
-                  <div key={l} style={{ display:"flex", justifyContent:"space-between", alignItems:"center", padding:"1px 0" }}>
-                    <span style={{ fontSize:7, fontFamily:"'DM Mono',monospace", color:"#555562", letterSpacing:.5 }}>{l}</span>
-                    <span style={{ fontSize:9, fontFamily:"'DM Mono',monospace", color:c, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap", maxWidth:42 }}>{v}</span>
-                  </div>
-                ))}
-              </div>
+              <span style={{ fontFamily:FONT.mono, fontSize:10, color:TOK.textSec, fontVariantNumeric:"tabular-nums" }}>{(mvol/1.5*100).toFixed(0)}</span>
             </div>
 
-            {/* ─── CH B STRIP (local) ─── */}
-            <div style={{ display:"flex", flexDirection:"column", borderLeft:"1px solid #202028", overflow:"hidden" }}>
-              {/* Header: label + VU inline */}
-              <div style={{ padding:"3px 6px", background:"#0a0a10", borderBottom:"1px solid #202028", display:"flex", justifyContent:"space-between", alignItems:"center", flexShrink:0 }}>
-                <span style={{ fontFamily:"'DM Mono',monospace", fontSize:11, color:"#00BFA5", fontWeight:600, letterSpacing:1 }}>B</span>
-                <VU an={eng.current?.B?.an} color="#00BFA5" w={50}/>
-              </div>
-              {/* EQ knobs LEFT, channel fader RIGHT — outer edge layout */}
-              <div style={{ flex:1, display:"flex", flexDirection:"row", minHeight:0, overflow:"hidden" }}>
-                {/* Knobs column — inner side */}
-                <div style={{ flex:1, display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"space-evenly", padding:"5px 2px" }}>
-                  <Knob v={eqB.vol} set={v=>updateEqB("vol",v)} min={0} max={1.5} ctr={1} label="GAIN" color="#00BFA5" size={20}/>
-                  <Knob v={eqB.hi}  set={v=>updateEqB("hi",v)}  min={-12} max={12} ctr={0} label="HI"   color="#00BFA5" size={20}/>
-                  <Knob v={eqB.mid} set={v=>updateEqB("mid",v)} min={-12} max={12} ctr={0} label="MID"  color="#00BFA5" size={20}/>
-                  <Knob v={eqB.lo}  set={v=>updateEqB("lo",v)}  min={-12} max={12} ctr={0} label="LO"   color="#00BFA5" size={20}/>
+            {/* ─── CHANNEL B ─── */}
+            <div style={{ display:"flex", flexDirection:"column", padding:"10px 4px 8px", gap:6, alignItems:"center", borderLeft:`1px solid ${TOK.borderSubtle}` }}>
+              <span style={{ fontFamily:FONT.ui, fontSize:11, fontWeight:600, color:TOK.partner, letterSpacing:1.4 }}>B</span>
+              <Knob v={eqB.vol} set={v=>updateEqB("vol",v)} min={0} max={1.5} ctr={1} label="GAIN" color={TOK.partnerVibrant} size={32}/>
+              <Knob v={eqB.hi}  set={v=>updateEqB("hi",v)}  min={-12} max={12} ctr={0} label="HI"   color={TOK.partnerVibrant} size={32}/>
+              <Knob v={eqB.mid} set={v=>updateEqB("mid",v)} min={-12} max={12} ctr={0} label="MID"  color={TOK.partnerVibrant} size={32}/>
+              <Knob v={eqB.lo}  set={v=>updateEqB("lo",v)}  min={-12} max={12} ctr={0} label="LOW"  color={TOK.partnerVibrant} size={32}/>
+              <div style={{ flex:1, display:"flex", alignItems:"flex-end", gap:6, paddingTop:4 }}>
+                <div style={{ width:4, height:64, background:TOK.surface2, borderRadius:2, overflow:"hidden" }}>
+                  <VerticalLevelMeter an={eng.current?.B?.an} color={TOK.partnerVibrant}/>
                 </div>
-                {/* Channel volume fader — far right (outer edge) */}
-                <div style={{ flexShrink:0, display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"center", padding:"5px 4px", borderLeft:"1px solid #181820", gap:2 }}>
-                  <div style={{ fontSize:6, fontFamily:"'DM Mono',monospace", color:"#00BFA555", letterSpacing:1 }}>VOL</div>
-                  <VerticalFader val={eqB.vol} set={v=>updateEqB("vol",v)} color="#00BFA5" h={150}/>
-                  <div style={{ fontSize:7, fontFamily:"'DM Mono',monospace", color:"#00BFA588" }}>{(eqB.vol/1.5*100).toFixed(0)}%</div>
-                </div>
+                <VerticalFader val={eqB.vol} set={v=>updateEqB("vol",v)} color={TOK.partnerVibrant} h={64}/>
               </div>
             </div>
           </div>
         </div>
 
-        {/* ── DECK B (partner) ── */}
-        <div style={{ display:"flex", flexDirection:"column", minWidth:0, minHeight:0, overflow:"hidden", background:"#0c0c12", border:"1px solid #1e1e28", borderRadius:10 }}>
-          <div style={{ display:"flex", gap:8, alignItems:"center", padding:"6px 12px", borderBottom:"1px solid #1e1e28", background:"#080810", flexShrink:0 }}>
-            <div style={{ width:6, height:6, borderRadius:"50%", background:sync.partner?"#00BFA5":"#282835", boxShadow:sync.partner?"0 0 8px #00BFA5":"none", transition:"all .3s" }}/>
-            <span style={{ fontSize:11, fontFamily:"'DM Mono',monospace", fontWeight:700, color:sync.partner?"#00BFA5":"#444454", letterSpacing:2 }}>DECK B</span>
-            {sync.partner&&<span style={{ fontSize:11, fontFamily:"'DM Sans',sans-serif", fontWeight:500, color:"#00BFA5aa", letterSpacing:.3 }}>{sync.partner}</span>}
-          </div>
-          <div style={{ flex:1, overflow:"hidden", minHeight:0 }}>
-            <Deck id="B" ch={eng.current?.B} ctx={eng.current?.ctx} color="#00BFA5" local remote={pB} onChange={dh("B")} midi={midiEvt} bpmResult={bpm.results["B"]} bpmAnalyze={bpm.analyze} eqHi={eqB.hi} eqMid={eqB.mid} eqLo={eqB.lo} chanVol={eqB.vol} loadFromLibrary={libLoadB} onTrackInfo={handleTrackInfo} onSync={()=>syncDecks("B",bpm.results["A"]?.bpm)} onLibraryTrackDrop={(trackId)=>{const t=lib.library.find(x=>x.id===trackId);if(t)handleLibLoad(t,"B");}} onProgUpdate={handleProgB} onWaveform={setWfB} onSeekReady={onDeckBSeekReady} onToggleReady={onDeckBToggleReady} onCueReady={onDeckBCueReady} onTransportFire={sync.send}/>
-          </div>
+        {/* ── DECK B (visually PARTNER; control still local per shared-decks model) ── */}
+        <div style={{ display:"flex", flexDirection:"column", minWidth:0, minHeight:0, overflow:"hidden" }}>
+          <Deck id="B" ch={eng.current?.B} ctx={eng.current?.ctx} color={TOK.partner} vibrantColor={TOK.partnerVibrant} isYou={false} local remote={pB} onChange={dh("B")} midi={midiEvt} bpmResult={bpm.results["B"]} bpmAnalyze={bpm.analyze} eqHi={eqB.hi} eqMid={eqB.mid} eqLo={eqB.lo} chanVol={eqB.vol} loadFromLibrary={libLoadB} onTrackInfo={handleTrackInfo} onSync={()=>syncDecks("B",bpm.results["A"]?.bpm)} onLibraryTrackDrop={(trackId)=>{const t=lib.library.find(x=>x.id===trackId);if(t)handleLibLoad(t,"B");}} onProgUpdate={handleProgB} onWaveform={setWfB} onSeekReady={onDeckBSeekReady} onToggleReady={onDeckBToggleReady} onCueReady={onDeckBCueReady} onTransportFire={sync.send}/>
         </div>
 
       </div>
@@ -4785,26 +5021,28 @@ export default function CollabMix({ initialPage = "landing", djName = null }) {
         </div>}
       </div>}
 
-      {/* ── CROSSFADER ROW — same grid as deck row, only center column has content ── */}
-      <div style={{ flexShrink:0, display:"grid", gridTemplateColumns:"1fr 260px 1fr", gap:8, padding:"4px 12px", background:"#070710", borderTop:"1px solid #181828", borderBottom:"1px solid #181828" }}>
-        <div/>{/* empty left */}
-        <div style={{ display:"flex", alignItems:"center", gap:8, padding:"4px 6px" }}>
-          {/* invisible spacer matching CTR button width so slider is visually centered */}
-          <button aria-hidden="true" tabIndex={-1} style={{ fontSize:7, height:16, padding:"0 8px", background:"transparent", border:"1px solid transparent", color:"transparent", borderRadius:3, cursor:"default", fontFamily:"'DM Mono',monospace", letterSpacing:.5, flexShrink:0, pointerEvents:"none", userSelect:"none" }}>CTR</button>
-          <span style={{ fontSize:11, fontFamily:"'DM Mono',monospace", color:"#C8A96E99", fontWeight:700, lineHeight:1, flexShrink:0 }}>A</span>
+      {/* ── CROSSFADER STRIP — 600px max, centered ── */}
+      <div style={{ flexShrink:0, padding:"8px 14px", background:TOK.bgBase, borderTop:`1px solid ${TOK.borderSubtle}`, borderBottom:`1px solid ${TOK.borderSubtle}`, display:"flex", justifyContent:"center" }}>
+        <div style={{ display:"flex", alignItems:"center", gap:12, width:"100%", maxWidth:600 }}>
+          <span style={{ fontSize:13, fontFamily:FONT.ui, fontWeight:600, color:TOK.you, letterSpacing:0.5 }}>A</span>
           <div style={{ flex:1, position:"relative", height:24, display:"flex", alignItems:"center" }}>
-            <div style={{ width:"100%", height:6, borderRadius:4, background:"#030310", border:"1px solid #181828", boxShadow:"inset 0 1px 3px rgba(0,0,0,.7)" }}>
-              <div style={{ height:"100%", width:`${xf*100}%`, background:"linear-gradient(90deg,#C8A96E44,#00BFA533)", borderRadius:4 }}/>
-            </div>
-            <input type="range" min={0} max={1} step={.005} value={xf} onChange={e=>setXfLocal(Number(e.target.value))} style={{ position:"absolute", width:"100%", opacity:0, cursor:"pointer", height:24 }}/>
-            <div style={{ position:"absolute", left:`calc(${xf*100}% - 13px)`, width:26, height:20, background:"linear-gradient(180deg,#2c2a3e,#16142a)", border:"1px solid #38364e", borderRadius:4, boxShadow:"0 2px 8px rgba(0,0,0,.8), inset 0 1px 0 rgba(255,255,255,.06)", pointerEvents:"none", display:"flex", alignItems:"center", justifyContent:"center" }}>
-              <div style={{ width:2, height:10, background:"#C8A96E88", borderRadius:1 }}/>
-            </div>
+            <div style={{ width:"100%", height:4, borderRadius:2, background:TOK.surface2 }}/>
+            <input type="range" min={0} max={1} step={.005} value={xf} onChange={e=>setXfLocal(Number(e.target.value))} style={{ position:"absolute", inset:0, width:"100%", height:"100%", opacity:0, cursor:"pointer" }}/>
+            <div style={{ position:"absolute", left:`calc(${xf*100}% - 12px)`, width:24, height:12, background:TOK.text, borderRadius:3, pointerEvents:"none", boxShadow:"0 2px 6px rgba(0,0,0,0.5)" }}/>
           </div>
-          <span style={{ fontSize:11, fontFamily:"'DM Mono',monospace", color:"#00BFA599", fontWeight:700, lineHeight:1, flexShrink:0 }}>B</span>
-          <button onClick={()=>setXfLocal(.5)} style={{ fontSize:7, height:16, padding:"0 8px", background:"transparent", border:"1px solid #252535", color:"#555562", borderRadius:3, cursor:"pointer", fontFamily:"'DM Mono',monospace", letterSpacing:.5, flexShrink:0 }}>CTR</button>
+          <span style={{ fontSize:13, fontFamily:FONT.ui, fontWeight:600, color:TOK.partner, letterSpacing:0.5 }}>B</span>
+          <button
+            onClick={()=>setXfLocal(.5)}
+            onMouseEnter={e=>{ e.currentTarget.style.borderColor=TOK.text; e.currentTarget.style.color=TOK.text; }}
+            onMouseLeave={e=>{ e.currentTarget.style.borderColor=TOK.borderDefined; e.currentTarget.style.color=TOK.textSec; }}
+            style={{
+              fontSize:11, height:24, padding:"0 10px",
+              background:"transparent", border:`1px solid ${TOK.borderDefined}`,
+              color:TOK.textSec, borderRadius:4, cursor:"pointer",
+              fontFamily:FONT.ui, fontWeight:600, letterSpacing:0.6,
+              transition:"all .15s", outline:"none",
+            }}>CTR</button>
         </div>
-        <div/>{/* empty right */}
       </div>
 
       {/* ── EMBEDDED LIBRARY — fills remaining space below decks ── */}
