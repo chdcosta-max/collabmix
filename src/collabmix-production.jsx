@@ -61,19 +61,19 @@ function createEngine() {
 function xg(p) { const a = p * Math.PI / 2; return { a: Math.cos(a), b: Math.sin(a) }; }
 
 // ── Design tokens (Mix//Sync design system) ─────────────────────
-// Named TOK (not D) because an existing local `const D = "#0c0c14"` uses the D
+// Named TOK (not D) because an existing local `const D = "#131519"` uses the D
 // identifier inside the Deck component scope. Future refactors can swap
 // hard-coded color literals for TOK.* references without a mass rename.
 const TOK = {
-  gold:   "#C8A96E", // primary brand, CTAs, accents
-  deckA:  "#7B61FF", // your deck — electric violet
-  deckB:  "#00BFA5", // partner deck — deep teal
+  gold:   "#ECEEF1", // primary brand, CTAs, accents
+  deckA:  "#5B8FF9", // your deck — electric violet
+  deckB:  "#C97064", // partner deck — deep teal
   bg:     "#07070F", // primary background (near-black w/ blue undertone)
-  bg2:    "#0D0C1A", // panels / cards
-  bg3:    "#13122A", // hover / active panels
+  bg2:    "#1A1D23", // panels / cards
+  bg3:    "#1A1D23", // hover / active panels
   border: "#1A1830", // borders, dividers
-  text:   "#EDE8DF", // primary text — warm off-white
-  subtle: "#9B96B0", // muted purple-grey (secondary text)
+  text:   "#ECEEF1", // primary text — warm off-white
+  subtle: "#7A7E85", // muted purple-grey (secondary text)
   muted:  "#4A4560", // disabled / very muted
 };
 
@@ -901,7 +901,7 @@ function useLibrary(){
 // ── Library Panel UI ──────────────────────────────────────────
 
 // Avatar colour-hash for artwork placeholder
-const SES_AVATAR_COLORS=[["#8B5CF6","#6D28D9"],["#C8A96E","#A07840"],["#C8A96E","#0099bb"],["#22c55e","#16a34a"],["#f59e0b","#d97706"],["#ef4444","#dc2626"],["#ec4899","#db2777"],["#14b8a6","#0d9488"]];
+const SES_AVATAR_COLORS=[["#8B5CF6","#6D28D9"],["#ECEEF1","#A07840"],["#ECEEF1","#0099bb"],["#6BB36B","#16a34a"],["#C9A06B","#d97706"],["#B86060","#dc2626"],["#ec4899","#db2777"],["#14b8a6","#0d9488"]];
 function sesAvatarColor(str=""){let h=0;for(let i=0;i<str.length;i++)h=(h<<5)-h+str.charCodeAt(i);return SES_AVATAR_COLORS[Math.abs(h)%SES_AVATAR_COLORS.length];}
 
 function TrackRow({track, onLoadA, onLoadB, isRec, reasons, canLoad, previewTrackId, onPreview, onDelete, onRemoveFromPlaylist, onDragStart, extractArtwork}){
@@ -910,12 +910,12 @@ function TrackRow({track, onLoadA, onLoadB, isRec, reasons, canLoad, previewTrac
   const [ctxMenu,setCtxMenu]=useState(null); // {x,y}
   const [artworkSrc,setArtworkSrc]=useState(track.artwork||null);
   const deckMenuRef=useRef(null);
-  const G="#C8A96E";
-  const eColor=ENERGY_COLOR[track.energy?.label]||"#555562";
+  const G="#ECEEF1";
+  const eColor=ENERGY_COLOR[track.energy?.label]||"#52555C";
   const fmt=(s)=>s?`${Math.floor(s/60)}:${String(Math.floor(s%60)).padStart(2,"0")}`:"--";
   const camelot=CAMELOT[track.key];
   const isMinor=camelot?.endsWith("A");
-  const keyColor=isMinor?"#8B6EAF":G;
+  const keyColor=isMinor?"#5B8FF9":G;
   const [ac,ac2]=sesAvatarColor(track.artist||track.title||"");
   const initial=(track.artist||track.title||"?")[0].toUpperCase();
   const isPreviewing=previewTrackId===track.id;
@@ -960,31 +960,31 @@ function TrackRow({track, onLoadA, onLoadB, isRec, reasons, canLoad, previewTrac
         if(onDragStart)onDragStart(track);
       }}
       onContextMenu={e=>{e.preventDefault();setCtxMenu({x:e.clientX,y:e.clientY});}}
-      style={{display:"grid",gridTemplateColumns:"28px 36px 1fr 70px 44px 70px 44px 64px",gap:6,alignItems:"center",padding:"5px 10px",background:isRec?"#22c55e07":hov?"#18182299":"transparent",borderBottom:"1px solid #14141e88",transition:"background .1s",position:"relative",cursor:"grab"}}
+      style={{display:"grid",gridTemplateColumns:"28px 36px 1fr 70px 44px 70px 44px 64px",gap:6,alignItems:"center",padding:"5px 10px",background:isRec?"#6BB36B07":hov?"#1A1D2399":"transparent",borderBottom:"1px solid #13151988",transition:"background .1s",position:"relative",cursor:"grab"}}
     >
       {/* Context menu */}
       {ctxMenu&&(
-        <div onMouseDown={e=>e.stopPropagation()} style={{position:"fixed",left:ctxMenu.x,top:ctxMenu.y,zIndex:9999,background:"#111118",border:"1px solid #252535",borderRadius:8,padding:"4px 0",minWidth:160,boxShadow:"0 12px 32px rgba(0,0,0,.9)"}}>
-          <div style={{padding:"2px 14px 6px",fontSize:7,fontFamily:"'DM Mono',monospace",color:"#555562",letterSpacing:1.2}}>{track.title?.substring(0,24)||track.filename}</div>
-          <div style={{height:1,background:"#1e1e28",margin:"0 0 4px"}}/>
-          {onLoadA&&<div onClick={()=>{onLoadA(track);setCtxMenu(null);}} style={{padding:"7px 14px",fontSize:10,fontFamily:"'DM Sans',sans-serif",color:"#7B61FF",cursor:"pointer",background:"transparent"}} onMouseEnter={e=>e.currentTarget.style.background="#7B61FF0e"} onMouseLeave={e=>e.currentTarget.style.background="transparent"}>▶ Load to Deck A</div>}
-          {onLoadB&&<div onClick={()=>{onLoadB(track);setCtxMenu(null);}} style={{padding:"7px 14px",fontSize:10,fontFamily:"'DM Sans',sans-serif",color:"#00BFA5",cursor:"pointer",background:"transparent"}} onMouseEnter={e=>e.currentTarget.style.background="#00BFA50e"} onMouseLeave={e=>e.currentTarget.style.background="transparent"}>▶ Load to Deck B</div>}
-          {onPreview&&<div onClick={()=>{onPreview(track);setCtxMenu(null);}} style={{padding:"7px 14px",fontSize:10,fontFamily:"'DM Sans',sans-serif",color:"#888898",cursor:"pointer",background:"transparent"}} onMouseEnter={e=>e.currentTarget.style.background="#18182299"} onMouseLeave={e=>e.currentTarget.style.background="transparent"}>{isPreviewing?"⏸ Stop Preview":"▶ Preview"}</div>}
-          <div style={{height:1,background:"#1e1e28",margin:"4px 0"}}/>
-          {onRemoveFromPlaylist&&<div onClick={()=>{onRemoveFromPlaylist(track.id);setCtxMenu(null);}} style={{padding:"7px 14px",fontSize:10,fontFamily:"'DM Sans',sans-serif",color:"#C8A96E",cursor:"pointer",background:"transparent"}} onMouseEnter={e=>e.currentTarget.style.background="#C8A96E10"} onMouseLeave={e=>e.currentTarget.style.background="transparent"}>↩ Remove from Playlist</div>}
-          {onDelete&&<div onClick={()=>{onDelete(track.id);setCtxMenu(null);}} style={{padding:"7px 14px",fontSize:10,fontFamily:"'DM Sans',sans-serif",color:"#ef4444",cursor:"pointer",background:"transparent"}} onMouseEnter={e=>e.currentTarget.style.background="#ef444410"} onMouseLeave={e=>e.currentTarget.style.background="transparent"}>🗑 Remove from Library</div>}
+        <div onMouseDown={e=>e.stopPropagation()} style={{position:"fixed",left:ctxMenu.x,top:ctxMenu.y,zIndex:9999,background:"#131519",border:"1px solid #21252C",borderRadius:8,padding:"4px 0",minWidth:160,boxShadow:"0 12px 32px rgba(0,0,0,.9)"}}>
+          <div style={{padding:"2px 14px 6px",fontSize:7,fontFamily:"'Inter',sans-serif",color:"#52555C",letterSpacing:1.2}}>{track.title?.substring(0,24)||track.filename}</div>
+          <div style={{height:1,background:"#1F2228",margin:"0 0 4px"}}/>
+          {onLoadA&&<div onClick={()=>{onLoadA(track);setCtxMenu(null);}} style={{padding:"7px 14px",fontSize:10,fontFamily:"'Inter',sans-serif",color:"#5B8FF9",cursor:"pointer",background:"transparent"}} onMouseEnter={e=>e.currentTarget.style.background="#5B8FF90e"} onMouseLeave={e=>e.currentTarget.style.background="transparent"}>▶ Load to Deck A</div>}
+          {onLoadB&&<div onClick={()=>{onLoadB(track);setCtxMenu(null);}} style={{padding:"7px 14px",fontSize:10,fontFamily:"'Inter',sans-serif",color:"#C97064",cursor:"pointer",background:"transparent"}} onMouseEnter={e=>e.currentTarget.style.background="#C970640e"} onMouseLeave={e=>e.currentTarget.style.background="transparent"}>▶ Load to Deck B</div>}
+          {onPreview&&<div onClick={()=>{onPreview(track);setCtxMenu(null);}} style={{padding:"7px 14px",fontSize:10,fontFamily:"'Inter',sans-serif",color:"#7A7E85",cursor:"pointer",background:"transparent"}} onMouseEnter={e=>e.currentTarget.style.background="#1A1D2399"} onMouseLeave={e=>e.currentTarget.style.background="transparent"}>{isPreviewing?"⏸ Stop Preview":"▶ Preview"}</div>}
+          <div style={{height:1,background:"#1F2228",margin:"4px 0"}}/>
+          {onRemoveFromPlaylist&&<div onClick={()=>{onRemoveFromPlaylist(track.id);setCtxMenu(null);}} style={{padding:"7px 14px",fontSize:10,fontFamily:"'Inter',sans-serif",color:"#ECEEF1",cursor:"pointer",background:"transparent"}} onMouseEnter={e=>e.currentTarget.style.background="#ECEEF110"} onMouseLeave={e=>e.currentTarget.style.background="transparent"}>↩ Remove from Playlist</div>}
+          {onDelete&&<div onClick={()=>{onDelete(track.id);setCtxMenu(null);}} style={{padding:"7px 14px",fontSize:10,fontFamily:"'Inter',sans-serif",color:"#B86060",cursor:"pointer",background:"transparent"}} onMouseEnter={e=>e.currentTarget.style.background="#B8606010"} onMouseLeave={e=>e.currentTarget.style.background="transparent"}>🗑 Remove from Library</div>}
         </div>
       )}
       {/* + Quick-add to deck */}
       <div style={{position:"relative"}} ref={deckMenuRef}>
         <button onClick={e=>{e.stopPropagation();setShowDeckMenu(v=>!v);}}
-          style={{width:22,height:22,borderRadius:5,background:showDeckMenu?`${G}22`:hov?`${G}12`:"transparent",border:`1px solid ${hov||showDeckMenu?G+"44":"transparent"}`,color:hov||showDeckMenu?G:"transparent",fontSize:14,lineHeight:1,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",transition:"all .15s",fontFamily:"'DM Mono',monospace"}}>＋</button>
+          style={{width:22,height:22,borderRadius:5,background:showDeckMenu?`${G}22`:hov?`${G}12`:"transparent",border:`1px solid ${hov||showDeckMenu?G+"44":"transparent"}`,color:hov||showDeckMenu?G:"transparent",fontSize:14,lineHeight:1,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",transition:"all .15s",fontFamily:"'Inter',sans-serif"}}>＋</button>
         {showDeckMenu&&(
-          <div onClick={e=>e.stopPropagation()} style={{position:"absolute",left:0,top:"calc(100% + 4px)",zIndex:500,background:"#111118",border:"1px solid #252535",borderRadius:10,padding:6,minWidth:130,boxShadow:"0 12px 32px rgba(0,0,0,.85)"}}>
-            <div style={{fontSize:8,color:"#555562",fontFamily:"'DM Mono',monospace",padding:"2px 8px 6px",letterSpacing:1.2}}>LOAD TO DECK</div>
+          <div onClick={e=>e.stopPropagation()} style={{position:"absolute",left:0,top:"calc(100% + 4px)",zIndex:500,background:"#131519",border:"1px solid #21252C",borderRadius:10,padding:6,minWidth:130,boxShadow:"0 12px 32px rgba(0,0,0,.85)"}}>
+            <div style={{fontSize:8,color:"#52555C",fontFamily:"'Inter',sans-serif",padding:"2px 8px 6px",letterSpacing:1.2}}>LOAD TO DECK</div>
             <div style={{display:"flex",gap:4,padding:"0 4px"}}>
-              {onLoadA&&<button onClick={e=>{e.stopPropagation();onLoadA(track);setShowDeckMenu(false);}} style={{flex:1,padding:"7px 4px",background:`${G}18`,border:`1px solid ${G}44`,color:G,borderRadius:7,cursor:"pointer",fontFamily:"'DM Mono',monospace",fontSize:11,fontWeight:700}}>▶ A</button>}
-              {onLoadB&&<button onClick={e=>{e.stopPropagation();onLoadB(track);setShowDeckMenu(false);}} style={{flex:1,padding:"7px 4px",background:"#C8A96E18",border:"1px solid #C8A96E44",color:"#C8A96E",borderRadius:7,cursor:"pointer",fontFamily:"'DM Mono',monospace",fontSize:11,fontWeight:700}}>▶ B</button>}
+              {onLoadA&&<button onClick={e=>{e.stopPropagation();onLoadA(track);setShowDeckMenu(false);}} style={{flex:1,padding:"7px 4px",background:`${G}18`,border:`1px solid ${G}44`,color:G,borderRadius:7,cursor:"pointer",fontFamily:"'Inter',sans-serif",fontSize:11,fontWeight:700}}>▶ A</button>}
+              {onLoadB&&<button onClick={e=>{e.stopPropagation();onLoadB(track);setShowDeckMenu(false);}} style={{flex:1,padding:"7px 4px",background:"#ECEEF118",border:"1px solid #ECEEF144",color:"#ECEEF1",borderRadius:7,cursor:"pointer",fontFamily:"'Inter',sans-serif",fontSize:11,fontWeight:700}}>▶ B</button>}
             </div>
           </div>
         )}
@@ -992,7 +992,7 @@ function TrackRow({track, onLoadA, onLoadB, isRec, reasons, canLoad, previewTrac
 
       {/* Artwork — click to preview */}
       <div onClick={e=>{e.stopPropagation();if(onPreview)onPreview(track);}} title={isPreviewing?"Stop preview":"Preview"}
-        style={{width:36,height:36,borderRadius:4,flexShrink:0,background:(artworkSrc||track.artwork)?"#000":"#13122A",display:"flex",alignItems:"center",justifyContent:"center",fontSize:14,fontWeight:700,color:eColor,fontFamily:"'DM Sans',sans-serif",userSelect:"none",position:"relative",overflow:"hidden",cursor:"pointer",outline:isPreviewing?`2px solid ${G}`:"none",transition:"outline .1s"}}>
+        style={{width:36,height:36,borderRadius:4,flexShrink:0,background:(artworkSrc||track.artwork)?"#000":"#1A1D23",display:"flex",alignItems:"center",justifyContent:"center",fontSize:14,fontWeight:700,color:eColor,fontFamily:"'Inter',sans-serif",userSelect:"none",position:"relative",overflow:"hidden",cursor:"pointer",outline:isPreviewing?`2px solid ${G}`:"none",transition:"outline .1s"}}>
         {(artworkSrc||track.artwork)?<img src={artworkSrc||track.artwork} alt="" style={{width:"100%",height:"100%",objectFit:"cover",position:"absolute",inset:0}}/>:<span style={{position:"relative",zIndex:1}}>{initial}</span>}
         {isPreviewing&&<div style={{position:"absolute",inset:0,background:"rgba(0,0,0,.6)",display:"flex",alignItems:"center",justifyContent:"center",zIndex:2}}><span style={{fontSize:11}}>⏸</span></div>}
         {!isPreviewing&&hov&&<div style={{position:"absolute",inset:0,background:"rgba(0,0,0,.45)",display:"flex",alignItems:"center",justifyContent:"center",zIndex:2}}><span style={{fontSize:10,color:"#fff"}}>▶</span></div>}
@@ -1001,35 +1001,35 @@ function TrackRow({track, onLoadA, onLoadB, isRec, reasons, canLoad, previewTrac
       {/* Title + artist + label */}
       <div style={{overflow:"hidden",minWidth:0}}>
         <div style={{display:"flex",gap:5,alignItems:"center"}}>
-          {isRec&&<div style={{width:4,height:4,borderRadius:"50%",background:"#22c55e",boxShadow:"0 0 4px #22c55e",flexShrink:0}}/>}
+          {isRec&&<div style={{width:4,height:4,borderRadius:"50%",background:"#6BB36B",boxShadow:"0 0 4px #6BB36B",flexShrink:0}}/>}
           {!track.analyzed&&!track.error&&<div style={{width:8,height:8,border:`1.5px solid ${G}33`,borderTop:`1.5px solid ${G}`,borderRadius:"50%",animation:"spin 1s linear infinite",flexShrink:0}}/>}
-          <div style={{fontSize:11,color:hov?"#e8e8f0":"#d8d8e2",whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis",fontFamily:"'DM Sans',sans-serif",fontWeight:400}}>{track.title||track.filename}</div>
+          <div style={{fontSize:11,color:hov?"#ECEEF1":"#ECEEF1",whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis",fontFamily:"'Inter',sans-serif",fontWeight:400}}>{track.title||track.filename}</div>
         </div>
-        <div style={{fontSize:9,color:"#888898",fontFamily:"'DM Sans',sans-serif",whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis",marginTop:1}}>
+        <div style={{fontSize:9,color:"#7A7E85",fontFamily:"'Inter',sans-serif",whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis",marginTop:1}}>
           {track.artist||"Unknown Artist"}
-          {track.label&&<span style={{color:"#555562"}}> · <span style={{color:`${G}cc`,fontFamily:"'DM Mono',monospace",fontSize:8}}>{track.label}</span></span>}
+          {track.label&&<span style={{color:"#52555C"}}> · <span style={{color:`${G}cc`,fontFamily:"'Inter',sans-serif",fontSize:8}}>{track.label}</span></span>}
         </div>
-        {reasons?.length>0&&(<div style={{display:"flex",gap:3,marginTop:2}}>{reasons.map(r=><span key={r} style={{fontSize:7,fontFamily:"'DM Mono',monospace",color:"#22c55e",background:"#22c55e11",borderRadius:2,padding:"0 4px",letterSpacing:.5}}>{r}</span>)}</div>)}
+        {reasons?.length>0&&(<div style={{display:"flex",gap:3,marginTop:2}}>{reasons.map(r=><span key={r} style={{fontSize:7,fontFamily:"'Inter',sans-serif",color:"#6BB36B",background:"#6BB36B11",borderRadius:2,padding:"0 4px",letterSpacing:.5}}>{r}</span>)}</div>)}
       </div>
 
       {/* BPM — single number, no label */}
-      <div style={{textAlign:"right",fontSize:12,fontFamily:"'DM Mono',monospace",color:track.bpm?"#C8A96E":"#2a2a3a",fontWeight:500}}>{track.bpm?track.bpm.toFixed(1):"--"}</div>
+      <div style={{textAlign:"right",fontSize:12,fontFamily:"'Inter',sans-serif",color:track.bpm?"#ECEEF1":"#2C3037",fontWeight:500}}>{track.bpm?track.bpm.toFixed(1):"--"}</div>
 
       {/* Key — rounded pill, gold for major, violet for minor, white text */}
       <div style={{textAlign:"center"}}>
-        {camelot?<span style={{fontSize:9,fontFamily:"'DM Mono',monospace",color:"#ffffff",background:isMinor?"#7B61FF":"#C8A96E",borderRadius:4,padding:"2px 6px",display:"inline-block",letterSpacing:.3,fontWeight:500}}>{camelot}</span>:<span style={{fontSize:11,color:"#555562",fontFamily:"'DM Mono',monospace"}}>--</span>}
+        {camelot?<span style={{fontSize:9,fontFamily:"'Inter',sans-serif",color:"#ffffff",background:isMinor?"#5B8FF9":"#ECEEF1",borderRadius:4,padding:"2px 6px",display:"inline-block",letterSpacing:.3,fontWeight:500}}>{camelot}</span>:<span style={{fontSize:11,color:"#52555C",fontFamily:"'Inter',sans-serif"}}>--</span>}
       </div>
 
       {/* Energy — colored text label, no bar */}
-      <div style={{fontSize:11,fontFamily:"'DM Mono',monospace",color:track.energy?eColor:"#555562",letterSpacing:.3,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{track.energy?track.energy.label:"--"}</div>
+      <div style={{fontSize:11,fontFamily:"'Inter',sans-serif",color:track.energy?eColor:"#52555C",letterSpacing:.3,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{track.energy?track.energy.label:"--"}</div>
 
       {/* Duration */}
-      <div style={{fontSize:11,fontFamily:"'DM Mono',monospace",color:"#888898",textAlign:"right"}}>{fmt(track.duration)}</div>
+      <div style={{fontSize:11,fontFamily:"'Inter',sans-serif",color:"#7A7E85",textAlign:"right"}}>{fmt(track.duration)}</div>
 
       {/* A / B load buttons */}
       <div style={{display:"flex",gap:3,opacity:hov&&canLoad?1:0,transition:"opacity .1s"}}>
-        {onLoadA&&<button onClick={e=>{e.stopPropagation();onLoadA(track);}} style={{padding:"2px 8px",fontSize:9,fontFamily:"'DM Mono',monospace",background:`${G}12`,border:`1px solid ${G}2a`,color:G,borderRadius:4,cursor:"pointer",letterSpacing:.5}}>A</button>}
-        {onLoadB&&<button onClick={e=>{e.stopPropagation();onLoadB(track);}} style={{padding:"2px 8px",fontSize:9,fontFamily:"'DM Mono',monospace",background:"#C8A96E12",border:"1px solid #C8A96E2a",color:"#C8A96E",borderRadius:4,cursor:"pointer",letterSpacing:.5}}>B</button>}
+        {onLoadA&&<button onClick={e=>{e.stopPropagation();onLoadA(track);}} style={{padding:"2px 8px",fontSize:9,fontFamily:"'Inter',sans-serif",background:`${G}12`,border:`1px solid ${G}2a`,color:G,borderRadius:4,cursor:"pointer",letterSpacing:.5}}>A</button>}
+        {onLoadB&&<button onClick={e=>{e.stopPropagation();onLoadB(track);}} style={{padding:"2px 8px",fontSize:9,fontFamily:"'Inter',sans-serif",background:"#ECEEF112",border:"1px solid #ECEEF12a",color:"#ECEEF1",borderRadius:4,cursor:"pointer",letterSpacing:.5}}>B</button>}
       </div>
     </div>
   );
@@ -1043,15 +1043,15 @@ function TrackRow({track, onLoadA, onLoadB, isRec, reasons, canLoad, previewTrac
 // iterate on this new layout — nothing else in the app references it directly
 // once the swap is made.
 function LibraryPanelV2({ lib, onLoad, playingTrack, previewTrackId, onPreview, onDelete, chat, onSendChat, me }) {
-  const G = "#C8A96E";
-  const BG = "#080810";
-  const BG2 = "#0D0C1A";
-  const BG3 = "#13122A";
-  const BORDER = "#1c1c24";
-  const TEXT = "#EDE8DF";
-  const SUBTLE = "#9B96B0";
-  const MUTED = "#555562";
-  const PARTNER = "#00BFA5";
+  const G = "#ECEEF1";
+  const BG = "#131519";
+  const BG2 = "#1A1D23";
+  const BG3 = "#1A1D23";
+  const BORDER = "#1F2228";
+  const TEXT = "#ECEEF1";
+  const SUBTLE = "#7A7E85";
+  const MUTED = "#52555C";
+  const PARTNER = "#C97064";
 
   // ── Mock data for empty library (prototype — replaced by real data on first import). ──
   const MOCK_TRACKS = [
@@ -1086,8 +1086,8 @@ function LibraryPanelV2({ lib, onLoad, playingTrack, previewTrackId, onPreview, 
   // deck-track state.
   const deckATrackId = useMock ? "m2"  : (playingTrack?.id || null);
   const deckBTrackId = useMock ? "m5"  : null;
-  const DECK_A_CLR = "#7B61FF"; // violet
-  const DECK_B_CLR = "#00BFA5"; // teal
+  const DECK_A_CLR = "#5B8FF9"; // violet
+  const DECK_B_CLR = "#C97064"; // teal
 
   // Suggestion source: prefer deck A, else deck B. Panel is disabled when neither loaded.
   const suggestionSourceId = deckATrackId || deckBTrackId || null;
@@ -1346,7 +1346,7 @@ function LibraryPanelV2({ lib, onLoad, playingTrack, previewTrackId, onPreview, 
         color: isActive ? TEXT : SUBTLE, fontSize: 12,
       }}>
         <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{label}</span>
-        <span style={{ fontSize: 10, color: MUTED, fontFamily: "'DM Mono',monospace", marginLeft: 6 }}>{count}</span>
+        <span style={{ fontSize: 10, color: MUTED, fontFamily: "'Inter',sans-serif", marginLeft: 6 }}>{count}</span>
       </div>
     );
   };
@@ -1354,7 +1354,7 @@ function LibraryPanelV2({ lib, onLoad, playingTrack, previewTrackId, onPreview, 
   const FilterPill = ({ children, onRemove }) => (
     <span style={{
       padding: "3px 4px 3px 9px", background: `${G}15`, border: `1px solid ${G}44`, color: G,
-      borderRadius: 12, fontSize: 10, fontFamily: "'DM Mono',monospace",
+      borderRadius: 12, fontSize: 10, fontFamily: "'Inter',sans-serif",
       display: "inline-flex", alignItems: "center", gap: 2,
     }}>
       <span>{children}</span>
@@ -1378,14 +1378,14 @@ function LibraryPanelV2({ lib, onLoad, playingTrack, previewTrackId, onPreview, 
           if (files.length > 0) handleImportFiles(files);
         }
       }}
-      style={{ display: "flex", height: "100%", background: BG, fontFamily: "'DM Sans',sans-serif", color: TEXT, position: "relative", overflow: "hidden", outline: isDraggingOver ? `2px dashed ${G}` : "2px dashed transparent", outlineOffset: -2, transition: "outline-color .15s" }}>
+      style={{ display: "flex", height: "100%", background: BG, fontFamily: "'Inter',sans-serif", color: TEXT, position: "relative", overflow: "hidden", outline: isDraggingOver ? `2px dashed ${G}` : "2px dashed transparent", outlineOffset: -2, transition: "outline-color .15s" }}>
 
       {/* ── LEFT RAIL ── */}
       <div style={{ width: 180, flexShrink: 0, borderRight: `1px solid ${BORDER}`, display: "flex", flexDirection: "column" }}>
-        <div style={{ padding: "14px 10px 6px", fontSize: 9, letterSpacing: 2, color: MUTED, fontFamily: "'DM Mono',monospace" }}>SMART</div>
+        <div style={{ padding: "14px 10px 6px", fontSize: 9, letterSpacing: 2, color: MUTED, fontFamily: "'Inter',sans-serif" }}>SMART</div>
         <FolderItem kind="smart" id="recent"  label="Recently Played"     count={playedIds.size} onClick={() => selectSmart("recent")} />
         <FolderItem kind="smart" id="session" label="Played This Session" count={playedIds.size} onClick={() => selectSmart("session")} />
-        <div style={{ padding: "14px 10px 6px", fontSize: 9, letterSpacing: 2, color: MUTED, fontFamily: "'DM Mono',monospace" }}>FOLDERS</div>
+        <div style={{ padding: "14px 10px 6px", fontSize: 9, letterSpacing: 2, color: MUTED, fontFamily: "'Inter',sans-serif" }}>FOLDERS</div>
         <div style={{ flex: 1, overflowY: "auto" }}>
           {crates.length === 0
             ? <div style={{ padding: "8px 12px", color: MUTED, fontSize: 11, fontStyle: "italic" }}>No folders yet</div>
@@ -1394,7 +1394,7 @@ function LibraryPanelV2({ lib, onLoad, playingTrack, previewTrackId, onPreview, 
         <div style={{ padding: 10, borderTop: `1px solid ${BORDER}`, display: "flex", flexDirection: "column", gap: 6 }}>
           <button onClick={handleAddMusic} style={{
             width: "100%", height: 28, background: `${G}14`, border: `1px solid ${G}44`,
-            color: G, fontSize: 9, letterSpacing: 2, fontFamily: "'DM Mono',monospace",
+            color: G, fontSize: 9, letterSpacing: 2, fontFamily: "'Inter',sans-serif",
             borderRadius: 4, cursor: "pointer", fontWeight: 600,
           }}>+ ADD MUSIC</button>
           <input
@@ -1411,7 +1411,7 @@ function LibraryPanelV2({ lib, onLoad, playingTrack, previewTrackId, onPreview, 
           />
           <button style={{
             width: "100%", height: 28, background: "transparent", border: `1px dashed ${BORDER}`,
-            color: SUBTLE, fontSize: 9, letterSpacing: 2, fontFamily: "'DM Mono',monospace",
+            color: SUBTLE, fontSize: 9, letterSpacing: 2, fontFamily: "'Inter',sans-serif",
             borderRadius: 4, cursor: "pointer",
           }}>+ NEW FOLDER</button>
         </div>
@@ -1434,7 +1434,7 @@ function LibraryPanelV2({ lib, onLoad, playingTrack, previewTrackId, onPreview, 
                   color: active ? TEXT : MUTED,
                   borderBottom: active ? `2px solid ${G}` : "2px solid transparent",
                   marginBottom: -1,
-                  fontSize: 11, fontFamily: "'DM Mono',monospace", letterSpacing: 1.5,
+                  fontSize: 11, fontFamily: "'Inter',sans-serif", letterSpacing: 1.5,
                   fontWeight: active ? 700 : 500,
                   textTransform: "uppercase",
                   transition: "color 0.12s",
@@ -1462,7 +1462,7 @@ function LibraryPanelV2({ lib, onLoad, playingTrack, previewTrackId, onPreview, 
               </span>
             );
           })}
-          <span style={{ fontSize: 11, color: MUTED, fontFamily: "'DM Mono',monospace" }}>
+          <span style={{ fontSize: 11, color: MUTED, fontFamily: "'Inter',sans-serif" }}>
             · {showGroups ? `${groups.length} group${groups.length === 1 ? "" : "s"}` : `${tracks.length} track${tracks.length === 1 ? "" : "s"}`}
           </span>
         </div>
@@ -1473,7 +1473,7 @@ function LibraryPanelV2({ lib, onLoad, playingTrack, previewTrackId, onPreview, 
             placeholder="Search tracks, artists, labels…  or  '124 8a high'"
             style={{
               width: "100%", padding: "9px 12px", background: BG, border: `1px solid ${BORDER}`,
-              color: TEXT, fontFamily: "'DM Sans',sans-serif", fontSize: 12, borderRadius: 6, outline: "none",
+              color: TEXT, fontFamily: "'Inter',sans-serif", fontSize: 12, borderRadius: 6, outline: "none",
               boxShadow: "inset 0 1px 0 rgba(0,0,0,0.4)",
             }} />
           <div style={{ marginTop: 8, display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap", minHeight: 22 }}>
@@ -1490,7 +1490,7 @@ function LibraryPanelV2({ lib, onLoad, playingTrack, previewTrackId, onPreview, 
                 border: `1px solid ${showSuggestions ? G : BORDER}`,
                 color: showSuggestions ? G : (suggestionSource ? SUBTLE : MUTED),
                 borderRadius: 4, cursor: suggestionSource ? "pointer" : "not-allowed",
-                fontFamily: "'DM Mono',monospace", fontSize: 10, letterSpacing: 1, outline: "none",
+                fontFamily: "'Inter',sans-serif", fontSize: 10, letterSpacing: 1, outline: "none",
                 display: "flex", alignItems: "center", gap: 5,
               }}>
               <span style={{ fontSize: 12 }}>✦</span> SUGGESTIONS
@@ -1513,14 +1513,14 @@ function LibraryPanelV2({ lib, onLoad, playingTrack, previewTrackId, onPreview, 
               onMouseLeave={e => { e.currentTarget.style.borderColor = `${G}33`; e.currentTarget.style.background = "transparent"; }}
             >
               <div style={{ fontSize: 32, opacity: 0.35 }}>🎵</div>
-              <div style={{ fontSize: 14, fontFamily: "'DM Mono',monospace", color: G, letterSpacing: 1.5, fontWeight: 600 }}>ADD YOUR MUSIC</div>
-              <div style={{ fontSize: 11, fontFamily: "'DM Sans',sans-serif", color: SUBTLE, lineHeight: 1.6, fontWeight: 300 }}>
+              <div style={{ fontSize: 14, fontFamily: "'Inter',sans-serif", color: G, letterSpacing: 1.5, fontWeight: 600 }}>ADD YOUR MUSIC</div>
+              <div style={{ fontSize: 11, fontFamily: "'Inter',sans-serif", color: SUBTLE, lineHeight: 1.6, fontWeight: 300 }}>
                 Drop tracks here or click to add
               </div>
-              <div style={{ fontSize: 10, fontFamily: "'DM Sans',sans-serif", color: MUTED, lineHeight: 1.6, fontWeight: 300, marginTop: -4 }}>
+              <div style={{ fontSize: 10, fontFamily: "'Inter',sans-serif", color: MUTED, lineHeight: 1.6, fontWeight: 300, marginTop: -4 }}>
                 Drag a folder for bulk import
               </div>
-              <div style={{ fontSize: 9, fontFamily: "'DM Mono',monospace", color: MUTED, letterSpacing: 1, marginTop: 4 }}>
+              <div style={{ fontSize: 9, fontFamily: "'Inter',sans-serif", color: MUTED, letterSpacing: 1, marginTop: 4 }}>
                 MP3 · WAV · FLAC · AAC · OGG · M4A
               </div>
             </div>
@@ -1544,7 +1544,7 @@ function LibraryPanelV2({ lib, onLoad, playingTrack, previewTrackId, onPreview, 
                   }}>
                   <span style={{ fontSize: 14, color: TEXT, fontWeight: 500, letterSpacing: 0.2 }}>{g.name}</span>
                   <span style={{ display: "flex", gap: 12, alignItems: "center" }}>
-                    <span style={{ fontSize: 10, color: MUTED, fontFamily: "'DM Mono',monospace" }}>
+                    <span style={{ fontSize: 10, color: MUTED, fontFamily: "'Inter',sans-serif" }}>
                       {g.items.length} track{g.items.length === 1 ? "" : "s"}
                     </span>
                     <span style={{ color: MUTED, fontSize: 16, lineHeight: 1 }}>›</span>
@@ -1580,9 +1580,9 @@ function LibraryPanelV2({ lib, onLoad, playingTrack, previewTrackId, onPreview, 
                 {deckClr ? (
                   <div title={`Loaded on Deck ${onDeckA ? "A" : "B"}`} style={{
                     width: 18, height: 18, borderRadius: 3, flexShrink: 0,
-                    background: deckClr, color: "#0a0a10",
+                    background: deckClr, color: "#131519",
                     display: "flex", alignItems: "center", justifyContent: "center",
-                    fontSize: 10, fontFamily: "'DM Mono',monospace", fontWeight: 700,
+                    fontSize: 10, fontFamily: "'Inter',sans-serif", fontWeight: 700,
                     boxShadow: `0 0 8px ${deckClr}88`,
                   }}>{onDeckA ? "A" : "B"}</div>
                 ) : (
@@ -1609,11 +1609,11 @@ function LibraryPanelV2({ lib, onLoad, playingTrack, previewTrackId, onPreview, 
                   </div>
                   <div style={{ fontSize: 11, color: SUBTLE, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{t.artist || ""}</div>
                 </div>
-                <div style={{ width: 52, textAlign: "right", fontFamily: "'DM Mono',monospace", fontSize: 11, color: t.bpm ? G : MUTED }}>
+                <div style={{ width: 52, textAlign: "right", fontFamily: "'Inter',sans-serif", fontSize: 11, color: t.bpm ? G : MUTED }}>
                   {t.bpm ? t.bpm.toFixed(1) : "—"}
                 </div>
                 <div style={{ width: 38, display: "flex", justifyContent: "center" }}>
-                  {t.key && <span style={{ fontSize: 9, padding: "2px 5px", background: `${G}15`, border: `1px solid ${G}33`, color: G, borderRadius: 3, fontFamily: "'DM Mono',monospace", letterSpacing: 0.5 }}>{t.key}</span>}
+                  {t.key && <span style={{ fontSize: 9, padding: "2px 5px", background: `${G}15`, border: `1px solid ${G}33`, color: G, borderRadius: 3, fontFamily: "'Inter',sans-serif", letterSpacing: 0.5 }}>{t.key}</span>}
                 </div>
                 <div style={{ width: 50 }}>
                   {t.energy != null && (
@@ -1622,7 +1622,7 @@ function LibraryPanelV2({ lib, onLoad, playingTrack, previewTrackId, onPreview, 
                     </div>
                   )}
                 </div>
-                <div style={{ width: 42, textAlign: "right", fontFamily: "'DM Mono',monospace", fontSize: 10, color: MUTED }}>
+                <div style={{ width: 42, textAlign: "right", fontFamily: "'Inter',sans-serif", fontSize: 10, color: MUTED }}>
                   {fmtDur(t.duration)}
                 </div>
               </div>
@@ -1636,7 +1636,7 @@ function LibraryPanelV2({ lib, onLoad, playingTrack, previewTrackId, onPreview, 
 
         {/* QUEUE (top) */}
         <div style={{ flex: `${queueFraction} 1 0`, minHeight: 80, display: "flex", flexDirection: "column" }}>
-          <div style={{ padding: "10px 14px", fontSize: 10, letterSpacing: 2, fontFamily: "'DM Mono',monospace", color: G, borderBottom: `1px solid ${BORDER}`, display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+          <div style={{ padding: "10px 14px", fontSize: 10, letterSpacing: 2, fontFamily: "'Inter',sans-serif", color: G, borderBottom: `1px solid ${BORDER}`, display: "flex", alignItems: "center", justifyContent: "space-between" }}>
             <span>QUEUE</span>
             <span style={{ color: MUTED, fontSize: 9 }}>{queueTracks.length} up next</span>
           </div>
@@ -1657,7 +1657,7 @@ function LibraryPanelV2({ lib, onLoad, playingTrack, previewTrackId, onPreview, 
                       <div style={{ fontSize: 11, color: TEXT, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{t.title}</div>
                       <div style={{ fontSize: 10, color: SUBTLE, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{t.artist}</div>
                     </div>
-                    <div style={{ fontSize: 10, color: G, fontFamily: "'DM Mono',monospace" }}>{t.bpm?.toFixed(0) || "—"}</div>
+                    <div style={{ fontSize: 10, color: G, fontFamily: "'Inter',sans-serif" }}>{t.bpm?.toFixed(0) || "—"}</div>
                   </div>
                 ))}
           </div>
@@ -1677,10 +1677,10 @@ function LibraryPanelV2({ lib, onLoad, playingTrack, previewTrackId, onPreview, 
 
         {/* CHAT (bottom) */}
         <div style={{ flex: `${1 - queueFraction} 1 0`, minHeight: 120, display: "flex", flexDirection: "column" }}>
-          <div style={{ padding: "10px 14px", fontSize: 10, letterSpacing: 2, fontFamily: "'DM Mono',monospace", color: G, borderBottom: `1px solid ${BORDER}`, display: "flex", alignItems: "center", gap: 8 }}>
+          <div style={{ padding: "10px 14px", fontSize: 10, letterSpacing: 2, fontFamily: "'Inter',sans-serif", color: G, borderBottom: `1px solid ${BORDER}`, display: "flex", alignItems: "center", gap: 8 }}>
             <span>CHAT</span>
-            <div style={{ width: 6, height: 6, borderRadius: 3, background: "#22c55e", boxShadow: "0 0 6px #22c55e88" }} />
-            <span style={{ color: MUTED, fontSize: 9, fontFamily: "'DM Sans',sans-serif", letterSpacing: 0, textTransform: "none" }}>partner online</span>
+            <div style={{ width: 6, height: 6, borderRadius: 3, background: "#6BB36B", boxShadow: "0 0 6px #6BB36B88" }} />
+            <span style={{ color: MUTED, fontSize: 9, fontFamily: "'Inter',sans-serif", letterSpacing: 0, textTransform: "none" }}>partner online</span>
           </div>
           <div style={{ flex: 1, overflowY: "auto", padding: "8px 12px" }}>
             {(!chat || chat.length === 0)
@@ -1702,11 +1702,11 @@ function LibraryPanelV2({ lib, onLoad, playingTrack, previewTrackId, onPreview, 
               onKeyDown={e => e.key === "Enter" && sendChat()} placeholder="Message…"
               style={{
                 flex: 1, height: 28, padding: "0 10px", background: BG2, border: `1px solid ${BORDER}`,
-                color: TEXT, fontFamily: "'DM Sans',sans-serif", fontSize: 11, borderRadius: 4, outline: "none",
+                color: TEXT, fontFamily: "'Inter',sans-serif", fontSize: 11, borderRadius: 4, outline: "none",
               }} />
             <button onClick={sendChat} style={{
               height: 28, width: 32, background: `${G}18`, border: `1px solid ${G}33`, color: G,
-              borderRadius: 4, cursor: "pointer", fontFamily: "'DM Mono',monospace", fontSize: 13, outline: "none",
+              borderRadius: 4, cursor: "pointer", fontFamily: "'Inter',sans-serif", fontSize: 13, outline: "none",
             }}>→</button>
           </div>
         </div>
@@ -1734,13 +1734,13 @@ function LibraryPanelV2({ lib, onLoad, playingTrack, previewTrackId, onPreview, 
       }}>
         <div style={{ padding: "14px 16px", borderBottom: `1px solid ${BORDER}`, display: "flex", alignItems: "center", justifyContent: "space-between" }}>
           <div>
-            <div style={{ fontSize: 9, letterSpacing: 2, color: MUTED, fontFamily: "'DM Mono',monospace", marginBottom: 2 }}>SUGGESTIONS FOR</div>
+            <div style={{ fontSize: 9, letterSpacing: 2, color: MUTED, fontFamily: "'Inter',sans-serif", marginBottom: 2 }}>SUGGESTIONS FOR</div>
             <div style={{ fontSize: 14, color: TEXT, fontWeight: 600, display: "flex", alignItems: "center", gap: 8 }}>
               <span style={{
                 width: 18, height: 18, borderRadius: 3,
                 background: suggestionSourceDeck === "A" ? DECK_A_CLR : DECK_B_CLR,
-                color: "#0a0a10", display: "flex", alignItems: "center", justifyContent: "center",
-                fontSize: 10, fontFamily: "'DM Mono',monospace", fontWeight: 700,
+                color: "#131519", display: "flex", alignItems: "center", justifyContent: "center",
+                fontSize: 10, fontFamily: "'Inter',sans-serif", fontWeight: 700,
               }}>{suggestionSourceDeck || "—"}</span>
               <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
                 {suggestionSource?.title || "—"}
@@ -1780,15 +1780,15 @@ function LibraryPanelV2({ lib, onLoad, playingTrack, previewTrackId, onPreview, 
                     <div style={{ marginTop: 3, display: "flex", gap: 4, flexWrap: "wrap" }}>
                       {t.reasons.map(r => (
                         <span key={r} style={{
-                          fontSize: 8, padding: "1px 5px", background: "#22c55e14",
-                          border: "1px solid #22c55e33", color: "#22c55e",
-                          borderRadius: 3, fontFamily: "'DM Mono',monospace", letterSpacing: 0.3,
+                          fontSize: 8, padding: "1px 5px", background: "#6BB36B14",
+                          border: "1px solid #6BB36B33", color: "#6BB36B",
+                          borderRadius: 3, fontFamily: "'Inter',sans-serif", letterSpacing: 0.3,
                         }}>{r}</span>
                       ))}
                     </div>
                   )}
                 </div>
-                <div style={{ fontSize: 10, color: G, fontFamily: "'DM Mono',monospace", textAlign: "right" }}>
+                <div style={{ fontSize: 10, color: G, fontFamily: "'Inter',sans-serif", textAlign: "right" }}>
                   {t.bpm ? t.bpm.toFixed(1) : "—"}
                   {t.key && <div style={{ fontSize: 9, color: SUBTLE, marginTop: 2 }}>{t.key}</div>}
                 </div>
@@ -1806,35 +1806,35 @@ function LibraryPanelV2({ lib, onLoad, playingTrack, previewTrackId, onPreview, 
             position: "fixed", inset: 0, background: "rgba(4,3,12,0.78)",
             display: "flex", alignItems: "center", justifyContent: "center",
             zIndex: 9999, backdropFilter: "blur(6px)",
-            fontFamily: "'DM Sans',sans-serif",
+            fontFamily: "'Inter',sans-serif",
           }}
         >
           <div style={{
-            width: 460, maxWidth: "92%", background: "#0E0C1A",
+            width: 460, maxWidth: "92%", background: "#1A1D23",
             border: `1px solid ${G}22`, borderRadius: 16, padding: 32,
             display: "flex", flexDirection: "column", gap: 14,
-            boxShadow: `0 40px 80px rgba(0,0,0,.7), 0 0 0 1px #1C1830`,
+            boxShadow: `0 40px 80px rgba(0,0,0,.7), 0 0 0 1px #1A1D23`,
           }}>
             <div style={{ textAlign: "center" }}>
-              <div style={{ fontFamily: "'Cormorant Garamond',serif", fontWeight: 700, fontSize: 22, letterSpacing: -0.3, color: TEXT }}>
+              <div style={{ fontFamily: "'Bricolage Grotesque',sans-serif", fontWeight: 700, fontSize: 22, letterSpacing: -0.3, color: TEXT }}>
                 Found {importPreview.items.length} {importPreview.items.length === 1 ? "track" : "tracks"}
               </div>
-              <div style={{ fontSize: 9, fontFamily: "'DM Mono',monospace", color: `${G}55`, letterSpacing: 3, marginTop: 6 }}>READY TO IMPORT</div>
+              <div style={{ fontSize: 9, fontFamily: "'Inter',sans-serif", color: `${G}55`, letterSpacing: 3, marginTop: 6 }}>READY TO IMPORT</div>
             </div>
 
-            <div style={{ fontSize: 12, fontFamily: "'DM Sans',sans-serif", color: SUBTLE, lineHeight: 1.6, fontWeight: 300, textAlign: "center" }}>
+            <div style={{ fontSize: 12, fontFamily: "'Inter',sans-serif", color: SUBTLE, lineHeight: 1.6, fontWeight: 300, textAlign: "center" }}>
               {importPreview.dupeCount} {importPreview.dupeCount === 1 ? "is" : "are"} already in your library.
               <br />What would you like to do?
             </div>
 
             {importPreview.dupeCount > 0 && importPreview.dupeCount <= 5 && (
               <div style={{
-                background: "#080710", border: `1px solid ${G}14`, borderRadius: 8,
+                background: "#131519", border: `1px solid ${G}14`, borderRadius: 8,
                 padding: "10px 14px", display: "flex", flexDirection: "column", gap: 4,
               }}>
-                <div style={{ fontSize: 8, fontFamily: "'DM Mono',monospace", color: `${G}55`, letterSpacing: 2 }}>DUPLICATES</div>
+                <div style={{ fontSize: 8, fontFamily: "'Inter',sans-serif", color: `${G}55`, letterSpacing: 2 }}>DUPLICATES</div>
                 {importPreview.items.filter(i => i.isDupe).map((item, i) => (
-                  <div key={i} style={{ fontSize: 11, color: TEXT, fontFamily: "'DM Sans',sans-serif", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                  <div key={i} style={{ fontSize: 11, color: TEXT, fontFamily: "'Inter',sans-serif", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
                     {item.artist} — {item.title}
                   </div>
                 ))}
@@ -1849,8 +1849,8 @@ function LibraryPanelV2({ lib, onLoad, playingTrack, previewTrackId, onPreview, 
                   await lib.commitImport(items, "skipDupes");
                 }}
                 style={{
-                  background: G, border: "none", color: "#080710",
-                  fontFamily: "'DM Mono',monospace", fontWeight: 500, fontSize: 11, letterSpacing: 2,
+                  background: G, border: "none", color: "#131519",
+                  fontFamily: "'Inter',sans-serif", fontWeight: 500, fontSize: 11, letterSpacing: 2,
                   padding: "13px 16px", borderRadius: 10, cursor: "pointer",
                   boxShadow: `0 0 24px ${G}28`, transition: "all .2s",
                 }}
@@ -1865,7 +1865,7 @@ function LibraryPanelV2({ lib, onLoad, playingTrack, previewTrackId, onPreview, 
                 }}
                 style={{
                   background: "transparent", border: `1px solid ${G}33`, color: G,
-                  fontFamily: "'DM Mono',monospace", fontWeight: 500, fontSize: 10, letterSpacing: 2,
+                  fontFamily: "'Inter',sans-serif", fontWeight: 500, fontSize: 10, letterSpacing: 2,
                   padding: "10px 16px", borderRadius: 8, cursor: "pointer", transition: "all .2s",
                 }}
               >
@@ -1875,7 +1875,7 @@ function LibraryPanelV2({ lib, onLoad, playingTrack, previewTrackId, onPreview, 
                 onClick={() => setImportPreview(null)}
                 style={{
                   background: "transparent", border: "none", color: MUTED,
-                  fontFamily: "'DM Mono',monospace", fontWeight: 500, fontSize: 9, letterSpacing: 2,
+                  fontFamily: "'Inter',sans-serif", fontWeight: 500, fontSize: 9, letterSpacing: 2,
                   padding: "6px", borderRadius: 6, cursor: "pointer",
                 }}
               >
@@ -1913,7 +1913,7 @@ function LibraryPanel({lib, onLoad, playingTrack, previewTrackId, onPreview, onD
   const newCrateRef=useRef(null);
   const itunesRef=useRef(null);
   const rekordboxRef=useRef(null);
-  const G="#C8A96E";
+  const G="#ECEEF1";
 
   useEffect(()=>chatEndRef.current?.scrollIntoView({behavior:"smooth"}),[chat]);
   useEffect(()=>{if(showNewCrateInput)newCrateRef.current?.focus();},[showNewCrateInput]);
@@ -1967,7 +1967,7 @@ function LibraryPanel({lib, onLoad, playingTrack, previewTrackId, onPreview, onD
 
   const colHdr=(label,key)=>(
     <div onClick={()=>{if(sortBy===key)setSortDir(d=>-d);else{setSortBy(key);setSortDir(1);}}}
-      style={{fontFamily:"'DM Mono',monospace",fontSize:9,color:sortBy===key?G:"#555562",cursor:"pointer",letterSpacing:.5,userSelect:"none",whiteSpace:"nowrap"}}>
+      style={{fontFamily:"'Inter',sans-serif",fontSize:9,color:sortBy===key?G:"#52555C",cursor:"pointer",letterSpacing:.5,userSelect:"none",whiteSpace:"nowrap"}}>
       {label}{sortBy===key?(sortDir===1?" ↑":" ↓"):""}
     </div>
   );
@@ -1998,11 +1998,11 @@ function LibraryPanel({lib, onLoad, playingTrack, previewTrackId, onPreview, onD
   ];
 
   const navItemStyle=(id,isQueue)=>({
-    padding:"6px 12px",fontSize:11,fontFamily:"'DM Sans',sans-serif",
-    color:!activeCrateId&&view===id?(isQueue?"#22c55e":G):"#888898",
-    background:!activeCrateId&&view===id?(isQueue?"#22c55e10":`${G}10`):"transparent",
+    padding:"6px 12px",fontSize:11,fontFamily:"'Inter',sans-serif",
+    color:!activeCrateId&&view===id?(isQueue?"#6BB36B":G):"#7A7E85",
+    background:!activeCrateId&&view===id?(isQueue?"#6BB36B10":`${G}10`):"transparent",
     cursor:"pointer",
-    borderLeft:`2px solid ${!activeCrateId&&view===id?(isQueue?"#22c55e":G):"transparent"}`,
+    borderLeft:`2px solid ${!activeCrateId&&view===id?(isQueue?"#6BB36B":G):"transparent"}`,
     transition:"all .1s",display:"flex",justifyContent:"space-between",alignItems:"center"
   });
 
@@ -2010,23 +2010,23 @@ function LibraryPanel({lib, onLoad, playingTrack, previewTrackId, onPreview, onD
     <div style={{display:"flex",height:"100%",overflow:"hidden"}}>
 
       {/* ── CHAT SIDEBAR ── */}
-      <div style={{width:240,flexShrink:0,display:"flex",flexDirection:"column",borderRight:"1px solid #1e1e28",background:"#08080e"}}>
-        <div style={{padding:"8px 10px 6px",borderBottom:"1px solid #1e1e28",flexShrink:0}}>
-          <div style={{fontFamily:"'DM Mono',monospace",fontSize:9,color:"#888898",letterSpacing:2}}>CHAT</div>
+      <div style={{width:240,flexShrink:0,display:"flex",flexDirection:"column",borderRight:"1px solid #1F2228",background:"#131519"}}>
+        <div style={{padding:"8px 10px 6px",borderBottom:"1px solid #1F2228",flexShrink:0}}>
+          <div style={{fontFamily:"'Inter',sans-serif",fontSize:9,color:"#7A7E85",letterSpacing:2}}>CHAT</div>
         </div>
         <div style={{flex:1,overflowY:"auto",padding:"6px 8px",display:"flex",flexDirection:"column",gap:5}}>
           {chat.length===0
-            ?<span style={{fontSize:9,fontFamily:"'DM Mono',monospace",color:"#333340",fontStyle:"italic",marginTop:8}}>No messages yet</span>
+            ?<span style={{fontSize:9,fontFamily:"'Inter',sans-serif",color:"#2C3037",fontStyle:"italic",marginTop:8}}>No messages yet</span>
             :chat.map((m,i)=>(
-              <div key={i} style={{fontSize:9,fontFamily:"'DM Mono',monospace"}}>
+              <div key={i} style={{fontSize:9,fontFamily:"'Inter',sans-serif"}}>
                 {m.type==="system"
-                  ?<span style={{color:"#555562",fontStyle:"italic",fontSize:8}}>— {m.msg} —</span>
+                  ?<span style={{color:"#52555C",fontStyle:"italic",fontSize:8}}>— {m.msg} —</span>
                   :<>
                     <div style={{display:"flex",gap:4,alignItems:"baseline"}}>
-                      <span style={{color:m.self||m.from===me?"#C8A96E":"#00BFA5",fontWeight:500,fontSize:9}}>{m.from}</span>
-                      <span style={{color:"#555562",fontSize:7}}>{m.time}</span>
+                      <span style={{color:m.self||m.from===me?"#ECEEF1":"#C97064",fontWeight:500,fontSize:9}}>{m.from}</span>
+                      <span style={{color:"#52555C",fontSize:7}}>{m.time}</span>
                     </div>
-                    <div style={{color:"#c0c0cc",marginTop:1,wordBreak:"break-word",lineHeight:1.4,fontSize:9}}>{m.msg}</div>
+                    <div style={{color:"#ECEEF1",marginTop:1,wordBreak:"break-word",lineHeight:1.4,fontSize:9}}>{m.msg}</div>
                   </>
                 }
               </div>
@@ -2034,35 +2034,35 @@ function LibraryPanel({lib, onLoad, playingTrack, previewTrackId, onPreview, onD
           }
           <div ref={chatEndRef}/>
         </div>
-        <div style={{flexShrink:0,padding:"5px 6px",borderTop:"1px solid #1e1e28",display:"flex",gap:4}}>
+        <div style={{flexShrink:0,padding:"5px 6px",borderTop:"1px solid #1F2228",display:"flex",gap:4}}>
           <input value={chatInput} onChange={e=>setChatInput(e.target.value)} onKeyDown={e=>e.key==="Enter"&&sendChat()} placeholder="Message..."
-            style={{flex:1,background:"#0c0c14",border:"1px solid #252535",color:"#d8d8e2",borderRadius:5,padding:"4px 7px",fontSize:9,fontFamily:"'DM Mono',monospace",outline:"none",minWidth:0}}/>
-          <button onClick={sendChat} style={{height:26,padding:"0 8px",background:`${G}18`,border:`1px solid ${G}33`,color:G,borderRadius:5,cursor:"pointer",fontFamily:"'DM Mono',monospace",fontSize:11,flexShrink:0}}>→</button>
+            style={{flex:1,background:"#131519",border:"1px solid #21252C",color:"#ECEEF1",borderRadius:5,padding:"4px 7px",fontSize:9,fontFamily:"'Inter',sans-serif",outline:"none",minWidth:0}}/>
+          <button onClick={sendChat} style={{height:26,padding:"0 8px",background:`${G}18`,border:`1px solid ${G}33`,color:G,borderRadius:5,cursor:"pointer",fontFamily:"'Inter',sans-serif",fontSize:11,flexShrink:0}}>→</button>
         </div>
       </div>
 
       {/* ── LIBRARY NAV SIDEBAR ── */}
-      <div style={{width:155,flexShrink:0,display:"flex",flexDirection:"column",borderRight:"1px solid #1e1e28",background:"#0a0a10"}}>
-        <div style={{padding:"8px 10px 6px",borderBottom:"1px solid #1e1e28",flexShrink:0,display:"flex",alignItems:"center",justifyContent:"space-between"}}>
-          <div style={{fontFamily:"'DM Mono',monospace",fontSize:11,color:"#d8d8e2",letterSpacing:1,fontWeight:600}}>Library</div>
+      <div style={{width:155,flexShrink:0,display:"flex",flexDirection:"column",borderRight:"1px solid #1F2228",background:"#131519"}}>
+        <div style={{padding:"8px 10px 6px",borderBottom:"1px solid #1F2228",flexShrink:0,display:"flex",alignItems:"center",justifyContent:"space-between"}}>
+          <div style={{fontFamily:"'Inter',sans-serif",fontSize:11,color:"#ECEEF1",letterSpacing:1,fontWeight:600}}>Library</div>
           <div style={{display:"flex",alignItems:"center",gap:4}}>
           {/* Reconnect folder — restores file access + artwork after browser restart */}
           <button title="Reconnect music folder (restores artwork & playback after browser restart)" onClick={()=>lib.reconnectFromFolder?.()} style={{background:"none",border:"none",cursor:"pointer",padding:"2px 3px",borderRadius:4,display:"flex",alignItems:"center",opacity:0.7,transition:"opacity 0.2s"}} onMouseEnter={e=>e.currentTarget.style.opacity=1} onMouseLeave={e=>e.currentTarget.style.opacity=0.7}>
             <svg width="16" height="14" viewBox="0 0 16 14" fill="none" xmlns="http://www.w3.org/2000/svg">
-              <path d="M1 3C1 2.44772 1.44772 2 2 2H6.5L7.5 3.5H14C14.5523 3.5 15 3.94772 15 4.5V11C15 11.5523 14.5523 12 14 12H2C1.44772 12 1 11.5523 1 11V3Z" stroke="#C8A96E" strokeWidth="1.5" strokeLinejoin="round" fill="none"/>
-              <path d="M5.5 8L7.5 10L10.5 6.5" stroke="#C8A96E" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
+              <path d="M1 3C1 2.44772 1.44772 2 2 2H6.5L7.5 3.5H14C14.5523 3.5 15 3.94772 15 4.5V11C15 11.5523 14.5523 12 14 12H2C1.44772 12 1 11.5523 1 11V3Z" stroke="#ECEEF1" strokeWidth="1.5" strokeLinejoin="round" fill="none"/>
+              <path d="M5.5 8L7.5 10L10.5 6.5" stroke="#ECEEF1" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
             </svg>
           </button>
           {/* SCAN ARTWORK — re-reads ID3 APIC for tracks missing artwork */}
-          <button title="Re-scan ID3 artwork for tracks missing cover art" disabled={lib.analyzing} onClick={()=>lib.scanArtwork?.()} style={{background:"transparent",border:"1px solid #C8A96E44",color:"#C8A96E",fontFamily:"'DM Mono',monospace",fontSize:8,letterSpacing:1,padding:"3px 6px",borderRadius:4,cursor:lib.analyzing?"default":"pointer",opacity:lib.analyzing?0.4:1,transition:"opacity 0.2s, border-color 0.2s"}} onMouseEnter={e=>{if(!lib.analyzing)e.currentTarget.style.borderColor="#C8A96E";}} onMouseLeave={e=>{e.currentTarget.style.borderColor="#C8A96E44";}}>SCAN ARTWORK</button>
+          <button title="Re-scan ID3 artwork for tracks missing cover art" disabled={lib.analyzing} onClick={()=>lib.scanArtwork?.()} style={{background:"transparent",border:"1px solid #ECEEF144",color:"#ECEEF1",fontFamily:"'Inter',sans-serif",fontSize:8,letterSpacing:1,padding:"3px 6px",borderRadius:4,cursor:lib.analyzing?"default":"pointer",opacity:lib.analyzing?0.4:1,transition:"opacity 0.2s, border-color 0.2s"}} onMouseEnter={e=>{if(!lib.analyzing)e.currentTarget.style.borderColor="#ECEEF1";}} onMouseLeave={e=>{e.currentTarget.style.borderColor="#ECEEF144";}}>SCAN ARTWORK</button>
           <button title={lib.analyzing?"Analyzing...":"Analyze library"} onClick={()=>lib.analyzeAll?.(lib.getFile)} style={{background:"none",border:"none",cursor:"pointer",padding:"2px 3px",borderRadius:4,opacity:lib.analyzing?0.5:1,transition:"opacity 0.2s",display:"flex",alignItems:"center"}}>
             <svg width="18" height="14" viewBox="0 0 18 14" fill="none" xmlns="http://www.w3.org/2000/svg">
-              <rect x="0"  y="5"  width="2" height="4" rx="1" fill={lib.analyzing?"#C8A96E":"#888898"}/>
-              <rect x="3"  y="2"  width="2" height="10" rx="1" fill={lib.analyzing?"#C8A96E":"#888898"}/>
-              <rect x="6"  y="0"  width="2" height="14" rx="1" fill={lib.analyzing?"#C8A96E":"#aaa8b8"}/>
-              <rect x="9"  y="3"  width="2" height="8"  rx="1" fill={lib.analyzing?"#C8A96E":"#888898"}/>
-              <rect x="12" y="1"  width="2" height="12" rx="1" fill={lib.analyzing?"#C8A96E":"#aaa8b8"}/>
-              <rect x="15" y="4"  width="2" height="6"  rx="1" fill={lib.analyzing?"#C8A96E":"#888898"}/>
+              <rect x="0"  y="5"  width="2" height="4" rx="1" fill={lib.analyzing?"#ECEEF1":"#7A7E85"}/>
+              <rect x="3"  y="2"  width="2" height="10" rx="1" fill={lib.analyzing?"#ECEEF1":"#7A7E85"}/>
+              <rect x="6"  y="0"  width="2" height="14" rx="1" fill={lib.analyzing?"#ECEEF1":"#7A7E85"}/>
+              <rect x="9"  y="3"  width="2" height="8"  rx="1" fill={lib.analyzing?"#ECEEF1":"#7A7E85"}/>
+              <rect x="12" y="1"  width="2" height="12" rx="1" fill={lib.analyzing?"#ECEEF1":"#7A7E85"}/>
+              <rect x="15" y="4"  width="2" height="6"  rx="1" fill={lib.analyzing?"#ECEEF1":"#7A7E85"}/>
             </svg>
           </button>
           </div>
@@ -2074,20 +2074,20 @@ function LibraryPanel({lib, onLoad, playingTrack, previewTrackId, onPreview, onD
             <div key={id} onClick={()=>{setActiveCrateId(null);setView(id);setDrillValue(null);}} style={navItemStyle(id,id==="queue")}>
               <span>{label}</span>
               {count!=null&&(
-                <span style={{fontSize:8,fontFamily:"'DM Mono',monospace",
-                  color:!activeCrateId&&view===id&&id==="queue"?"#22c55e":"#555562",
-                  background:!activeCrateId&&view===id&&id==="queue"?"#22c55e18":"transparent",
+                <span style={{fontSize:8,fontFamily:"'Inter',sans-serif",
+                  color:!activeCrateId&&view===id&&id==="queue"?"#6BB36B":"#52555C",
+                  background:!activeCrateId&&view===id&&id==="queue"?"#6BB36B18":"transparent",
                   borderRadius:8,padding:"1px 6px",fontSize:9}}>{count}</span>
               )}
             </div>
           ))}
 
           {/* Divider + PLAYLISTS collapsible */}
-          <div style={{height:1,background:"#1e1e28",margin:"6px 8px 2px"}}/>
+          <div style={{height:1,background:"#1F2228",margin:"6px 8px 2px"}}/>
           <div onClick={()=>setCratesExpanded(e=>!e)}
             style={{padding:"5px 12px 4px",display:"flex",justifyContent:"space-between",alignItems:"center",cursor:"pointer"}}>
-            <span style={{fontSize:9,fontFamily:"'DM Mono',monospace",color:"#555562",letterSpacing:1}}>PLAYLISTS</span>
-            <span style={{fontSize:9,fontFamily:"'DM Mono',monospace",color:"#555562"}}>{cratesExpanded?"▾":"▸"}</span>
+            <span style={{fontSize:9,fontFamily:"'Inter',sans-serif",color:"#52555C",letterSpacing:1}}>PLAYLISTS</span>
+            <span style={{fontSize:9,fontFamily:"'Inter',sans-serif",color:"#52555C"}}>{cratesExpanded?"▾":"▸"}</span>
           </div>
 
           {cratesExpanded&&(
@@ -2106,15 +2106,15 @@ function LibraryPanel({lib, onLoad, playingTrack, previewTrackId, onPreview, onD
                       await cmDbPut("crates",updated);lib.reload?.();
                     }catch{}
                   }}
-                  style={{padding:"5px 12px 5px 20px",fontSize:10,fontFamily:"'DM Sans',sans-serif",
-                    color:activeCrateId===cr.id?G:dragOverCrate===cr.id?"#d8d8e2":"#888898",
+                  style={{padding:"5px 12px 5px 20px",fontSize:10,fontFamily:"'Inter',sans-serif",
+                    color:activeCrateId===cr.id?G:dragOverCrate===cr.id?"#ECEEF1":"#7A7E85",
                     background:activeCrateId===cr.id?`${G}10`:dragOverCrate===cr.id?`${G}18`:"transparent",
                     cursor:"pointer",
                     borderLeft:`2px solid ${activeCrateId===cr.id?G:dragOverCrate===cr.id?G+"88":"transparent"}`,
                     transition:"all .1s",display:"flex",justifyContent:"space-between",alignItems:"center",
                     outline:dragOverCrate===cr.id?`1px dashed ${G}44`:"none"}}>
                   <span style={{overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",flex:1}}>{cr.name}</span>
-                  <span style={{fontSize:9,color:"#555562",fontFamily:"'DM Mono',monospace",flexShrink:0,marginLeft:4}}>{(cr.trackIds||[]).length}</span>
+                  <span style={{fontSize:9,color:"#52555C",fontFamily:"'Inter',sans-serif",flexShrink:0,marginLeft:4}}>{(cr.trackIds||[]).length}</span>
                 </div>
               ))}
               {showNewCrateInput
@@ -2123,12 +2123,12 @@ function LibraryPanel({lib, onLoad, playingTrack, previewTrackId, onPreview, onD
                       onChange={e=>setNewCrateName(e.target.value)}
                       onKeyDown={e=>{if(e.key==="Enter")createCrate();if(e.key==="Escape"){setShowNewCrateInput(false);setNewCrateName("");}}}
                       placeholder="Playlist name..."
-                      style={{flex:1,background:"#0c0c14",border:`1px solid ${G}33`,color:"#d8d8e2",borderRadius:4,padding:"3px 6px",fontSize:9,fontFamily:"'DM Mono',monospace",outline:"none",minWidth:0}}/>
+                      style={{flex:1,background:"#131519",border:`1px solid ${G}33`,color:"#ECEEF1",borderRadius:4,padding:"3px 6px",fontSize:9,fontFamily:"'Inter',sans-serif",outline:"none",minWidth:0}}/>
                     <button onClick={createCrate}
-                      style={{padding:"2px 6px",background:`${G}18`,border:`1px solid ${G}44`,color:G,borderRadius:4,cursor:"pointer",fontSize:10,fontFamily:"'DM Mono',monospace"}}>✓</button>
+                      style={{padding:"2px 6px",background:`${G}18`,border:`1px solid ${G}44`,color:G,borderRadius:4,cursor:"pointer",fontSize:10,fontFamily:"'Inter',sans-serif"}}>✓</button>
                   </div>
                 :<div onClick={()=>setShowNewCrateInput(true)}
-                    style={{padding:"4px 20px",fontSize:9,fontFamily:"'DM Mono',monospace",color:"#555562",cursor:"pointer",letterSpacing:.5}}>
+                    style={{padding:"4px 20px",fontSize:9,fontFamily:"'Inter',sans-serif",color:"#52555C",cursor:"pointer",letterSpacing:.5}}>
                     + New Playlist
                   </div>
               }
@@ -2137,7 +2137,7 @@ function LibraryPanel({lib, onLoad, playingTrack, previewTrackId, onPreview, onD
         </div>
 
         {/* ADD TRACKS */}
-        <div style={{flexShrink:0,padding:"6px 8px",borderTop:"1px solid #1e1e28",display:"flex",flexDirection:"column",gap:4}}>
+        <div style={{flexShrink:0,padding:"6px 8px",borderTop:"1px solid #1F2228",display:"flex",flexDirection:"column",gap:4}}>
           <button
             onClick={async () => {
               try {
@@ -2178,16 +2178,16 @@ function LibraryPanel({lib, onLoad, playingTrack, previewTrackId, onPreview, onD
             }}
             style={{
               padding: "8px 16px",
-              background: "#C8A96E",
+              background: "#ECEEF1",
               border: "none",
-              color: "#07070f",
+              color: "#0A0B0D",
               fontFamily: "'DM Mono', monospace",
               fontWeight: 500,
               fontSize: 10,
               letterSpacing: 2,
               borderRadius: 7,
               cursor: "pointer",
-              boxShadow: "0 0 20px #C8A96E28",
+              boxShadow: "0 0 20px #ECEEF128",
               transition: "all .2s",
               whiteSpace: "nowrap",
               width: "100%",
@@ -2248,39 +2248,39 @@ function LibraryPanel({lib, onLoad, playingTrack, previewTrackId, onPreview, onD
       <div style={{flex:1,display:"flex",flexDirection:"column",overflow:"hidden",minWidth:0}}>
 
         {/* Header: breadcrumb + search + FILTER */}
-        <div style={{padding:"6px 10px",borderBottom:"1px solid #181820",flexShrink:0}}>
+        <div style={{padding:"6px 10px",borderBottom:"1px solid #21252C",flexShrink:0}}>
           {/* Breadcrumb for drill views */}
           {drillValue&&(
             <div style={{display:"flex",alignItems:"center",gap:6,marginBottom:5}}>
-              <button onClick={()=>setDrillValue(null)} style={{fontSize:8,fontFamily:"'DM Mono',monospace",color:G,background:"transparent",border:`1px solid ${G}33`,borderRadius:4,padding:"2px 7px",cursor:"pointer",letterSpacing:.5}}>← {view==="artists"?"Artists":view==="labels"?"Labels":"Energy"}</button>
-              <span style={{fontSize:9,fontFamily:"'DM Sans',sans-serif",color:"#d8d8e2",fontWeight:500}}>{drillValue}</span>
-              <span style={{fontSize:8,fontFamily:"'DM Mono',monospace",color:"#555562"}}>({filtered.length})</span>
+              <button onClick={()=>setDrillValue(null)} style={{fontSize:8,fontFamily:"'Inter',sans-serif",color:G,background:"transparent",border:`1px solid ${G}33`,borderRadius:4,padding:"2px 7px",cursor:"pointer",letterSpacing:.5}}>← {view==="artists"?"Artists":view==="labels"?"Labels":"Energy"}</button>
+              <span style={{fontSize:9,fontFamily:"'Inter',sans-serif",color:"#ECEEF1",fontWeight:500}}>{drillValue}</span>
+              <span style={{fontSize:8,fontFamily:"'Inter',sans-serif",color:"#52555C"}}>({filtered.length})</span>
             </div>
           )}
           <div style={{display:"flex",gap:6,alignItems:"center"}}>
             <input value={filter} onChange={e=>setFilter(e.target.value)} placeholder={drillValue?`Search in ${drillValue}...`:"Search tracks..."}
-              style={{flex:1,background:"#0c0c14",border:"1px solid #252535",color:"#d0d0e0",borderRadius:5,padding:"4px 9px",fontSize:9,fontFamily:"'DM Mono',monospace",outline:"none"}}/>
+              style={{flex:1,background:"#131519",border:"1px solid #21252C",color:"#d0d0e0",borderRadius:5,padding:"4px 9px",fontSize:9,fontFamily:"'Inter',sans-serif",outline:"none"}}/>
             <button onClick={()=>setShowFilters(f=>!f)}
-              style={{padding:"3px 10px",fontSize:7,fontFamily:"'DM Mono',monospace",letterSpacing:1,
+              style={{padding:"3px 10px",fontSize:7,fontFamily:"'Inter',sans-serif",letterSpacing:1,
                 background:hasActiveFilter||showFilters?`${G}22`:"transparent",
-                color:hasActiveFilter||showFilters?G:"#888898",
-                border:`1px solid ${hasActiveFilter||showFilters?G+"44":"#252535"}`,
+                color:hasActiveFilter||showFilters?G:"#7A7E85",
+                border:`1px solid ${hasActiveFilter||showFilters?G+"44":"#21252C"}`,
                 borderRadius:4,cursor:"pointer",outline:"none",whiteSpace:"nowrap",flexShrink:0}}>
               FILTER{hasActiveFilter?" ●":""}</button>
-            {!isDrillList&&<span style={{fontSize:9,fontFamily:"'DM Mono',monospace",color:"#555562",flexShrink:0}}>{filtered.length}</span>}
+            {!isDrillList&&<span style={{fontSize:9,fontFamily:"'Inter',sans-serif",color:"#52555C",flexShrink:0}}>{filtered.length}</span>}
             {lib.importing&&<div style={{width:8,height:8,border:`1.5px solid ${G}33`,borderTop:`1.5px solid ${G}`,borderRadius:"50%",animation:"spin 1s linear infinite",flexShrink:0}}/>}
           </div>
 
           {/* Filter panel */}
           {showFilters&&(
-            <div style={{marginTop:8,padding:"10px 12px",background:"#0c0c14",borderRadius:6,border:"1px solid #252535",display:"flex",flexDirection:"column",gap:10}}>
+            <div style={{marginTop:8,padding:"10px 12px",background:"#131519",borderRadius:6,border:"1px solid #21252C",display:"flex",flexDirection:"column",gap:10}}>
               {/* Energy pills */}
               <div>
-                <div style={{fontSize:7,fontFamily:"'DM Mono',monospace",color:"#555562",letterSpacing:1.5,marginBottom:5}}>ENERGY</div>
+                <div style={{fontSize:7,fontFamily:"'Inter',sans-serif",color:"#52555C",letterSpacing:1.5,marginBottom:5}}>ENERGY</div>
                 <div style={{display:"flex",flexWrap:"wrap",gap:4}}>
                   {ENERGY_LABELS.map(e=>(
                     <button key={e} onClick={()=>setEnergyFilter(ef=>ef===e?null:e)}
-                      style={{padding:"3px 9px",fontSize:7,fontFamily:"'DM Mono',monospace",borderRadius:12,
+                      style={{padding:"3px 9px",fontSize:7,fontFamily:"'Inter',sans-serif",borderRadius:12,
                         background:energyFilter===e?ENERGY_COLOR[e]:`${ENERGY_COLOR[e]}22`,
                         color:energyFilter===e?"#000":ENERGY_COLOR[e],
                         border:`1px solid ${ENERGY_COLOR[e]}55`,cursor:"pointer",letterSpacing:.5,
@@ -2290,7 +2290,7 @@ function LibraryPanel({lib, onLoad, playingTrack, previewTrackId, onPreview, onD
               </div>
               {/* BPM range */}
               <div>
-                <div style={{display:"flex",justifyContent:"space-between",fontSize:7,fontFamily:"'DM Mono',monospace",color:"#555562",letterSpacing:1.5,marginBottom:4}}>
+                <div style={{display:"flex",justifyContent:"space-between",fontSize:7,fontFamily:"'Inter',sans-serif",color:"#52555C",letterSpacing:1.5,marginBottom:4}}>
                   <span>BPM RANGE</span><span style={{color:G}}>{bpmRange[0]} – {bpmRange[1]}</span>
                 </div>
                 <input type="range" min={60} max={200} value={bpmRange[0]}
@@ -2302,21 +2302,21 @@ function LibraryPanel({lib, onLoad, playingTrack, previewTrackId, onPreview, onD
               </div>
               {/* Key/Camelot grid */}
               <div>
-                <div style={{fontSize:7,fontFamily:"'DM Mono',monospace",color:"#555562",letterSpacing:1.5,marginBottom:5}}>KEY (CAMELOT)</div>
+                <div style={{fontSize:7,fontFamily:"'Inter',sans-serif",color:"#52555C",letterSpacing:1.5,marginBottom:5}}>KEY (CAMELOT)</div>
                 <div style={{display:"grid",gridTemplateColumns:"repeat(12,1fr)",gap:2}}>
                   {CAMELOT_KEYS.map(k=>(
                     <button key={k} onClick={()=>setKeyFilter(kf=>kf===k?null:k)}
-                      style={{padding:"3px 1px",fontSize:7,fontFamily:"'DM Mono',monospace",
+                      style={{padding:"3px 1px",fontSize:7,fontFamily:"'Inter',sans-serif",
                         background:keyFilter===k?G:"transparent",
-                        color:keyFilter===k?"#000":k.endsWith("A")?"#8B6EAF":G,
-                        border:`1px solid ${keyFilter===k?G:k.endsWith("A")?"#8B6EAF44":G+"33"}`,
+                        color:keyFilter===k?"#000":k.endsWith("A")?"#5B8FF9":G,
+                        border:`1px solid ${keyFilter===k?G:k.endsWith("A")?"#5B8FF944":G+"33"}`,
                         borderRadius:3,cursor:"pointer",textAlign:"center"}}>{k}</button>
                   ))}
                 </div>
               </div>
               {hasActiveFilter&&(
                 <button onClick={()=>{setEnergyFilter(null);setBpmRange([60,200]);setKeyFilter(null);}}
-                  style={{padding:"4px",fontSize:7,fontFamily:"'DM Mono',monospace",background:"transparent",border:"1px solid #252535",color:"#555562",borderRadius:4,cursor:"pointer",letterSpacing:1}}>
+                  style={{padding:"4px",fontSize:7,fontFamily:"'Inter',sans-serif",background:"transparent",border:"1px solid #21252C",color:"#52555C",borderRadius:4,cursor:"pointer",letterSpacing:1}}>
                   RESET FILTERS</button>
               )}
             </div>
@@ -2324,7 +2324,7 @@ function LibraryPanel({lib, onLoad, playingTrack, previewTrackId, onPreview, onD
         </div>
 
         {/* Column headers */}
-        <div style={{display:"grid",gridTemplateColumns:"28px 36px 1fr 70px 44px 70px 44px 64px",gap:6,padding:"4px 10px",borderBottom:"1px solid #181820",flexShrink:0}}>
+        <div style={{display:"grid",gridTemplateColumns:"28px 36px 1fr 70px 44px 70px 44px 64px",gap:6,padding:"4px 10px",borderBottom:"1px solid #21252C",flexShrink:0}}>
           <div/><div/>
           {colHdr("TITLE / ARTIST","title")}
           {colHdr("BPM","bpm")}
@@ -2343,20 +2343,20 @@ function LibraryPanel({lib, onLoad, playingTrack, previewTrackId, onPreview, onD
               const eCol=view==="energy"?ENERGY_COLOR[val]:null;
               return(
                 <div key={val} onClick={()=>setDrillValue(val)}
-                  style={{display:"flex",alignItems:"center",gap:10,padding:"10px 14px",borderBottom:"1px solid #14141e",cursor:"pointer",background:"transparent",transition:"background .1s"}}
-                  onMouseEnter={e=>e.currentTarget.style.background="#181822"}
+                  style={{display:"flex",alignItems:"center",gap:10,padding:"10px 14px",borderBottom:"1px solid #131519",cursor:"pointer",background:"transparent",transition:"background .1s"}}
+                  onMouseEnter={e=>e.currentTarget.style.background="#1A1D23"}
                   onMouseLeave={e=>e.currentTarget.style.background="transparent"}>
                   {eCol&&<div style={{width:8,height:8,borderRadius:"50%",background:eCol,flexShrink:0,boxShadow:`0 0 6px ${eCol}`}}/>}
                   <div style={{flex:1,minWidth:0}}>
-                    <div style={{fontSize:11,fontFamily:"'DM Sans',sans-serif",color:"#d8d8e2",fontWeight:500,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{val||"Unknown"}</div>
-                    <div style={{fontSize:8,fontFamily:"'DM Mono',monospace",color:"#555562",marginTop:1}}>{count} {count===1?"track":"tracks"}</div>
+                    <div style={{fontSize:11,fontFamily:"'Inter',sans-serif",color:"#ECEEF1",fontWeight:500,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{val||"Unknown"}</div>
+                    <div style={{fontSize:8,fontFamily:"'Inter',sans-serif",color:"#52555C",marginTop:1}}>{count} {count===1?"track":"tracks"}</div>
                   </div>
-                  <span style={{fontSize:10,color:"#555562",flexShrink:0}}>›</span>
+                  <span style={{fontSize:10,color:"#52555C",flexShrink:0}}>›</span>
                 </div>
               );
             })}
             {(view==="artists"?uniqueArtists:view==="labels"?uniqueLabels:uniqueEnergies).length===0&&(
-              <div style={{padding:24,textAlign:"center",fontSize:9,fontFamily:"'DM Mono',monospace",color:"#555562"}}>
+              <div style={{padding:24,textAlign:"center",fontSize:9,fontFamily:"'Inter',sans-serif",color:"#52555C"}}>
                 {view==="artists"?"No artists found":view==="labels"?"No labels — import tracks with label tags":"Analyze tracks to see energy levels"}
               </div>
             )}
@@ -2364,9 +2364,9 @@ function LibraryPanel({lib, onLoad, playingTrack, previewTrackId, onPreview, onD
         ):(
           <div style={{flex:1,overflowY:"auto",padding:"2px 0"}} onDragOver={e=>e.preventDefault()} onDrop={e=>{e.preventDefault();lib.importFiles([...e.dataTransfer.files]);}}>
             {filtered.length===0?(
-              <div onClick={()=>setShowImportModal(true)} style={{display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",height:"100%",gap:12,cursor:"pointer",padding:20,border:`2px dashed #C8A96E18`,borderRadius:8,margin:8}}>
+              <div onClick={()=>setShowImportModal(true)} style={{display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",height:"100%",gap:12,cursor:"pointer",padding:20,border:`2px dashed #ECEEF118`,borderRadius:8,margin:8}}>
                 <div style={{fontSize:28,opacity:.15}}>♫</div>
-                <div style={{fontFamily:"'DM Mono',monospace",fontSize:9,color:"#555562",textAlign:"center",letterSpacing:1,lineHeight:2}}>{allTracks.length===0?"DROP TRACKS HERE\nOR CLICK TO ADD\n\nMP3 · WAV · FLAC · AAC":"NO TRACKS MATCH"}</div>
+                <div style={{fontFamily:"'Inter',sans-serif",fontSize:9,color:"#52555C",textAlign:"center",letterSpacing:1,lineHeight:2}}>{allTracks.length===0?"DROP TRACKS HERE\nOR CLICK TO ADD\n\nMP3 · WAV · FLAC · AAC":"NO TRACKS MATCH"}</div>
               </div>
             ):filtered.map(track=>{
               const recData=selfRecs.find(r=>r.id===track.id);
@@ -2392,16 +2392,16 @@ function LibraryPanel({lib, onLoad, playingTrack, previewTrackId, onPreview, onD
       </div>{/* end main track list column */}
 
       {/* ── ALWAYS-ON SUGGEST PANEL ── */}
-      <div style={{width:220,flexShrink:0,display:"flex",flexDirection:"column",borderLeft:"1px solid #1e1e28",background:"#09090f",overflow:"hidden"}}>
-        <div style={{padding:"6px 10px 5px",borderBottom:"1px solid #1e1e28",flexShrink:0,display:"flex",alignItems:"center",justifyContent:"space-between"}}>
-          <div style={{fontSize:9,fontFamily:"'DM Mono',monospace",color:`${G}cc`,letterSpacing:1.5}}>SUGGESTIONS</div>
-          {selfRecs.length>0&&<span style={{fontSize:8,fontFamily:"'DM Mono',monospace",color:"#555562"}}>{selfRecs.length}</span>}
+      <div style={{width:220,flexShrink:0,display:"flex",flexDirection:"column",borderLeft:"1px solid #1F2228",background:"#09090f",overflow:"hidden"}}>
+        <div style={{padding:"6px 10px 5px",borderBottom:"1px solid #1F2228",flexShrink:0,display:"flex",alignItems:"center",justifyContent:"space-between"}}>
+          <div style={{fontSize:9,fontFamily:"'Inter',sans-serif",color:`${G}cc`,letterSpacing:1.5}}>SUGGESTIONS</div>
+          {selfRecs.length>0&&<span style={{fontSize:8,fontFamily:"'Inter',sans-serif",color:"#52555C"}}>{selfRecs.length}</span>}
         </div>
         <div style={{flex:1,overflowY:"auto",padding:"2px 0"}}>
           {selfRecs.length===0?(
-            <div style={{padding:16,fontSize:8,fontFamily:"'DM Mono',monospace",color:"#555562",textAlign:"center",lineHeight:1.8,marginTop:8}}>
+            <div style={{padding:16,fontSize:8,fontFamily:"'Inter',sans-serif",color:"#52555C",textAlign:"center",lineHeight:1.8,marginTop:8}}>
               Load a track to<br/>see mix suggestions<br/><br/>
-              <span style={{color:"#333340"}}>Matches by key,<br/>BPM &amp; energy</span>
+              <span style={{color:"#2C3037"}}>Matches by key,<br/>BPM &amp; energy</span>
             </div>
           ):selfRecs.map(track=>{
             return(
@@ -2419,16 +2419,16 @@ function LibraryPanel({lib, onLoad, playingTrack, previewTrackId, onPreview, onD
                     </div>
                   );})()}
                   <div style={{flex:1,minWidth:0}}>
-                    <div style={{fontSize:9,color:"#d8d8e2",fontFamily:"'DM Sans',sans-serif",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",fontWeight:500}}>{track.title||track.filename}</div>
-                    <div style={{fontSize:8,color:"#888898",fontFamily:"'DM Sans',sans-serif",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{track.artist}</div>
+                    <div style={{fontSize:9,color:"#ECEEF1",fontFamily:"'Inter',sans-serif",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",fontWeight:500}}>{track.title||track.filename}</div>
+                    <div style={{fontSize:8,color:"#7A7E85",fontFamily:"'Inter',sans-serif",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{track.artist}</div>
                   </div>
                 </div>
                 {/* reasons */}
-                {track.reasons?.length>0&&<div style={{display:"flex",gap:2,flexWrap:"wrap",marginTop:4}}>{track.reasons.map(r=><span key={r} style={{fontSize:6,fontFamily:"'DM Mono',monospace",color:"#22c55e",background:"#22c55e10",borderRadius:2,padding:"0 4px",letterSpacing:.4}}>{r}</span>)}</div>}
+                {track.reasons?.length>0&&<div style={{display:"flex",gap:2,flexWrap:"wrap",marginTop:4}}>{track.reasons.map(r=><span key={r} style={{fontSize:6,fontFamily:"'Inter',sans-serif",color:"#6BB36B",background:"#6BB36B10",borderRadius:2,padding:"0 4px",letterSpacing:.4}}>{r}</span>)}</div>}
                 {/* load buttons */}
                 <div style={{display:"flex",gap:3,marginTop:5}}>
-                  <button onClick={()=>onLoad(track,"A")} style={{flex:1,padding:"3px 0",fontSize:8,fontFamily:"'DM Mono',monospace",background:`${G}12`,border:`1px solid ${G}2a`,color:G,borderRadius:3,cursor:"pointer"}}>→ A</button>
-                  <button onClick={()=>onLoad(track,"B")} style={{flex:1,padding:"3px 0",fontSize:8,fontFamily:"'DM Mono',monospace",background:"#C8A96E10",border:"1px solid #C8A96E28",color:"#C8A96E",borderRadius:3,cursor:"pointer"}}>→ B</button>
+                  <button onClick={()=>onLoad(track,"A")} style={{flex:1,padding:"3px 0",fontSize:8,fontFamily:"'Inter',sans-serif",background:`${G}12`,border:`1px solid ${G}2a`,color:G,borderRadius:3,cursor:"pointer"}}>→ A</button>
+                  <button onClick={()=>onLoad(track,"B")} style={{flex:1,padding:"3px 0",fontSize:8,fontFamily:"'Inter',sans-serif",background:"#ECEEF110",border:"1px solid #ECEEF128",color:"#ECEEF1",borderRadius:3,cursor:"pointer"}}>→ B</button>
                 </div>
               </div>
             );
@@ -2441,57 +2441,57 @@ function LibraryPanel({lib, onLoad, playingTrack, previewTrackId, onPreview, onD
       {/* ── IMPORT MODAL ── */}
       {showImportModal&&(
         <div onClick={e=>{if(e.target===e.currentTarget)setShowImportModal(false);}} style={{position:"fixed",inset:0,background:"rgba(0,0,0,.8)",zIndex:9998,display:"flex",alignItems:"center",justifyContent:"center",backdropFilter:"blur(8px)"}}>
-          <div style={{width:480,background:"#0E0C1A",border:"1px solid #252535",borderRadius:14,padding:28,display:"flex",flexDirection:"column",gap:18,boxShadow:"0 40px 80px rgba(0,0,0,.8)"}}>
+          <div style={{width:480,background:"#1A1D23",border:"1px solid #21252C",borderRadius:14,padding:28,display:"flex",flexDirection:"column",gap:18,boxShadow:"0 40px 80px rgba(0,0,0,.8)"}}>
             <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
-              <div style={{fontFamily:"'DM Mono',monospace",fontSize:13,color:G,letterSpacing:1}}>ADD MUSIC</div>
-              <button onClick={()=>setShowImportModal(false)} style={{background:"transparent",border:"none",color:"#555562",fontSize:16,cursor:"pointer",padding:"2px 6px"}}>✕</button>
+              <div style={{fontFamily:"'Inter',sans-serif",fontSize:13,color:G,letterSpacing:1}}>ADD MUSIC</div>
+              <button onClick={()=>setShowImportModal(false)} style={{background:"transparent",border:"none",color:"#52555C",fontSize:16,cursor:"pointer",padding:"2px 6px"}}>✕</button>
             </div>
             {/* Tab selector */}
-            <div style={{display:"flex",gap:0,borderRadius:7,overflow:"hidden",border:"1px solid #252535"}}>
+            <div style={{display:"flex",gap:0,borderRadius:7,overflow:"hidden",border:"1px solid #21252C"}}>
               {[["local","📁 Local Files"],["itunes","🎵 iTunes"],["rekordbox","🎛 Rekordbox"]].map(([tab,label])=>(
-                <button key={tab} onClick={()=>setImportTab(tab)} style={{flex:1,padding:"8px 4px",fontSize:9,fontFamily:"'DM Mono',monospace",background:importTab===tab?`${G}18`:"transparent",color:importTab===tab?G:"#555562",border:"none",borderRight:tab!=="rekordbox"?"1px solid #252535":"none",cursor:"pointer",letterSpacing:.5}}>{label}</button>
+                <button key={tab} onClick={()=>setImportTab(tab)} style={{flex:1,padding:"8px 4px",fontSize:9,fontFamily:"'Inter',sans-serif",background:importTab===tab?`${G}18`:"transparent",color:importTab===tab?G:"#52555C",border:"none",borderRight:tab!=="rekordbox"?"1px solid #21252C":"none",cursor:"pointer",letterSpacing:.5}}>{label}</button>
               ))}
             </div>
 
             {importTab==="local"&&(
               <div style={{display:"flex",flexDirection:"column",gap:12}}>
-                <div style={{fontSize:10,fontFamily:"'DM Sans',sans-serif",color:"#888898",lineHeight:1.6}}>Select individual audio files or hold <span style={{color:G,fontFamily:"'DM Mono',monospace"}}>⌘/Ctrl</span> to select multiple files at once.</div>
+                <div style={{fontSize:10,fontFamily:"'Inter',sans-serif",color:"#7A7E85",lineHeight:1.6}}>Select individual audio files or hold <span style={{color:G,fontFamily:"'Inter',sans-serif"}}>⌘/Ctrl</span> to select multiple files at once.</div>
                 <div onClick={()=>fileRef.current?.click()} style={{border:`2px dashed ${G}33`,borderRadius:8,padding:24,textAlign:"center",cursor:"pointer",display:"flex",flexDirection:"column",gap:8}} onMouseEnter={e=>e.currentTarget.style.borderColor=G+"66"} onMouseLeave={e=>e.currentTarget.style.borderColor=G+"33"}>
                   <div style={{fontSize:24,opacity:.4}}>♫</div>
-                  <div style={{fontSize:10,fontFamily:"'DM Mono',monospace",color:G,letterSpacing:.5}}>CLICK TO BROWSE</div>
-                  <div style={{fontSize:9,fontFamily:"'DM Sans',sans-serif",color:"#555562"}}>MP3 · WAV · FLAC · AAC · OGG · M4A</div>
+                  <div style={{fontSize:10,fontFamily:"'Inter',sans-serif",color:G,letterSpacing:.5}}>CLICK TO BROWSE</div>
+                  <div style={{fontSize:9,fontFamily:"'Inter',sans-serif",color:"#52555C"}}>MP3 · WAV · FLAC · AAC · OGG · M4A</div>
                 </div>
-                <div style={{fontSize:9,fontFamily:"'DM Sans',sans-serif",color:"#555562",textAlign:"center"}}>You can also drag &amp; drop files directly into the track list</div>
+                <div style={{fontSize:9,fontFamily:"'Inter',sans-serif",color:"#52555C",textAlign:"center"}}>You can also drag &amp; drop files directly into the track list</div>
               </div>
             )}
 
             {importTab==="itunes"&&(
               <div style={{display:"flex",flexDirection:"column",gap:14}}>
-                <div style={{fontSize:10,fontFamily:"'DM Sans',sans-serif",color:"#888898",lineHeight:1.7}}>Export your iTunes/Apple Music library XML and import it here to see all your tracks, BPM, keys and artwork.</div>
-                <div style={{background:"#0c0c14",border:"1px solid #1e1e28",borderRadius:8,padding:14,display:"flex",flexDirection:"column",gap:6}}>
-                  <div style={{fontSize:9,fontFamily:"'DM Mono',monospace",color:G,letterSpacing:.5,marginBottom:4}}>HOW TO EXPORT FROM ITUNES / MUSIC APP</div>
+                <div style={{fontSize:10,fontFamily:"'Inter',sans-serif",color:"#7A7E85",lineHeight:1.7}}>Export your iTunes/Apple Music library XML and import it here to see all your tracks, BPM, keys and artwork.</div>
+                <div style={{background:"#131519",border:"1px solid #1F2228",borderRadius:8,padding:14,display:"flex",flexDirection:"column",gap:6}}>
+                  <div style={{fontSize:9,fontFamily:"'Inter',sans-serif",color:G,letterSpacing:.5,marginBottom:4}}>HOW TO EXPORT FROM ITUNES / MUSIC APP</div>
                   {["1. Open iTunes or Apple Music on your Mac","2. Go to File → Library → Export Library…","3. Save the file as iTunes Music Library.xml","4. Click the button below to select it"].map((s,i)=>(
-                    <div key={i} style={{fontSize:9,fontFamily:"'DM Sans',sans-serif",color:"#888898",display:"flex",gap:8,alignItems:"flex-start"}}>
-                      <span style={{color:G,fontFamily:"'DM Mono',monospace",fontSize:8,flexShrink:0,marginTop:1}}>{i+1}.</span>{s.slice(3)}
+                    <div key={i} style={{fontSize:9,fontFamily:"'Inter',sans-serif",color:"#7A7E85",display:"flex",gap:8,alignItems:"flex-start"}}>
+                      <span style={{color:G,fontFamily:"'Inter',sans-serif",fontSize:8,flexShrink:0,marginTop:1}}>{i+1}.</span>{s.slice(3)}
                     </div>
                   ))}
                 </div>
-                <button onClick={()=>itunesRef.current?.click()} style={{padding:"10px",fontSize:10,fontFamily:"'DM Mono',monospace",background:`${G}18`,border:`1px solid ${G}44`,color:G,borderRadius:7,cursor:"pointer",letterSpacing:.5}}>SELECT ITUNES XML FILE</button>
+                <button onClick={()=>itunesRef.current?.click()} style={{padding:"10px",fontSize:10,fontFamily:"'Inter',sans-serif",background:`${G}18`,border:`1px solid ${G}44`,color:G,borderRadius:7,cursor:"pointer",letterSpacing:.5}}>SELECT ITUNES XML FILE</button>
               </div>
             )}
 
             {importTab==="rekordbox"&&(
               <div style={{display:"flex",flexDirection:"column",gap:14}}>
-                <div style={{fontSize:10,fontFamily:"'DM Sans',sans-serif",color:"#888898",lineHeight:1.7}}>Export your Rekordbox collection as XML and import it here to sync your tracks, cue points and playlists.</div>
-                <div style={{background:"#0c0c14",border:"1px solid #1e1e28",borderRadius:8,padding:14,display:"flex",flexDirection:"column",gap:6}}>
-                  <div style={{fontSize:9,fontFamily:"'DM Mono',monospace",color:G,letterSpacing:.5,marginBottom:4}}>HOW TO EXPORT FROM REKORDBOX</div>
+                <div style={{fontSize:10,fontFamily:"'Inter',sans-serif",color:"#7A7E85",lineHeight:1.7}}>Export your Rekordbox collection as XML and import it here to sync your tracks, cue points and playlists.</div>
+                <div style={{background:"#131519",border:"1px solid #1F2228",borderRadius:8,padding:14,display:"flex",flexDirection:"column",gap:6}}>
+                  <div style={{fontSize:9,fontFamily:"'Inter',sans-serif",color:G,letterSpacing:.5,marginBottom:4}}>HOW TO EXPORT FROM REKORDBOX</div>
                   {["1. Open Rekordbox on your computer","2. Go to File → Export Collection in xml format","3. Choose a save location and click Export","4. Click the button below to select the exported XML"].map((s,i)=>(
-                    <div key={i} style={{fontSize:9,fontFamily:"'DM Sans',sans-serif",color:"#888898",display:"flex",gap:8,alignItems:"flex-start"}}>
-                      <span style={{color:"#00BFA5",fontFamily:"'DM Mono',monospace",fontSize:8,flexShrink:0,marginTop:1}}>{i+1}.</span>{s.slice(3)}
+                    <div key={i} style={{fontSize:9,fontFamily:"'Inter',sans-serif",color:"#7A7E85",display:"flex",gap:8,alignItems:"flex-start"}}>
+                      <span style={{color:"#C97064",fontFamily:"'Inter',sans-serif",fontSize:8,flexShrink:0,marginTop:1}}>{i+1}.</span>{s.slice(3)}
                     </div>
                   ))}
                 </div>
-                <button onClick={()=>rekordboxRef.current?.click()} style={{padding:"10px",fontSize:10,fontFamily:"'DM Mono',monospace",background:"#00BFA518",border:"1px solid #00BFA544",color:"#00BFA5",borderRadius:7,cursor:"pointer",letterSpacing:.5}}>SELECT REKORDBOX XML FILE</button>
+                <button onClick={()=>rekordboxRef.current?.click()} style={{padding:"10px",fontSize:10,fontFamily:"'Inter',sans-serif",background:"#C9706418",border:"1px solid #C9706444",color:"#C97064",borderRadius:7,cursor:"pointer",letterSpacing:.5}}>SELECT REKORDBOX XML FILE</button>
               </div>
             )}
           </div>
@@ -2681,7 +2681,7 @@ function useMidi({ onAction }) {
 // ── UI Primitives ─────────────────────────────────────────────
 function VU({ an, color, w=100 }) {
   const ref=useRef(null),raf=useRef(null);
-  useEffect(()=>{ if(!an||!ref.current)return; const c=ref.current,ctx=c.getContext("2d"),d=new Uint8Array(an.frequencyBinCount); const draw=()=>{ raf.current=requestAnimationFrame(draw); an.getByteFrequencyData(d); const lv=d.reduce((s,v)=>s+v,0)/d.length/255; ctx.clearRect(0,0,c.width,c.height); const n=12; for(let i=0;i<n;i++){ctx.fillStyle=lv*n>i?(i>10?"#ef4444":i>8?"#f59e0b":color):"#0b0b18";ctx.fillRect(i*(c.width/n+.3),0,c.width/n-1,c.height);} }; draw(); return()=>cancelAnimationFrame(raf.current); },[an,color]);
+  useEffect(()=>{ if(!an||!ref.current)return; const c=ref.current,ctx=c.getContext("2d"),d=new Uint8Array(an.frequencyBinCount); const draw=()=>{ raf.current=requestAnimationFrame(draw); an.getByteFrequencyData(d); const lv=d.reduce((s,v)=>s+v,0)/d.length/255; ctx.clearRect(0,0,c.width,c.height); const n=12; for(let i=0;i<n;i++){ctx.fillStyle=lv*n>i?(i>10?"#B86060":i>8?"#C9A06B":color):"#0b0b18";ctx.fillRect(i*(c.width/n+.3),0,c.width/n-1,c.height);} }; draw(); return()=>cancelAnimationFrame(raf.current); },[an,color]);
   return <canvas ref={ref} width={w} height={6} style={{width:"100%",borderRadius:2}}/>;
 }
 
@@ -2739,10 +2739,10 @@ function WF({ bands, peaks, freq, prog, onSeek, h=80, hotCues=[], loopStart=null
         ctx.fillStyle=played?'#44aaff':'#1e5599';
         if(bH>0.5)ctx.fillRect(x,base-bH,BAR,bH);
         // Mid (brand gold)
-        ctx.fillStyle=played?'#C8A96E':'#8A7548';
+        ctx.fillStyle=played?'#ECEEF1':'#8A7548';
         if(mH>0.5)ctx.fillRect(x,base-bH-mH,BAR,mH);
         // High (off-white tips)
-        ctx.fillStyle=played?'#EDE8DF':'#8A857E';
+        ctx.fillStyle=played?'#ECEEF1':'#8A857E';
         if(hH>0.5)ctx.fillRect(x,base-bH-mH-hH,BAR,hH);
       }
 
@@ -2756,12 +2756,12 @@ function WF({ bands, peaks, freq, prog, onSeek, h=80, hotCues=[], loopStart=null
         const lx1=Math.floor(loopStart*W),lx2=Math.floor(loopEnd*W);
         ctx.fillStyle=loopActive?"rgba(200,169,110,0.22)":"rgba(200,169,110,0.09)";
         ctx.fillRect(lx1,0,lx2-lx1,H);
-        ctx.fillStyle=loopActive?"#C8A96Ecc":"#C8A96E66";
+        ctx.fillStyle=loopActive?"#ECEEF1cc":"#ECEEF166";
         ctx.fillRect(lx1,0,2,H); ctx.fillRect(Math.max(lx1,lx2-2),0,2,H);
       }
 
       // ── Hot cue markers ──
-      const CUE_CLR=["#C8A96E","#ef4444","#22c55e","#f59e0b"];
+      const CUE_CLR=["#ECEEF1","#B86060","#6BB36B","#C9A06B"];
       hotCues.forEach((cue,ci)=>{
         if(cue===null)return;
         const cx=Math.floor(cue*W);
@@ -3118,14 +3118,14 @@ function ZoomedWF({ bands, peaks, freq, prog, dur, onSeek, h=72, hotCues=[], loo
       if(lx2>0&&lx1<W){
         ctx.fillStyle=loopActive?"rgba(200,169,110,0.2)":"rgba(200,169,110,0.08)";
         ctx.fillRect(Math.max(0,lx1),0,Math.min(W,lx2)-Math.max(0,lx1),H);
-        ctx.fillStyle=loopActive?"#C8A96Ecc":"#C8A96E66";
+        ctx.fillStyle=loopActive?"#ECEEF1cc":"#ECEEF166";
         if(lx1>=0&&lx1<W)ctx.fillRect(lx1,0,2,H);
         if(lx2>=0&&lx2<W)ctx.fillRect(lx2-1,0,2,H);
       }
     }
 
     // ── Hot cue markers ──
-    const CUE_CLR=["#C8A96E","#ef4444","#22c55e","#f59e0b"];
+    const CUE_CLR=["#ECEEF1","#B86060","#6BB36B","#C9A06B"];
     hotCues.forEach((cue,ci)=>{
       if(cue===null)return;
       const cxm=Math.floor(((cue*len)-startSample)/samplesPerPx);
@@ -3199,7 +3199,7 @@ function BeatGrid({ bpm, dur, prog, color, beatPhaseFrac=null }) {
   return <canvas ref={ref} width={460} height={18} style={{width:"100%",height:18,background:"#04040b",borderRadius:4}}/>;
 }
 
-function Knob({ v, set, min=-12, max=12, ctr=0, label, color="#C8A96E", size=38, off }) {
+function Knob({ v, set, min=-12, max=12, ctr=0, label, color="#ECEEF1", size=38, off }) {
   const dr=useRef(false),sy=useRef(0),sv=useRef(0); const pct=(v-min)/(max-min);
   const md=(e)=>{ if(off)return; e.preventDefault();dr.current=true;sy.current=e.clientY;sv.current=v; const mm=(ev)=>{if(dr.current)set(Math.max(min,Math.min(max,sv.current+(sy.current-ev.clientY)/100*(max-min))));};const mu=()=>{dr.current=false;window.removeEventListener("mousemove",mm);window.removeEventListener("mouseup",mu);};window.addEventListener("mousemove",mm);window.addEventListener("mouseup",mu); };
   return (
@@ -3207,13 +3207,13 @@ function Knob({ v, set, min=-12, max=12, ctr=0, label, color="#C8A96E", size=38,
       <div onMouseDown={md} onDoubleClick={()=>!off&&set(ctr)} style={{width:size,height:size,borderRadius:"50%",background:"#0a0a1c",border:`2px solid ${color}33`,cursor:off?"default":"ns-resize",position:"relative",boxShadow:v!==ctr?`0 0 8px ${color}22`:"none"}}>
         <div style={{position:"absolute",width:3,height:3,borderRadius:"50%",background:color,top:"50%",left:"50%",transform:`translate(-50%,-50%) rotate(${-135+pct*270}deg) translateY(-${size*.26}px)`}}/>
       </div>
-      <span style={{fontSize:7,color:"#888898",fontFamily:"'DM Mono',monospace",letterSpacing:.5}}>{label}</span>
+      <span style={{fontSize:7,color:"#7A7E85",fontFamily:"'Inter',sans-serif",letterSpacing:.5}}>{label}</span>
     </div>
   );
 }
 
 // ── Deck ─────────────────────────────────────────────────────
-const HOT_CUE_COLORS=["#C8A96E","#ef4444","#22c55e","#f59e0b"];
+const HOT_CUE_COLORS=["#ECEEF1","#B86060","#6BB36B","#C9A06B"];
 
 function Deck({ id, ch, ctx:ac, color, local, remote, onChange, midi:mt, bpmResult, bpmAnalyze, eqHi=0, eqMid=0, eqLo=0, chanVol=1, loadFromLibrary=null, onTrackInfo=null, onSync=null, onLibraryTrackDrop=null, onProgUpdate=null, onWaveform=null, onSeekReady=null, remoteSeek=null, onToggleReady=null, onCueReady=null, remoteToggle=null, remoteCue=null, onTransportFire=null }) {
   const [buf,setBuf]=useState(null),[name,setName]=useState(null),[play,setPlay]=useState(false);
@@ -3477,16 +3477,18 @@ function Deck({ id, ch, ctx:ac, color, local, remote, onChange, midi:mt, bpmResu
   const fmt=(s)=>`${String(Math.floor(Math.max(0,s)/60)).padStart(2,"0")}:${String(Math.floor(Math.max(0,s)%60)).padStart(2,"0")}`;
   const cur=prog*dur;
 
-  const D="#0c0c14", BD="1px solid #1e1e28";
+  const D="#131519", BD="1px solid rgba(255,255,255,0.06)";
   return (
-    <div style={{background:D, border:`1px solid ${play?color+"44":"#1e1e28"}`, borderRadius:10, overflow:"hidden", display:"flex", flexDirection:"column", boxShadow:play?`0 0 24px ${color}14`:`0 2px 12px rgba(0,0,0,.5)`, transition:"all .3s"}}>
+    <div style={{background:D, border:"1px solid rgba(255,255,255,0.06)", borderRadius:10, overflow:"hidden", display:"flex", flexDirection:"column", boxShadow:play?`0 0 24px ${color}1a`:"0 2px 12px rgba(0,0,0,.3)", transition:"all .25s"}}>
 
-      {/* ── HEADER: badge | track | bpm ── */}
-      <div style={{display:"flex", alignItems:"stretch", minHeight:54, borderBottom:BD}}>
-        <div style={{width:52, flexShrink:0, background:`linear-gradient(180deg,${color}12,${color}06)`, borderRight:`1px solid ${color}22`, display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"center", gap:4}}>
-          <span style={{fontFamily:"'DM Mono',monospace", fontWeight:500, fontSize:24, color, lineHeight:1, letterSpacing:-1}}>{id}</span>
-          <span style={{fontSize:7, color:color+"88", fontFamily:"'DM Mono',monospace", fontWeight:500, letterSpacing:2}}>{local?"YOU":"PRTNR"}</span>
-          {play&&<div style={{width:4,height:4,borderRadius:"50%",background:color,boxShadow:`0 0 8px ${color}`,animation:"blink 1s infinite"}}/>}
+      {/* ── HEADER: badge | track | bpm ──
+          Deck letter is neutral (NOT identity color). Identity is signaled
+          ONLY at the deck's top border + the small YOU/PARTNER tag. */}
+      <div style={{display:"flex", alignItems:"stretch", minHeight:80, borderBottom:BD}}>
+        <div style={{width:60, flexShrink:0, borderRight:BD, display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"center", gap:6}}>
+          <span style={{fontFamily:"'Inter',sans-serif", fontWeight:600, fontSize:14, color:"rgba(236,238,241,0.42)", lineHeight:1, letterSpacing:0.2}}>{id}</span>
+          <span style={{fontSize:9, color:color, opacity:0.6, fontFamily:"'Inter',sans-serif", fontWeight:600, letterSpacing:1.4, textTransform:"uppercase"}}>{local?"You":"Partner"}</span>
+          {play&&<div style={{width:5,height:5,borderRadius:"50%",background:"#ECEEF1",boxShadow:"0 0 10px rgba(236,238,241,0.5)",animation:"blink 1.4s infinite"}}/>}
         </div>
 
         <div onClick={()=>fr.current?.click()}
@@ -3496,8 +3498,8 @@ function Deck({ id, ch, ctx:ac, color, local, remote, onChange, midi:mt, bpmResu
           style={{flex:1, padding: buf ? "0 14px" : "6px 10px", cursor:"pointer", display:"flex", flexDirection:"column", justifyContent:"center", background:dragOver?color+"08":"transparent", transition:"background .12s", minWidth:0}}>
           {(buf||remote?.trackName)?(
             <>
-              <div style={{fontSize:13, fontWeight:500, color:"#d8d8e2", fontFamily:"'DM Sans',sans-serif", whiteSpace:"nowrap", overflow:"hidden", textOverflow:"ellipsis"}}>{name||remote?.trackName||"—"}</div>
-              <div style={{fontSize:9, color:"#888898", fontFamily:"'DM Mono',monospace", marginTop:3, letterSpacing:.3}}>{buf?`${fmt(dur)} · ${trackArtist||`${(buf.sampleRate/1000).toFixed(1)}kHz · ${buf.numberOfChannels===2?"STEREO":"MONO"}`}`:`${fmt(remote?.duration||0)} · ${remote?.artist||"—"}`}</div>
+              <div style={{fontSize:28, fontWeight:700, color:"#ECEEF1", fontFamily:"'Bricolage Grotesque',sans-serif", whiteSpace:"nowrap", overflow:"hidden", textOverflow:"ellipsis", letterSpacing:"-0.02em", lineHeight:1.05}}>{name||remote?.trackName||"—"}</div>
+              <div style={{fontSize:14, color:"rgba(236,238,241,0.62)", fontFamily:"'Inter',sans-serif", fontWeight:500, marginTop:6, letterSpacing:0}}>{buf?`${fmt(dur)} · ${trackArtist||`${(buf.sampleRate/1000).toFixed(1)}kHz · ${buf.numberOfChannels===2?"STEREO":"MONO"}`}`:`${fmt(remote?.duration||0)} · ${remote?.artist||"—"}`}</div>
             </>
           ):(
             <div style={{
@@ -3516,8 +3518,8 @@ function Deck({ id, ch, ctx:ac, color, local, remote, onChange, midi:mt, bpmResu
                 background: dragOver ? color+"22" : "transparent",
               }}>+</div>
               <div>
-                <div style={{fontSize:12, fontWeight:600, color:dragOver?color:color+"dd", fontFamily:"'DM Mono',monospace", letterSpacing:1.5}}>{dragOver?"DROP HERE":"LOAD TRACK"}</div>
-                <div style={{fontSize:9, color:"#555562", marginTop:2, fontFamily:"'DM Mono',monospace", letterSpacing:.5}}>click or drag · mp3 wav flac aac</div>
+                <div style={{fontSize:12, fontWeight:600, color:dragOver?color:color+"dd", fontFamily:"'Inter',sans-serif", letterSpacing:1.5}}>{dragOver?"DROP HERE":"LOAD TRACK"}</div>
+                <div style={{fontSize:9, color:"#52555C", marginTop:2, fontFamily:"'Inter',sans-serif", letterSpacing:.5}}>click or drag · mp3 wav flac aac</div>
               </div>
             </div>
           )}
@@ -3527,17 +3529,17 @@ function Deck({ id, ch, ctx:ac, color, local, remote, onChange, midi:mt, bpmResu
         {/* KEY display */}
         {(()=>{const effectiveKey=deckKey||remote?.key;const ck=effectiveKey?CAMELOT[effectiveKey]:null;const km=ck?.endsWith("A");return ck?(
           <div style={{flexShrink:0,padding:"0 10px",borderLeft:BD,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",gap:2,minWidth:52}}>
-            <div style={{fontSize:11,fontFamily:"'DM Mono',monospace",fontWeight:500,color:km?"#9B7EC8":color,background:(km?"#9B7EC8":color)+"18",borderRadius:4,padding:"2px 6px",letterSpacing:.5}}>{ck}</div>
-            <div style={{fontSize:7,color:"#888898",fontFamily:"'DM Mono',monospace",letterSpacing:1}}>{effectiveKey}</div>
+            <div style={{fontSize:14,fontFamily:"'JetBrains Mono',monospace",fontWeight:500,color:"#ECEEF1",background:"transparent",border:"1px solid rgba(255,255,255,0.12)",borderRadius:4,padding:"3px 8px",letterSpacing:0.3}}>{ck}</div>
+            <div style={{fontSize:10,color:"rgba(236,238,241,0.36)",fontFamily:"'Inter',sans-serif",fontWeight:600,letterSpacing:1.4,textTransform:"uppercase"}}>{effectiveKey}</div>
           </div>
         ):null;})()}
         <div style={{flexShrink:0, padding:"0 14px", borderLeft:BD, display:"flex", flexDirection:"column", alignItems:"flex-end", justifyContent:"center", gap:4, minWidth:96}}>
-          {bpmResult?.analyzing&&<div style={{fontSize:7,color:"#f59e0b",fontFamily:"'DM Mono',monospace",animation:"pulse .8s infinite"}}>ANA...</div>}
+          {bpmResult?.analyzing&&<div style={{fontSize:7,color:"#C9A06B",fontFamily:"'Inter',sans-serif",animation:"pulse .8s infinite"}}>ANA...</div>}
           <div style={{textAlign:"right"}}>
             {(()=>{const effectiveBpm=bpmResult?.bpm??remote?.bpm;return(
-            <div style={{fontSize:32, fontFamily:"'DM Mono',monospace", fontWeight:600, color:effectiveBpm?"#C8A96E":"#2a2a3a", lineHeight:0.95, letterSpacing:-0.5, textShadow:effectiveBpm?"0 0 18px #C8A96E22":"none"}}>{effectiveBpm?(effectiveBpm*(bpmResult?.bpm?rate:1)).toFixed(1):"—"}</div>
+            <div style={{fontSize:28, fontFamily:"'JetBrains Mono',monospace", fontWeight:500, color:effectiveBpm?"#ECEEF1":"rgba(236,238,241,0.18)", lineHeight:0.95, letterSpacing:-0.3}}>{effectiveBpm?(effectiveBpm*(bpmResult?.bpm?rate:1)).toFixed(1):"—"}</div>
             );})()}
-            <div style={{fontSize:7, color:"#888898", fontFamily:"'DM Mono',monospace", letterSpacing:2.5, marginTop:2}}>BPM</div>
+            <div style={{fontSize:10, color:"rgba(236,238,241,0.36)", fontFamily:"'Inter',sans-serif", fontWeight:600, letterSpacing:1.4, marginTop:4, textTransform:"uppercase"}}>BPM</div>
           </div>
           <VU an={ch?.an} color={color}/>
         </div>
@@ -3549,18 +3551,18 @@ function Deck({ id, ch, ctx:ac, color, local, remote, onChange, midi:mt, bpmResu
       </div>
 
       {/* ── HOT CUES + LOOP CONTROLS ── */}
-      <div style={{display:"flex",gap:3,padding:"5px 10px",background:"#08080e",borderBottom:"1px solid #141420",alignItems:"center"}}>
+      <div style={{display:"flex",gap:3,padding:"5px 10px",background:"#131519",borderBottom:"1px solid #131519",alignItems:"center"}}>
           {/* Hot cue buttons 1-4 */}
           {HOT_CUE_COLORS.map((c,i)=>(
             <button key={i}
               onClick={()=>{if(!buf)return;if(hotCues[i]!==null){seek(hotCues[i]);}else{setHotCues(p=>{const n=[...p];n[i]=prog;return n;});}}}
               onContextMenu={e=>{e.preventDefault();if(buf)setHotCues(p=>{const n=[...p];n[i]=null;return n;});}}
               title={hotCues[i]!==null?"Click:recall  Right-click:clear":"Click to set cue"}
-              style={{width:36,height:28,background:hotCues[i]!==null?`${c}30`:"#0e0e18",border:`1px solid ${hotCues[i]!==null?c+"88":c+"33"}`,color:hotCues[i]!==null?c:c+"66",borderRadius:5,cursor:"pointer",fontFamily:"'DM Mono',monospace",fontSize:11,fontWeight:700,transition:"all .1s",flexShrink:0,boxShadow:hotCues[i]!==null?`0 0 6px ${c}44`:"none"}}>
+              style={{width:36,height:28,background:hotCues[i]!==null?`${c}30`:"#131519",border:`1px solid ${hotCues[i]!==null?c+"88":c+"33"}`,color:hotCues[i]!==null?c:c+"66",borderRadius:5,cursor:"pointer",fontFamily:"'Inter',sans-serif",fontSize:11,fontWeight:700,transition:"all .1s",flexShrink:0,boxShadow:hotCues[i]!==null?`0 0 6px ${c}44`:"none"}}>
               {i+1}
             </button>
           ))}
-          <div style={{width:1,height:22,background:"#252535",margin:"0 3px",flexShrink:0}}/>
+          <div style={{width:1,height:22,background:"#21252C",margin:"0 3px",flexShrink:0}}/>
           {/* Beat loop buttons: 1, 2, 4, 8, 16 beats */}
           {[[1,"1"],[2,"2"],[4,"4"],[8,"8"],[16,"16"]].map(([beats,label])=>(
             <button key={beats}
@@ -3572,7 +3574,7 @@ function Deck({ id, ch, ctx:ac, color, local, remote, onChange, midi:mt, bpmResu
                 const lEnd=Math.min(1,lStart+lDur/(buf?.duration||1));
                 setLoopStart(lStart);setLoopEnd(lEnd);setLoopActive(true);
               }}
-              style={{height:28,padding:"0 8px",background:"#0e0e18",border:"1px solid #C8A96E33",color:"#C8A96E88",borderRadius:4,cursor:"pointer",fontFamily:"'DM Mono',monospace",fontSize:10,fontWeight:600,letterSpacing:.3,flexShrink:0}}>
+              style={{height:28,padding:"0 8px",background:"#131519",border:"1px solid #ECEEF133",color:"#ECEEF188",borderRadius:4,cursor:"pointer",fontFamily:"'Inter',sans-serif",fontSize:10,fontWeight:600,letterSpacing:.3,flexShrink:0}}>
               {label}
             </button>
           ))}
@@ -3584,63 +3586,66 @@ function Deck({ id, ch, ctx:ac, color, local, remote, onChange, midi:mt, bpmResu
                 setLoopActive(nv);
                 if(!nv&&src.current)src.current.loop=false;
               }}
-              style={{height:24,padding:"0 8px",background:loopActive?"#C8A96E1e":"#08080e",border:`1px solid ${loopActive?"#C8A96E66":"#C8A96E1a"}`,color:loopActive?"#C8A96E":"#C8A96E44",borderRadius:4,cursor:"pointer",fontFamily:"'DM Mono',monospace",fontSize:9,fontWeight:loopActive?500:400}}>
+              style={{height:24,padding:"0 8px",background:loopActive?"#ECEEF11e":"#131519",border:`1px solid ${loopActive?"#ECEEF166":"#ECEEF11a"}`,color:loopActive?"#ECEEF1":"#ECEEF144",borderRadius:4,cursor:"pointer",fontFamily:"'Inter',sans-serif",fontSize:9,fontWeight:loopActive?500:400}}>
               {loopActive?"⟳ LOOP":"LOOP"}
             </button>
           )}
           {loopStart!==null&&(
             <button
               onClick={()=>{setLoopActive(false);setLoopStart(null);setLoopEnd(null);if(src.current)src.current.loop=false;}}
-              style={{height:26,width:26,background:"transparent",border:"1px solid #ef444422",color:"#ef444455",borderRadius:4,cursor:"pointer",fontSize:10}}>
+              style={{height:26,width:26,background:"transparent",border:"1px solid #B8606022",color:"#B8606055",borderRadius:4,cursor:"pointer",fontSize:10}}>
               ✕
             </button>
           )}
       </div>
 
       {/* ── LCD TIME ── */}
-      <div style={{display:"flex", alignItems:"center", justifyContent:"space-between", padding:"6px 14px", background:"#08080e", borderBottom:BD}}>
+      <div style={{display:"flex", alignItems:"center", justifyContent:"space-between", padding:"6px 14px", background:"#131519", borderBottom:BD}}>
         <div>
-          <div style={{fontFamily:"'DM Mono',monospace", fontWeight:600, fontSize:22, color, letterSpacing:0.5, lineHeight:1, textShadow:`0 0 16px ${color}55`, fontVariantNumeric:"tabular-nums"}}>{fmt(cur)}</div>
-          <div style={{fontSize:7, color:"#555562", fontFamily:"'DM Mono',monospace", letterSpacing:2.5, marginTop:4, textTransform:"uppercase"}}>Elapsed</div>
+          <div style={{fontFamily:"'Inter',sans-serif", fontWeight:600, fontSize:22, color, letterSpacing:0.5, lineHeight:1, textShadow:`0 0 16px ${color}55`, fontVariantNumeric:"tabular-nums"}}>{fmt(cur)}</div>
+          <div style={{fontSize:7, color:"#52555C", fontFamily:"'Inter',sans-serif", letterSpacing:2.5, marginTop:4, textTransform:"uppercase"}}>Elapsed</div>
         </div>
         <div style={{display:"flex", flexDirection:"column", alignItems:"center", gap:3}}>
           {play&&<div style={{width:5,height:5,borderRadius:"50%",background:color,boxShadow:`0 0 8px ${color}`,animation:"pulse .7s infinite"}}/>}
-          <div style={{fontSize:9, color:"#888898", fontFamily:"'DM Mono',monospace"}}>{buf?`${(prog*100).toFixed(0)}%`:""}</div>
+          <div style={{fontSize:9, color:"#7A7E85", fontFamily:"'Inter',sans-serif"}}>{buf?`${(prog*100).toFixed(0)}%`:""}</div>
         </div>
         <div style={{textAlign:"right"}}>
-          <div style={{fontFamily:"'DM Mono',monospace", fontWeight:600, fontSize:22, color:"#383848", letterSpacing:0.5, lineHeight:1, fontVariantNumeric:"tabular-nums"}}>-{fmt(Math.max(0,dur-cur))}</div>
-          <div style={{fontSize:7, color:"#555562", fontFamily:"'DM Mono',monospace", letterSpacing:2.5, marginTop:4, textTransform:"uppercase"}}>Remain</div>
+          <div style={{fontFamily:"'Inter',sans-serif", fontWeight:600, fontSize:22, color:"#383848", letterSpacing:0.5, lineHeight:1, fontVariantNumeric:"tabular-nums"}}>-{fmt(Math.max(0,dur-cur))}</div>
+          <div style={{fontSize:7, color:"#52555C", fontFamily:"'Inter',sans-serif", letterSpacing:2.5, marginTop:4, textTransform:"uppercase"}}>Remain</div>
         </div>
       </div>
 
-      {/* ── TRANSPORT ── */}
-      <div style={{display:"flex", alignItems:"center", gap:6, padding:"8px 12px", borderBottom:BD}}>
-        <button onClick={(e)=>{ if(local&&cue) cue(); else if(remoteCue) remoteCue(); }} disabled={!cueEnabled} style={{height:48,padding:"0 12px",background:"#111118",border:`1px solid ${cueEnabled?"#2a2a38":"#1e1e28"}`,color:cueEnabled?"#C8A96E":"#2a2a38",borderRadius:7,cursor:cueEnabled?"pointer":"default",fontFamily:"'DM Mono',monospace",fontSize:10,fontWeight:700,letterSpacing:1.5,outline:"none",flexShrink:0}}>CUE</button>
-        <button onClick={local?()=>seek(Math.max(0,prog-.005)):undefined} disabled={!local} style={{height:48,width:36,background:"#111118",border:"1px solid #1e1e28",color:local?"#888898":"#2a2a38",borderRadius:6,cursor:local?"pointer":"default",fontFamily:"'DM Mono',monospace",fontSize:13,outline:"none"}}>◂◂</button>
-        <button onClick={(e)=>{ if(local&&toggle) toggle(); else if(remoteToggle) remoteToggle(); }} disabled={!enabled} style={{flex:1,height:48,background:playVisual?color+"33":(enabled?"#1a1a26":"#141420"),border:`2px solid ${playVisual?color:(enabled?color+"66":color+"22")}`,color:playVisual?color:(enabled?color:color+"44"),borderRadius:8,cursor:enabled?"pointer":"default",fontSize:24,fontWeight:600,display:"flex",alignItems:"center",justifyContent:"center",boxShadow:playVisual?`0 0 24px ${color}55`:"none",outline:"none",transition:"all .15s"}}>
+      {/* ── TRANSPORT ──
+          Play button is the booth's heartbeat. Active = filled white,
+          inactive = ghost outline. Cue/scrub/Sync are quieter ghost buttons
+          that defer to play. */}
+      <div style={{display:"flex", alignItems:"center", gap:8, padding:"12px 14px", borderBottom:BD}}>
+        <button onClick={(e)=>{ if(local&&cue) cue(); else if(remoteCue) remoteCue(); }} disabled={!cueEnabled} style={{height:48,padding:"0 18px",background:"transparent",border:`1px solid ${cueEnabled?"rgba(255,255,255,0.12)":"rgba(255,255,255,0.06)"}`,color:cueEnabled?"#ECEEF1":"rgba(236,238,241,0.22)",borderRadius:6,cursor:cueEnabled?"pointer":"default",fontFamily:"'Inter',sans-serif",fontSize:13,fontWeight:600,letterSpacing:0,outline:"none",flexShrink:0,transition:"all .2s"}}>Cue</button>
+        <button onClick={local?()=>seek(Math.max(0,prog-.005)):undefined} disabled={!local} style={{height:48,width:40,background:"transparent",border:"1px solid rgba(255,255,255,0.06)",color:local?"rgba(236,238,241,0.62)":"rgba(236,238,241,0.18)",borderRadius:6,cursor:local?"pointer":"default",fontFamily:"'Inter',sans-serif",fontSize:13,outline:"none"}}>◂◂</button>
+        <button onClick={(e)=>{ if(local&&toggle) toggle(); else if(remoteToggle) remoteToggle(); }} disabled={!enabled} style={{flex:1,height:64,background:playVisual?"#ECEEF1":"transparent",border:`1px solid ${playVisual?"#ECEEF1":"rgba(255,255,255,0.20)"}`,color:playVisual?"#0A0B0D":"rgba(236,238,241,0.62)",borderRadius:8,cursor:enabled?"pointer":"default",fontSize:22,fontWeight:600,display:"flex",alignItems:"center",justifyContent:"center",boxShadow:playVisual?"0 0 24px rgba(236,238,241,0.15)":"none",opacity:enabled?1:0.4,outline:"none",transition:"all .2s"}}>
           {playVisual?"⏸":"▶"}
         </button>
-        <button onClick={local?()=>seek(Math.min(1,prog+.005)):undefined} disabled={!local} style={{height:48,width:36,background:"#111118",border:"1px solid #1e1e28",color:local?"#888898":"#2a2a38",borderRadius:6,cursor:local?"pointer":"default",fontFamily:"'DM Mono',monospace",fontSize:13,outline:"none"}}>▸▸</button>
-        {onSync&&<button onClick={onSync} disabled={!buf||!bpmResult?.bpm} style={{height:48,padding:"0 10px",background:buf&&bpmResult?.bpm?"#22c55e18":"transparent",border:`1px solid ${buf&&bpmResult?.bpm?"#22c55e66":"#22c55e22"}`,color:buf&&bpmResult?.bpm?"#22c55e":"#22c55e44",borderRadius:7,cursor:buf&&bpmResult?.bpm?"pointer":"default",fontFamily:"'DM Mono',monospace",fontSize:10,fontWeight:700,letterSpacing:1.5,outline:"none",flexShrink:0}}>SYNC</button>}
+        <button onClick={local?()=>seek(Math.min(1,prog+.005)):undefined} disabled={!local} style={{height:48,width:40,background:"transparent",border:"1px solid rgba(255,255,255,0.06)",color:local?"rgba(236,238,241,0.62)":"rgba(236,238,241,0.18)",borderRadius:6,cursor:local?"pointer":"default",fontFamily:"'Inter',sans-serif",fontSize:13,outline:"none"}}>▸▸</button>
+        {onSync&&<button onClick={onSync} disabled={!buf||!bpmResult?.bpm} style={{height:40,padding:"0 14px",background:"transparent",border:`1px solid ${buf&&bpmResult?.bpm?"rgba(91,143,249,0.45)":"rgba(255,255,255,0.06)"}`,color:buf&&bpmResult?.bpm?"#5B8FF9":"rgba(236,238,241,0.18)",borderRadius:6,cursor:buf&&bpmResult?.bpm?"pointer":"default",fontFamily:"'Inter',sans-serif",fontSize:13,fontWeight:600,letterSpacing:0,outline:"none",flexShrink:0,transition:"all .2s"}}>Sync</button>}
       </div>
 
       <div style={{display:"none"}} data-set-rate={id} ref={el=>{if(el)el._setRate=setRate;}}/>
     </div>
   );
 }
-const TB=(c)=>({height:28,padding:"0 8px",background:"#0a0a14",border:`1px solid ${c}33`,color:c,borderRadius:5,cursor:"pointer",fontFamily:"'DM Mono',monospace",fontSize:9,outline:"none",display:"flex",alignItems:"center",justifyContent:"center"});
-const TB2=(c,h=28)=>({height:h,width:h+8,background:"#0a0a14",border:`1px solid ${c}44`,color:c+"bb",borderRadius:7,cursor:"pointer",fontFamily:"'DM Mono',monospace",fontSize:11,outline:"none",display:"flex",alignItems:"center",justifyContent:"center",transition:"all .1s"});
-const sBtn=(c)=>({padding:"5px 9px",fontSize:9,fontFamily:"'DM Mono',monospace",background:c+"0e",border:`1px solid ${c}2a`,color:c,borderRadius:6,cursor:"pointer",letterSpacing:.5,display:"flex",alignItems:"center",justifyContent:"center",gap:4});
+const TB=(c)=>({height:28,padding:"0 8px",background:"#131519",border:`1px solid ${c}33`,color:c,borderRadius:5,cursor:"pointer",fontFamily:"'Inter',sans-serif",fontSize:9,outline:"none",display:"flex",alignItems:"center",justifyContent:"center"});
+const TB2=(c,h=28)=>({height:h,width:h+8,background:"#131519",border:`1px solid ${c}44`,color:c+"bb",borderRadius:7,cursor:"pointer",fontFamily:"'Inter',sans-serif",fontSize:11,outline:"none",display:"flex",alignItems:"center",justifyContent:"center",transition:"all .1s"});
+const sBtn=(c)=>({padding:"5px 9px",fontSize:9,fontFamily:"'Inter',sans-serif",background:c+"0e",border:`1px solid ${c}2a`,color:c,borderRadius:6,cursor:"pointer",letterSpacing:.5,display:"flex",alignItems:"center",justifyContent:"center",gap:4});
 
 // ── VerticalFader Component ──────────────────────────────────
-function VerticalFader({ val, set, color="#C8A96E", h=130 }) {
+function VerticalFader({ val, set, color="#ECEEF1", h=130 }) {
   const pct = Math.min(1, Math.max(0, val / 1.5));
   const trackH = h - 8;
   const capTop = 4 + (1 - pct) * (trackH - 22);
   return (
     <div style={{position:"relative", width:38, height:h, margin:"0 auto", flexShrink:0}}>
       {/* Track groove */}
-      <div style={{position:"absolute", left:"50%", top:4, height:trackH, transform:"translateX(-50%)", width:7, background:"#040408", border:"1px solid #1e1e28", borderRadius:4, boxShadow:"inset 0 1px 4px rgba(0,0,0,.7)"}}>
+      <div style={{position:"absolute", left:"50%", top:4, height:trackH, transform:"translateX(-50%)", width:7, background:"#040408", border:"1px solid #1F2228", borderRadius:4, boxShadow:"inset 0 1px 4px rgba(0,0,0,.7)"}}>
         {/* Tick marks */}
         {[0.25,0.5,0.67,0.75].map(t=>(
           <div key={t} style={{position:"absolute", right:-4, top:`${(1-t)*100}%`, width:3, height:1, background:"#2e2e40", borderRadius:1}}/>
@@ -3657,14 +3662,14 @@ function VerticalFader({ val, set, color="#C8A96E", h=130 }) {
       <div style={{
         position:"absolute", left:"50%", transform:"translateX(-50%)",
         top:capTop+"px", width:34, height:22,
-        background:"linear-gradient(180deg,#303040,#181820)",
+        background:"linear-gradient(180deg,#303040,#21252C)",
         border:"1px solid #3c3c50", borderRadius:5,
         boxShadow:"0 3px 10px rgba(0,0,0,.7), inset 0 1px 0 rgba(255,255,255,.08)",
         pointerEvents:"none", display:"flex", alignItems:"center", justifyContent:"center", gap:3
       }}>
-        <div style={{width:1, height:13, background:"#2e2c46", borderRadius:1}}/>
+        <div style={{width:1, height:13, background:"#2C3037", borderRadius:1}}/>
         <div style={{width:12, height:2, background:`${color}77`, borderRadius:1}}/>
-        <div style={{width:1, height:13, background:"#2e2c46", borderRadius:1}}/>
+        <div style={{width:1, height:13, background:"#2C3037", borderRadius:1}}/>
       </div>
     </div>
   );
@@ -3677,40 +3682,40 @@ function SyncPanel({ bpmA, bpmB, rateA, rateB, onSyncB, onSyncA }) {
   const inSync=diff!==null&&parseFloat(diff)<0.5;
   return (
     <div style={{padding:10,display:"flex",flexDirection:"column",gap:8}}>
-      <div style={{display:"flex",gap:8,justifyContent:"space-around",background:"#0a0a12",borderRadius:8,padding:"10px",border:"1px solid #1e1e28"}}>
-        {[["A","#7B61FF",effA,rateA],["B","#00BFA5",effB,rateB]].map(([id,c,eff,r])=>(
+      <div style={{display:"flex",gap:8,justifyContent:"space-around",background:"#131519",borderRadius:8,padding:"10px",border:"1px solid #1F2228"}}>
+        {[["A","#5B8FF9",effA,rateA],["B","#C97064",effB,rateB]].map(([id,c,eff,r])=>(
           <div key={id} style={{textAlign:"center"}}>
-            <div style={{fontSize:7,fontFamily:"'DM Mono',monospace",color:c+"44",letterSpacing:2}}>DECK {id}</div>
-            <div style={{fontSize:20,fontFamily:"'DM Mono',monospace",fontWeight:700,color:eff?c:"#555562"}}>{eff?eff.toFixed(1):"—"}</div>
-            {r!==1&&<div style={{fontSize:6,color:c+"66",fontFamily:"'DM Mono',monospace"}}>{r>1?"+":""}{((r-1)*100).toFixed(1)}%</div>}
+            <div style={{fontSize:7,fontFamily:"'Inter',sans-serif",color:c+"44",letterSpacing:2}}>DECK {id}</div>
+            <div style={{fontSize:20,fontFamily:"'Inter',sans-serif",fontWeight:700,color:eff?c:"#52555C"}}>{eff?eff.toFixed(1):"—"}</div>
+            {r!==1&&<div style={{fontSize:6,color:c+"66",fontFamily:"'Inter',sans-serif"}}>{r>1?"+":""}{((r-1)*100).toFixed(1)}%</div>}
           </div>
         ))}
       </div>
-      {diff&&<div style={{textAlign:"center",fontSize:8,fontFamily:"'DM Mono',monospace",color:inSync?"#22c55e":"#555562"}}>Δ{diff} BPM {inSync?"✓ IN SYNC":""}</div>}
+      {diff&&<div style={{textAlign:"center",fontSize:8,fontFamily:"'Inter',sans-serif",color:inSync?"#6BB36B":"#52555C"}}>Δ{diff} BPM {inSync?"✓ IN SYNC":""}</div>}
       <div style={{display:"flex",gap:5}}>
-        <button onClick={onSyncB} disabled={!bpmA||!bpmB} style={{flex:1,...sBtn("#C8A96E")}}>SYNC B→A</button>
-        <button onClick={onSyncA} disabled={!bpmA||!bpmB} style={{flex:1,...sBtn("#00BFA5")}}>SYNC A→B</button>
+        <button onClick={onSyncB} disabled={!bpmA||!bpmB} style={{flex:1,...sBtn("#ECEEF1")}}>SYNC B→A</button>
+        <button onClick={onSyncA} disabled={!bpmA||!bpmB} style={{flex:1,...sBtn("#C97064")}}>SYNC A→B</button>
       </div>
-      {(!bpmA||!bpmB)&&<div style={{fontSize:7,fontFamily:"'DM Mono',monospace",color:"#555562",textAlign:"center",lineHeight:1.9}}>Load tracks to detect BPM<br/>Analysis runs automatically</div>}
+      {(!bpmA||!bpmB)&&<div style={{fontSize:7,fontFamily:"'Inter',sans-serif",color:"#52555C",textAlign:"center",lineHeight:1.9}}>Load tracks to detect BPM<br/>Analysis runs automatically</div>}
     </div>
   );
 }
 
 function RTCPanel({ rtc, partner, syncOk }) {
-  const ST={idle:{c:"#555562",l:"OFFLINE"},offering:{c:"#f59e0b",l:"OFFERING"},answering:{c:"#f59e0b",l:"ANSWERING"},connecting:{c:"#f59e0b",l:"CONNECTING"},connected:{c:"#22c55e",l:"● STREAMING"},failed:{c:"#ef4444",l:"FAILED"}};
+  const ST={idle:{c:"#52555C",l:"OFFLINE"},offering:{c:"#C9A06B",l:"OFFERING"},answering:{c:"#C9A06B",l:"ANSWERING"},connecting:{c:"#C9A06B",l:"CONNECTING"},connected:{c:"#6BB36B",l:"● STREAMING"},failed:{c:"#B86060",l:"FAILED"}};
   const s=ST[rtc.state]||ST.idle,live=rtc.state==="connected",busy=["offering","answering","connecting"].includes(rtc.state),canCall=syncOk&&partner&&!live&&!busy;
   return (
     <div style={{padding:10,display:"flex",flexDirection:"column",gap:8}}>
-      <div style={{display:"flex",justifyContent:"space-between"}}><span style={{fontSize:8,fontFamily:"'DM Mono',monospace",color:"#888898",letterSpacing:1}}>P2P AUDIO</span><span style={{fontSize:7,fontFamily:"'DM Mono',monospace",color:s.c}}>{s.l}</span></div>
-      {live&&<div style={{display:"flex",gap:2,height:16,alignItems:"center",justifyContent:"center"}}>{Array.from({length:12}).map((_,i)=><div key={i} style={{width:3,borderRadius:2,background:"#22c55e",height:"100%",animation:`wave ${.4+(i%4)*.1}s ease-in-out ${i*.06}s infinite`,transformOrigin:"bottom"}}/>)}</div>}
-      <div style={{fontSize:7,fontFamily:"'DM Mono',monospace",color:"#888898",display:"flex",justifyContent:"space-between"}}><span>PARTNER</span><span style={{color:partner?"#00BFA5":"#555562"}}>{partner||"—"}</span></div>
-      <div style={{display:"flex",flexDirection:"column",gap:2}}><div style={{display:"flex",justifyContent:"space-between",fontSize:7,fontFamily:"'DM Mono',monospace",color:"#888898"}}><span>PARTNER VOL</span><span style={{color:"#22c55e"}}>{Math.round(rtc.remVol*100)}%</span></div><input type="range" min={0} max={1.5} step={.01} value={rtc.remVol} onChange={e=>rtc.setRemVol(Number(e.target.value))} style={{width:"100%",cursor:"pointer",accentColor:"#22c55e"}}/></div>
+      <div style={{display:"flex",justifyContent:"space-between"}}><span style={{fontSize:8,fontFamily:"'Inter',sans-serif",color:"#7A7E85",letterSpacing:1}}>P2P AUDIO</span><span style={{fontSize:7,fontFamily:"'Inter',sans-serif",color:s.c}}>{s.l}</span></div>
+      {live&&<div style={{display:"flex",gap:2,height:16,alignItems:"center",justifyContent:"center"}}>{Array.from({length:12}).map((_,i)=><div key={i} style={{width:3,borderRadius:2,background:"#6BB36B",height:"100%",animation:`wave ${.4+(i%4)*.1}s ease-in-out ${i*.06}s infinite`,transformOrigin:"bottom"}}/>)}</div>}
+      <div style={{fontSize:7,fontFamily:"'Inter',sans-serif",color:"#7A7E85",display:"flex",justifyContent:"space-between"}}><span>PARTNER</span><span style={{color:partner?"#C97064":"#52555C"}}>{partner||"—"}</span></div>
+      <div style={{display:"flex",flexDirection:"column",gap:2}}><div style={{display:"flex",justifyContent:"space-between",fontSize:7,fontFamily:"'Inter',sans-serif",color:"#7A7E85"}}><span>PARTNER VOL</span><span style={{color:"#6BB36B"}}>{Math.round(rtc.remVol*100)}%</span></div><input type="range" min={0} max={1.5} step={.01} value={rtc.remVol} onChange={e=>rtc.setRemVol(Number(e.target.value))} style={{width:"100%",cursor:"pointer",accentColor:"#6BB36B"}}/></div>
       <div style={{display:"flex",gap:5}}>
-        {canCall&&<button onClick={rtc.startCall} style={{flex:1,...sBtn("#22c55e"),fontWeight:700}}>▶ START STREAM</button>}
-        {busy&&<button disabled style={{flex:1,...sBtn("#f59e0b")}}>◌ CONNECTING...</button>}
-        {(live||busy)&&<><button onClick={rtc.toggleMute} style={{...sBtn(rtc.muted?"#ef4444":"#888898"),padding:"5px 8px"}}>{rtc.muted?"🔇":"🎙"}</button><button onClick={rtc.endCall} style={{...sBtn("#ef4444"),padding:"5px 8px"}}>✕</button></>}
+        {canCall&&<button onClick={rtc.startCall} style={{flex:1,...sBtn("#6BB36B"),fontWeight:700}}>▶ START STREAM</button>}
+        {busy&&<button disabled style={{flex:1,...sBtn("#C9A06B")}}>◌ CONNECTING...</button>}
+        {(live||busy)&&<><button onClick={rtc.toggleMute} style={{...sBtn(rtc.muted?"#B86060":"#7A7E85"),padding:"5px 8px"}}>{rtc.muted?"🔇":"🎙"}</button><button onClick={rtc.endCall} style={{...sBtn("#B86060"),padding:"5px 8px"}}>✕</button></>}
       </div>
-      {!live&&!busy&&!canCall&&<div style={{fontSize:7,fontFamily:"'DM Mono',monospace",color:"#555562",lineHeight:1.9}}>{!syncOk?"Connect via WebSocket first":!partner?"Waiting for partner to join":"Ready — click Start Stream"}</div>}
+      {!live&&!busy&&!canCall&&<div style={{fontSize:7,fontFamily:"'Inter',sans-serif",color:"#52555C",lineHeight:1.9}}>{!syncOk?"Connect via WebSocket first":!partner?"Waiting for partner to join":"Ready — click Start Stream"}</div>}
     </div>
   );
 }
@@ -3722,21 +3727,21 @@ function RecPanel({ rec, ready }) {
   const fsz=(b)=>b>1e6?`${(b/1e6).toFixed(1)}MB`:`${(b/1e3).toFixed(0)}KB`;
   return (
     <div style={{padding:10,display:"flex",flexDirection:"column",gap:8}}>
-      {isActive&&<div style={{fontSize:22,fontFamily:"'DM Mono',monospace",fontWeight:700,color:isRec?"#ef4444":"#f59e0b",letterSpacing:2,textAlign:"center"}}>{fmt(rec.dur)}</div>}
-      {isActive&&<div style={{height:3,background:"#0a0a18",borderRadius:2}}><div style={{height:"100%",width:`${rec.level*100}%`,background:rec.level>.8?"#ef4444":rec.level>.6?"#f59e0b":"#22c55e",transition:"width .05s"}}/></div>}
-      {!isActive&&<input value={label} onChange={e=>setLabel(e.target.value)} placeholder="Label (optional)" style={{background:"#07070f",border:"1px solid #141424",color:"#e8e8f0",borderRadius:6,padding:"5px 8px",fontSize:9,fontFamily:"'DM Mono',monospace",outline:"none"}}/>}
+      {isActive&&<div style={{fontSize:22,fontFamily:"'Inter',sans-serif",fontWeight:700,color:isRec?"#B86060":"#C9A06B",letterSpacing:2,textAlign:"center"}}>{fmt(rec.dur)}</div>}
+      {isActive&&<div style={{height:3,background:"#131519",borderRadius:2}}><div style={{height:"100%",width:`${rec.level*100}%`,background:rec.level>.8?"#B86060":rec.level>.6?"#C9A06B":"#6BB36B",transition:"width .05s"}}/></div>}
+      {!isActive&&<input value={label} onChange={e=>setLabel(e.target.value)} placeholder="Label (optional)" style={{background:"#0A0B0D",border:"1px solid #1A1D23",color:"#ECEEF1",borderRadius:6,padding:"5px 8px",fontSize:9,fontFamily:"'Inter',sans-serif",outline:"none"}}/>}
       <div style={{display:"flex",gap:5}}>
-        {!isActive&&<button onClick={()=>rec.start(label||null)} disabled={!ready} style={{flex:1,padding:"8px",...sBtn("#ef4444"),fontWeight:700,opacity:ready?1:.4}}>● REC</button>}
-        {isRec&&<><button onClick={rec.pause} style={{flex:1,padding:"7px",...sBtn("#f59e0b"),fontWeight:700}}>⏸</button><button onClick={rec.stop} style={{flex:1,padding:"7px",...sBtn("#ef4444"),fontWeight:700}}>⏹ STOP</button></>}
-        {isPaused&&<><button onClick={rec.resume} style={{flex:1,padding:"7px",...sBtn("#22c55e"),fontWeight:700}}>▶</button><button onClick={rec.stop} style={{flex:1,padding:"7px",...sBtn("#ef4444"),fontWeight:700}}>⏹ STOP</button></>}
+        {!isActive&&<button onClick={()=>rec.start(label||null)} disabled={!ready} style={{flex:1,padding:"8px",...sBtn("#B86060"),fontWeight:700,opacity:ready?1:.4}}>● REC</button>}
+        {isRec&&<><button onClick={rec.pause} style={{flex:1,padding:"7px",...sBtn("#C9A06B"),fontWeight:700}}>⏸</button><button onClick={rec.stop} style={{flex:1,padding:"7px",...sBtn("#B86060"),fontWeight:700}}>⏹ STOP</button></>}
+        {isPaused&&<><button onClick={rec.resume} style={{flex:1,padding:"7px",...sBtn("#6BB36B"),fontWeight:700}}>▶</button><button onClick={rec.stop} style={{flex:1,padding:"7px",...sBtn("#B86060"),fontWeight:700}}>⏹ STOP</button></>}
       </div>
       {rec.recs.length>0&&(
-        <div style={{display:"flex",flexDirection:"column",gap:5,borderTop:"1px solid #0f0f1e",paddingTop:8}}>
-          <div style={{fontSize:7,fontFamily:"'DM Mono',monospace",color:"#888898",letterSpacing:2}}>SAVED ({rec.recs.length})</div>
+        <div style={{display:"flex",flexDirection:"column",gap:5,borderTop:"1px solid #1A1D23",paddingTop:8}}>
+          <div style={{fontSize:7,fontFamily:"'Inter',sans-serif",color:"#7A7E85",letterSpacing:2}}>SAVED ({rec.recs.length})</div>
           {rec.recs.map(r=>(
-            <div key={r.id} style={{background:"#07070f",border:"1px solid #0f0f1e",borderRadius:7,padding:"6px 9px",display:"flex",justifyContent:"space-between",alignItems:"center"}}>
-              <div><div style={{fontSize:9,fontFamily:"'DM Mono',monospace",color:"#d8d8e2"}}>{r.label}</div><div style={{fontSize:7,fontFamily:"'DM Mono',monospace",color:"#555562"}}>{fsz(r.size)} · {r.ext}</div></div>
-              <div style={{display:"flex",gap:4}}><button onClick={()=>rec.dl(r)} style={{...sBtn("#C8A96E"),padding:"2px 7px",fontSize:7}}>↓</button><button onClick={()=>rec.del(r.id)} style={{...sBtn("#ef4444"),padding:"2px 6px",fontSize:7}}>✕</button></div>
+            <div key={r.id} style={{background:"#0A0B0D",border:"1px solid #1A1D23",borderRadius:7,padding:"6px 9px",display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+              <div><div style={{fontSize:9,fontFamily:"'Inter',sans-serif",color:"#ECEEF1"}}>{r.label}</div><div style={{fontSize:7,fontFamily:"'Inter',sans-serif",color:"#52555C"}}>{fsz(r.size)} · {r.ext}</div></div>
+              <div style={{display:"flex",gap:4}}><button onClick={()=>rec.dl(r)} style={{...sBtn("#ECEEF1"),padding:"2px 7px",fontSize:7}}>↓</button><button onClick={()=>rec.del(r.id)} style={{...sBtn("#B86060"),padding:"2px 6px",fontSize:7}}>✕</button></div>
             </div>
           ))}
         </div>
@@ -3751,14 +3756,14 @@ function MidiPanel({ midi }) {
   const mc=new Set(Object.values(midi.mappings)).size;
   return (
     <div style={{display:"flex",flexDirection:"column",height:"100%"}}>
-      <div style={{display:"flex",borderBottom:"1px solid #0f0f1e",flexShrink:0}}>
+      <div style={{display:"flex",borderBottom:"1px solid #1A1D23",flexShrink:0}}>
         {[["dev","DEV"],["map",`MAP(${mc})`]].map(([id,l])=>(
-          <button key={id} onClick={()=>setTab(id)} style={{flex:1,padding:"6px 3px",fontSize:7,fontFamily:"'DM Mono',monospace",background:tab===id?"#0d0d20":"transparent",color:tab===id?"#C8A96E":"#555562",border:"none",borderBottom:`1px solid ${tab===id?"#C8A96E":"transparent"}`,cursor:"pointer",outline:"none"}}>{l}</button>
+          <button key={id} onClick={()=>setTab(id)} style={{flex:1,padding:"6px 3px",fontSize:7,fontFamily:"'Inter',sans-serif",background:tab===id?"#0d0d20":"transparent",color:tab===id?"#ECEEF1":"#52555C",border:"none",borderBottom:`1px solid ${tab===id?"#ECEEF1":"transparent"}`,cursor:"pointer",outline:"none"}}>{l}</button>
         ))}
       </div>
       <div style={{flex:1,overflowY:"auto",padding:7}}>
-        {tab==="dev"&&(<div style={{display:"flex",flexDirection:"column",gap:5}}>{!midi.granted?<button onClick={midi.request} style={{...sBtn("#f59e0b"),width:"100%",justifyContent:"center",padding:"7px"}}>ENABLE MIDI ACCESS</button>:<>{midi.devices.length===0&&<div style={{fontSize:7,color:"#555562",fontFamily:"'DM Mono',monospace",textAlign:"center",padding:"10px 0"}}>No MIDI devices found.<br/>Plug in your controller.</div>}{midi.devices.map(d=><div key={d.id} onClick={()=>midi.connect(d.id)} style={{padding:"5px 7px",borderRadius:5,cursor:"pointer",background:midi.active?.id===d.id?"#C8A96E0d":"#07070f",border:`1px solid ${midi.active?.id===d.id?"#C8A96E33":"#0f0f1e"}`}}><div style={{fontSize:8,color:"#d8d8e2",fontFamily:"'DM Mono',monospace"}}>{d.name}</div>{midi.active?.id===d.id&&<div style={{fontSize:6,color:"#C8A96E",fontFamily:"'DM Mono',monospace"}}>● ACTIVE</div>}</div>)}</> }</div>)}
-        {tab==="map"&&(<div style={{display:"flex",flexDirection:"column",gap:2}}>{midi.learning&&<div style={{fontSize:7,fontFamily:"'DM Mono',monospace",color:"#C8A96E",background:"#C8A96E0a",border:"1px solid #C8A96E22",borderRadius:4,padding:"4px 7px",marginBottom:3,animation:"pulse .8s infinite"}}>● Move a control on your controller...<button onClick={()=>midi.setLearning(null)} style={{float:"right",background:"none",border:"none",color:"#C8A96E",cursor:"pointer",fontSize:8}}>✕</button></div>}{ACTS.map(ak=>{const mp=Object.entries(midi.mappings).find(([,v])=>v===ak);const il=midi.learning===ak;return(<div key={ak} style={{display:"flex",gap:3,alignItems:"center",padding:"2px 3px",borderRadius:3,background:il?"#C8A96E08":"transparent"}}><span style={{flex:1,fontSize:7,fontFamily:"'DM Mono',monospace",color:mp?"#8888aa":"#555562",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{ak.replace(/_/g," ")}</span>{mp&&<span style={{fontSize:5,color:"#C8A96E44",fontFamily:"'DM Mono',monospace"}}>{mp[0].slice(0,6)}</span>}<button onClick={()=>midi.setLearning(il?null:ak)} style={{padding:"1px 4px",fontSize:5,fontFamily:"'DM Mono',monospace",background:il?"#C8A96E22":"#0a0a18",border:`1px solid ${il?"#C8A96E44":"#141424"}`,color:il?"#C8A96E":"#555562",borderRadius:3,cursor:"pointer"}}>{il?"●":"LRN"}</button></div>);})}</div>)}
+        {tab==="dev"&&(<div style={{display:"flex",flexDirection:"column",gap:5}}>{!midi.granted?<button onClick={midi.request} style={{...sBtn("#C9A06B"),width:"100%",justifyContent:"center",padding:"7px"}}>ENABLE MIDI ACCESS</button>:<>{midi.devices.length===0&&<div style={{fontSize:7,color:"#52555C",fontFamily:"'Inter',sans-serif",textAlign:"center",padding:"10px 0"}}>No MIDI devices found.<br/>Plug in your controller.</div>}{midi.devices.map(d=><div key={d.id} onClick={()=>midi.connect(d.id)} style={{padding:"5px 7px",borderRadius:5,cursor:"pointer",background:midi.active?.id===d.id?"#ECEEF10d":"#0A0B0D",border:`1px solid ${midi.active?.id===d.id?"#ECEEF133":"#1A1D23"}`}}><div style={{fontSize:8,color:"#ECEEF1",fontFamily:"'Inter',sans-serif"}}>{d.name}</div>{midi.active?.id===d.id&&<div style={{fontSize:6,color:"#ECEEF1",fontFamily:"'Inter',sans-serif"}}>● ACTIVE</div>}</div>)}</> }</div>)}
+        {tab==="map"&&(<div style={{display:"flex",flexDirection:"column",gap:2}}>{midi.learning&&<div style={{fontSize:7,fontFamily:"'Inter',sans-serif",color:"#ECEEF1",background:"#ECEEF10a",border:"1px solid #ECEEF122",borderRadius:4,padding:"4px 7px",marginBottom:3,animation:"pulse .8s infinite"}}>● Move a control on your controller...<button onClick={()=>midi.setLearning(null)} style={{float:"right",background:"none",border:"none",color:"#ECEEF1",cursor:"pointer",fontSize:8}}>✕</button></div>}{ACTS.map(ak=>{const mp=Object.entries(midi.mappings).find(([,v])=>v===ak);const il=midi.learning===ak;return(<div key={ak} style={{display:"flex",gap:3,alignItems:"center",padding:"2px 3px",borderRadius:3,background:il?"#ECEEF108":"transparent"}}><span style={{flex:1,fontSize:7,fontFamily:"'Inter',sans-serif",color:mp?"#7A7E85":"#52555C",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{ak.replace(/_/g," ")}</span>{mp&&<span style={{fontSize:5,color:"#ECEEF144",fontFamily:"'Inter',sans-serif"}}>{mp[0].slice(0,6)}</span>}<button onClick={()=>midi.setLearning(il?null:ak)} style={{padding:"1px 4px",fontSize:5,fontFamily:"'Inter',sans-serif",background:il?"#ECEEF122":"#131519",border:`1px solid ${il?"#ECEEF144":"#1A1D23"}`,color:il?"#ECEEF1":"#52555C",borderRadius:3,cursor:"pointer"}}>{il?"●":"LRN"}</button></div>);})}</div>)}
       </div>
     </div>
   );
@@ -3771,13 +3776,13 @@ function ChatPanel({ log, send, me }) {
   return (
     <div style={{display:"flex",flexDirection:"column",height:"100%"}}>
       <div style={{flex:1,overflowY:"auto",padding:"7px 9px",display:"flex",flexDirection:"column",gap:3}}>
-        {log.length===0&&<div style={{fontSize:8,color:"#555562",fontFamily:"'DM Mono',monospace",textAlign:"center",marginTop:20}}>Chat with your partner here</div>}
-        {log.map((m,i)=><div key={i} style={{fontSize:9,fontFamily:"'DM Mono',monospace"}}>{m.type==="system"?<span style={{color:"#555562",fontStyle:"italic"}}>— {m.msg} —</span>:<><span style={{color:"#555562",fontSize:6}}>{m.time} </span><span style={{color:m.self||m.from===me?"#C8A96E":"#00BFA5",fontWeight:700}}>{m.from}: </span><span style={{color:"#c0c0cc"}}>{m.msg}</span></>}</div>)}
+        {log.length===0&&<div style={{fontSize:8,color:"#52555C",fontFamily:"'Inter',sans-serif",textAlign:"center",marginTop:20}}>Chat with your partner here</div>}
+        {log.map((m,i)=><div key={i} style={{fontSize:9,fontFamily:"'Inter',sans-serif"}}>{m.type==="system"?<span style={{color:"#52555C",fontStyle:"italic"}}>— {m.msg} —</span>:<><span style={{color:"#52555C",fontSize:6}}>{m.time} </span><span style={{color:m.self||m.from===me?"#ECEEF1":"#C97064",fontWeight:700}}>{m.from}: </span><span style={{color:"#ECEEF1"}}>{m.msg}</span></>}</div>)}
         <div ref={end}/>
       </div>
-      <div style={{display:"flex",gap:5,padding:"5px 7px",borderTop:"1px solid #0f0f1e"}}>
-        <input value={input} onChange={e=>setInput(e.target.value)} onKeyDown={e=>e.key==="Enter"&&go()} placeholder="Message your partner..." style={{flex:1,background:"#07070f",border:"1px solid #141424",color:"#e8e8f0",borderRadius:5,padding:"4px 7px",fontSize:9,fontFamily:"'DM Mono',monospace",outline:"none"}}/>
-        <button onClick={go} style={{...sBtn("#C8A96E"),padding:"4px 9px",fontSize:10}}>→</button>
+      <div style={{display:"flex",gap:5,padding:"5px 7px",borderTop:"1px solid #1A1D23"}}>
+        <input value={input} onChange={e=>setInput(e.target.value)} onKeyDown={e=>e.key==="Enter"&&go()} placeholder="Message your partner..." style={{flex:1,background:"#0A0B0D",border:"1px solid #1A1D23",color:"#ECEEF1",borderRadius:5,padding:"4px 7px",fontSize:9,fontFamily:"'Inter',sans-serif",outline:"none"}}/>
+        <button onClick={go} style={{...sBtn("#ECEEF1"),padding:"4px 9px",fontSize:10}}>→</button>
       </div>
     </div>
   );
@@ -3791,18 +3796,18 @@ function ChatBar({ log, send, me }) {
   useEffect(()=>end.current?.scrollIntoView({behavior:"smooth"}),[log]);
   const go = () => { if(!input.trim()) return; send(input); setInput(""); };
 
-  const G = "#C8A96E";
+  const G = "#ECEEF1";
   return (
-    <div style={{ borderTop:`1px solid ${G}18`, background:"#080710", flexShrink:0 }}>
+    <div style={{ borderTop:`1px solid ${G}18`, background:"#131519", flexShrink:0 }}>
       {expanded && (
         <div style={{ maxHeight:140, overflowY:"auto", padding:"8px 18px", display:"flex", flexDirection:"column", gap:4, borderBottom:`1px solid ${G}14` }}>
           {log.length===0
-            ? <span style={{ fontSize:9, fontFamily:"'DM Mono',monospace", color:"#555562", fontStyle:"italic" }}>No messages yet — say hi to your partner</span>
+            ? <span style={{ fontSize:9, fontFamily:"'Inter',sans-serif", color:"#52555C", fontStyle:"italic" }}>No messages yet — say hi to your partner</span>
             : log.map((m,i)=>(
-                <div key={i} style={{ fontSize:9, fontFamily:"'DM Mono',monospace" }}>
+                <div key={i} style={{ fontSize:9, fontFamily:"'Inter',sans-serif" }}>
                   {m.type==="system"
-                    ? <span style={{ color:"#555562", fontStyle:"italic" }}>— {m.msg} —</span>
-                    : <><span style={{ color:"#555562", fontSize:7 }}>{m.time} </span><span style={{ color:m.self||m.from===me?"#C8A96E":"#00BFA5", fontWeight:500 }}>{m.from}: </span><span style={{ color:"#888898" }}>{m.msg}</span></>
+                    ? <span style={{ color:"#52555C", fontStyle:"italic" }}>— {m.msg} —</span>
+                    : <><span style={{ color:"#52555C", fontSize:7 }}>{m.time} </span><span style={{ color:m.self||m.from===me?"#ECEEF1":"#C97064", fontWeight:500 }}>{m.from}: </span><span style={{ color:"#7A7E85" }}>{m.msg}</span></>
                   }
                 </div>
               ))
@@ -3811,24 +3816,24 @@ function ChatBar({ log, send, me }) {
         </div>
       )}
       <div style={{ display:"flex", alignItems:"center", gap:10, padding:"6px 18px" }}>
-        <button onClick={()=>setExpanded(e=>!e)} style={{ fontSize:7, fontFamily:"'DM Mono',monospace", letterSpacing:2, color:expanded?G:`${G}55`, background:"transparent", border:"none", cursor:"pointer", padding:0, flexShrink:0, display:"flex", alignItems:"center", gap:4 }}>
+        <button onClick={()=>setExpanded(e=>!e)} style={{ fontSize:7, fontFamily:"'Inter',sans-serif", letterSpacing:2, color:expanded?G:`${G}55`, background:"transparent", border:"none", cursor:"pointer", padding:0, flexShrink:0, display:"flex", alignItems:"center", gap:4 }}>
           💬 {expanded ? "▾ CHAT" : "▸ CHAT"}
-          {!expanded && log.filter(m=>m.type!=="system").length>0 && <span style={{ background:G, color:"#080710", borderRadius:8, fontSize:6, padding:"1px 5px", fontWeight:700 }}>{log.filter(m=>m.type!=="system").length}</span>}
+          {!expanded && log.filter(m=>m.type!=="system").length>0 && <span style={{ background:G, color:"#131519", borderRadius:8, fontSize:6, padding:"1px 5px", fontWeight:700 }}>{log.filter(m=>m.type!=="system").length}</span>}
         </button>
         {!expanded && (() => { const last=log.filter(m=>m.type!=="system").slice(-1)[0]; return last ? (
-          <span style={{ fontSize:8, fontFamily:"'DM Mono',monospace", color:"#555562", overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap", flex:1 }}>
-            <span style={{ color:last.from===me?"#C8A96E55":"#00BFA555" }}>{last.from}: </span>{last.msg}
+          <span style={{ fontSize:8, fontFamily:"'Inter',sans-serif", color:"#52555C", overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap", flex:1 }}>
+            <span style={{ color:last.from===me?"#ECEEF155":"#C9706455" }}>{last.from}: </span>{last.msg}
           </span>
-        ) : <span style={{ flex:1, fontSize:8, fontFamily:"'DM Mono',monospace", color:"#555562" }}>Message your partner...</span>; })()}
+        ) : <span style={{ flex:1, fontSize:8, fontFamily:"'Inter',sans-serif", color:"#52555C" }}>Message your partner...</span>; })()}
         {expanded && <div style={{ flex:1 }}/>}
         <input
           value={input}
           onChange={e=>setInput(e.target.value)}
           onKeyDown={e=>e.key==="Enter"&&go()}
           placeholder="Type a message..."
-          style={{ width:220, background:"#0E0C1A", border:`1px solid ${G}22`, color:"#d8d8e2", borderRadius:6, padding:"5px 10px", fontSize:9, fontFamily:"'DM Mono',monospace", outline:"none", flexShrink:0 }}
+          style={{ width:220, background:"#1A1D23", border:`1px solid ${G}22`, color:"#ECEEF1", borderRadius:6, padding:"5px 10px", fontSize:9, fontFamily:"'Inter',sans-serif", outline:"none", flexShrink:0 }}
         />
-        <button onClick={go} style={{ height:26, padding:"0 12px", background:`${G}18`, border:`1px solid ${G}33`, color:G, borderRadius:6, cursor:"pointer", fontFamily:"'DM Mono',monospace", fontSize:11, flexShrink:0 }}>→</button>
+        <button onClick={go} style={{ height:26, padding:"0 12px", background:`${G}18`, border:`1px solid ${G}33`, color:G, borderRadius:6, cursor:"pointer", fontFamily:"'Inter',sans-serif", fontSize:11, flexShrink:0 }}>→</button>
       </div>
     </div>
   );
@@ -3848,29 +3853,29 @@ function Landing({ onEnter }) {
   ];
 
   return (
-    <div style={{ minHeight:"100vh", background:"#020208", color:"#e8e8f0", fontFamily:"'Barlow', sans-serif", overflowX:"hidden" }}>
+    <div style={{ minHeight:"100vh", background:"#0A0B0D", color:"#ECEEF1", fontFamily:"'Barlow', sans-serif", overflowX:"hidden" }}>
       <style>{`
         @keyframes float { 0%,100%{transform:translateY(0)} 50%{transform:translateY(-12px)} }
         @keyframes glow  { 0%,100%{opacity:.4} 50%{opacity:.9} }
         @keyframes slide { from{opacity:0;transform:translateY(24px)} to{opacity:1;transform:translateY(0)} }
         @keyframes spin  { to{transform:rotate(360deg)} }
-        .feat-card:hover { border-color: #C8A96E44 !important; transform: translateY(-3px); box-shadow: 0 8px 30px rgba(0,212,255,.08) !important; }
+        .feat-card:hover { border-color: #ECEEF144 !important; transform: translateY(-3px); box-shadow: 0 8px 30px rgba(0,212,255,.08) !important; }
         .feat-card { transition: all .2s ease !important; }
-        .cta-btn:hover { box-shadow: 0 0 40px #C8A96E55, 0 0 80px #C8A96E22 !important; transform: scale(1.02); }
+        .cta-btn:hover { box-shadow: 0 0 40px #ECEEF155, 0 0 80px #ECEEF122 !important; transform: scale(1.02); }
         .cta-btn { transition: all .2s ease !important; }
-        .nav-link:hover { color: #C8A96E !important; }
+        .nav-link:hover { color: #ECEEF1 !important; }
         .nav-link { transition: color .15s !important; }
       `}</style>
       <link href="https://fonts.googleapis.com/css2?family=Barlow:wght@300;400;600;700&family=Barlow+Condensed:wght@600;700;800;900&display=swap" rel="stylesheet"/>
 
       {/* NAV */}
-      <nav style={{ position:"fixed", top:0, left:0, right:0, zIndex:100, padding:"14px 40px", display:"flex", justifyContent:"space-between", alignItems:"center", background:"linear-gradient(180deg,#020208ee,transparent)", backdropFilter:"blur(8px)" }}>
-        <div style={{ fontFamily:"'DM Mono',monospace", fontWeight:900, fontSize:22, letterSpacing:3, background:"linear-gradient(90deg,#C8A96E,#00BFA5)", WebkitBackgroundClip:"text", WebkitTextFillColor:"transparent" }}>MIX//SYNC</div>
+      <nav style={{ position:"fixed", top:0, left:0, right:0, zIndex:100, padding:"14px 40px", display:"flex", justifyContent:"space-between", alignItems:"center", background:"linear-gradient(180deg,#0A0B0Dee,transparent)", backdropFilter:"blur(8px)" }}>
+        <div style={{ fontFamily:"'Inter',sans-serif", fontWeight:900, fontSize:22, letterSpacing:3, background:"linear-gradient(90deg,#ECEEF1,#C97064)", WebkitBackgroundClip:"text", WebkitTextFillColor:"transparent" }}>MIX//SYNC</div>
         <div style={{ display:"flex", gap:28, alignItems:"center" }}>
           {["Features","How It Works","Get Started"].map(l=>(
-            <span key={l} className="nav-link" style={{ fontSize:11, fontFamily:"'DM Mono',monospace", color:"#888898", letterSpacing:1, cursor:"pointer" }}>{l.toUpperCase()}</span>
+            <span key={l} className="nav-link" style={{ fontSize:11, fontFamily:"'Inter',sans-serif", color:"#7A7E85", letterSpacing:1, cursor:"pointer" }}>{l.toUpperCase()}</span>
           ))}
-          <button onClick={onEnter} className="cta-btn" style={{ padding:"8px 20px", background:"linear-gradient(135deg,#C8A96E,#0099bb)", border:"none", color:"#000", fontFamily:"'DM Mono',monospace", fontWeight:800, fontSize:12, letterSpacing:2, borderRadius:6, cursor:"pointer" }}>
+          <button onClick={onEnter} className="cta-btn" style={{ padding:"8px 20px", background:"linear-gradient(135deg,#ECEEF1,#0099bb)", border:"none", color:"#000", fontFamily:"'Inter',sans-serif", fontWeight:800, fontSize:12, letterSpacing:2, borderRadius:6, cursor:"pointer" }}>
             START A MIX →
           </button>
         </div>
@@ -3880,66 +3885,66 @@ function Landing({ onEnter }) {
       <section style={{ minHeight:"100vh", display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"center", textAlign:"center", padding:"100px 40px 60px", position:"relative", overflow:"hidden" }}>
 
         {/* Background glow orbs */}
-        <div style={{ position:"absolute", top:"20%", left:"15%", width:400, height:400, borderRadius:"50%", background:"radial-gradient(circle,#C8A96E08,transparent 70%)", animation:"glow 4s ease-in-out infinite", pointerEvents:"none" }}/>
-        <div style={{ position:"absolute", top:"30%", right:"10%", width:300, height:300, borderRadius:"50%", background:"radial-gradient(circle,#00BFA508,transparent 70%)", animation:"glow 5s ease-in-out 1s infinite", pointerEvents:"none" }}/>
+        <div style={{ position:"absolute", top:"20%", left:"15%", width:400, height:400, borderRadius:"50%", background:"radial-gradient(circle,#ECEEF108,transparent 70%)", animation:"glow 4s ease-in-out infinite", pointerEvents:"none" }}/>
+        <div style={{ position:"absolute", top:"30%", right:"10%", width:300, height:300, borderRadius:"50%", background:"radial-gradient(circle,#C9706408,transparent 70%)", animation:"glow 5s ease-in-out 1s infinite", pointerEvents:"none" }}/>
         <div style={{ position:"absolute", bottom:"20%", left:"40%", width:500, height:200, borderRadius:"50%", background:"radial-gradient(circle,#a855f706,transparent 70%)", animation:"glow 6s ease-in-out 2s infinite", pointerEvents:"none" }}/>
 
         {/* Animated grid lines */}
         <div style={{ position:"absolute", inset:0, backgroundImage:"linear-gradient(#ffffff04 1px,transparent 1px),linear-gradient(90deg,#ffffff04 1px,transparent 1px)", backgroundSize:"60px 60px", pointerEvents:"none" }}/>
 
         <div style={{ animation:"slide .8s ease forwards", maxWidth:760 }}>
-          <div style={{ fontSize:10, fontFamily:"'DM Mono',monospace", color:"#C8A96E", letterSpacing:4, marginBottom:20, display:"flex", alignItems:"center", justifyContent:"center", gap:10 }}>
-            <div style={{ width:20, height:1, background:"#C8A96E" }}/>
+          <div style={{ fontSize:10, fontFamily:"'Inter',sans-serif", color:"#ECEEF1", letterSpacing:4, marginBottom:20, display:"flex", alignItems:"center", justifyContent:"center", gap:10 }}>
+            <div style={{ width:20, height:1, background:"#ECEEF1" }}/>
             THE FUTURE OF REMOTE DJing
-            <div style={{ width:20, height:1, background:"#C8A96E" }}/>
+            <div style={{ width:20, height:1, background:"#ECEEF1" }}/>
           </div>
 
-          <h1 style={{ fontFamily:"'DM Mono',monospace", fontWeight:900, fontSize:"clamp(48px,8vw,96px)", lineHeight:.95, letterSpacing:-1, margin:"0 0 24px" }}>
-            <span style={{ display:"block", background:"linear-gradient(135deg,#ffffff,#aaaacc)", WebkitBackgroundClip:"text", WebkitTextFillColor:"transparent" }}>MIX TOGETHER.</span>
-            <span style={{ display:"block", background:"linear-gradient(135deg,#C8A96E,#0066ff)", WebkitBackgroundClip:"text", WebkitTextFillColor:"transparent" }}>ANYWHERE.</span>
+          <h1 style={{ fontFamily:"'Inter',sans-serif", fontWeight:900, fontSize:"clamp(48px,8vw,96px)", lineHeight:.95, letterSpacing:-1, margin:"0 0 24px" }}>
+            <span style={{ display:"block", background:"linear-gradient(135deg,#ffffff,#ECEEF1)", WebkitBackgroundClip:"text", WebkitTextFillColor:"transparent" }}>MIX TOGETHER.</span>
+            <span style={{ display:"block", background:"linear-gradient(135deg,#ECEEF1,#0066ff)", WebkitBackgroundClip:"text", WebkitTextFillColor:"transparent" }}>ANYWHERE.</span>
           </h1>
 
-          <p style={{ fontSize:16, color:"#8888aa", lineHeight:1.7, maxWidth:520, margin:"0 auto 40px", fontWeight:300 }}>
+          <p style={{ fontSize:16, color:"#7A7E85", lineHeight:1.7, maxWidth:520, margin:"0 auto 40px", fontWeight:300 }}>
             Two DJs. Real-time audio sync. MIDI controllers. Beat detection. Live audio streaming. All in your browser — no software to install.
           </p>
 
           <div style={{ display:"flex", gap:12, justifyContent:"center", flexWrap:"wrap" }}>
-            <button onClick={onEnter} className="cta-btn" style={{ padding:"16px 40px", background:"linear-gradient(135deg,#C8A96E,#0077cc)", border:"none", color:"#000", fontFamily:"'DM Mono',monospace", fontWeight:800, fontSize:15, letterSpacing:2, borderRadius:8, cursor:"pointer", boxShadow:"0 0 30px #C8A96E33" }}>
+            <button onClick={onEnter} className="cta-btn" style={{ padding:"16px 40px", background:"linear-gradient(135deg,#ECEEF1,#0077cc)", border:"none", color:"#000", fontFamily:"'Inter',sans-serif", fontWeight:800, fontSize:15, letterSpacing:2, borderRadius:8, cursor:"pointer", boxShadow:"0 0 30px #ECEEF133" }}>
               START A MIX →
             </button>
-            <button style={{ padding:"16px 32px", background:"transparent", border:"1px solid #ffffff22", color:"#888", fontFamily:"'DM Mono',monospace", fontWeight:700, fontSize:14, letterSpacing:2, borderRadius:8, cursor:"pointer" }}>
+            <button style={{ padding:"16px 32px", background:"transparent", border:"1px solid #ffffff22", color:"#888", fontFamily:"'Inter',sans-serif", fontWeight:700, fontSize:14, letterSpacing:2, borderRadius:8, cursor:"pointer" }}>
               WATCH DEMO ▶
             </button>
           </div>
 
-          <div style={{ marginTop:24, fontSize:9, fontFamily:"'DM Mono',monospace", color:"#888898", letterSpacing:1 }}>
+          <div style={{ marginTop:24, fontSize:9, fontFamily:"'Inter',sans-serif", color:"#7A7E85", letterSpacing:1 }}>
             No account required · Works in Chrome & Edge · Free to use
           </div>
         </div>
 
         {/* Floating mixer preview */}
         <div style={{ marginTop:60, width:"100%", maxWidth:860, animation:"float 6s ease-in-out infinite", position:"relative" }}>
-          <div style={{ background:"linear-gradient(150deg,#0d0d22,#07070f)", border:"1px solid #1a1a30", borderRadius:16, padding:"20px 24px", boxShadow:"0 40px 80px rgba(0,0,0,.6), 0 0 60px rgba(0,212,255,.06)", display:"grid", gridTemplateColumns:"1fr 80px 1fr", gap:16, alignItems:"center" }}>
-            {["#C8A96E","#00BFA5"].map((c,i)=>(
+          <div style={{ background:"linear-gradient(150deg,#0d0d22,#0A0B0D)", border:"1px solid #1a1a30", borderRadius:16, padding:"20px 24px", boxShadow:"0 40px 80px rgba(0,0,0,.6), 0 0 60px rgba(0,212,255,.06)", display:"grid", gridTemplateColumns:"1fr 80px 1fr", gap:16, alignItems:"center" }}>
+            {["#ECEEF1","#C97064"].map((c,i)=>(
               <div key={i} style={{ background:"#06060f", borderRadius:10, padding:12, border:`1px solid ${c}22` }}>
                 <div style={{ display:"flex", justifyContent:"space-between", marginBottom:8 }}>
-                  <span style={{ fontSize:9, fontFamily:"'DM Mono',monospace", color:c, letterSpacing:2 }}>DECK {i===0?"A":"B"}</span>
+                  <span style={{ fontSize:9, fontFamily:"'Inter',sans-serif", color:c, letterSpacing:2 }}>DECK {i===0?"A":"B"}</span>
                   <div style={{ display:"flex", gap:1 }}>{Array.from({length:8}).map((_,j)=><div key={j} style={{ width:4, height:4+Math.random()*12, background:c+(j<5?"cc":"33"), borderRadius:1 }}/>)}</div>
                 </div>
                 <div style={{ height:28, background:"#03030a", borderRadius:4, marginBottom:8, overflow:"hidden", display:"flex", alignItems:"center" }}>
                   {Array.from({length:60}).map((_,j)=>{ const h=Math.sin(j*.4+(i*.5))*.4+.5; return <div key={j} style={{ flex:1, height:`${h*100}%`, background:j<30?c:c+"44", borderRadius:1 }}/>; })}
                 </div>
                 <div style={{ display:"flex", gap:4, justifyContent:"center" }}>
-                  {["⏮","◂◂","▶","▸▸"].map(btn=><div key={btn} style={{ width:24, height:20, background:"#0a0a18", border:`1px solid ${c}22`, borderRadius:3, display:"flex", alignItems:"center", justifyContent:"center", fontSize:8, color:btn==="▶"?c:"#555562" }}>{btn}</div>)}
+                  {["⏮","◂◂","▶","▸▸"].map(btn=><div key={btn} style={{ width:24, height:20, background:"#131519", border:`1px solid ${c}22`, borderRadius:3, display:"flex", alignItems:"center", justifyContent:"center", fontSize:8, color:btn==="▶"?c:"#52555C" }}>{btn}</div>)}
                 </div>
               </div>
             ))}
             <div style={{ display:"flex", flexDirection:"column", alignItems:"center", gap:8 }}>
-              <div style={{ fontSize:7, fontFamily:"'DM Mono',monospace", color:"#888898", letterSpacing:1 }}>XF</div>
-              <div style={{ width:"100%", height:4, background:"linear-gradient(90deg,#C8A96E,#00BFA5)", borderRadius:2, position:"relative" }}>
-                <div style={{ position:"absolute", left:"calc(50% - 8px)", top:-6, width:16, height:16, background:"#e8e8f0", borderRadius:3, boxShadow:"0 0 8px rgba(255,255,255,.3)" }}/>
+              <div style={{ fontSize:7, fontFamily:"'Inter',sans-serif", color:"#7A7E85", letterSpacing:1 }}>XF</div>
+              <div style={{ width:"100%", height:4, background:"linear-gradient(90deg,#ECEEF1,#C97064)", borderRadius:2, position:"relative" }}>
+                <div style={{ position:"absolute", left:"calc(50% - 8px)", top:-6, width:16, height:16, background:"#ECEEF1", borderRadius:3, boxShadow:"0 0 8px rgba(255,255,255,.3)" }}/>
               </div>
-              <div style={{ fontSize:7, fontFamily:"'DM Mono',monospace", color:"#22c55e" }}>124.0 BPM</div>
+              <div style={{ fontSize:7, fontFamily:"'Inter',sans-serif", color:"#6BB36B" }}>124.0 BPM</div>
             </div>
           </div>
           {/* Reflection */}
@@ -3950,25 +3955,25 @@ function Landing({ onEnter }) {
       {/* FEATURES */}
       <section style={{ padding:"80px 40px", maxWidth:1100, margin:"0 auto" }}>
         <div style={{ textAlign:"center", marginBottom:56 }}>
-          <div style={{ fontSize:9, fontFamily:"'DM Mono',monospace", color:"#C8A96E", letterSpacing:4, marginBottom:14 }}>WHAT'S INSIDE</div>
-          <h2 style={{ fontFamily:"'DM Mono',monospace", fontWeight:900, fontSize:"clamp(32px,5vw,52px)", letterSpacing:-1, margin:0, color:"#e8e8f0" }}>EVERYTHING A DJ NEEDS</h2>
+          <div style={{ fontSize:9, fontFamily:"'Inter',sans-serif", color:"#ECEEF1", letterSpacing:4, marginBottom:14 }}>WHAT'S INSIDE</div>
+          <h2 style={{ fontFamily:"'Inter',sans-serif", fontWeight:900, fontSize:"clamp(32px,5vw,52px)", letterSpacing:-1, margin:0, color:"#ECEEF1" }}>EVERYTHING A DJ NEEDS</h2>
         </div>
         <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(280px,1fr))", gap:16 }}>
           {features.map((f,i)=>(
-            <div key={i} className="feat-card" style={{ background:"linear-gradient(150deg,#0d0d1e,#07070f)", border:"1px solid #141428", borderRadius:12, padding:"24px 22px" }}>
+            <div key={i} className="feat-card" style={{ background:"linear-gradient(150deg,#0d0d1e,#0A0B0D)", border:"1px solid #141428", borderRadius:12, padding:"24px 22px" }}>
               <div style={{ fontSize:28, marginBottom:12 }}>{f.icon}</div>
-              <div style={{ fontFamily:"'DM Mono',monospace", fontWeight:800, fontSize:17, letterSpacing:1, color:"#e8e8f0", marginBottom:8 }}>{f.title}</div>
-              <div style={{ fontSize:11, color:"#888898", lineHeight:1.7, fontWeight:300 }}>{f.desc}</div>
+              <div style={{ fontFamily:"'Inter',sans-serif", fontWeight:800, fontSize:17, letterSpacing:1, color:"#ECEEF1", marginBottom:8 }}>{f.title}</div>
+              <div style={{ fontSize:11, color:"#7A7E85", lineHeight:1.7, fontWeight:300 }}>{f.desc}</div>
             </div>
           ))}
         </div>
       </section>
 
       {/* HOW IT WORKS */}
-      <section style={{ padding:"80px 40px", background:"linear-gradient(180deg,transparent,#0a0a1800,transparent)" }}>
+      <section style={{ padding:"80px 40px", background:"linear-gradient(180deg,transparent,#13151900,transparent)" }}>
         <div style={{ maxWidth:800, margin:"0 auto", textAlign:"center" }}>
-          <div style={{ fontSize:9, fontFamily:"'DM Mono',monospace", color:"#C8A96E", letterSpacing:4, marginBottom:14 }}>SIMPLE AS IT GETS</div>
-          <h2 style={{ fontFamily:"'DM Mono',monospace", fontWeight:900, fontSize:"clamp(28px,4vw,46px)", letterSpacing:-1, marginBottom:48, color:"#e8e8f0" }}>THREE STEPS TO GO LIVE</h2>
+          <div style={{ fontSize:9, fontFamily:"'Inter',sans-serif", color:"#ECEEF1", letterSpacing:4, marginBottom:14 }}>SIMPLE AS IT GETS</div>
+          <h2 style={{ fontFamily:"'Inter',sans-serif", fontWeight:900, fontSize:"clamp(28px,4vw,46px)", letterSpacing:-1, marginBottom:48, color:"#ECEEF1" }}>THREE STEPS TO GO LIVE</h2>
           <div style={{ display:"grid", gridTemplateColumns:"repeat(3,1fr)", gap:24 }}>
             {[
               { n:"01", title:"Open the App", desc:"No install. No account. Just click Launch App and you're in." },
@@ -3976,9 +3981,9 @@ function Landing({ onEnter }) {
               { n:"03", title:"Start Mixing", desc:"Load your tracks, hit play. You're live. Your mix streams to their ears in real time." },
             ].map((s,i)=>(
               <div key={i} style={{ textAlign:"center" }}>
-                <div style={{ fontSize:40, fontFamily:"'DM Mono',monospace", fontWeight:900, color:"#C8A96E11", letterSpacing:-2, marginBottom:12 }}>{s.n}</div>
-                <div style={{ fontFamily:"'DM Mono',monospace", fontWeight:800, fontSize:18, color:"#e8e8f0", marginBottom:8 }}>{s.title}</div>
-                <div style={{ fontSize:11, color:"#888898", lineHeight:1.7 }}>{s.desc}</div>
+                <div style={{ fontSize:40, fontFamily:"'Inter',sans-serif", fontWeight:900, color:"#ECEEF111", letterSpacing:-2, marginBottom:12 }}>{s.n}</div>
+                <div style={{ fontFamily:"'Inter',sans-serif", fontWeight:800, fontSize:18, color:"#ECEEF1", marginBottom:8 }}>{s.title}</div>
+                <div style={{ fontSize:11, color:"#7A7E85", lineHeight:1.7 }}>{s.desc}</div>
               </div>
             ))}
           </div>
@@ -3988,23 +3993,23 @@ function Landing({ onEnter }) {
       {/* BOTTOM CTA */}
       <section style={{ padding:"80px 40px", textAlign:"center" }}>
         <div style={{ maxWidth:600, margin:"0 auto" }}>
-          <h2 style={{ fontFamily:"'DM Mono',monospace", fontWeight:900, fontSize:"clamp(32px,5vw,56px)", letterSpacing:-1, margin:"0 0 16px", background:"linear-gradient(135deg,#ffffff,#aaaacc)", WebkitBackgroundClip:"text", WebkitTextFillColor:"transparent" }}>
+          <h2 style={{ fontFamily:"'Inter',sans-serif", fontWeight:900, fontSize:"clamp(32px,5vw,56px)", letterSpacing:-1, margin:"0 0 16px", background:"linear-gradient(135deg,#ffffff,#ECEEF1)", WebkitBackgroundClip:"text", WebkitTextFillColor:"transparent" }}>
             READY TO MIX?
           </h2>
-          <p style={{ fontSize:13, color:"#888898", marginBottom:32, lineHeight:1.7 }}>
+          <p style={{ fontSize:13, color:"#7A7E85", marginBottom:32, lineHeight:1.7 }}>
             Invite a friend, load up your tracks, and start playing together right now. No credit card. No software.
           </p>
-          <button onClick={onEnter} className="cta-btn" style={{ padding:"18px 48px", background:"linear-gradient(135deg,#C8A96E,#0077cc)", border:"none", color:"#000", fontFamily:"'DM Mono',monospace", fontWeight:900, fontSize:16, letterSpacing:3, borderRadius:8, cursor:"pointer", boxShadow:"0 0 40px #C8A96E33" }}>
+          <button onClick={onEnter} className="cta-btn" style={{ padding:"18px 48px", background:"linear-gradient(135deg,#ECEEF1,#0077cc)", border:"none", color:"#000", fontFamily:"'Inter',sans-serif", fontWeight:900, fontSize:16, letterSpacing:3, borderRadius:8, cursor:"pointer", boxShadow:"0 0 40px #ECEEF133" }}>
             START A MIX →
           </button>
         </div>
       </section>
 
       {/* FOOTER */}
-      <footer style={{ borderTop:"1px solid #0f0f1e", padding:"24px 40px", display:"flex", justifyContent:"space-between", alignItems:"center" }}>
-        <div style={{ fontFamily:"'DM Mono',monospace", fontWeight:800, fontSize:14, letterSpacing:3, background:"linear-gradient(90deg,#C8A96E,#00BFA5)", WebkitBackgroundClip:"text", WebkitTextFillColor:"transparent" }}>MIX//SYNC</div>
-        <div style={{ fontSize:8, fontFamily:"'DM Mono',monospace", color:"#555562" }}>Built for DJs who refuse to be in the same room.</div>
-        <div style={{ fontSize:8, fontFamily:"'DM Mono',monospace", color:"#555562" }}>Chrome & Edge · HTTPS required for MIDI + WebRTC</div>
+      <footer style={{ borderTop:"1px solid #1A1D23", padding:"24px 40px", display:"flex", justifyContent:"space-between", alignItems:"center" }}>
+        <div style={{ fontFamily:"'Inter',sans-serif", fontWeight:800, fontSize:14, letterSpacing:3, background:"linear-gradient(90deg,#ECEEF1,#C97064)", WebkitBackgroundClip:"text", WebkitTextFillColor:"transparent" }}>MIX//SYNC</div>
+        <div style={{ fontSize:8, fontFamily:"'Inter',sans-serif", color:"#52555C" }}>Built for DJs who refuse to be in the same room.</div>
+        <div style={{ fontSize:8, fontFamily:"'Inter',sans-serif", color:"#52555C" }}>Chrome & Edge · HTTPS required for MIDI + WebRTC</div>
       </footer>
     </div>
   );
@@ -4020,7 +4025,7 @@ function ShareButton({ room, mixName }) {
     });
   };
   return (
-    <button onClick={copy} style={{ background: copied ? "#22c55e22" : "#C8A96E11", border: copied ? "1px solid #22c55e55" : "1px solid #C8A96E44", color: copied ? "#22c55e" : "#C8A96E", fontFamily:"'DM Mono',monospace", fontWeight:800, fontSize:7, letterSpacing:1, height:22, padding:"0 9px", borderRadius:5, cursor:"pointer", transition:"all .3s" }}>
+    <button onClick={copy} style={{ background: copied ? "#6BB36B22" : "#ECEEF111", border: copied ? "1px solid #6BB36B55" : "1px solid #ECEEF144", color: copied ? "#6BB36B" : "#ECEEF1", fontFamily:"'Inter',sans-serif", fontWeight:800, fontSize:7, letterSpacing:1, height:22, padding:"0 9px", borderRadius:5, cursor:"pointer", transition:"all .3s" }}>
       {copied ? "✓ COPIED" : "⎘ INVITE"}
     </button>
   );
@@ -4053,72 +4058,72 @@ function Lobby({ onJoin, djName = null }) {
     });
   };
 
-  const G = "#C8A96E";
+  const G = "#ECEEF1";
   return (
-    <div style={{ minHeight:"100vh", background:"#080710", display:"flex", alignItems:"center", justifyContent:"center", fontFamily:"'DM Sans',sans-serif", position:"relative", overflow:"hidden" }}>
+    <div style={{ minHeight:"100vh", background:"#131519", display:"flex", alignItems:"center", justifyContent:"center", fontFamily:"'Inter',sans-serif", position:"relative", overflow:"hidden" }}>
       <style>{`@keyframes drift2{0%,100%{transform:translateY(0)}50%{transform:translateY(-12px)}}`}</style>
-      <link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:wght@600;700&family=DM+Sans:wght@300;400;500&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet"/>
+      <link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,400..800&family=Inter:wght@400..700&family=JetBrains+Mono:wght@400..600&display=swap" rel="stylesheet"/>
       <div style={{ position:"absolute", top:"15%", right:"10%", width:"50%", height:"60%", borderRadius:"50%", background:`radial-gradient(ellipse,${G}07 0%,transparent 65%)`, animation:"drift2 18s ease-in-out infinite", pointerEvents:"none" }}/>
       <div style={{ position:"absolute", bottom:"10%", left:"5%", width:"35%", height:"45%", borderRadius:"50%", background:"radial-gradient(ellipse,#4A308008 0%,transparent 60%)", animation:"drift2 24s ease-in-out 4s infinite", pointerEvents:"none" }}/>
 
-      <div style={{ position:"relative", zIndex:1, width:460, background:"#0E0C1A", border:`1px solid ${G}18`, borderRadius:16, padding:36, display:"flex", flexDirection:"column", gap:20, boxShadow:`0 40px 80px rgba(0,0,0,.7), 0 0 0 1px #1C1830` }}>
+      <div style={{ position:"relative", zIndex:1, width:460, background:"#1A1D23", border:`1px solid ${G}18`, borderRadius:16, padding:36, display:"flex", flexDirection:"column", gap:20, boxShadow:`0 40px 80px rgba(0,0,0,.7), 0 0 0 1px #1A1D23` }}>
 
         {/* Header — matches App.jsx logo */}
         <div style={{ textAlign:"center" }}>
-          <div style={{ fontFamily:"'Cormorant Garamond',serif", fontWeight:700, fontSize:28, letterSpacing:-0.5, color:"#d8d8e2" }}>
+          <div style={{ fontFamily:"'Bricolage Grotesque',sans-serif", fontWeight:700, fontSize:28, letterSpacing:-0.5, color:"#ECEEF1" }}>
             Mix<span style={{ color:G }}>//</span>Sync
           </div>
-          <div style={{ fontSize:9, fontFamily:"'DM Mono',monospace", color:`${G}55`, letterSpacing:3, marginTop:6 }}>{isJoining?"JOIN MIX":"START A MIX"}</div>
+          <div style={{ fontSize:9, fontFamily:"'Inter',sans-serif", color:`${G}55`, letterSpacing:3, marginTop:6 }}>{isJoining?"JOIN MIX":"START A MIX"}</div>
         </div>
 
         {/* Mix Name */}
         <div style={{ display:"flex", flexDirection:"column", gap:7 }}>
-          <label style={{ fontSize:8, fontFamily:"'DM Mono',monospace", color:`${G}77`, letterSpacing:2 }}>{isJoining?"JOINING MIX":"MIX NAME"}</label>
+          <label style={{ fontSize:8, fontFamily:"'Inter',sans-serif", color:`${G}77`, letterSpacing:2 }}>{isJoining?"JOINING MIX":"MIX NAME"}</label>
           {isJoining ? (
-            <div style={{ fontFamily:"'Cormorant Garamond',serif", fontWeight:700, fontSize:22, letterSpacing:0.5, color:"#d8d8e2", padding:"6px 0" }}>{mixName || "Untitled Mix"}</div>
+            <div style={{ fontFamily:"'Bricolage Grotesque',sans-serif", fontWeight:700, fontSize:22, letterSpacing:0.5, color:"#ECEEF1", padding:"6px 0" }}>{mixName || "Untitled Mix"}</div>
           ) : (
             <input
               value={mixName}
               onChange={e => setMixName(e.target.value)}
               placeholder="e.g., Saturday Late Night"
-              style={{ background:"#080710", border:`1px solid ${G}33`, color:"#d8d8e2", borderRadius:8, padding:"11px 14px", fontSize:16, fontFamily:"'DM Sans',sans-serif", fontWeight:500, outline:"none" }}
+              style={{ background:"#131519", border:`1px solid ${G}33`, color:"#ECEEF1", borderRadius:8, padding:"11px 14px", fontSize:16, fontFamily:"'Inter',sans-serif", fontWeight:500, outline:"none" }}
             />
           )}
         </div>
 
         {/* DJ Name */}
         <div style={{ display:"flex", flexDirection:"column", gap:7 }}>
-          <label style={{ fontSize:8, fontFamily:"'DM Mono',monospace", color:`${G}77`, letterSpacing:2 }}>YOUR DJ NAME</label>
+          <label style={{ fontSize:8, fontFamily:"'Inter',sans-serif", color:`${G}77`, letterSpacing:2 }}>YOUR DJ NAME</label>
           <input
             value={name}
             onChange={e => setName(e.target.value)}
-            style={{ background:"#080710", border:`1px solid ${G}33`, color:"#d8d8e2", borderRadius:8, padding:"11px 14px", fontSize:16, fontFamily:"'DM Sans',sans-serif", fontWeight:500, outline:"none" }}
+            style={{ background:"#131519", border:`1px solid ${G}33`, color:"#ECEEF1", borderRadius:8, padding:"11px 14px", fontSize:16, fontFamily:"'Inter',sans-serif", fontWeight:500, outline:"none" }}
           />
         </div>
 
         {/* Mix Code */}
-        <div style={{ background:"#080710", border:`1px solid ${G}18`, borderRadius:12, padding:16, display:"flex", flexDirection:"column", gap:8 }}>
-          <div style={{ fontSize:8, fontFamily:"'DM Mono',monospace", color:`${G}55`, letterSpacing:2 }}>MIX CODE</div>
-          <div style={{ fontFamily:"'Cormorant Garamond',serif", fontWeight:700, fontSize:22, letterSpacing:1, color:"#d8d8e2" }}>{room}</div>
-          <div style={{ fontSize:8, fontFamily:"'DM Mono',monospace", color:"#555562", wordBreak:"break-all" }}>{inviteLink}</div>
+        <div style={{ background:"#131519", border:`1px solid ${G}18`, borderRadius:12, padding:16, display:"flex", flexDirection:"column", gap:8 }}>
+          <div style={{ fontSize:8, fontFamily:"'Inter',sans-serif", color:`${G}55`, letterSpacing:2 }}>MIX CODE</div>
+          <div style={{ fontFamily:"'Bricolage Grotesque',sans-serif", fontWeight:700, fontSize:22, letterSpacing:1, color:"#ECEEF1" }}>{room}</div>
+          <div style={{ fontSize:8, fontFamily:"'Inter',sans-serif", color:"#52555C", wordBreak:"break-all" }}>{inviteLink}</div>
           <button
             onClick={copyLink}
-            style={{ background: copied ? "#22c55e14" : `${G}14`, border: copied ? "1px solid #22c55e33" : `1px solid ${G}33`, color: copied ? "#22c55e" : G, fontFamily:"'DM Mono',monospace", fontWeight:500, fontSize:10, letterSpacing:2, padding:"10px 16px", borderRadius:8, cursor:"pointer", transition:"all .3s", textAlign:"center" }}
+            style={{ background: copied ? "#6BB36B14" : `${G}14`, border: copied ? "1px solid #6BB36B33" : `1px solid ${G}33`, color: copied ? "#6BB36B" : G, fontFamily:"'Inter',sans-serif", fontWeight:500, fontSize:10, letterSpacing:2, padding:"10px 16px", borderRadius:8, cursor:"pointer", transition:"all .3s", textAlign:"center" }}
           >
             {copied ? "✓ LINK COPIED!" : "⎘ COPY MIX LINK"}
           </button>
-          <div style={{ fontSize:8, fontFamily:"'DM Sans',sans-serif", color:"#888898", lineHeight:1.6, fontWeight:300 }}>Send this link to your partner — they'll join the same mix instantly.</div>
+          <div style={{ fontSize:8, fontFamily:"'Inter',sans-serif", color:"#7A7E85", lineHeight:1.6, fontWeight:300 }}>Send this link to your partner — they'll join the same mix instantly.</div>
         </div>
 
         {/* Join button — matches App.jsx btn-gold */}
         <button
           onClick={() => onJoin({ url: SERVER_URL, room, name, mixName: mixName || "Untitled Mix" })}
-          style={{ background:G, border:"none", color:"#080710", fontFamily:"'DM Mono',monospace", fontWeight:500, fontSize:12, letterSpacing:2, padding:"15px", borderRadius:10, cursor:"pointer", boxShadow:`0 0 32px ${G}30, 0 8px 20px rgba(0,0,0,.4)`, transition:"all .2s" }}
+          style={{ background:G, border:"none", color:"#131519", fontFamily:"'Inter',sans-serif", fontWeight:500, fontSize:12, letterSpacing:2, padding:"15px", borderRadius:10, cursor:"pointer", boxShadow:`0 0 32px ${G}30, 0 8px 20px rgba(0,0,0,.4)`, transition:"all .2s" }}
         >
           {isJoining?"JOIN MIX →":"START MIX →"}
         </button>
 
-        <div style={{ fontSize:8, fontFamily:"'DM Mono',monospace", color:"#555562", textAlign:"center", letterSpacing:1 }}>
+        <div style={{ fontSize:8, fontFamily:"'Inter',sans-serif", color:"#52555C", textAlign:"center", letterSpacing:1 }}>
           Chrome · Edge · Free
         </div>
       </div>
@@ -4553,49 +4558,49 @@ export default function CollabMix({ initialPage = "landing", djName = null }) {
     sync.send({ type:"library_sync", tracks: meta });
   }, [lib.library, session]);
 
-  const SC = { connected:"#22c55e", connecting:"#f59e0b", disconnected:"#555562", error:"#ef4444" };
+  const SC = { connected:"#6BB36B", connecting:"#C9A06B", disconnected:"#52555C", error:"#B86060" };
   const PANELS = [["rtc","⚡ AUDIO"],["rec","⏺ REC"],["midi","⎍ MIDI"]];
 
   if (page==="landing") return <Landing onEnter={()=>setPage("lobby")}/>;
   if (page==="lobby")   return <Lobby onJoin={join} djName={djName}/>;
 
-  const G = "#C8A96E"; // gold accent — matches App.jsx landing
+  const G = "#ECEEF1"; // gold accent — matches App.jsx landing
   return (
-    <div style={{ height:"100vh", overflow:"hidden", background:"#0a0a0f", fontFamily:"'DM Sans',sans-serif", color:"#d8d8e2", display:"flex", flexDirection:"column" }}>
+    <div className="cm-grain" style={{ position:"relative", height:"100vh", overflow:"hidden", background:"#0A0B0D", fontFamily:"'Inter',sans-serif", color:"#ECEEF1", display:"flex", flexDirection:"column" }}>
       <style>{`
         @keyframes blink{0%,100%{box-shadow:0 0 5px currentColor}50%{box-shadow:0 0 14px currentColor}}
         @keyframes pulse{0%,100%{opacity:1}50%{opacity:.4}}
         @keyframes wave{0%,100%{transform:scaleY(.3)}50%{transform:scaleY(1)}}
         @keyframes spin{to{transform:rotate(360deg)}}
-        *{box-sizing:border-box}
-        ::-webkit-scrollbar{width:3px}::-webkit-scrollbar-track{background:#080808}::-webkit-scrollbar-thumb{background:#252530;border-radius:2px}
+        *{box-sizing:border-box;-webkit-font-smoothing:antialiased;-moz-osx-font-smoothing:grayscale}
+        ::-webkit-scrollbar{width:3px}::-webkit-scrollbar-track{background:#0A0B0D}::-webkit-scrollbar-thumb{background:#2C3037;border-radius:2px}
+        .cm-grain::before{content:"";position:fixed;inset:0;pointer-events:none;z-index:9999;opacity:0.018;mix-blend-mode:overlay;background-image:url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='240' height='240'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2' stitchTiles='stitch'/><feColorMatrix values='0 0 0 0 1 0 0 0 0 1 0 0 0 0 1 0 0 0 0.55 0'/></filter><rect width='240' height='240' filter='url(%23n)'/></svg>")}
       `}</style>
-      <link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:wght@600;700&family=DM+Sans:wght@300;400;500&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet"/>
+      <link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,400..800&family=Inter:wght@400..700&family=JetBrains+Mono:wght@400..600&display=swap" rel="stylesheet"/>
 
-      {/* TOP BAR — matches App.jsx nav */}
-      <div style={{ background:"#08080cf0", backdropFilter:"blur(16px)", borderBottom:"1px solid #1c1c24", padding:"8px 18px", display:"flex", alignItems:"center", gap:12, flexShrink:0 }}>
+      {/* TOP BAR — booth header. Background flows into page (no separation). */}
+      <div style={{ position:"relative", zIndex:2, background:"#0A0B0D", borderBottom:"1px solid rgba(255,255,255,0.06)", padding:"14px 24px", display:"flex", alignItems:"center", gap:16, flexShrink:0 }}>
         <div onClick={()=>leave()} style={{ display:"flex", alignItems:"center", gap:8, cursor:"pointer" }}>
-          <div style={{ width:28, height:28, borderRadius:7, border:`1px solid ${G}38`, display:"flex", alignItems:"center", justifyContent:"center", background:`${G}08` }}>
-            <span style={{ fontFamily:"'DM Mono',monospace", fontSize:9, color:G }}>{"//"}</span>
-          </div>
-          <span style={{ fontFamily:"'Cormorant Garamond',serif", fontSize:18, fontWeight:700, color:"#d8d8e2", letterSpacing:-0.3 }}>Mix<span style={{ color:G }}>//</span>Sync</span>
+          {/* Wordmark — // is the brand mark, the connection between two DJs.
+              Color reflects host's perspective (--you). Could later animate
+              based on partner connection state. */}
+          <span style={{ fontFamily:"'Bricolage Grotesque',sans-serif", fontSize:22, fontWeight:700, color:"#ECEEF1", letterSpacing:"-0.02em", lineHeight:1 }}>Mix<span style={{ color:"#5B8FF9", fontSize:24 }}>//</span>Sync</span>
         </div>
-        <div style={{ flex:1, display:"flex", gap:10, alignItems:"center" }}>
-          <div style={{ display:"flex", gap:5, alignItems:"center", fontSize:7, fontFamily:"'DM Mono',monospace" }}>
-            <div style={{ width:5, height:5, borderRadius:"50%", background:SC[sync.status], boxShadow:sync.status==="connected"?`0 0 8px ${SC[sync.status]}`:""}}/>
-            <span style={{ color:SC[sync.status], letterSpacing:1 }}>{sync.status.toUpperCase()}</span>
-            {sync.ping&&<span style={{ color:"#555562" }}>· {sync.ping}ms</span>}
+        <div style={{ flex:1, display:"flex", gap:12, alignItems:"center" }}>
+          <div style={{ display:"flex", gap:7, alignItems:"center", fontSize:11, fontFamily:"'Inter',sans-serif" }}>
+            <div style={{ width:7, height:7, borderRadius:"50%", background:SC[sync.status], boxShadow:sync.status==="connected"?`0 0 8px ${SC[sync.status]}66`:""}}/>
+            {sync.ping&&<span style={{ color:"rgba(236,238,241,0.36)", fontFamily:"'JetBrains Mono',monospace", fontWeight:400 }}>{sync.ping}ms</span>}
           </div>
-          {sync.connErr && <span style={{ fontSize:9, fontFamily:"'DM Mono',monospace", color:"#ef4444", background:"#ef444411", border:"1px solid #ef444422", borderRadius:4, padding:"1px 8px" }}>{sync.connErr}</span>}
-          {sync.partner&&<div style={{ fontSize:9, fontFamily:"'DM Mono',monospace", color:G, background:`${G}0e`, border:`1px solid ${G}28`, borderRadius:5, padding:"2px 10px", letterSpacing:.5 }}>⟺ {sync.partner}</div>}
-          {rtc.state==="connected"&&<div style={{ fontSize:9, fontFamily:"'DM Mono',monospace", color:"#22c55e", background:"#22c55e0d", border:"1px solid #22c55e28", borderRadius:5, padding:"2px 10px", letterSpacing:.5 }}>LIVE</div>}
-          {rec.state==="recording"&&<div style={{ fontSize:9, fontFamily:"'DM Mono',monospace", color:"#ef4444", background:"#ef444411", border:"1px solid #ef444428", borderRadius:5, padding:"2px 10px", animation:"pulse .8s infinite", letterSpacing:.5 }}>REC {String(Math.floor(rec.dur/60)).padStart(2,"0")}:{String(Math.floor(rec.dur%60)).padStart(2,"0")}</div>}
-          {midi.active&&<div style={{ fontSize:9, fontFamily:"'DM Mono',monospace", color:G, background:`${G}0d`, border:`1px solid ${G}28`, borderRadius:5, padding:"2px 10px", letterSpacing:.5 }}>MIDI</div>}
+          {sync.connErr && <span style={{ fontSize:11, fontFamily:"'Inter',sans-serif", fontWeight:500, color:"#B86060", background:"rgba(184,96,96,0.06)", border:"1px solid rgba(184,96,96,0.20)", borderRadius:4, padding:"3px 10px" }}>{sync.connErr}</span>}
+          {sync.partner&&<div style={{ fontSize:11, fontFamily:"'Inter',sans-serif", fontWeight:500, color:"rgba(236,238,241,0.62)", background:"transparent", border:"1px solid rgba(255,255,255,0.06)", borderRadius:5, padding:"3px 10px", letterSpacing:.2 }}>⟺ {sync.partner}</div>}
+          {rtc.state==="connected"&&<div style={{ fontSize:10, fontFamily:"'Inter',sans-serif", fontWeight:600, color:"#6BB36B", background:"transparent", border:"1px solid rgba(107,179,107,0.32)", borderRadius:4, padding:"3px 8px", letterSpacing:1.4, textTransform:"uppercase" }}>Live</div>}
+          {rec.state==="recording"&&<div style={{ fontSize:10, fontFamily:"'JetBrains Mono',monospace", fontWeight:600, color:"#B86060", background:"transparent", border:"1px solid rgba(184,96,96,0.32)", borderRadius:4, padding:"3px 8px", animation:"pulse .8s infinite", letterSpacing:1.4, textTransform:"uppercase" }}>REC {String(Math.floor(rec.dur/60)).padStart(2,"0")}:{String(Math.floor(rec.dur%60)).padStart(2,"0")}</div>}
+          {midi.active&&<div style={{ fontSize:10, fontFamily:"'Inter',sans-serif", fontWeight:600, color:"rgba(236,238,241,0.62)", background:"transparent", border:"1px solid rgba(255,255,255,0.12)", borderRadius:4, padding:"3px 8px", letterSpacing:1.4, textTransform:"uppercase" }}>Midi</div>}
         </div>
-        <div style={{ display:"flex", gap:8, alignItems:"center" }}>
-          <span style={{ fontSize:9, fontFamily:"'DM Mono',monospace", color:"#888898", letterSpacing:.5 }}>{session.name}</span>
+        <div style={{ display:"flex", gap:10, alignItems:"center" }}>
+          <span style={{ fontSize:14, fontFamily:"'Inter',sans-serif", fontWeight:500, color:"#ECEEF1", letterSpacing:0 }}>{session.name}</span>
           <ShareButton room={session.room} mixName={session.mixName}/>
-          <button onClick={leave} style={{ height:24, padding:"0 10px", background:"transparent", border:"1px solid #ef444433", color:"#ef4444", borderRadius:6, cursor:"pointer", fontFamily:"'DM Mono',monospace", fontSize:9, letterSpacing:.5 }}>LEAVE</button>
+          <button onClick={leave} style={{ height:32, padding:"0 14px", background:"transparent", border:"1px solid rgba(255,255,255,0.12)", color:"rgba(236,238,241,0.62)", borderRadius:6, cursor:"pointer", fontFamily:"'Inter',sans-serif", fontSize:13, fontWeight:600, letterSpacing:0, transition:"all .18s" }} onMouseEnter={e=>{e.currentTarget.style.borderColor='rgba(184,96,96,0.55)';e.currentTarget.style.color='#B86060';}} onMouseLeave={e=>{e.currentTarget.style.borderColor='rgba(255,255,255,0.12)';e.currentTarget.style.color='rgba(236,238,241,0.62)';}}>Leave</button>
         </div>
       </div>
 
@@ -4608,45 +4613,45 @@ export default function CollabMix({ initialPage = "landing", djName = null }) {
         const hasB = !!wfB?.bass;
         if (!hasA && !hasB) {
           return (
-            <div style={{ flexShrink:0, height:40, background:"#020208", borderBottom:"1px solid #16161e", display:"flex", alignItems:"center", justifyContent:"center", color:"#4a4a5a", fontSize:9, fontFamily:"'DM Mono',monospace", letterSpacing:3, textTransform:"uppercase" }}>
+            <div style={{ flexShrink:0, height:40, background:"#0A0B0D", borderBottom:"1px solid #1F2228", display:"flex", alignItems:"center", justifyContent:"center", color:"#4a4a5a", fontSize:9, fontFamily:"'Inter',sans-serif", letterSpacing:3, textTransform:"uppercase" }}>
               No track loaded — drop tracks below to start
             </div>
           );
         }
         const wfH = (hasA && hasB) ? 110 : 140; // 1 deck loaded → 140; both → 110 each
         return (
-          <div style={{ flexShrink:0, background:"#020208", borderBottom:"1px solid #16161e" }}>
+          <div style={{ flexShrink:0, background:"#0A0B0D", borderBottom:"1px solid #1F2228" }}>
             {hasA && (
               <div style={{ position:"relative", minHeight:wfH, flexShrink:0 }}>
                 <div style={{ position:"absolute", top:6, left:10, zIndex:2, display:"flex", gap:8, alignItems:"center", pointerEvents:"none" }}>
-                  <div style={{ width:5, height:5, borderRadius:"50%", background:"#C8A96E", boxShadow:"0 0 6px #C8A96E" }}/>
-                  <span style={{ fontSize:9, fontFamily:"'DM Mono',monospace", fontWeight:700, color:"#C8A96E88", letterSpacing:2 }}>A</span>
+                  <div style={{ width:5, height:5, borderRadius:"50%", background:"#ECEEF1", boxShadow:"0 0 6px #ECEEF1" }}/>
+                  <span style={{ fontSize:9, fontFamily:"'Inter',sans-serif", fontWeight:700, color:"#ECEEF188", letterSpacing:2 }}>A</span>
                 </div>
                 <div style={{ position:"absolute", top:6, right:10, zIndex:2, display:"flex", gap:6, alignItems:"center" }}>
                   <div style={{ display:"flex", gap:2, alignItems:"center", opacity:wfA?.name?1:0.35 }}>
-                    <button onClick={()=>nudgeGridA(-5)} disabled={!wfA?.name} title="Shift grid 5ms earlier" style={{ height:18, width:18, padding:0, fontSize:10, fontFamily:"'DM Mono',monospace", background:"transparent", border:"1px solid #ffffff18", color:"#ffffff88", borderRadius:3, cursor:wfA?.name?"pointer":"default", outline:"none" }}>←</button>
-                    <div onDoubleClick={resetGridA} title="Double-click to reset" style={{ minWidth:44, textAlign:"center", height:18, lineHeight:"18px", padding:"0 4px", fontSize:8, fontFamily:"'DM Mono',monospace", color: gridOffsetA===0 ? "#ffffff44" : "#ef4444", background: gridOffsetA===0 ? "transparent" : "#ef444411", border: `1px solid ${gridOffsetA===0 ? "#ffffff14" : "#ef444433"}`, borderRadius:3, userSelect:"none" }}>{gridOffsetA>0?"+":""}{gridOffsetA}ms</div>
-                    <button onClick={()=>nudgeGridA(5)} disabled={!wfA?.name} title="Shift grid 5ms later" style={{ height:18, width:18, padding:0, fontSize:10, fontFamily:"'DM Mono',monospace", background:"transparent", border:"1px solid #ffffff18", color:"#ffffff88", borderRadius:3, cursor:wfA?.name?"pointer":"default", outline:"none" }}>→</button>
+                    <button onClick={()=>nudgeGridA(-5)} disabled={!wfA?.name} title="Shift grid 5ms earlier" style={{ height:18, width:18, padding:0, fontSize:10, fontFamily:"'Inter',sans-serif", background:"transparent", border:"1px solid #ffffff18", color:"#ffffff88", borderRadius:3, cursor:wfA?.name?"pointer":"default", outline:"none" }}>←</button>
+                    <div onDoubleClick={resetGridA} title="Double-click to reset" style={{ minWidth:44, textAlign:"center", height:18, lineHeight:"18px", padding:"0 4px", fontSize:8, fontFamily:"'Inter',sans-serif", color: gridOffsetA===0 ? "#ffffff44" : "#B86060", background: gridOffsetA===0 ? "transparent" : "#B8606011", border: `1px solid ${gridOffsetA===0 ? "#ffffff14" : "#B8606033"}`, borderRadius:3, userSelect:"none" }}>{gridOffsetA>0?"+":""}{gridOffsetA}ms</div>
+                    <button onClick={()=>nudgeGridA(5)} disabled={!wfA?.name} title="Shift grid 5ms later" style={{ height:18, width:18, padding:0, fontSize:10, fontFamily:"'Inter',sans-serif", background:"transparent", border:"1px solid #ffffff18", color:"#ffffff88", borderRadius:3, cursor:wfA?.name?"pointer":"default", outline:"none" }}>→</button>
                   </div>
                   <div style={{ display:"flex", gap:2, alignItems:"center", opacity:wfA?.name?1:0.35 }}>
-                    <button onClick={()=>nudgeBpmA(-1)} disabled={!wfA?.name} title="Decrease BPM by 0.01" style={{ height:18, padding:"0 4px", fontSize:8, fontFamily:"'DM Mono',monospace", background:"transparent", border:"1px solid #ffffff18", color:"#ffffff88", borderRadius:3, cursor:wfA?.name?"pointer":"default", outline:"none" }}>BPM−</button>
-                    <div onDoubleClick={resetBpmA} title="Double-click to reset" style={{ minWidth:60, textAlign:"center", height:18, lineHeight:"18px", padding:"0 4px", fontSize:8, fontFamily:"'DM Mono',monospace", color: bpmNudgeA===0 ? "#ffffff44" : "#ef4444", background: bpmNudgeA===0 ? "transparent" : "#ef444411", border: `1px solid ${bpmNudgeA===0 ? "#ffffff14" : "#ef444433"}`, borderRadius:3, userSelect:"none" }}>{bpmNudgeA>0?"+":""}{(bpmNudgeA*0.01).toFixed(2)} BPM</div>
-                    <button onClick={()=>nudgeBpmA(1)} disabled={!wfA?.name} title="Increase BPM by 0.01" style={{ height:18, padding:"0 4px", fontSize:8, fontFamily:"'DM Mono',monospace", background:"transparent", border:"1px solid #ffffff18", color:"#ffffff88", borderRadius:3, cursor:wfA?.name?"pointer":"default", outline:"none" }}>BPM+</button>
+                    <button onClick={()=>nudgeBpmA(-1)} disabled={!wfA?.name} title="Decrease BPM by 0.01" style={{ height:18, padding:"0 4px", fontSize:8, fontFamily:"'Inter',sans-serif", background:"transparent", border:"1px solid #ffffff18", color:"#ffffff88", borderRadius:3, cursor:wfA?.name?"pointer":"default", outline:"none" }}>BPM−</button>
+                    <div onDoubleClick={resetBpmA} title="Double-click to reset" style={{ minWidth:60, textAlign:"center", height:18, lineHeight:"18px", padding:"0 4px", fontSize:8, fontFamily:"'Inter',sans-serif", color: bpmNudgeA===0 ? "#ffffff44" : "#B86060", background: bpmNudgeA===0 ? "transparent" : "#B8606011", border: `1px solid ${bpmNudgeA===0 ? "#ffffff14" : "#B8606033"}`, borderRadius:3, userSelect:"none" }}>{bpmNudgeA>0?"+":""}{(bpmNudgeA*0.01).toFixed(2)} BPM</div>
+                    <button onClick={()=>nudgeBpmA(1)} disabled={!wfA?.name} title="Increase BPM by 0.01" style={{ height:18, padding:"0 4px", fontSize:8, fontFamily:"'Inter',sans-serif", background:"transparent", border:"1px solid #ffffff18", color:"#ffffff88", borderRadius:3, cursor:wfA?.name?"pointer":"default", outline:"none" }}>BPM+</button>
                   </div>
                   <div style={{ width:1, height:12, background:"#ffffff18" }}/>
                   {WF_ZOOM_LABELS.map((lbl,i)=>(
-                    <button key={i} onClick={()=>setWfZoom(i)} style={{ height:18, padding:"0 7px", fontSize:8, fontFamily:"'DM Mono',monospace", letterSpacing:.5, background:wfZoom===i?"#C8A96E22":"transparent", border:`1px solid ${wfZoom===i?"#C8A96E88":"#ffffff18"}`, color:wfZoom===i?"#C8A96E":"#ffffff44", borderRadius:4, cursor:"pointer", outline:"none" }}>{lbl}</button>
+                    <button key={i} onClick={()=>setWfZoom(i)} style={{ height:18, padding:"0 7px", fontSize:8, fontFamily:"'Inter',sans-serif", letterSpacing:.5, background:wfZoom===i?"#ECEEF122":"transparent", border:`1px solid ${wfZoom===i?"#ECEEF188":"#ffffff18"}`, color:wfZoom===i?"#ECEEF1":"#ffffff44", borderRadius:4, cursor:"pointer", outline:"none" }}>{lbl}</button>
                   ))}
                 </div>
                 <AnimatedZoomedWF bands={wfA} dur={wfA?.dur||0} progRef={progRefA} onSeek={seekDeckA} h={wfH} windowSec={WF_WINDOWS[wfZoom]} beatPhaseFrac={bpm.results["A"]?.beatPhaseFrac??null} beatPeriodSec={bpm.results["A"]?.beatPeriodSec??null} gridOffsetMs={gridOffsetA} bpmNudge={bpmNudgeA*0.01}/>
               </div>
             )}
-            {hasA && hasB && <div style={{ height:1, background:"#0d0d18" }}/>}
+            {hasA && hasB && <div style={{ height:1, background:"#1F2228" }}/>}
             {hasB && (
               <div style={{ position:"relative", minHeight:wfH, flexShrink:0 }}>
                 <div style={{ position:"absolute", top:6, left:10, zIndex:2, display:"flex", gap:8, alignItems:"center", pointerEvents:"none" }}>
-                  <div style={{ width:5, height:5, borderRadius:"50%", background:"#00BFA5", boxShadow:"0 0 6px #00BFA5" }}/>
-                  <span style={{ fontSize:9, fontFamily:"'DM Mono',monospace", fontWeight:700, color:"#00BFA588", letterSpacing:2 }}>B</span>
+                  <div style={{ width:5, height:5, borderRadius:"50%", background:"#C97064", boxShadow:"0 0 6px #C97064" }}/>
+                  <span style={{ fontSize:9, fontFamily:"'Inter',sans-serif", fontWeight:700, color:"#C9706488", letterSpacing:2 }}>B</span>
                 </div>
                 <AnimatedZoomedWF bands={wfB} dur={wfB?.dur||0} progRef={progRefB} onSeek={seekDeckB} h={wfH} windowSec={WF_WINDOWS[wfZoom]} beatPhaseFrac={bpm.results["B"]?.beatPhaseFrac??null} beatPeriodSec={bpm.results["B"]?.beatPeriodSec??null} gridOffsetMs={gridOffsetB} bpmNudge={bpmNudgeB*0.01}/>
               </div>
@@ -4658,28 +4663,31 @@ export default function CollabMix({ initialPage = "landing", djName = null }) {
       {/* DECKS + MIXER ROW */}
       <div style={{ flexShrink:0, display:"grid", gridTemplateColumns:"1fr 260px 1fr", gap:8, padding:"8px 12px 0", height:"288px", overflow:"hidden" }}>
 
-        {/* ── DECK A (local) ── */}
-        <div style={{ display:"flex", flexDirection:"column", minWidth:0, minHeight:0, overflow:"hidden", background:"#0c0c12", border:"1px solid #1e1e28", borderRadius:10 }}>
-          <div style={{ display:"flex", gap:8, alignItems:"center", padding:"6px 12px", borderBottom:"1px solid #1e1e28", background:"#080810", flexShrink:0 }}>
-            <div style={{ width:6, height:6, borderRadius:"50%", background:"#7B61FF", boxShadow:"0 0 8px #7B61FF" }}/>
-            <span style={{ fontSize:11, fontFamily:"'DM Mono',monospace", fontWeight:700, color:"#7B61FF", letterSpacing:2 }}>DECK A</span>
-            <span style={{ fontSize:11, fontFamily:"'DM Sans',sans-serif", fontWeight:500, color:"#7B61FFaa", letterSpacing:.3 }}>{session.name}</span>
+        {/* ── DECK A (local — YOU) ──
+            TODO(identity): Currently maps Deck A → YOU and Deck B → PARTNER.
+            When the product supports either DJ owning either deck, derive
+            the identity color from `local` flag instead of deck id. */}
+        <div style={{ display:"flex", flexDirection:"column", minWidth:0, minHeight:0, overflow:"hidden", background:"#131519", border:"1px solid rgba(255,255,255,0.06)", borderTop:"1px solid rgba(91,143,249,0.4)", borderRadius:12 }}>
+          <div style={{ display:"flex", gap:10, alignItems:"baseline", padding:"10px 16px", borderBottom:"1px solid rgba(255,255,255,0.06)", background:"transparent", flexShrink:0 }}>
+            <span style={{ fontSize:14, fontFamily:"'Inter',sans-serif", fontWeight:600, color:"rgba(236,238,241,0.42)", letterSpacing:0.2 }}>A</span>
+            <span style={{ fontSize:10, fontFamily:"'Inter',sans-serif", fontWeight:600, color:"rgba(91,143,249,0.6)", letterSpacing:1.4, textTransform:"uppercase" }}>You</span>
+            <span style={{ fontSize:13, fontFamily:"'Inter',sans-serif", fontWeight:500, color:"rgba(236,238,241,0.36)", letterSpacing:0 }}>{session.name}</span>
           </div>
           <div style={{ flex:1, overflow:"hidden", minHeight:0 }}>
-            <Deck id="A" ch={eng.current?.A} ctx={eng.current?.ctx} color="#7B61FF" local remote={pA} onChange={dh("A")} midi={midiEvt} bpmResult={bpm.results["A"]} bpmAnalyze={bpm.analyze} eqHi={eqA.hi} eqMid={eqA.mid} eqLo={eqA.lo} chanVol={eqA.vol} loadFromLibrary={libLoadA} onTrackInfo={handleTrackInfo} onSync={()=>syncDecks("A",bpm.results["B"]?.bpm)} onLibraryTrackDrop={(trackId)=>{const t=lib.library.find(x=>x.id===trackId);if(t)handleLibLoad(t,"A");}} onProgUpdate={handleProgA} onWaveform={setWfA} onSeekReady={onDeckASeekReady} onToggleReady={onDeckAToggleReady} onCueReady={onDeckACueReady} onTransportFire={sync.send}/>
+            <Deck id="A" ch={eng.current?.A} ctx={eng.current?.ctx} color="#5B8FF9" local remote={pA} onChange={dh("A")} midi={midiEvt} bpmResult={bpm.results["A"]} bpmAnalyze={bpm.analyze} eqHi={eqA.hi} eqMid={eqA.mid} eqLo={eqA.lo} chanVol={eqA.vol} loadFromLibrary={libLoadA} onTrackInfo={handleTrackInfo} onSync={()=>syncDecks("A",bpm.results["B"]?.bpm)} onLibraryTrackDrop={(trackId)=>{const t=lib.library.find(x=>x.id===trackId);if(t)handleLibLoad(t,"A");}} onProgUpdate={handleProgA} onWaveform={setWfA} onSeekReady={onDeckASeekReady} onToggleReady={onDeckAToggleReady} onCueReady={onDeckACueReady} onTransportFire={sync.send}/>
           </div>
         </div>
 
         {/* ── CENTER MIXER ── */}
-        <div style={{ display:"flex", flexDirection:"column", background:"#0e0e14", border:"1px solid #222230", borderRadius:10, overflow:"hidden", minHeight:0, boxShadow:"0 8px 32px rgba(0,0,0,.8), inset 0 1px 0 #2a2a38" }}>
+        <div style={{ display:"flex", flexDirection:"column", background:"#131519", border:"1px solid rgba(255,255,255,0.06)", borderRadius:12, overflow:"hidden", minHeight:0, boxShadow:"0 12px 32px rgba(0,0,0,.4)" }}>
 
           {/* HEADER */}
-          <div style={{ padding:"5px 8px", background:"#0a0a10", borderBottom:"1px solid #202028", display:"flex", flexDirection:"column", alignItems:"center", gap:3, flexShrink:0 }}>
-            <VU an={eng.current?.masterAn} color="#C8A96E" w={80}/>
+          <div style={{ padding:"5px 8px", background:"#131519", borderBottom:"1px solid #1F2228", display:"flex", flexDirection:"column", alignItems:"center", gap:3, flexShrink:0 }}>
+            <VU an={eng.current?.masterAn} color="#ECEEF1" w={80}/>
             <div style={{ display:"flex", gap:6, alignItems:"center" }}>
-              <div style={{ fontSize:7, fontFamily:"'DM Mono',monospace", color:"#C8A96E", letterSpacing:1.5, fontWeight:600 }}>MASTER OUT</div>
-              <div style={{ width:1, height:8, background:"#2a2a38" }}/>
-              <div style={{ fontSize:7, fontFamily:"'DM Mono',monospace", color:"#555562", letterSpacing:1 }}>{session.room}</div>
+              <div style={{ fontSize:7, fontFamily:"'Inter',sans-serif", color:"#ECEEF1", letterSpacing:1.5, fontWeight:600 }}>MASTER OUT</div>
+              <div style={{ width:1, height:8, background:"#2C3037" }}/>
+              <div style={{ fontSize:7, fontFamily:"'Inter',sans-serif", color:"#52555C", letterSpacing:1 }}>{session.room}</div>
             </div>
           </div>
 
@@ -4687,98 +4695,98 @@ export default function CollabMix({ initialPage = "landing", djName = null }) {
           <div style={{ display:"grid", gridTemplateColumns:"1fr 78px 1fr", flex:1, minHeight:0, overflow:"hidden" }}>
 
             {/* ─── CH A STRIP ─── */}
-            <div style={{ display:"flex", flexDirection:"column", borderRight:"1px solid #202028", overflow:"hidden" }}>
+            <div style={{ display:"flex", flexDirection:"column", borderRight:"1px solid #1F2228", overflow:"hidden" }}>
               {/* Header: label + VU inline */}
-              <div style={{ padding:"3px 6px", background:"#0a0a10", borderBottom:"1px solid #202028", display:"flex", justifyContent:"space-between", alignItems:"center", flexShrink:0 }}>
-                <span style={{ fontFamily:"'DM Mono',monospace", fontSize:11, color:"#7B61FF", fontWeight:600, letterSpacing:1 }}>A</span>
-                <VU an={eng.current?.A?.an} color="#7B61FF" w={50}/>
+              <div style={{ padding:"3px 6px", background:"#131519", borderBottom:"1px solid #1F2228", display:"flex", justifyContent:"space-between", alignItems:"center", flexShrink:0 }}>
+                <span style={{ fontFamily:"'Inter',sans-serif", fontSize:11, color:"#5B8FF9", fontWeight:600, letterSpacing:1 }}>A</span>
+                <VU an={eng.current?.A?.an} color="#5B8FF9" w={50}/>
               </div>
               {/* Channel fader LEFT, EQ knobs RIGHT — outer edge layout */}
               <div style={{ flex:1, display:"flex", flexDirection:"row", minHeight:0, overflow:"hidden" }}>
                 {/* Channel volume fader — far left (outer edge) */}
-                <div style={{ flexShrink:0, display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"center", padding:"5px 4px", borderRight:"1px solid #181820", gap:2 }}>
-                  <div style={{ fontSize:6, fontFamily:"'DM Mono',monospace", color:"#7B61FF55", letterSpacing:1 }}>VOL</div>
-                  <VerticalFader val={eqA.vol} set={v=>updateEqA("vol",v)} color="#7B61FF" h={150}/>
-                  <div style={{ fontSize:7, fontFamily:"'DM Mono',monospace", color:"#7B61FF88" }}>{(eqA.vol/1.5*100).toFixed(0)}%</div>
+                <div style={{ flexShrink:0, display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"center", padding:"5px 4px", borderRight:"1px solid #21252C", gap:2 }}>
+                  <div style={{ fontSize:6, fontFamily:"'Inter',sans-serif", color:"#5B8FF955", letterSpacing:1 }}>VOL</div>
+                  <VerticalFader val={eqA.vol} set={v=>updateEqA("vol",v)} color="#5B8FF9" h={150}/>
+                  <div style={{ fontSize:7, fontFamily:"'Inter',sans-serif", color:"#5B8FF988" }}>{(eqA.vol/1.5*100).toFixed(0)}%</div>
                 </div>
                 {/* Knobs column — inner side */}
                 <div style={{ flex:1, display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"space-evenly", padding:"5px 2px" }}>
-                  <Knob v={eqA.vol} set={v=>updateEqA("vol",v)} min={0} max={1.5} ctr={1} label="GAIN" color="#7B61FF" size={20}/>
-                  <Knob v={eqA.hi}  set={v=>updateEqA("hi",v)}  min={-12} max={12} ctr={0} label="HI"   color="#7B61FF" size={20}/>
-                  <Knob v={eqA.mid} set={v=>updateEqA("mid",v)} min={-12} max={12} ctr={0} label="MID"  color="#7B61FF" size={20}/>
-                  <Knob v={eqA.lo}  set={v=>updateEqA("lo",v)}  min={-12} max={12} ctr={0} label="LO"   color="#7B61FF" size={20}/>
+                  <Knob v={eqA.vol} set={v=>updateEqA("vol",v)} min={0} max={1.5} ctr={1} label="GAIN" color="#5B8FF9" size={20}/>
+                  <Knob v={eqA.hi}  set={v=>updateEqA("hi",v)}  min={-12} max={12} ctr={0} label="HI"   color="#5B8FF9" size={20}/>
+                  <Knob v={eqA.mid} set={v=>updateEqA("mid",v)} min={-12} max={12} ctr={0} label="MID"  color="#5B8FF9" size={20}/>
+                  <Knob v={eqA.lo}  set={v=>updateEqA("lo",v)}  min={-12} max={12} ctr={0} label="LO"   color="#5B8FF9" size={20}/>
                 </div>
               </div>
             </div>
 
             {/* ─── CENTER COLUMN ─── */}
-            <div style={{ display:"flex", flexDirection:"column", background:"#0a0a12", overflow:"hidden" }}>
+            <div style={{ display:"flex", flexDirection:"column", background:"#131519", overflow:"hidden" }}>
               {/* Master fader */}
               <div style={{ flex:1, display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"center", gap:3, minHeight:0 }}>
-                <div style={{ fontSize:7, fontFamily:"'DM Mono',monospace", color:"#C8A96E99", letterSpacing:2 }}>MASTER</div>
-                <VerticalFader val={mvol} set={setMvol} color="#C8A96E" h={150}/>
-                <div style={{ fontSize:7, fontFamily:"'DM Mono',monospace", color:"#C8A96E99" }}>{(mvol/1.5*100).toFixed(0)}%</div>
+                <div style={{ fontSize:7, fontFamily:"'Inter',sans-serif", color:"#ECEEF199", letterSpacing:2 }}>MASTER</div>
+                <VerticalFader val={mvol} set={setMvol} color="#ECEEF1" h={150}/>
+                <div style={{ fontSize:7, fontFamily:"'Inter',sans-serif", color:"#ECEEF199" }}>{(mvol/1.5*100).toFixed(0)}%</div>
               </div>
               {/* Session info */}
-              <div style={{ padding:"5px 6px 4px", borderTop:"1px solid #202028", flexShrink:0 }}>
-                {[["ROOM",session.room,"#C8A96E"],["PING",sync.ping?`${sync.ping}ms`:"—","#7a9aaa"],["NET",rtc.state==="connected"?"LIVE":"OFF",rtc.state==="connected"?"#22c55e":"#444454"]].map(([l,v,c])=>(
+              <div style={{ padding:"5px 6px 4px", borderTop:"1px solid #1F2228", flexShrink:0 }}>
+                {[["ROOM",session.room,"#ECEEF1"],["PING",sync.ping?`${sync.ping}ms`:"—","#7a9aaa"],["NET",rtc.state==="connected"?"LIVE":"OFF",rtc.state==="connected"?"#6BB36B":"#2C3037"]].map(([l,v,c])=>(
                   <div key={l} style={{ display:"flex", justifyContent:"space-between", alignItems:"center", padding:"1px 0" }}>
-                    <span style={{ fontSize:7, fontFamily:"'DM Mono',monospace", color:"#555562", letterSpacing:.5 }}>{l}</span>
-                    <span style={{ fontSize:9, fontFamily:"'DM Mono',monospace", color:c, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap", maxWidth:42 }}>{v}</span>
+                    <span style={{ fontSize:7, fontFamily:"'Inter',sans-serif", color:"#52555C", letterSpacing:.5 }}>{l}</span>
+                    <span style={{ fontSize:9, fontFamily:"'Inter',sans-serif", color:c, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap", maxWidth:42 }}>{v}</span>
                   </div>
                 ))}
               </div>
             </div>
 
             {/* ─── CH B STRIP (local) ─── */}
-            <div style={{ display:"flex", flexDirection:"column", borderLeft:"1px solid #202028", overflow:"hidden" }}>
+            <div style={{ display:"flex", flexDirection:"column", borderLeft:"1px solid #1F2228", overflow:"hidden" }}>
               {/* Header: label + VU inline */}
-              <div style={{ padding:"3px 6px", background:"#0a0a10", borderBottom:"1px solid #202028", display:"flex", justifyContent:"space-between", alignItems:"center", flexShrink:0 }}>
-                <span style={{ fontFamily:"'DM Mono',monospace", fontSize:11, color:"#00BFA5", fontWeight:600, letterSpacing:1 }}>B</span>
-                <VU an={eng.current?.B?.an} color="#00BFA5" w={50}/>
+              <div style={{ padding:"3px 6px", background:"#131519", borderBottom:"1px solid #1F2228", display:"flex", justifyContent:"space-between", alignItems:"center", flexShrink:0 }}>
+                <span style={{ fontFamily:"'Inter',sans-serif", fontSize:11, color:"#C97064", fontWeight:600, letterSpacing:1 }}>B</span>
+                <VU an={eng.current?.B?.an} color="#C97064" w={50}/>
               </div>
               {/* EQ knobs LEFT, channel fader RIGHT — outer edge layout */}
               <div style={{ flex:1, display:"flex", flexDirection:"row", minHeight:0, overflow:"hidden" }}>
                 {/* Knobs column — inner side */}
                 <div style={{ flex:1, display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"space-evenly", padding:"5px 2px" }}>
-                  <Knob v={eqB.vol} set={v=>updateEqB("vol",v)} min={0} max={1.5} ctr={1} label="GAIN" color="#00BFA5" size={20}/>
-                  <Knob v={eqB.hi}  set={v=>updateEqB("hi",v)}  min={-12} max={12} ctr={0} label="HI"   color="#00BFA5" size={20}/>
-                  <Knob v={eqB.mid} set={v=>updateEqB("mid",v)} min={-12} max={12} ctr={0} label="MID"  color="#00BFA5" size={20}/>
-                  <Knob v={eqB.lo}  set={v=>updateEqB("lo",v)}  min={-12} max={12} ctr={0} label="LO"   color="#00BFA5" size={20}/>
+                  <Knob v={eqB.vol} set={v=>updateEqB("vol",v)} min={0} max={1.5} ctr={1} label="GAIN" color="#C97064" size={20}/>
+                  <Knob v={eqB.hi}  set={v=>updateEqB("hi",v)}  min={-12} max={12} ctr={0} label="HI"   color="#C97064" size={20}/>
+                  <Knob v={eqB.mid} set={v=>updateEqB("mid",v)} min={-12} max={12} ctr={0} label="MID"  color="#C97064" size={20}/>
+                  <Knob v={eqB.lo}  set={v=>updateEqB("lo",v)}  min={-12} max={12} ctr={0} label="LO"   color="#C97064" size={20}/>
                 </div>
                 {/* Channel volume fader — far right (outer edge) */}
-                <div style={{ flexShrink:0, display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"center", padding:"5px 4px", borderLeft:"1px solid #181820", gap:2 }}>
-                  <div style={{ fontSize:6, fontFamily:"'DM Mono',monospace", color:"#00BFA555", letterSpacing:1 }}>VOL</div>
-                  <VerticalFader val={eqB.vol} set={v=>updateEqB("vol",v)} color="#00BFA5" h={150}/>
-                  <div style={{ fontSize:7, fontFamily:"'DM Mono',monospace", color:"#00BFA588" }}>{(eqB.vol/1.5*100).toFixed(0)}%</div>
+                <div style={{ flexShrink:0, display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"center", padding:"5px 4px", borderLeft:"1px solid #21252C", gap:2 }}>
+                  <div style={{ fontSize:6, fontFamily:"'Inter',sans-serif", color:"#C9706455", letterSpacing:1 }}>VOL</div>
+                  <VerticalFader val={eqB.vol} set={v=>updateEqB("vol",v)} color="#C97064" h={150}/>
+                  <div style={{ fontSize:7, fontFamily:"'Inter',sans-serif", color:"#C9706488" }}>{(eqB.vol/1.5*100).toFixed(0)}%</div>
                 </div>
               </div>
             </div>
           </div>
         </div>
 
-        {/* ── DECK B (partner) ── */}
-        <div style={{ display:"flex", flexDirection:"column", minWidth:0, minHeight:0, overflow:"hidden", background:"#0c0c12", border:"1px solid #1e1e28", borderRadius:10 }}>
-          <div style={{ display:"flex", gap:8, alignItems:"center", padding:"6px 12px", borderBottom:"1px solid #1e1e28", background:"#080810", flexShrink:0 }}>
-            <div style={{ width:6, height:6, borderRadius:"50%", background:sync.partner?"#00BFA5":"#282835", boxShadow:sync.partner?"0 0 8px #00BFA5":"none", transition:"all .3s" }}/>
-            <span style={{ fontSize:11, fontFamily:"'DM Mono',monospace", fontWeight:700, color:sync.partner?"#00BFA5":"#444454", letterSpacing:2 }}>DECK B</span>
-            {sync.partner&&<span style={{ fontSize:11, fontFamily:"'DM Sans',sans-serif", fontWeight:500, color:"#00BFA5aa", letterSpacing:.3 }}>{sync.partner}</span>}
+        {/* ── DECK B (partner — PARTNER) ── */}
+        <div style={{ display:"flex", flexDirection:"column", minWidth:0, minHeight:0, overflow:"hidden", background:"#131519", border:"1px solid rgba(255,255,255,0.06)", borderTop:`1px solid ${sync.partner?"rgba(201,112,100,0.4)":"rgba(255,255,255,0.06)"}`, borderRadius:12 }}>
+          <div style={{ display:"flex", gap:10, alignItems:"baseline", padding:"10px 16px", borderBottom:"1px solid rgba(255,255,255,0.06)", background:"transparent", flexShrink:0 }}>
+            <span style={{ fontSize:14, fontFamily:"'Inter',sans-serif", fontWeight:600, color:"rgba(236,238,241,0.42)", letterSpacing:0.2 }}>B</span>
+            <span style={{ fontSize:10, fontFamily:"'Inter',sans-serif", fontWeight:600, color:sync.partner?"rgba(201,112,100,0.6)":"rgba(236,238,241,0.22)", letterSpacing:1.4, textTransform:"uppercase" }}>Partner</span>
+            {sync.partner&&<span style={{ fontSize:13, fontFamily:"'Inter',sans-serif", fontWeight:500, color:"rgba(236,238,241,0.36)", letterSpacing:0 }}>{sync.partner}</span>}
           </div>
           <div style={{ flex:1, overflow:"hidden", minHeight:0 }}>
-            <Deck id="B" ch={eng.current?.B} ctx={eng.current?.ctx} color="#00BFA5" local remote={pB} onChange={dh("B")} midi={midiEvt} bpmResult={bpm.results["B"]} bpmAnalyze={bpm.analyze} eqHi={eqB.hi} eqMid={eqB.mid} eqLo={eqB.lo} chanVol={eqB.vol} loadFromLibrary={libLoadB} onTrackInfo={handleTrackInfo} onSync={()=>syncDecks("B",bpm.results["A"]?.bpm)} onLibraryTrackDrop={(trackId)=>{const t=lib.library.find(x=>x.id===trackId);if(t)handleLibLoad(t,"B");}} onProgUpdate={handleProgB} onWaveform={setWfB} onSeekReady={onDeckBSeekReady} onToggleReady={onDeckBToggleReady} onCueReady={onDeckBCueReady} onTransportFire={sync.send}/>
+            <Deck id="B" ch={eng.current?.B} ctx={eng.current?.ctx} color="#C97064" local remote={pB} onChange={dh("B")} midi={midiEvt} bpmResult={bpm.results["B"]} bpmAnalyze={bpm.analyze} eqHi={eqB.hi} eqMid={eqB.mid} eqLo={eqB.lo} chanVol={eqB.vol} loadFromLibrary={libLoadB} onTrackInfo={handleTrackInfo} onSync={()=>syncDecks("B",bpm.results["A"]?.bpm)} onLibraryTrackDrop={(trackId)=>{const t=lib.library.find(x=>x.id===trackId);if(t)handleLibLoad(t,"B");}} onProgUpdate={handleProgB} onWaveform={setWfB} onSeekReady={onDeckBSeekReady} onToggleReady={onDeckBToggleReady} onCueReady={onDeckBCueReady} onTransportFire={sync.send}/>
           </div>
         </div>
 
       </div>
 
       {/* ── PANELS (AUDIO / REC / MIDI) — full-width, below decks ── */}
-      {(panel||true) && <div style={{ flexShrink:0, borderTop:"1px solid #181828", background:"#07070e" }}>
-        <div style={{ display:"flex", borderBottom:"1px solid #111118" }}>
+      {(panel||true) && <div style={{ flexShrink:0, borderTop:"1px solid #21252C", background:"#07070e" }}>
+        <div style={{ display:"flex", borderBottom:"1px solid #131519" }}>
           {PANELS.map(([pid,l])=>(
-            <button key={pid} onClick={()=>setPanel(p=>p===pid?null:pid)} style={{ padding:"4px 16px", fontSize:9, fontFamily:"'DM Mono',monospace", background:"transparent", color:panel===pid?"#C8A96E":"#555562", border:"none", borderBottom:`2px solid ${panel===pid?"#C8A96E":"transparent"}`, cursor:"pointer", outline:"none", letterSpacing:.5 }}>{l}</button>
+            <button key={pid} onClick={()=>setPanel(p=>p===pid?null:pid)} style={{ padding:"4px 16px", fontSize:9, fontFamily:"'Inter',sans-serif", background:"transparent", color:panel===pid?"#ECEEF1":"#52555C", border:"none", borderBottom:`2px solid ${panel===pid?"#ECEEF1":"transparent"}`, cursor:"pointer", outline:"none", letterSpacing:.5 }}>{l}</button>
           ))}
         </div>
-        {panel && <div style={{ maxHeight:120, overflow:"auto", background:"#0a0a12" }}>
+        {panel && <div style={{ maxHeight:120, overflow:"auto", background:"#131519" }}>
           {panel==="rtc"  && <RTCPanel rtc={rtc} partner={sync.partner} syncOk={sync.status==="connected"}/>}
           {panel==="rec"  && <RecPanel rec={rec} ready={ready}/>}
           {panel==="midi" && <MidiPanel midi={midi}/>}
@@ -4786,29 +4794,29 @@ export default function CollabMix({ initialPage = "landing", djName = null }) {
       </div>}
 
       {/* ── CROSSFADER ROW — same grid as deck row, only center column has content ── */}
-      <div style={{ flexShrink:0, display:"grid", gridTemplateColumns:"1fr 260px 1fr", gap:8, padding:"4px 12px", background:"#070710", borderTop:"1px solid #181828", borderBottom:"1px solid #181828" }}>
+      <div style={{ flexShrink:0, display:"grid", gridTemplateColumns:"1fr 260px 1fr", gap:8, padding:"4px 12px", background:"#070710", borderTop:"1px solid #21252C", borderBottom:"1px solid #21252C" }}>
         <div/>{/* empty left */}
         <div style={{ display:"flex", alignItems:"center", gap:8, padding:"4px 6px" }}>
           {/* invisible spacer matching CTR button width so slider is visually centered */}
-          <button aria-hidden="true" tabIndex={-1} style={{ fontSize:7, height:16, padding:"0 8px", background:"transparent", border:"1px solid transparent", color:"transparent", borderRadius:3, cursor:"default", fontFamily:"'DM Mono',monospace", letterSpacing:.5, flexShrink:0, pointerEvents:"none", userSelect:"none" }}>CTR</button>
-          <span style={{ fontSize:11, fontFamily:"'DM Mono',monospace", color:"#C8A96E99", fontWeight:700, lineHeight:1, flexShrink:0 }}>A</span>
+          <button aria-hidden="true" tabIndex={-1} style={{ fontSize:7, height:16, padding:"0 8px", background:"transparent", border:"1px solid transparent", color:"transparent", borderRadius:3, cursor:"default", fontFamily:"'Inter',sans-serif", letterSpacing:.5, flexShrink:0, pointerEvents:"none", userSelect:"none" }}>CTR</button>
+          <span style={{ fontSize:11, fontFamily:"'Inter',sans-serif", color:"#ECEEF199", fontWeight:700, lineHeight:1, flexShrink:0 }}>A</span>
           <div style={{ flex:1, position:"relative", height:24, display:"flex", alignItems:"center" }}>
-            <div style={{ width:"100%", height:6, borderRadius:4, background:"#030310", border:"1px solid #181828", boxShadow:"inset 0 1px 3px rgba(0,0,0,.7)" }}>
-              <div style={{ height:"100%", width:`${xf*100}%`, background:"linear-gradient(90deg,#C8A96E44,#00BFA533)", borderRadius:4 }}/>
+            <div style={{ width:"100%", height:6, borderRadius:4, background:"#030310", border:"1px solid #21252C", boxShadow:"inset 0 1px 3px rgba(0,0,0,.7)" }}>
+              <div style={{ height:"100%", width:`${xf*100}%`, background:"linear-gradient(90deg,#ECEEF144,#C9706433)", borderRadius:4 }}/>
             </div>
             <input type="range" min={0} max={1} step={.005} value={xf} onChange={e=>setXfLocal(Number(e.target.value))} style={{ position:"absolute", width:"100%", opacity:0, cursor:"pointer", height:24 }}/>
             <div style={{ position:"absolute", left:`calc(${xf*100}% - 13px)`, width:26, height:20, background:"linear-gradient(180deg,#2c2a3e,#16142a)", border:"1px solid #38364e", borderRadius:4, boxShadow:"0 2px 8px rgba(0,0,0,.8), inset 0 1px 0 rgba(255,255,255,.06)", pointerEvents:"none", display:"flex", alignItems:"center", justifyContent:"center" }}>
-              <div style={{ width:2, height:10, background:"#C8A96E88", borderRadius:1 }}/>
+              <div style={{ width:2, height:10, background:"#ECEEF188", borderRadius:1 }}/>
             </div>
           </div>
-          <span style={{ fontSize:11, fontFamily:"'DM Mono',monospace", color:"#00BFA599", fontWeight:700, lineHeight:1, flexShrink:0 }}>B</span>
-          <button onClick={()=>setXfLocal(.5)} style={{ fontSize:7, height:16, padding:"0 8px", background:"transparent", border:"1px solid #252535", color:"#555562", borderRadius:3, cursor:"pointer", fontFamily:"'DM Mono',monospace", letterSpacing:.5, flexShrink:0 }}>CTR</button>
+          <span style={{ fontSize:11, fontFamily:"'Inter',sans-serif", color:"#C9706499", fontWeight:700, lineHeight:1, flexShrink:0 }}>B</span>
+          <button onClick={()=>setXfLocal(.5)} style={{ fontSize:7, height:16, padding:"0 8px", background:"transparent", border:"1px solid #21252C", color:"#52555C", borderRadius:3, cursor:"pointer", fontFamily:"'Inter',sans-serif", letterSpacing:.5, flexShrink:0 }}>CTR</button>
         </div>
         <div/>{/* empty right */}
       </div>
 
       {/* ── EMBEDDED LIBRARY — fills remaining space below decks ── */}
-      <div style={{ flex:1, overflow:"hidden", borderTop:"1px solid #1c1c24", background:"#080810", minHeight:0 }}>
+      <div style={{ flex:1, overflow:"hidden", borderTop:"1px solid #1F2228", background:"#131519", minHeight:0 }}>
         <LibraryPanelV2
           lib={lib}
           onLoad={handleLibLoad}
