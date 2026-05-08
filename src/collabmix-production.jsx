@@ -274,8 +274,23 @@ async function cmDbDelete(store,key){
   return new Promise((res,rej)=>{const tx=db.transaction(store,"readwrite");const r=tx.objectStore(store).delete(key);r.onsuccess=()=>res();r.onerror=e=>rej(e.target.error);});
 }
 async function cmDbPut(store,item){
+  const t0=performance.now();
+  const key=item?.id??'<no-id>';
+  console.log('[IDB-PUT-START]',{store,key,at:Date.now()});
   const db=await openCmDB();
-  return new Promise((res,rej)=>{const tx=db.transaction(store,"readwrite");const r=tx.objectStore(store).put(item);r.onsuccess=()=>res();r.onerror=e=>rej(e.target.error);});
+  return new Promise((res,rej)=>{
+    const tx=db.transaction(store,"readwrite");
+    const r=tx.objectStore(store).put(item);
+    r.onsuccess=()=>{
+      console.log('[IDB-PUT-OK]',{store,key,ms:Math.round(performance.now()-t0)});
+      res();
+    };
+    r.onerror=e=>{
+      const err=e.target.error;
+      console.error('[IDB-PUT-FAIL]',{store,key,error:err?.message||String(err),ms:Math.round(performance.now()-t0)});
+      rej(err);
+    };
+  });
 }
 // Store FileSystemFileHandle with explicit out-of-line key (handles store uses no keyPath in Library app)
 async function cmDbPutHandle(trackId,handle){
@@ -294,6 +309,8 @@ async function cmDbPutHandle(trackId,handle){
 // Files stored here survive page reloads and browser restarts with NO user gesture needed.
 const OPFS_DIR="cm_audio";
 async function opfsStore(trackId,file){
+  const t0=performance.now();
+  console.log('[OPFS-WRITE-START]',{id:trackId,fileSize:file?.size??'unknown',at:Date.now()});
   try{
     const root=await navigator.storage.getDirectory();
     const dir=await root.getDirectoryHandle(OPFS_DIR,{create:true});
@@ -301,16 +318,25 @@ async function opfsStore(trackId,file){
     const wr=await fh.createWritable();
     await wr.write(file);
     await wr.close();
+    console.log('[OPFS-WRITE-OK]',{id:trackId,ms:Math.round(performance.now()-t0)});
     return true;
-  }catch{return false;}
+  }catch(err){
+    console.error('[OPFS-WRITE-FAIL]',{id:trackId,error:err?.message||String(err),ms:Math.round(performance.now()-t0)});
+    throw err;
+  }
 }
 async function opfsGet(trackId){
   try{
     const root=await navigator.storage.getDirectory();
     const dir=await root.getDirectoryHandle(OPFS_DIR,{create:false});
     const fh=await dir.getFileHandle(trackId);
-    return await fh.getFile();
-  }catch{return null;}
+    const file=await fh.getFile();
+    console.log('[OPFS-READ-OK]',{id:trackId,fileSize:file?.size});
+    return file;
+  }catch(err){
+    console.warn('[OPFS-READ-FAIL]',{id:trackId,error:err?.message||String(err),name:err?.name});
+    return null;
+  }
 }
 async function opfsDelete(trackId){
   try{
@@ -462,6 +488,25 @@ function useLibrary(){
   const _importFileObjects=useCallback(async(files,handles=[],opts={})=>{
     const audio=[...files].filter(f=>f.type.startsWith("audio/")||f.name.match(/\.(mp3|wav|flac|aac|ogg|m4a)$/i));
     if(!audio.length)return;
+    // Request persistent storage from Chrome on first import. Without this,
+    // Chrome treats our storage as "best effort" and may evict between sessions.
+    if (navigator.storage && navigator.storage.persist) {
+      try {
+        const persisted = await navigator.storage.persisted();
+        if (!persisted) {
+          const granted = await navigator.storage.persist();
+          console.log('[STORAGE-PERSIST]', { requested: true, granted });
+          if (!granted) {
+            console.warn('[STORAGE-PERSIST] Browser denied persistent storage. Library may be evicted between sessions.');
+          }
+        } else {
+          console.log('[STORAGE-PERSIST]', { alreadyPersisted: true });
+        }
+      } catch (err) {
+        console.warn('[STORAGE-PERSIST] Error requesting persistent storage:', err);
+      }
+    }
+    const tImport0=performance.now();
     setImporting(true);
     let importedCount=0;
     let skippedCount=0;
@@ -470,6 +515,7 @@ function useLibrary(){
       const file=audio[i];
       const handle=handles[i]||null;
       const id=`t_${Date.now()}_${Math.random().toString(36).slice(2,6)}`;
+      console.log('[IMPORT-ITER]',{index:i,total:audio.length,filename:file.name,id});
       let tags={};
       try{const sl=file.slice(0,1048576);tags=parseID3(await sl.arrayBuffer());}catch{}
       // Filename → clean + parse "Artist - Title" so messy library filenames produce nice titles
@@ -491,14 +537,32 @@ function useLibrary(){
       // Don't pin File in fileMap or queue for analysis — both retained the File
       // reference for the whole session, and 300+ pinned blobs caused OOM. getFile
       // will hit OPFS first; analysis is deferred to handleLibLoad → queueAnalysis.
-      opfsStore(id,file); // background write to OPFS — no await, keeps import fast
-      setLibrary(prev=>{if(prev.find(t=>t.filename===track.filename))return prev;return [...prev,track];});
+      // Await OPFS write: if it fails, skip the rest of this iteration so we
+      // don't end up with IDB metadata that points at non-existent OPFS files.
+      // (No importedCount-- needed: the increment is at the end of the loop;
+      // `continue` here means it's never reached for this track.)
+      try {
+        await opfsStore(id, file);
+      } catch (err) {
+        console.error('[IMPORT-OPFS-FAIL]', { id, filename: file.name, error: err?.message || String(err) });
+        continue;
+      }
+      setLibrary(prev=>{
+        if(prev.find(t=>t.filename===track.filename)){
+          console.log('[STATE-SET-SKIP]',{id,reason:'filename-dupe',length:prev.length});
+          return prev;
+        }
+        const next=[...prev,track];
+        console.log('[STATE-SET]',{id,prevLength:prev.length,nextLength:next.length});
+        return next;
+      });
       batchAdded.push(track);
       // Persist metadata + handle to IDB so tracks survive page reloads
-      try{await cmDbPut("tracks",track);}catch{}
-      if(handle){try{await cmDbPutHandle(id,handle);}catch{}}
+      try{await cmDbPut("tracks",track);}catch(err){console.error('[IMPORT-ITER-IDB-CAUGHT]',{id,error:err?.message||String(err)});}
+      if(handle){try{await cmDbPutHandle(id,handle);}catch(err){console.error('[IMPORT-ITER-HANDLE-CAUGHT]',{id,error:err?.message||String(err)});}}
       importedCount++;
     }
+    console.log('[IMPORT-DONE]',{importedCount,skippedCount,totalCandidates:audio.length,ms:Math.round(performance.now()-tImport0)});
     if(skippedCount>0){
       console.log(`[library] Imported ${importedCount} tracks, skipped ${skippedCount} duplicate${skippedCount===1?"":"s"}`);
     }
@@ -684,24 +748,41 @@ function useLibrary(){
 
   // Get File object — in-memory first, then OPFS (zero-click, survives restarts), then IDB handle
   const getFile=useCallback(async(id)=>{
-    if(fileMap.current[id]) return fileMap.current[id];
+    if(fileMap.current[id]){
+      console.log('[GET-FILE]',{id,branch:'fileMap-hit'});
+      return fileMap.current[id];
+    }
     // OPFS: zero permissions, always works, survives browser restarts
     const opfsFile=await opfsGet(id);
-    if(opfsFile){fileMap.current[id]=opfsFile;return opfsFile;}
+    if(opfsFile){
+      console.log('[GET-FILE]',{id,branch:'opfs-hit',size:opfsFile.size});
+      fileMap.current[id]=opfsFile;
+      return opfsFile;
+    }
     // Fall back to IDB file handle (requires browser session or user gesture)
     try{
       const handle=await cmDbGet("handles",id);
-      if(!handle) return null;
+      if(!handle){
+        console.log('[GET-FILE]',{id,branch:'no-handle-null'});
+        return null;
+      }
       const perm=await handle.queryPermission({mode:"read"});
       if(perm!=="granted"){
         const req=await handle.requestPermission({mode:"read"});
-        if(req!=="granted") return null;
+        if(req!=="granted"){
+          console.log('[GET-FILE]',{id,branch:'permission-denied'});
+          return null;
+        }
       }
       const file=await handle.getFile();
+      console.log('[GET-FILE]',{id,branch:'idb-handle-hit',size:file?.size});
       fileMap.current[id]=file;
-      opfsStore(id,file); // migrate to OPFS so future sessions need zero clicks
+      opfsStore(id,file).catch(()=>{}); // migrate to OPFS so future sessions need zero clicks
       return file;
-    }catch{return null;}
+    }catch(err){
+      console.warn('[GET-FILE]',{id,branch:'idb-handle-error',error:err?.message||String(err)});
+      return null;
+    }
   },[]);
 
   // Re-scan ID3 APIC artwork for every track currently missing an artwork blob.
@@ -1435,7 +1516,7 @@ function LibraryPanelV2({ lib, onLoad, playingTrack, previewTrackId, onPreview, 
             const deckClr = onDeckA ? DECK_A_CLR : onDeckB ? DECK_B_CLR : null;
             const baseBg = deckClr ? `${deckClr}12` : "transparent";
             return (
-              <div key={t.id} onClick={() => onLoad(t, "A")}
+              <div key={t.id} onClick={() => { console.log('[ROW-CLICK]',{id:t.id,title:t.title,artist:t.artist}); onLoad(t, "A"); }}
                 onMouseEnter={e => e.currentTarget.style.background = deckClr ? `${deckClr}22` : BG2}
                 onMouseLeave={e => e.currentTarget.style.background = baseBg}
                 style={{
@@ -4027,6 +4108,30 @@ export default function CollabMix({ initialPage = "landing", djName = null }) {
     if (ready && !eng.current) { eng.current = createEngine(); }
   }, [ready]);
 
+  // Diagnostic surface for library state↔IDB desync investigation. Exposes the
+  // current library state and a verifyLibrary() helper to the browser console
+  // via window._mmDebug. Run window._mmDebug.verifyLibrary() to compare counts.
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    window._mmDebug = window._mmDebug || {};
+    window._mmDebug.library = lib.library;
+    window._mmDebug.verifyLibrary = async () => {
+      const idbTracks = await cmDbAll("tracks");
+      const stateIds = new Set((lib.library || []).map(t => t.id));
+      const idbIds = new Set(idbTracks.map(t => t.id));
+      const inStateNotIdb = [...stateIds].filter(id => !idbIds.has(id));
+      const inIdbNotState = [...idbIds].filter(id => !stateIds.has(id));
+      const result = {
+        stateCount: stateIds.size,
+        idbCount: idbIds.size,
+        inStateNotIdb,
+        inIdbNotState,
+      };
+      console.log('[VERIFY]', result);
+      return result;
+    };
+  }, [lib.library]);
+
   // ── Full-width waveform state (lifted from Deck components) ──
   const [wfA, setWfA] = useState(null); // {bass, mid, high, dur} — only updates on track load
   const [wfB, setWfB] = useState(null);
@@ -4125,10 +4230,13 @@ export default function CollabMix({ initialPage = "landing", djName = null }) {
   }, []);
 
   const handleLibLoad = useCallback(async (track, deck) => {
+    console.log('[LIB-LOAD]',{step:'entry',id:track.id,deck,title:track.title,artist:track.artist});
     // Get the file FIRST — requestPermission and showOpenFilePicker both need the user gesture.
     // Do NOT call AudioContext.resume() before this or it consumes the gesture.
     let file = await lib.getFile(track.id);
+    console.log('[LIB-LOAD]',{step:'after-getFile',id:track.id,fileFound:!!file,size:file?.size});
     if (!file) {
+      console.warn('[LIB-LOAD]',{step:'picker-fallback-FIRING',id:track.id,reason:'getFile returned null/undefined'});
       // File handle expired — open picker so user can re-locate the track
       try {
         const [fileHandle] = await window.showOpenFilePicker({ types:[{description:"Audio",accept:{"audio/*":[]}}], multiple:false });
