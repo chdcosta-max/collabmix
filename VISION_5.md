@@ -518,3 +518,100 @@ order): cover-fit math fix for non-square artwork, track list
 virtualization (react-window), delete-tracks UI, re-test at 500+
 tracks, then dogfood with a real DJ. Public beta still needs
 virtualization + delete + import safety + cover-fit polish first."
+
+=================================================================
+DESIGN EXPLORATION STATE — May 8 morning
+=================================================================
+
+Pivoted off feature work to do a structural design exploration across
+four parallel branches. Direction D (design-decks) is the leading
+candidate.
+
+— Branches —
+- master:        production version, commit 5cfe3b9. Original design.
+- design-warm:   Direction A (warm/amber), commit 33847809. Abandoned.
+- design-booth:  Direction C (cool restrained), iterated to commit 3ec2995.
+                 Has WIP stash from before the design-decks branch was cut
+                 (`stash@{0}` — design-booth WIP before design-decks branch).
+- design-decks:  Direction D (structural redesign), commit 6fc5506.
+                 LEADING DIRECTION.
+
+— Latest design-decks preview —
+https://collabmix-32jisad0k-chdcosta-maxs-projects.vercel.app
+
+— What's working in Direction D —
+- Structurally significant improvement — decks finally feel like decks
+  instead of metadata strips.
+- Twin stacked top waveforms (YOU dusty blue, PARTNER dusty violet) are
+  beautiful and distinctive. CSS drop-shadow glow on the brighter
+  vibrant tokens (#7DA3E8 / #A28FD0) makes them feel alive.
+- Album art (96px) as deck anchor — pulls compressed artwork from the
+  track record we already store.
+- Vibrant waveforms with brightness gradient and per-deck identity tint.
+- Vertical mixer column with proper VU meters: 6px vertical bars,
+  identity → warning → error color zones, 1px white peak-hold line that
+  decays after 1.5s.
+- A-H cue list with timestamps, Rekordbox-inspired (hotCues[0..7] →
+  letters A-H, click flashes the row in its palette color).
+- White play button with glow when active feels premium; CUE/SYNC
+  reduced to 38px so play is the visual anchor.
+- Track key in single muted gold (--accent-key #C8A876) — separates key
+  metadata from identity color signal.
+- Inter with tabular-nums replacing JetBrains Mono — looks modern,
+  cohesive with the body family. Global body CSS sets
+  font-feature-settings:"tnum" 1 + font-variant-numeric:tabular-nums
+  so digits stay column-aligned everywhere.
+- Identity colors (YOU blue #5B8FF9, PARTNER violet #9B7BD9) used
+  surgically: top deck border, waveform tint, channel labels in mixer.
+  Nothing else competes with them.
+
+— Pending issues / next session iteration list —
+1. Decks too tall (currently 380px) — compress back to ~280px so
+   library has more vertical room. Will require restructuring the cue
+   list (see #3) and tightening the transport row.
+2. Library zone too cramped — should be 50%+ of vertical screen space.
+   Direct consequence of #1.
+3. Cue list needs 2x4 grid layout (Rekordbox-style), currently a 1x8
+   vertical column. Same content (letter + timestamp), just laid out
+   as 2 cols × 4 rows so it takes ~half the vertical space.
+4. Mixer column content cut off at bottom — faders + meters extend
+   below the deck row's 380px boundary. Need to either grow mixer
+   container or shrink the fader/meter heights.
+5. Duplicate fader/meter rendering on mixer channels — visible
+   especially on Channel B (looks like the fader+meter pair is rendered
+   twice or double-stacked). Investigate the channel-strip JSX.
+6. Top waveforms could be slightly shorter (55-60px each instead of
+   70px) to give more vertical headroom for the library.
+7. Verify track key displays on Deck B — was reported missing in
+   iteration 1; the JSX renders identically on both decks now, so this
+   may have been a data issue (no ID3 key on the loaded track) rather
+   than a render bug. Confirm with a track that has a known key.
+8. Verify proportional sizing across viewports (full screen vs
+   windowed). Current heights are fixed pixels; small windows likely
+   crowd the library out entirely.
+
+— Decisions locked in (do not relitigate) —
+- Layout A: twin stacked waveforms at top — Mix//Sync's brand element.
+- Same orientation for both decks (NOT mirrored) — accessible to
+  less-elite DJs who haven't internalized a left-deck-vs-right-deck
+  spatial mental model.
+- EQ stays in central mixer (NOT moved into decks).
+- Identity colors only signal who owns a deck (top border, waveform
+  tint). They are NOT used for other UI.
+- Track key uses a single gold color (#C8A876), not identity color.
+- Inter with tabular-nums for all numerical readouts (replaced
+  JetBrains Mono globally).
+- DJ names in deck headers, not "YOU"/"PARTNER" labels. Identity is
+  conveyed by the top border color alone.
+- A-H cue list with timestamps replaces the old 1-8 numbered grid.
+  Content stays as A-H + timestamps, but next iteration restores the
+  2x4 GRID layout (not 1x8 column) for vertical compactness.
+- Single curated palette for the 8 cue colors (no Skittles).
+- Single LOOP button + halve/double chevrons (no row of bar buttons).
+
+— Next session plan —
+1. Open all 4 preview URLs side by side with fresh eyes (master,
+   design-warm, design-booth, design-decks).
+2. Decide whether design-decks is the winning direction.
+3. If yes: do the final polish iteration covering issues 1-8 above.
+4. Then plan the merge to master.
