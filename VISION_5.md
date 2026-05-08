@@ -1,4 +1,4 @@
-MIX//SYNC — RESUME BRIEF (May 6-7, 2026 — late marathon-session handoff)
+MIX//SYNC — RESUME BRIEF (May 7, 2026 evening — dogfood-ready handoff)
 =================================================================
 
 HOW TO USE: Paste this entire note as your first message in a new Claude
@@ -22,7 +22,7 @@ PROJECT BASICS
 - Frontend: React + Vite on Vercel (collabmix.vercel.app)
 - Deploy: bash BUILD_AND_PUSH.command
 - GitHub: github.com/chdcosta-max/collabmix
-- Latest commit: 63ac7f9 (Library import + refresh-rejoin + Mix Name UX)
+- Latest commit: 38f23ee (Compress artwork on import — 35x memory reduction)
 
 =================================================================
 SESSION HISTORY
@@ -162,8 +162,47 @@ MAY 6-7 EVENING — late (three commits, UX + library import + OOM fix):
       • Tracks with ID3 BPM/key tags display those values immediately;
         tracks without ID3 show "—" until loaded onto a deck.
 
+MAY 7 EVENING (two commits — both critical dogfood blockers cleared):
+19. Library persistence (commit 82fd5c6)
+    - Root cause of carry-over "library state↔IDB desync": Chrome was
+      evicting OPFS data between sessions because storage was on the
+      default (evictable) tier. 200+ track libraries appeared imported
+      in the UI but only ~4 entries survived a browser quit.
+    - Fix:
+      a) Request persistent storage on first import via
+         `navigator.storage.persist()` (gated on `persisted()` so we
+         don't re-prompt). Upgrades OPFS+IDB to the persistent tier
+         so Chrome won't evict under quota pressure.
+      b) Made `opfsStore` properly awaited inside the import loop —
+         previously fire-and-forget under concurrency, which was
+         silently dropping writes at scale. Errors now propagate;
+         per-track failures are caught and skipped instead of
+         orphaning a metadata entry without bytes.
+    - Verified: library survives page refresh AND full Chrome
+      quit/restart cycles. This was the gating issue blocking
+      dogfood.
+20. Artwork compression (commit 38f23ee)
+    - Root cause of OOM at moderate library sizes: each track held a
+      full-res base64 ID3 APIC artwork string up to ~666 KB. At 266
+      tracks that was ~177 MB just for artwork strings, multiplied
+      across the library state, the IDB poll's deserialization
+      allocation, and the artwork cache. Total resident memory hit
+      ~6 GB — over Chrome's per-tab limit.
+    - Fix: new `downscaleArtwork(dataUrl)` helper draws the original
+      image into a canvas at 200×200 with cover-fit centering, then
+      re-encodes as JPEG quality 0.7 (~10-20 KB per track, ~35×
+      reduction). Called in `_importFileObjects` after `parseID3`;
+      keeps the original on compression failure. The 5-second IDB
+      poll's existing fingerprint check already prevents redundant
+      `setLibrary` calls, so compressed artwork plus that guard
+      makes polling churn a non-issue at any practical scale.
+    - Verified at 135 tracks: Chrome reports 182 MB resident
+      (vs ~3 GB at comparable scale pre-fix). Roughly 1.3 MB per
+      track linear scaling — projects ~700 MB at 500 tracks,
+      ~2.6 GB at 2000 tracks.
+
 =================================================================
-ARCHITECTURE DECISIONS (May 4 + May 6-7)
+ARCHITECTURE DECISIONS (May 4 + May 6-7 + May 7)
 =================================================================
 
 Shared-decks model: both DJs see the same Deck A and Deck B. Whoever loads
@@ -203,6 +242,19 @@ loaded onto a deck. This bounds memory pressure to one track at a time
 even with thousands in the library. The deck-side BPM analyzer runs in
 parallel with the library-side analyzer when a track loads — wasteful but
 correct, and bounded.
+
+Library memory & durability (May 7 insight): two orthogonal axes failed
+silently and had to be fixed together for the library to be usable.
+(1) Durability — default OPFS storage is evictable. Without a persistent
+storage request, Chrome may discard hundreds of imported tracks under
+quota pressure. Always call `navigator.storage.persist()` before relying
+on long-lived browser storage, and `await` writes in import loops so
+silent failures surface. (2) Memory — embedded ID3 artwork is the
+dominant per-track cost (~666 KB raw vs ~10-20 KB compressed). Aggressive
+downscale (200×200 JPEG @0.7) on import keeps thumbnails crisp while
+collapsing the per-track cost ~35×. Together these turn library scale
+from "OOM at 266 tracks" into "linear at ~1.3 MB/track, viable to
+thousands."
 
 =================================================================
 TESTING SCOREBOARD
@@ -246,38 +298,55 @@ May 6-7 late session also verified:
 - OOM fix: 322-track import no longer crashes Chrome (was crashing prior
   to commit 63ac7f9).
 
+May 7 evening verified:
+- Library persistence: tracks survive a full Chrome quit/restart, not
+  just a tab refresh. `navigator.storage.persist()` returns true after
+  first import. Awaited opfsStore means metadata and bytes stay in sync.
+- Artwork compression: 135-track library uses 182 MB resident (was on
+  track for ~3 GB pre-fix). Artwork still visibly populated in track
+  rows; some non-square sources show minor cover-fit framing (flagged
+  as polish, not breaking).
+
 =================================================================
 KNOWN OPEN ISSUES
 =================================================================
 
-NEW (May 6-7 late session) — NEXT-SESSION HIGH PRIORITY:
-- **Library state↔IDB desync under load.** Bulk import of 200+ tracks
-  observed showing many tracks in library UI but only ~4 actually persisted
-  to IDB after the dust settled. Total IDB storage ~2.1KB suggests writes
-  weren't actually persisting at scale. Cause unclear — possibly:
-  • fire-and-forget opfsStore writes failing silently under concurrency
-  • setLibrary state setter races (multiple sequential state updates batched
-    in unexpected ways)
-  • Chrome quota silent eviction without persistent storage request
-  Needs isolated investigation: import small batches with instrumentation,
-  verify each track lands in BOTH OPFS and IDB before moving on. **HIGH
-  PRIORITY before any real dogfooding with a partner DJ who has hundreds
-  of tracks** — current state means the user could think they have 300
-  tracks imported but only 4 are actually saved.
-- **No persistent storage request** — Chrome may evict OPFS data under
-  quota pressure or general housekeeping. Should call
-  `navigator.storage.persist()` on first import to upgrade to persistent
-  storage that survives eviction. Small fix, high value, ~5 lines.
-- **Track list rendering not virtualized** — V2 LibraryPanel renders
-  every track row in DOM. 100+ tracks degrades scroll performance. Needs
-  windowing library (react-window or similar) before scaling to real DJ
-  libraries (5000+ tracks).
-- **No manual "Analyze Library" path** — auto-queue on app load was
-  removed (was the OOM cause). Currently legacy unanalyzed tracks only
-  get analyzed by being loaded onto a deck. Should add an explicit
-  "Analyze All" button so users can backfill BPM/key when they have time.
-  The `analyzeAll(getFileFn)` function in useLibrary already exists —
-  just needs a button + click handler.
+NEW (May 7 evening) — NEXT-SESSION PRIORITIES (in priority order):
+
+1. **Track list virtualization** (HIGH for public launch). Even with
+   compressed artwork, rendering 500+ DOM rows simultaneously degrades
+   scroll performance. Needs react-window or similar windowing library.
+   Critical before opening to public users with arbitrary library sizes.
+
+2. **Artwork cover-fit math.** Some non-square source art crops awkwardly
+   during compression — visible as "half artwork showing" on certain
+   tracks. Polish issue, not breaking. Adjust the canvas drawImage
+   cover-fit calculation in `downscaleArtwork` (probably needs
+   contain-fit-with-blur-pad or a smarter aspect handler).
+
+3. **Click-to-load picker fallback UX.** When the OPFS file is missing,
+   `handleLibLoad` falls through to the file picker silently. With
+   awaited `opfsStore` now in place this should be rare, but a
+   "track audio missing — locate file?" prompt would be clearer than
+   silently opening a picker.
+
+4. **Pre-fix tracks still hold full-size artwork.** Tracks imported
+   before commit 38f23ee retain full ID3 APIC bytes. Could add a
+   one-time "re-compress library" pass on app load, but simplest is
+   to just re-import. Document for users.
+
+5. **No delete-tracks UI.** Users currently have no way to remove
+   tracks from their library. Needed before launch.
+
+6. **Import safety / progress UI.** For users importing 500+ tracks,
+   show progress and don't allow runaway imports without warning.
+
+7. **No manual "Analyze Library" path** — auto-queue on app load was
+   removed (was the OOM cause). Legacy unanalyzed tracks only get
+   analyzed by being loaded onto a deck. Should add an explicit
+   "Analyze All" button so users can backfill BPM/key when they have
+   time. `analyzeAll(getFileFn)` in useLibrary already exists — just
+   needs a button + click handler.
 
 CARRIED FORWARD FROM EARLIER MAY 6-7:
 - Phantom loop on zoomed waveform clicks. Repro: while playback is active,
@@ -331,40 +400,69 @@ RESOLVED THIS SESSION (May 6-7):
 - ✅ Refresh-during-session bounces to Landing (fixed in 63ac7f9)
 - ✅ OOM on bulk import (fixed in 63ac7f9 — deferred analysis)
 
+RESOLVED MAY 7 EVENING:
+- ✅ Library state↔IDB desync under load — Chrome was evicting OPFS data
+  on the default storage tier. Fixed in 82fd5c6 by requesting persistent
+  storage and awaiting opfsStore writes.
+- ✅ No persistent storage request — added in 82fd5c6.
+- ✅ OOM at moderate library scale (~6 GB at 266 tracks) — fixed in
+  38f23ee by compressing ID3 artwork to 200×200 JPEG @0.7 on import.
+  ~35× memory reduction; verified at 135 tracks / 182 MB.
+
+=================================================================
+DOGFOOD READINESS
+=================================================================
+
+The two critical blockers are now cleared:
+- ✅ Library data loss across browser restarts (82fd5c6)
+- ✅ OOM crash at moderate library size (38f23ee)
+
+For dogfood with one DJ partner on 50-150 tracks → **READY**.
+For public beta with random users on arbitrary libraries → still
+needs virtualization + delete UI + import safety + cover-fit polish
+first.
+
 =================================================================
 RECOMMENDED FIRST ACTIONS NEXT SESSION
 =================================================================
 
 In priority order:
 
-1. **Fix library state↔IDB desync.** (HIGH — blocks dogfooding with real
-   libraries.) Import 50-100 tracks with instrumentation. Verify each
-   makes it into BOTH OPFS and IDB. Hypothesis ranking: silent opfsStore
-   failures > setLibrary races > Chrome quota eviction. Easiest first
-   step: await opfsStore + cmDbPut serially instead of fire-and-forget.
+1. **Cover-fit math fix** (small) — adjust `downscaleArtwork` so
+   non-square source art doesn't crop awkwardly. Probably swap
+   cover-fit for contain-fit with letterbox, or a smarter aspect
+   handler.
 
-2. **Add navigator.storage.persist() request.** Small change (~5 lines),
-   high value. Upgrade to persistent OPFS so a real DJ library doesn't
-   get evicted. Best place: first time importFiles is called, before
-   the first opfsStore.
+2. **Track list virtualization** (medium) — react-window. Probably
+   1-2 hours including testing. Removes the last hard limit on
+   library scale.
 
-3. **Dogfood with another DJ on a small library** (~50 tracks). After
-   #1 and #2 land, real human use will surface what to fix next. Test
-   scenarios: track handoff, EQ matching on incoming tracks, cue points,
-   beat-grid alignment under live conditions, network latency tolerance.
+3. **Delete tracks UI** (small) — users need a way to remove tracks
+   from their library before any public exposure.
 
-4. **Track list virtualization** — once dogfooding reveals scale needs.
-   react-window is the go-to. Probably 1-2 hours including testing.
+4. **Re-test at 500+ tracks** — verify projected memory scaling
+   (~700 MB) holds and scroll/import perf is acceptable with
+   virtualization in place.
 
-5. **Add "Analyze All" button** to library panel — wire to existing
+5. **Dogfood with a real DJ partner** on a 50-150 track library.
+   Real use will surface what to fix next. Test scenarios: track
+   handoff, EQ matching on incoming tracks, cue points, beat-grid
+   alignment under live conditions, network latency tolerance.
+
+6. **Add "Analyze All" button** to library panel — wire to existing
    `lib.analyzeAll(getFile)`. Quick addition, surfaces the existing
    one-at-a-time analyzer to users for legacy tracks.
 
-6. **Phantom loop bug** — once stability is solid, audit
+7. **Click-to-load picker fallback UX** — replace silent file-picker
+   fallback in `handleLibLoad` with an explicit "track audio missing
+   — locate file?" prompt.
+
+8. **Phantom loop bug** — once stability is solid, audit
    AnimatedZoomedWF click handlers and any drag-to-set-loop gestures.
 
-7. **WF_W resolution decision** — bump to 48000 for better partner-side
-   waveform quality, OR improve render with smoothed bars.
+9. **WF_W resolution decision** — bump to 48000 for better
+   partner-side waveform quality, OR improve render with smoothed
+   bars.
 
 =================================================================
 WORKING RULES
@@ -406,14 +504,17 @@ WORKING RULES
 INSTRUCTION FOR NEW CLAUDE
 =================================================================
 "Continuing work on Mix//Sync. Previous chat hit context limits.
-Please confirm you understand where we left off. The May 6-7 marathon
-session shipped 5 commits: audio routing fix (3268c2f), partner playhead
-jitter fix (7781f83), shareable invite links + Mix Name UX (7a2fd25),
-VISION update (ec6d660), and library import + refresh-rejoin + OOM fix
-(63ac7f9). Two-DJ end-to-end works: invite link → both DJs join → audio
-+ metadata + transport + smooth playhead. Library import works for small
-batches but has a critical state↔IDB desync issue under load (200+ tracks
-showed in UI but only ~4 actually persisted to IDB). NEXT priority is
-fixing that desync before any real dogfooding. Also: call
-navigator.storage.persist() before scaling, and add 'Analyze All' button
-for legacy tracks."
+Please confirm you understand where we left off. The May 7 evening
+session shipped two commits that cleared both critical dogfood
+blockers: library persistence (82fd5c6) added
+navigator.storage.persist() and made opfsStore writes properly
+awaited so libraries survive Chrome quit/restart cycles, and artwork
+compression (38f23ee) downscales ID3 artwork to 200×200 JPEG @0.7
+on import for ~35× per-track memory reduction (135 tracks now uses
+182 MB; pre-fix was on track for ~3 GB at that scale). The two
+critical blockers (data loss, OOM) are now fixed — app is dogfood-
+ready for one DJ partner on 50-150 tracks. NEXT priorities (in
+order): cover-fit math fix for non-square artwork, track list
+virtualization (react-window), delete-tracks UI, re-test at 500+
+tracks, then dogfood with a real DJ. Public beta still needs
+virtualization + delete + import safety + cover-fit polish first."
