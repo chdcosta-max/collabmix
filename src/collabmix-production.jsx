@@ -82,12 +82,14 @@ const TOK = {
   you:         "#5B8FF9",
   partner:     "#9B7BD9",
   active:      "#ECEEF1",
-  youVibrant:     "#6E92D6",
-  partnerVibrant: "#8F7BC2",
+  youVibrant:     "#7DA3E8",
+  partnerVibrant: "#A28FD0",
   // Status
   connected: "#6BB36B",
   warning:   "#C9A06B",
   error:     "#B86060",
+  // Track-key accent — semantic, not identity. Single color across both decks.
+  accentKey: "#C8A876",
   // Legacy aliases — kept so existing literals can still resolve via TOK
   // during the gradual migration. New code must NOT use these.
   gold:   "#C8A96E",
@@ -113,11 +115,12 @@ const CUE_PALETTE = [
   "#B86060", // 8 oxblood
 ];
 
-// Font roles
+// Font roles. `mono` is now Inter with tabular-nums (set globally in body CSS) —
+// modernized away from JetBrains Mono so numerics share the body family.
 const FONT = {
-  ui:    "'Inter','DM Sans',sans-serif",          // body, buttons, labels
+  ui:      "'Inter','DM Sans',sans-serif",                     // body, buttons, labels
   display: "'Bricolage Grotesque','Cormorant Garamond',serif", // wordmark, deck titles
-  mono:  "'JetBrains Mono','DM Mono',monospace",  // BPM, time, key, codes
+  mono:    "'Inter','DM Sans',sans-serif",                     // numerics — paired with tabular-nums
 };
 
 
@@ -2731,29 +2734,71 @@ function VU({ an, color, w=100 }) {
   return <canvas ref={ref} width={w} height={6} style={{width:"100%",borderRadius:2}}/>;
 }
 
-// Thin vertical level meter — 4px wide bar fills bottom-up with current audio level.
-// Top 2 LED bands warn (amber/red); body uses identity color.
-function VerticalLevelMeter({ an, color }) {
-  const ref=useRef(null),raf=useRef(null);
+// Vertical level meter — fills bottom-up. Color zones: identity (0-70%) →
+// warning (70-90%) → error (90+%). 1px white peak-hold line tracks the highest
+// recent level and decays after ~1.5s of no new peak.
+function VerticalLevelMeter({ an, identity, color=null, h=null, w=6 }) {
+  // Backwards-compat: previous callers used `color`. Map it to identity.
+  const idColor = identity || color || "#ffffff";
+  const fillRef = useRef(null);
+  const peakRef = useRef(null);
+  const peakStateRef = useRef({ val:0, ts:0 });
+  const raf = useRef(null);
   useEffect(()=>{
-    if(!an||!ref.current)return;
-    const el=ref.current;
-    const draw=()=>{
-      raf.current=requestAnimationFrame(draw);
-      const d=new Uint8Array(an.frequencyBinCount);
-      an.getByteFrequencyData(d);
-      const lv=d.reduce((s,v)=>s+v,0)/d.length/255;
-      const pct=Math.min(1,lv*1.4); // slight visual headroom
-      el.style.height=`${(pct*100).toFixed(1)}%`;
-      // Color shifts at peak
-      el.style.background = pct>0.92 ? "#B86060" : pct>0.78 ? "#C9A06B" : color;
+    if(!an || !fillRef.current) return;
+    const fill = fillRef.current;
+    const peak = peakRef.current;
+    const buf = new Uint8Array(an.frequencyBinCount);
+    const draw = () => {
+      raf.current = requestAnimationFrame(draw);
+      an.getByteFrequencyData(buf);
+      let sum=0; for(let i=0;i<buf.length;i++) sum+=buf[i];
+      const lv = Math.min(1, (sum/buf.length/255) * 1.4); // slight visual headroom
+      // Fill height + zoned color
+      fill.style.height = `${(lv*100).toFixed(1)}%`;
+      fill.style.background = lv > 0.9 ? "#B86060" : lv > 0.7 ? "#C9A06B" : idColor;
+      // Peak hold logic
+      const now = performance.now();
+      const ps = peakStateRef.current;
+      if (lv >= ps.val) {
+        ps.val = lv; ps.ts = now;
+      } else if (now - ps.ts > 1500) {
+        // Decay smoothly after hold expires
+        ps.val = Math.max(0, ps.val - 0.012);
+      }
+      if (peak) {
+        peak.style.bottom = `${(ps.val*100).toFixed(1)}%`;
+        peak.style.opacity = ps.val > 0.02 ? 1 : 0;
+      }
     };
     draw();
-    return()=>cancelAnimationFrame(raf.current);
-  },[an,color]);
+    return ()=>cancelAnimationFrame(raf.current);
+  },[an, idColor]);
   return (
-    <div style={{width:"100%",height:"100%",display:"flex",flexDirection:"column",justifyContent:"flex-end"}}>
-      <div ref={ref} style={{width:"100%",height:"0%",background:color,transition:"background .1s"}}/>
+    <div style={{
+      width:w,
+      height: h ? h : "100%",
+      background:TOK.surface2,
+      borderRadius:2,
+      position:"relative",
+      overflow:"hidden",
+      flexShrink:0,
+    }}>
+      <div ref={fillRef} style={{
+        position:"absolute", left:0, right:0, bottom:0,
+        height:"0%",
+        background: idColor,
+        transition:"background .08s, height .04s linear",
+      }}/>
+      <div ref={peakRef} style={{
+        position:"absolute", left:0, right:0,
+        bottom:"0%",
+        height:1,
+        background:"#ffffff",
+        opacity:0,
+        transition:"bottom .08s linear, opacity .15s",
+        pointerEvents:"none",
+      }}/>
     </div>
   );
 }
@@ -2929,8 +2974,10 @@ function AnimatedZoomedWF({ bands, dur, progRef, onSeek, h=96, windowSec=8, beat
       const maxH=Math.min(center,physH-1-center);
       const bands=bandsRef.current;
 
-      ctx.fillStyle='#030308';
-      ctx.fillRect(0,0,physW,physH);
+      // Transparent canvas — parent div supplies the background. This is what lets
+      // a CSS drop-shadow filter on the wrapping div pick up the bright peak alpha
+      // and emit a visible glow around them.
+      ctx.clearRect(0,0,physW,physH);
 
       if(bands&&bands.bass&&bands.bass.length&&dur2&&maxH>0){
         const bArr=bands.bass, mArr=bands.mid, hArr=bands.high;
@@ -3067,7 +3114,7 @@ function AnimatedZoomedWF({ bands, dur, progRef, onSeek, h=96, windowSec=8, beat
     const srcX=(progRef?.current??0)*len-viewPx/2;
     seekRef.current(Math.max(0,Math.min(1,(srcX+clickX/W*viewPx)/len)));
   };
-  return <canvas ref={ref} onClick={onClick} style={{width:'100%',height:h,background:'#030308',cursor:'crosshair',display:'block'}}/>;
+  return <canvas ref={ref} onClick={onClick} style={{width:'100%',height:h,background:'transparent',cursor:'crosshair',display:'block'}}/>;
 }
 
 // ── Scrolling zoomed waveform (Rekordbox-style) ───────────────
@@ -3285,7 +3332,7 @@ function Knob({ v, set, min=-12, max=12, ctr=0, label, color="#C8A96E", size=38,
 // ── Deck ─────────────────────────────────────────────────────
 const HOT_CUE_COLORS=["#C8A96E","#ef4444","#22c55e","#f59e0b"];
 
-function Deck({ id, ch, ctx:ac, color, vibrantColor=null, isYou=null, local, remote, onChange, midi:mt, bpmResult, bpmAnalyze, eqHi=0, eqMid=0, eqLo=0, chanVol=1, loadFromLibrary=null, onTrackInfo=null, onSync=null, onLibraryTrackDrop=null, onProgUpdate=null, onWaveform=null, onSeekReady=null, remoteSeek=null, onToggleReady=null, onCueReady=null, remoteToggle=null, remoteCue=null, onTransportFire=null }) {
+function Deck({ id, ch, ctx:ac, color, vibrantColor=null, isYou=null, djName="", local, remote, onChange, midi:mt, bpmResult, bpmAnalyze, eqHi=0, eqMid=0, eqLo=0, chanVol=1, loadFromLibrary=null, onTrackInfo=null, onSync=null, onLibraryTrackDrop=null, onProgUpdate=null, onWaveform=null, onSeekReady=null, remoteSeek=null, onToggleReady=null, onCueReady=null, remoteToggle=null, remoteCue=null, onTransportFire=null }) {
   const [buf,setBuf]=useState(null),[name,setName]=useState(null),[play,setPlay]=useState(false);
   const [prog,setProg]=useState(0),[dur,setDur]=useState(0);
   const progRef=useRef(0); // mirror of prog for parent AnimatedZoomedWF without 60fps setState
@@ -3299,6 +3346,7 @@ function Deck({ id, ch, ctx:ac, color, vibrantColor=null, isYou=null, local, rem
   const [trackArtist,setTrackArtist]=useState(null);
   const [trackArtwork,setTrackArtwork]=useState(null);
   const [hotCues,setHotCues]=useState([null,null,null,null,null,null,null,null]);
+  const [flashedCue,setFlashedCue]=useState(-1); // briefly highlights a triggered cue row
   const [loopActive,setLoopActive]=useState(false);
   const [loopStart,setLoopStart]=useState(null);
   const [loopEnd,setLoopEnd]=useState(null);
@@ -3567,6 +3615,17 @@ function Deck({ id, ch, ctx:ac, color, vibrantColor=null, isYou=null, local, rem
   const ck = effectiveKey ? CAMELOT[effectiveKey] : null;
   const hasTrack = !!(buf || remote?.trackName);
 
+  const triggerCue = (i) => {
+    if(!buf) return;
+    if(hotCues[i] !== null){
+      seek(hotCues[i]);
+      setFlashedCue(i);
+      setTimeout(()=>setFlashedCue(p=>p===i?-1:p), 360);
+    } else {
+      setHotCues(p=>{const n=[...p];n[i]=prog;return n;});
+    }
+  };
+
   return (
     <div style={{
       background: TOK.surface1,
@@ -3576,22 +3635,21 @@ function Deck({ id, ch, ctx:ac, color, vibrantColor=null, isYou=null, local, rem
       padding: 16,
       display: "flex",
       flexDirection: "column",
-      gap: 14,
-      minHeight: 280,
+      gap: 12,
+      minHeight: 360,
+      height: "100%",
       boxShadow: playVisualNow
         ? `0 -2px 12px ${accent}40, 0 4px 18px rgba(0,0,0,0.55)`
         : `0 2px 8px rgba(0,0,0,0.45)`,
       transition: "border-color .25s, box-shadow .25s",
       position: "relative",
     }}>
-      {/* ── Header ── */}
-      <div style={{display:"flex",alignItems:"center",gap:10}}>
+      {/* ── Header — letter + DJ name (identity is conveyed by the top border color) ── */}
+      <div style={{display:"flex",alignItems:"center",gap:10,flexShrink:0}}>
         <span style={{fontFamily:FONT.ui,fontSize:14,fontWeight:600,color:TOK.textSec}}>{id}</span>
-        <span style={{fontFamily:FONT.ui,fontSize:10,fontWeight:600,letterSpacing:1.4,color:accent,opacity:0.7,textTransform:"uppercase"}}>
-          {isYouResolved ? "YOU" : "PARTNER"}
-        </span>
-        {bpmResult?.analyzing && <span style={{fontFamily:FONT.mono,fontSize:9,color:TOK.warning,letterSpacing:1,animation:"pulse .8s infinite"}}>ANALYZING…</span>}
-        <div style={{flex:1}}/>
+        <span style={{fontFamily:FONT.ui,fontSize:13,fontWeight:500,color:TOK.text,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis",flexShrink:1,minWidth:0}}>{djName || (isYouResolved ? "" : "Partner")}</span>
+        {bpmResult?.analyzing && <span style={{fontFamily:FONT.ui,fontSize:9,color:TOK.warning,letterSpacing:1,animation:"pulse .8s infinite",fontWeight:600}}>ANALYZING…</span>}
+        <div style={{flex:1,minWidth:8}}/>
         {effectiveBpm && (
           <span style={{fontFamily:FONT.mono,fontSize:14,fontWeight:500,color:TOK.text,fontVariantNumeric:"tabular-nums"}}>
             {(effectiveBpm*(bpmResult?.bpm?rate:1)).toFixed(1)}
@@ -3599,130 +3657,136 @@ function Deck({ id, ch, ctx:ac, color, vibrantColor=null, isYou=null, local, rem
           </span>
         )}
         {playVisualNow && (
-          <div style={{width:6,height:6,borderRadius:"50%",background:accent,boxShadow:`0 0 8px ${accent}`,marginLeft:6}}/>
+          <div style={{width:6,height:6,borderRadius:"50%",background:accent,boxShadow:`0 0 8px ${accent}`,marginLeft:6,flexShrink:0}}/>
         )}
       </div>
 
-      {/* ── Track row: art | info+waveform ── */}
-      <div
-        onClick={local ? (()=>fr.current?.click()) : undefined}
-        onDragOver={local?(e=>{e.preventDefault();e.stopPropagation();setDragOver(true);}):undefined}
-        onDragLeave={local?(()=>setDragOver(false)):undefined}
-        onDrop={local?(e=>{
-          e.preventDefault();e.stopPropagation();setDragOver(false);
-          const f=e.dataTransfer.files[0];
-          if(f&&f.type.startsWith("audio/")){load(f);return;}
-          try{const d=JSON.parse(e.dataTransfer.getData("application/json"));if(d?.trackId&&onLibraryTrackDrop)onLibraryTrackDrop(d.trackId);}catch{}
-        }):undefined}
-        style={{
-          display:"flex",gap:14,alignItems:"flex-start",
-          cursor: local ? "pointer" : "default",
-          border: dragOver ? `1.5px dashed ${accent}` : "1.5px dashed transparent",
-          borderRadius:8,
-          padding: dragOver ? 4 : 0,
-          margin: dragOver ? -4 : 0,
-          transition:"border-color .15s",
-        }}>
-        {/* Album art */}
-        <div style={{
-          width:96,height:96,flexShrink:0,
-          background: trackArtwork ? "#000" : TOK.surface2,
-          border:`1px solid ${TOK.borderSubtle}`,
-          borderRadius:6,
-          overflow:"hidden",
-          display:"flex",alignItems:"center",justifyContent:"center",
-        }}>
-          {trackArtwork ? (
-            <img src={trackArtwork} alt="" style={{width:"100%",height:"100%",objectFit:"cover",display:"block"}}/>
-          ) : (
-            <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke={TOK.textMuted} strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round">
-              <path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/>
-            </svg>
-          )}
-        </div>
+      {/* ── Body: main content (left) | cue list (right) ── */}
+      <div style={{display:"flex",gap:14,flex:1,minHeight:0}}>
 
-        {/* Info + waveform */}
-        <div style={{flex:1,minWidth:0,display:"flex",flexDirection:"column",gap:8}}>
-          {hasTrack ? (
-            <>
-              <div>
-                <div style={{
-                  fontFamily:FONT.display,fontSize:22,fontWeight:700,
-                  color:TOK.text,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis",
-                  lineHeight:1.1,letterSpacing:-0.3,
-                }}>{effectiveTitle || "—"}</div>
-                <div style={{
-                  fontFamily:FONT.ui,fontSize:13,fontWeight:500,
-                  color:TOK.textSec,marginTop:5,
-                  whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis",
-                }}>
-                  {effectiveArtist || "—"}
-                  <span style={{color:TOK.textMuted}}> · </span>
-                  <span style={{fontFamily:FONT.mono,color:TOK.textSec}}>{fmt(effectiveDur)}</span>
-                  {ck && <>
-                    <span style={{color:TOK.textMuted}}> · </span>
-                    <span style={{fontFamily:FONT.mono,color:ck.endsWith("A")?TOK.partner:TOK.text,fontWeight:600}}>{ck}</span>
-                  </>}
-                </div>
-              </div>
-              <div style={{height:60,background:TOK.bgBase,border:`1px solid ${TOK.borderSubtle}`,borderRadius:4,overflow:"hidden",filter:`drop-shadow(0 0 4px ${accent}33)`}}>
-                <WF
-                  bands={wfBass?{bass:wfBass,mid:wfMid,high:wfHigh}:null}
-                  peaks={wfPeaks} freq={wfFreq}
-                  prog={prog} onSeek={local?seek:remoteSeek}
-                  h={60}
-                  hotCues={hotCues}
-                  loopStart={loopStart} loopEnd={loopEnd} loopActive={loopActive}
-                  bpm={bpmResult?.bpm?(bpmResult.bpm*rate):null}
-                  dur={dur}
-                  beatPhaseFrac={bpmResult?.beatPhaseFrac??null}
-                  color={accentVibrant}
-                />
-              </div>
-            </>
-          ) : (
-            <div style={{
-              flex:1,minHeight:96,
-              display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",gap:6,
-              color: dragOver ? accent : TOK.textMuted,
-              fontFamily:FONT.ui,
+        {/* Main content column */}
+        <div style={{flex:1,display:"flex",flexDirection:"column",gap:12,minWidth:0,minHeight:0}}>
+
+          {/* Track row: art + info+waveform.
+              onClick gated on !hasTrack so a loaded waveform doesn't reopen the picker.
+              Drop still works whenever local — drag-and-drop is the canonical track-swap path. */}
+          <div
+            onClick={local && !hasTrack ? (()=>fr.current?.click()) : undefined}
+            onDragOver={local?(e=>{e.preventDefault();e.stopPropagation();setDragOver(true);}):undefined}
+            onDragLeave={local?(()=>setDragOver(false)):undefined}
+            onDrop={local?(e=>{
+              e.preventDefault();e.stopPropagation();setDragOver(false);
+              const f=e.dataTransfer.files[0];
+              if(f&&f.type.startsWith("audio/")){load(f);return;}
+              try{const d=JSON.parse(e.dataTransfer.getData("application/json"));if(d?.trackId&&onLibraryTrackDrop)onLibraryTrackDrop(d.trackId);}catch{}
+            }):undefined}
+            style={{
+              display:"flex",gap:14,alignItems:"flex-start",
+              cursor: local && !hasTrack ? "pointer" : "default",
+              border: dragOver ? `1.5px dashed ${accent}` : "1.5px dashed transparent",
+              borderRadius:8,
+              padding: dragOver ? 4 : 0,
+              margin: dragOver ? -4 : 0,
+              transition:"border-color .15s",
+              flexShrink:0,
             }}>
-              <div style={{fontSize:13,fontWeight:600,letterSpacing:0.3}}>
-                {dragOver ? "Drop track here" : (local ? "Click or drag to load track" : "Waiting for partner…")}
-              </div>
-              <div style={{fontSize:11,fontWeight:400,color:TOK.textMuted,letterSpacing:0.3}}>
-                MP3 · WAV · FLAC · AAC
-              </div>
+            {/* Album art */}
+            <div style={{
+              width:96,height:96,flexShrink:0,
+              background: trackArtwork ? "#000" : TOK.surface2,
+              border:`1px solid ${TOK.borderSubtle}`,
+              borderRadius:6,
+              overflow:"hidden",
+              display:"flex",alignItems:"center",justifyContent:"center",
+            }}>
+              {trackArtwork ? (
+                <img src={trackArtwork} alt="" style={{width:"100%",height:"100%",objectFit:"cover",display:"block"}}/>
+              ) : (
+                <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke={TOK.textMuted} strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/>
+                </svg>
+              )}
             </div>
-          )}
-        </div>
-      </div>
 
-      <input ref={fr} type="file" accept="audio/*" style={{display:"none"}} onChange={e=>{ const f=e.target.files[0]; e.target.value=""; if(f) load(f); }}/>
+            {/* Info + waveform */}
+            <div style={{flex:1,minWidth:0,display:"flex",flexDirection:"column",gap:8}}>
+              {hasTrack ? (
+                <>
+                  <div>
+                    <div style={{
+                      fontFamily:FONT.display,fontSize:22,fontWeight:700,
+                      color:TOK.text,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis",
+                      lineHeight:1.1,letterSpacing:-0.3,
+                    }}>{effectiveTitle || "—"}</div>
+                    <div style={{
+                      fontFamily:FONT.ui,fontSize:13,fontWeight:500,
+                      color:TOK.textSec,marginTop:5,
+                      whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis",
+                    }}>
+                      {effectiveArtist || "—"}
+                      <span style={{color:TOK.textMuted}}> · </span>
+                      <span style={{fontFamily:FONT.mono,color:TOK.textSec,fontVariantNumeric:"tabular-nums"}}>{fmt(effectiveDur)}</span>
+                      {ck && <>
+                        <span style={{color:TOK.textMuted}}> · </span>
+                        <span style={{fontFamily:FONT.mono,color:TOK.accentKey,fontWeight:600,fontVariantNumeric:"tabular-nums"}}>{ck}</span>
+                      </>}
+                    </div>
+                  </div>
+                  <div style={{height:60,background:TOK.bgBase,border:`1px solid ${TOK.borderSubtle}`,borderRadius:4,overflow:"hidden",filter:`drop-shadow(0 0 4px ${accent}33)`}}>
+                    <WF
+                      bands={wfBass?{bass:wfBass,mid:wfMid,high:wfHigh}:null}
+                      peaks={wfPeaks} freq={wfFreq}
+                      prog={prog} onSeek={local?seek:remoteSeek}
+                      h={60}
+                      hotCues={hotCues}
+                      loopStart={loopStart} loopEnd={loopEnd} loopActive={loopActive}
+                      bpm={bpmResult?.bpm?(bpmResult.bpm*rate):null}
+                      dur={dur}
+                      beatPhaseFrac={bpmResult?.beatPhaseFrac??null}
+                      color={accentVibrant}
+                    />
+                  </div>
+                </>
+              ) : (
+                <div style={{
+                  flex:1,minHeight:96,
+                  display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",gap:6,
+                  color: dragOver ? accent : TOK.textMuted,
+                  fontFamily:FONT.ui,
+                }}>
+                  <div style={{fontSize:13,fontWeight:600,letterSpacing:0.3}}>
+                    {dragOver ? "Drop track here" : (local ? "Click or drag to load track" : "Waiting for partner…")}
+                  </div>
+                  <div style={{fontSize:11,fontWeight:400,color:TOK.textMuted,letterSpacing:0.3}}>
+                    MP3 · WAV · FLAC · AAC
+                  </div>
+                </div>
+              )}
+            </div>
+          </div>
 
-      {/* ── Transport row: controls | cue grid ── */}
-      <div style={{display:"flex",gap:14,alignItems:"flex-start",flex:1,minHeight:0}}>
-        <div style={{flex:1,display:"flex",flexDirection:"column",gap:12,minWidth:0}}>
-          {/* Buttons */}
-          <div style={{display:"flex",alignItems:"center",gap:10}}>
-            {/* CUE */}
+          <input ref={fr} type="file" accept="audio/*" style={{display:"none"}} onChange={e=>{ const f=e.target.files[0]; e.target.value=""; if(f) load(f); }}/>
+
+          {/* Transport controls */}
+          <div style={{display:"flex",alignItems:"center",gap:10,flexShrink:0}}>
+            {/* CUE — 38px tall ghost */}
             <button
               onClick={()=>{ if(local&&cue) cue(); else if(remoteCue) remoteCue(); }}
               disabled={!cueEnabled}
               onMouseEnter={e=>{ if(cueEnabled){e.currentTarget.style.borderColor=TOK.text;e.currentTarget.style.background=TOK.surface2;} }}
               onMouseLeave={e=>{ e.currentTarget.style.borderColor=TOK.borderDefined;e.currentTarget.style.background="transparent"; }}
               style={{
-                height:48,padding:"0 18px",minWidth:80,
+                height:38,padding:"0 14px",minWidth:64,
                 background:"transparent",
                 border:`1px solid ${TOK.borderDefined}`,
                 color:cueEnabled?TOK.text:TOK.textMuted,
-                borderRadius:8,
+                borderRadius:6,
                 fontFamily:FONT.ui,fontSize:13,fontWeight:600,letterSpacing:1,
                 cursor:cueEnabled?"pointer":"default",outline:"none",
                 transition:"all .15s",
               }}>CUE</button>
 
-            {/* PLAY */}
+            {/* PLAY — 52px circle (kept large; visual hierarchy anchor) */}
             <button
               onClick={()=>{ if(local&&toggle) toggle(); else if(remoteToggle) remoteToggle(); }}
               disabled={!enabled}
@@ -3738,10 +3802,10 @@ function Deck({ id, ch, ctx:ac, color, vibrantColor=null, isYou=null, local, rem
                 display:"flex",alignItems:"center",justifyContent:"center",
                 boxShadow:playVisualNow?`0 0 20px rgba(255,255,255,0.18)`:"none",
                 outline:"none",flexShrink:0,
-                transition:"all .2s",
+                transition:"all .2s",padding:0,
               }}>{playVisualNow?"❚❚":"▶"}</button>
 
-            {/* SYNC */}
+            {/* SYNC — 38px tall ghost */}
             {onSync && (
               <button
                 onClick={onSync}
@@ -3749,95 +3813,95 @@ function Deck({ id, ch, ctx:ac, color, vibrantColor=null, isYou=null, local, rem
                 onMouseEnter={e=>{ if(buf&&bpmResult?.bpm){e.currentTarget.style.borderColor=TOK.text;e.currentTarget.style.background=TOK.surface2;} }}
                 onMouseLeave={e=>{ e.currentTarget.style.borderColor=TOK.borderDefined;e.currentTarget.style.background="transparent"; }}
                 style={{
-                  height:48,padding:"0 18px",minWidth:80,
+                  height:38,padding:"0 14px",minWidth:64,
                   background:"transparent",
                   border:`1px solid ${TOK.borderDefined}`,
                   color:buf&&bpmResult?.bpm?TOK.text:TOK.textMuted,
-                  borderRadius:8,
+                  borderRadius:6,
                   fontFamily:FONT.ui,fontSize:13,fontWeight:600,letterSpacing:1,
                   cursor:buf&&bpmResult?.bpm?"pointer":"default",outline:"none",
                   transition:"all .15s",
                 }}>SYNC</button>
             )}
-          </div>
 
-          {/* Loop control */}
-          <div style={{display:"flex",alignItems:"center",gap:8,height:28}}>
-            <button
-              onClick={()=>{
-                if(loopActive){
-                  setLoopActive(false);
-                  if(src.current) src.current.loop=false;
-                  return;
-                }
-                if(!buf) return;
-                const bps=(bpmResult?.bpm||120)/60;
-                const lDur=loopBars/bps;
-                const lStart=prog;
-                const lEnd=Math.min(1,lStart+lDur/(buf.duration||1));
-                setLoopStart(lStart);setLoopEnd(lEnd);setLoopActive(true);
-              }}
-              disabled={!local || !buf}
-              style={{
-                fontFamily:FONT.ui,fontSize:11,fontWeight:600,letterSpacing:1,
-                color:loopActive?TOK.text:TOK.textSec,
-                background:"transparent",border:"none",
-                cursor:local&&buf?"pointer":"default",
-                padding:"0 4px",textTransform:"uppercase",outline:"none",
-              }}>LOOP</button>
-            <div style={{
-              minWidth:32,height:24,padding:"0 8px",
-              display:"flex",alignItems:"center",justifyContent:"center",
-              border:loopActive?`1px solid ${accent}`:`1px solid ${TOK.borderDefined}`,
-              background:loopActive?accent+"18":"transparent",
-              borderRadius:4,
-              fontFamily:FONT.mono,fontSize:14,fontWeight:500,
-              color:TOK.text,fontVariantNumeric:"tabular-nums",
-              boxShadow:loopActive?`0 0 8px ${accent}55`:"none",
-              transition:"all .15s",
-            }}>{loopBars<1?`1/${Math.round(1/loopBars)}`:loopBars}</div>
-            <button
-              onClick={()=>{
-                const nv=Math.max(0.25,loopBars/2);
-                setLoopBars(nv);
-                if(loopActive&&buf){
+            {/* Loop control inline */}
+            <div style={{display:"flex",alignItems:"center",gap:6,marginLeft:10}}>
+              <button
+                onClick={()=>{
+                  if(loopActive){
+                    setLoopActive(false);
+                    if(src.current) src.current.loop=false;
+                    return;
+                  }
+                  if(!buf) return;
                   const bps=(bpmResult?.bpm||120)/60;
-                  const lDur=nv/bps;
-                  const lEnd=Math.min(1,(loopStart??prog)+lDur/(buf.duration||1));
-                  setLoopEnd(lEnd);
-                }
-              }}
-              style={{
-                width:28,height:28,
-                background:"transparent",
-                border:`1px solid ${TOK.borderDefined}`,
-                color:TOK.textSec,borderRadius:4,
-                cursor:"pointer",fontSize:13,outline:"none",
+                  const lDur=loopBars/bps;
+                  const lStart=prog;
+                  const lEnd=Math.min(1,lStart+lDur/(buf.duration||1));
+                  setLoopStart(lStart);setLoopEnd(lEnd);setLoopActive(true);
+                }}
+                disabled={!local || !buf}
+                style={{
+                  fontFamily:FONT.ui,fontSize:11,fontWeight:600,letterSpacing:1,
+                  color:loopActive?TOK.text:TOK.textSec,
+                  background:"transparent",border:"none",
+                  cursor:local&&buf?"pointer":"default",
+                  padding:"0 4px",textTransform:"uppercase",outline:"none",
+                }}>LOOP</button>
+              <div style={{
+                minWidth:32,height:24,padding:"0 8px",
                 display:"flex",alignItems:"center",justifyContent:"center",
-              }}>‹</button>
-            <button
-              onClick={()=>{
-                const nv=Math.min(64,loopBars*2);
-                setLoopBars(nv);
-                if(loopActive&&buf){
-                  const bps=(bpmResult?.bpm||120)/60;
-                  const lDur=nv/bps;
-                  const lEnd=Math.min(1,(loopStart??prog)+lDur/(buf.duration||1));
-                  setLoopEnd(lEnd);
-                }
-              }}
-              style={{
-                width:28,height:28,
-                background:"transparent",
-                border:`1px solid ${TOK.borderDefined}`,
-                color:TOK.textSec,borderRadius:4,
-                cursor:"pointer",fontSize:13,outline:"none",
-                display:"flex",alignItems:"center",justifyContent:"center",
-              }}>›</button>
+                border:loopActive?`1px solid ${accent}`:`1px solid ${TOK.borderDefined}`,
+                background:loopActive?accent+"18":"transparent",
+                borderRadius:4,
+                fontFamily:FONT.mono,fontSize:13,fontWeight:500,
+                color:TOK.text,fontVariantNumeric:"tabular-nums",
+                boxShadow:loopActive?`0 0 8px ${accent}55`:"none",
+                transition:"all .15s",
+              }}>{loopBars<1?`1/${Math.round(1/loopBars)}`:loopBars}</div>
+              <button
+                onClick={()=>{
+                  const nv=Math.max(0.25,loopBars/2);
+                  setLoopBars(nv);
+                  if(loopActive&&buf){
+                    const bps=(bpmResult?.bpm||120)/60;
+                    const lDur=nv/bps;
+                    const lEnd=Math.min(1,(loopStart??prog)+lDur/(buf.duration||1));
+                    setLoopEnd(lEnd);
+                  }
+                }}
+                style={{
+                  width:24,height:24,
+                  background:"transparent",
+                  border:`1px solid ${TOK.borderDefined}`,
+                  color:TOK.textSec,borderRadius:4,
+                  cursor:"pointer",fontSize:13,outline:"none",padding:0,
+                  display:"flex",alignItems:"center",justifyContent:"center",
+                }}>‹</button>
+              <button
+                onClick={()=>{
+                  const nv=Math.min(64,loopBars*2);
+                  setLoopBars(nv);
+                  if(loopActive&&buf){
+                    const bps=(bpmResult?.bpm||120)/60;
+                    const lDur=nv/bps;
+                    const lEnd=Math.min(1,(loopStart??prog)+lDur/(buf.duration||1));
+                    setLoopEnd(lEnd);
+                  }
+                }}
+                style={{
+                  width:24,height:24,
+                  background:"transparent",
+                  border:`1px solid ${TOK.borderDefined}`,
+                  color:TOK.textSec,borderRadius:4,
+                  cursor:"pointer",fontSize:13,outline:"none",padding:0,
+                  display:"flex",alignItems:"center",justifyContent:"center",
+                }}>›</button>
+            </div>
           </div>
 
           {/* Timer display */}
-          <div style={{display:"flex",alignItems:"flex-end",gap:32,marginTop:"auto"}}>
+          <div style={{display:"flex",alignItems:"flex-end",gap:32,marginTop:"auto",flexShrink:0}}>
             <div>
               <div style={{fontFamily:FONT.mono,fontSize:16,fontWeight:400,color:TOK.text,letterSpacing:0.3,fontVariantNumeric:"tabular-nums",lineHeight:1}}>{fmt(cur)}</div>
               <div style={{fontFamily:FONT.ui,fontSize:9,fontWeight:600,color:TOK.textMuted,letterSpacing:1.2,marginTop:5,textTransform:"uppercase"}}>Elapsed</div>
@@ -3849,44 +3913,53 @@ function Deck({ id, ch, ctx:ac, color, vibrantColor=null, isYou=null, local, rem
           </div>
         </div>
 
-        {/* Cue pad grid 2 cols × 4 rows = 8 pads. Visual: [1][5]/[2][6]/[3][7]/[4][8] */}
+        {/* Vertical cue list — A-H, Rekordbox style.
+            Letter + timestamp per row. Hover surface-2; click triggers seek + flashes the
+            row briefly in its palette color. Memory map: hotCues[0..7] → A..H. */}
         <div style={{
-          display:"grid",
-          gridTemplateColumns:"32px 32px",
-          gridAutoRows:"32px",
-          gap:4,flexShrink:0,
+          width:120, flexShrink:0,
+          display:"flex", flexDirection:"column",
+          borderLeft:`1px solid ${TOK.borderSubtle}`,
+          paddingLeft:6,
+          gap:0,
         }}>
-          {[0,1,2,3,4,5,6,7].map(visualIdx=>{
-            const col = visualIdx >= 4 ? 1 : 0;
-            const row = visualIdx % 4;
-            const cueIdx = col*4 + row;
-            const padColor = CUE_PALETTE[cueIdx];
-            const isSet = hotCues[cueIdx] != null;
+          <div style={{fontFamily:FONT.ui,fontSize:9,fontWeight:600,color:TOK.textMuted,letterSpacing:1.2,padding:"2px 8px 6px",textTransform:"uppercase"}}>Cues</div>
+          {[0,1,2,3,4,5,6,7].map(i=>{
+            const letter = String.fromCharCode(65 + i); // A..H
+            const isSet = hotCues[i] != null;
+            const ts = isSet ? fmt(hotCues[i] * effectiveDur) : "—";
+            const palette = CUE_PALETTE[i];
+            const flashed = flashedCue === i;
             return (
               <button
-                key={cueIdx}
-                onClick={()=>{
-                  if(!buf)return;
-                  if(hotCues[cueIdx]!==null){seek(hotCues[cueIdx]);}
-                  else{setHotCues(p=>{const n=[...p];n[cueIdx]=prog;return n;});}
-                }}
-                onContextMenu={e=>{e.preventDefault();if(buf)setHotCues(p=>{const n=[...p];n[cueIdx]=null;return n;});}}
-                title={isSet?"Click: recall  ·  Right-click: clear":"Click to set cue"}
+                key={i}
+                onClick={()=>triggerCue(i)}
+                onContextMenu={e=>{e.preventDefault();if(buf)setHotCues(p=>{const n=[...p];n[i]=null;return n;});}}
+                onMouseEnter={e=>{ if(!flashed && isSet) e.currentTarget.style.background=TOK.surface2; }}
+                onMouseLeave={e=>{ if(!flashed) e.currentTarget.style.background="transparent"; }}
+                title={isSet ? "Click: recall  ·  Right-click: clear" : "Click to set cue at playhead"}
                 style={{
-                  gridColumn: col+1, gridRow: row+1,
-                  width:32,height:32,
-                  background:isSet?padColor:TOK.surface2,
-                  border:`1px solid ${isSet?padColor:TOK.borderSubtle}`,
-                  color:isSet?TOK.bgBase:TOK.textSec,
-                  borderRadius:4,
-                  cursor:"pointer",
-                  fontFamily:FONT.ui,fontSize:11,fontWeight:600,
-                  boxShadow:isSet?`0 0 6px ${padColor}66`:"none",
-                  outline:"none",transition:"all .12s",
-                  display:"flex",alignItems:"center",justifyContent:"center",
-                  padding:0,
+                  display:"flex", alignItems:"center", justifyContent:"space-between",
+                  padding:"4px 8px", height:22,
+                  background: flashed ? palette : "transparent",
+                  border:"none",
+                  cursor: buf ? "pointer" : "default",
+                  outline:"none",
+                  transition: flashed ? "none" : "background .18s",
+                  fontFamily:FONT.ui,
+                  textAlign:"left",
+                  borderRadius:3,
                 }}>
-                {cueIdx+1}
+                <span style={{
+                  fontSize:12, fontWeight:600,
+                  color: flashed ? TOK.bgBase : (isSet ? TOK.text : TOK.textSec),
+                  letterSpacing:0.4,
+                }}>{letter}</span>
+                <span style={{
+                  fontSize:12, fontWeight:500,
+                  color: flashed ? TOK.bgBase : (isSet ? TOK.textSec : TOK.textMuted),
+                  fontVariantNumeric:"tabular-nums",
+                }}>{ts}</span>
               </button>
             );
           })}
@@ -4846,9 +4919,12 @@ export default function CollabMix({ initialPage = "landing", djName = null }) {
         @keyframes pulse{0%,100%{opacity:1}50%{opacity:.4}}
         @keyframes wave{0%,100%{transform:scaleY(.3)}50%{transform:scaleY(1)}}
         @keyframes spin{to{transform:rotate(360deg)}}
+        @keyframes cueflash{0%{background:var(--cueflash,transparent)}100%{background:transparent}}
         *{box-sizing:border-box}
         ::-webkit-scrollbar{width:6px;height:6px}::-webkit-scrollbar-track{background:transparent}::-webkit-scrollbar-thumb{background:rgba(255,255,255,0.10);border-radius:3px}::-webkit-scrollbar-thumb:hover{background:rgba(255,255,255,0.18)}
-        body{font-family:${FONT.ui}}
+        /* Tabular numerals globally — only affects digit glyphs, leaves text untouched.
+           This is what lets us drop JetBrains Mono and still keep timer/BPM columns aligned. */
+        body{font-family:${FONT.ui};font-feature-settings:"tnum" 1;font-variant-numeric:tabular-nums}
       `}</style>
       <link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:wght@600;700&family=DM+Sans:wght@300;400;500&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet"/>
 
@@ -4904,22 +4980,22 @@ export default function CollabMix({ initialPage = "landing", djName = null }) {
             </div>
           );
         }
-        const wfH = (hasA && hasB) ? 55 : 110; // both loaded → 55 each (~110 stack); one → 110
-        const renderTopChrome = (label, accent, opacity, ctrl) => (
-          <div style={{ position:"absolute", top:5, left:10, zIndex:2, display:"flex", gap:8, alignItems:"center", pointerEvents:"none" }}>
-            <div style={{ width:5, height:5, borderRadius:"50%", background:accent, boxShadow:`0 0 6px ${accent}88`, opacity }}/>
-            <span style={{ fontSize:10, fontFamily:FONT.ui, fontWeight:600, color:accent, letterSpacing:1.4, opacity }}>{label}</span>
+        const wfH = (hasA && hasB) ? 70 : 140; // ~140 stack when both loaded; full 140 when one
+        const renderTopChrome = (label, accent, opacity) => (
+          <div style={{ position:"absolute", top:6, left:12, zIndex:2, display:"flex", gap:8, alignItems:"center", pointerEvents:"none" }}>
+            <div style={{ width:6, height:6, borderRadius:"50%", background:accent, boxShadow:`0 0 8px ${accent}`, opacity }}/>
+            <span style={{ fontSize:10, fontFamily:FONT.ui, fontWeight:700, color:accent, letterSpacing:1.4, opacity }}>{label}</span>
           </div>
         );
         return (
           <div style={{ flexShrink:0, background:TOK.bgBase, borderBottom:`1px solid ${TOK.borderSubtle}` }}>
             {hasA && (
-              <div style={{ position:"relative", minHeight:wfH, flexShrink:0 }}>
-                {renderTopChrome("YOU", TOK.you, 0.85)}
-                <div style={{ position:"absolute", top:5, right:10, zIndex:2, display:"flex", gap:6, alignItems:"center" }}>
+              <div style={{ position:"relative", minHeight:wfH, flexShrink:0, background:TOK.bgBase }}>
+                {renderTopChrome("YOU", TOK.you, 0.9)}
+                <div style={{ position:"absolute", top:6, right:12, zIndex:2, display:"flex", gap:6, alignItems:"center" }}>
                   <div style={{ display:"flex", gap:2, alignItems:"center", opacity:wfA?.name?1:0.35 }}>
                     <button onClick={()=>nudgeGridA(-5)} disabled={!wfA?.name} title="Shift grid 5ms earlier" style={{ height:18, width:18, padding:0, fontSize:10, fontFamily:FONT.mono, background:"transparent", border:`1px solid ${TOK.borderDefined}`, color:TOK.textSec, borderRadius:3, cursor:wfA?.name?"pointer":"default", outline:"none" }}>←</button>
-                    <div onDoubleClick={resetGridA} title="Double-click to reset" style={{ minWidth:42, textAlign:"center", height:18, lineHeight:"18px", padding:"0 4px", fontSize:9, fontFamily:FONT.mono, color: gridOffsetA===0 ? TOK.textMuted : TOK.error, background: gridOffsetA===0 ? "transparent" : TOK.error+"15", border: `1px solid ${gridOffsetA===0 ? TOK.borderSubtle : TOK.error+"40"}`, borderRadius:3, userSelect:"none" }}>{gridOffsetA>0?"+":""}{gridOffsetA}ms</div>
+                    <div onDoubleClick={resetGridA} title="Double-click to reset" style={{ minWidth:42, textAlign:"center", height:18, lineHeight:"18px", padding:"0 4px", fontSize:9, fontFamily:FONT.mono, color: gridOffsetA===0 ? TOK.textMuted : TOK.error, background: gridOffsetA===0 ? "transparent" : TOK.error+"15", border: `1px solid ${gridOffsetA===0 ? TOK.borderSubtle : TOK.error+"40"}`, borderRadius:3, userSelect:"none", fontVariantNumeric:"tabular-nums" }}>{gridOffsetA>0?"+":""}{gridOffsetA}ms</div>
                     <button onClick={()=>nudgeGridA(5)} disabled={!wfA?.name} title="Shift grid 5ms later" style={{ height:18, width:18, padding:0, fontSize:10, fontFamily:FONT.mono, background:"transparent", border:`1px solid ${TOK.borderDefined}`, color:TOK.textSec, borderRadius:3, cursor:wfA?.name?"pointer":"default", outline:"none" }}>→</button>
                   </div>
                   <div style={{ width:1, height:12, background:TOK.borderSubtle }}/>
@@ -4927,74 +5003,72 @@ export default function CollabMix({ initialPage = "landing", djName = null }) {
                     <button key={i} onClick={()=>setWfZoom(i)} style={{ height:18, padding:"0 7px", fontSize:9, fontFamily:FONT.ui, fontWeight:600, letterSpacing:0.5, background:wfZoom===i?TOK.surface2:"transparent", border:`1px solid ${wfZoom===i?TOK.borderEmphasis:TOK.borderSubtle}`, color:wfZoom===i?TOK.text:TOK.textSec, borderRadius:4, cursor:"pointer", outline:"none" }}>{lbl}</button>
                   ))}
                 </div>
-                <AnimatedZoomedWF bands={wfA} dur={wfA?.dur||0} progRef={progRefA} onSeek={seekDeckA} h={wfH} windowSec={WF_WINDOWS[wfZoom]} beatPhaseFrac={bpm.results["A"]?.beatPhaseFrac??null} beatPeriodSec={bpm.results["A"]?.beatPeriodSec??null} gridOffsetMs={gridOffsetA} bpmNudge={bpmNudgeA*0.01} peakColor={TOK.youVibrant} bassColor={TOK.you}/>
+                <div style={{ filter:`drop-shadow(0 0 8px ${TOK.youVibrant}80)` }}>
+                  <AnimatedZoomedWF bands={wfA} dur={wfA?.dur||0} progRef={progRefA} onSeek={seekDeckA} h={wfH} windowSec={WF_WINDOWS[wfZoom]} beatPhaseFrac={bpm.results["A"]?.beatPhaseFrac??null} beatPeriodSec={bpm.results["A"]?.beatPeriodSec??null} gridOffsetMs={gridOffsetA} bpmNudge={bpmNudgeA*0.01} peakColor={TOK.youVibrant} bassColor={TOK.you}/>
+                </div>
               </div>
             )}
             {hasA && hasB && <div style={{ height:1, background:TOK.borderSubtle }}/>}
             {hasB && (
-              <div style={{ position:"relative", minHeight:wfH, flexShrink:0 }}>
-                {renderTopChrome("PARTNER", TOK.partner, 0.85)}
-                <AnimatedZoomedWF bands={wfB} dur={wfB?.dur||0} progRef={progRefB} onSeek={seekDeckB} h={wfH} windowSec={WF_WINDOWS[wfZoom]} beatPhaseFrac={bpm.results["B"]?.beatPhaseFrac??null} beatPeriodSec={bpm.results["B"]?.beatPeriodSec??null} gridOffsetMs={gridOffsetB} bpmNudge={bpmNudgeB*0.01} peakColor={TOK.partnerVibrant} bassColor={TOK.partner}/>
+              <div style={{ position:"relative", minHeight:wfH, flexShrink:0, background:TOK.bgBase }}>
+                {renderTopChrome("PARTNER", TOK.partner, 0.9)}
+                <div style={{ filter:`drop-shadow(0 0 8px ${TOK.partnerVibrant}80)` }}>
+                  <AnimatedZoomedWF bands={wfB} dur={wfB?.dur||0} progRef={progRefB} onSeek={seekDeckB} h={wfH} windowSec={WF_WINDOWS[wfZoom]} beatPhaseFrac={bpm.results["B"]?.beatPhaseFrac??null} beatPeriodSec={bpm.results["B"]?.beatPeriodSec??null} gridOffsetMs={gridOffsetB} bpmNudge={bpmNudgeB*0.01} peakColor={TOK.partnerVibrant} bassColor={TOK.partner}/>
+                </div>
               </div>
             )}
           </div>
         );
       })()}
 
-      {/* DECKS + MIXER ROW.
-          TODO(deck-identity): Deck A is hardcoded YOU (TOK.you / blue) and Deck B
-          is hardcoded PARTNER (TOK.partner / violet). Make this dynamic from
-          session role once host/invitee wiring lands. */}
-      <div style={{ flexShrink:0, display:"grid", gridTemplateColumns:"1fr 220px 1fr", gap:10, padding:"10px 14px 0", height:"288px", overflow:"hidden" }}>
+      {/* DECKS + MIXER ROW. Height bumped to 380px so the cue list, transport,
+          loop, and timer all fit inside each deck without clipping.
+          TODO(deck-identity): identity colors are still hardcoded by deck slot
+          (A=blue, B=violet). Wire to session role when host/invitee lands. */}
+      <div style={{ flexShrink:0, display:"grid", gridTemplateColumns:"1fr 220px 1fr", gap:10, padding:"10px 14px 0", height:"380px", overflow:"hidden" }}>
 
         {/* ── DECK A (visually YOU; both decks remain locally controllable per shared-decks model) ── */}
         <div style={{ display:"flex", flexDirection:"column", minWidth:0, minHeight:0, overflow:"hidden" }}>
-          <Deck id="A" ch={eng.current?.A} ctx={eng.current?.ctx} color={TOK.you} vibrantColor={TOK.youVibrant} isYou={true} local remote={pA} onChange={dh("A")} midi={midiEvt} bpmResult={bpm.results["A"]} bpmAnalyze={bpm.analyze} eqHi={eqA.hi} eqMid={eqA.mid} eqLo={eqA.lo} chanVol={eqA.vol} loadFromLibrary={libLoadA} onTrackInfo={handleTrackInfo} onSync={()=>syncDecks("A",bpm.results["B"]?.bpm)} onLibraryTrackDrop={(trackId)=>{const t=lib.library.find(x=>x.id===trackId);if(t)handleLibLoad(t,"A");}} onProgUpdate={handleProgA} onWaveform={setWfA} onSeekReady={onDeckASeekReady} onToggleReady={onDeckAToggleReady} onCueReady={onDeckACueReady} onTransportFire={sync.send}/>
+          <Deck id="A" ch={eng.current?.A} ctx={eng.current?.ctx} color={TOK.you} vibrantColor={TOK.youVibrant} isYou={true} djName={session.name||""} local remote={pA} onChange={dh("A")} midi={midiEvt} bpmResult={bpm.results["A"]} bpmAnalyze={bpm.analyze} eqHi={eqA.hi} eqMid={eqA.mid} eqLo={eqA.lo} chanVol={eqA.vol} loadFromLibrary={libLoadA} onTrackInfo={handleTrackInfo} onSync={()=>syncDecks("A",bpm.results["B"]?.bpm)} onLibraryTrackDrop={(trackId)=>{const t=lib.library.find(x=>x.id===trackId);if(t)handleLibLoad(t,"A");}} onProgUpdate={handleProgA} onWaveform={setWfA} onSeekReady={onDeckASeekReady} onToggleReady={onDeckAToggleReady} onCueReady={onDeckACueReady} onTransportFire={sync.send}/>
         </div>
 
-        {/* ── CENTER MIXER (220px, vertical) ── */}
+        {/* ── CENTER MIXER (220px wide, vertical) ── */}
         <div style={{ display:"flex", flexDirection:"column", background:TOK.surface1, border:`1px solid ${TOK.borderSubtle}`, borderRadius:10, overflow:"hidden", minHeight:0, boxShadow:"0 4px 18px rgba(0,0,0,0.45)" }}>
           <div style={{ display:"grid", gridTemplateColumns:"1fr 76px 1fr", flex:1, minHeight:0, overflow:"hidden" }}>
 
             {/* ─── CHANNEL A ─── */}
-            <div style={{ display:"flex", flexDirection:"column", padding:"10px 4px 8px", gap:6, alignItems:"center", borderRight:`1px solid ${TOK.borderSubtle}` }}>
+            <div style={{ display:"flex", flexDirection:"column", padding:"12px 6px 10px", gap:8, alignItems:"center", borderRight:`1px solid ${TOK.borderSubtle}` }}>
               <span style={{ fontFamily:FONT.ui, fontSize:11, fontWeight:600, color:TOK.you, letterSpacing:1.4 }}>A</span>
-              <Knob v={eqA.vol} set={v=>updateEqA("vol",v)} min={0} max={1.5} ctr={1} label="GAIN" color={TOK.youVibrant} size={32}/>
-              <Knob v={eqA.hi}  set={v=>updateEqA("hi",v)}  min={-12} max={12} ctr={0} label="HI"   color={TOK.youVibrant} size={32}/>
-              <Knob v={eqA.mid} set={v=>updateEqA("mid",v)} min={-12} max={12} ctr={0} label="MID"  color={TOK.youVibrant} size={32}/>
-              <Knob v={eqA.lo}  set={v=>updateEqA("lo",v)}  min={-12} max={12} ctr={0} label="LOW"  color={TOK.youVibrant} size={32}/>
-              <div style={{ flex:1, display:"flex", alignItems:"flex-end", gap:6, paddingTop:4 }}>
-                <VerticalFader val={eqA.vol} set={v=>updateEqA("vol",v)} color={TOK.youVibrant} h={64}/>
-                <div style={{ width:4, height:64, background:TOK.surface2, borderRadius:2, overflow:"hidden" }}>
-                  <VerticalLevelMeter an={eng.current?.A?.an} color={TOK.youVibrant}/>
-                </div>
+              <Knob v={eqA.vol} set={v=>updateEqA("vol",v)} min={0} max={1.5} ctr={1} label="GAIN" color={TOK.youVibrant} size={28}/>
+              <Knob v={eqA.hi}  set={v=>updateEqA("hi",v)}  min={-12} max={12} ctr={0} label="HI"   color={TOK.youVibrant} size={28}/>
+              <Knob v={eqA.mid} set={v=>updateEqA("mid",v)} min={-12} max={12} ctr={0} label="MID"  color={TOK.youVibrant} size={28}/>
+              <Knob v={eqA.lo}  set={v=>updateEqA("lo",v)}  min={-12} max={12} ctr={0} label="LOW"  color={TOK.youVibrant} size={28}/>
+              <div style={{ flex:1, display:"flex", alignItems:"stretch", justifyContent:"center", gap:8, paddingTop:6, minHeight:0, width:"100%" }}>
+                <VerticalFader val={eqA.vol} set={v=>updateEqA("vol",v)} color={TOK.youVibrant} h={150}/>
+                <VerticalLevelMeter an={eng.current?.A?.an} identity={TOK.youVibrant} h={150} w={6}/>
               </div>
             </div>
 
             {/* ─── MASTER ─── */}
-            <div style={{ display:"flex", flexDirection:"column", padding:"10px 4px 8px", gap:8, alignItems:"center", background:TOK.bgBase }}>
+            <div style={{ display:"flex", flexDirection:"column", padding:"12px 6px 10px", gap:8, alignItems:"center", background:TOK.bgBase }}>
               <span style={{ fontFamily:FONT.ui, fontSize:9, fontWeight:600, color:TOK.textSec, letterSpacing:1.4, textTransform:"uppercase" }}>Master</span>
-              <div style={{ flex:1, display:"flex", alignItems:"flex-end", gap:6 }}>
-                <VerticalFader val={mvol} set={setMvol} color={TOK.active} h={180}/>
-                <div style={{ width:4, height:180, background:TOK.surface2, borderRadius:2, overflow:"hidden" }}>
-                  <VerticalLevelMeter an={eng.current?.masterAn} color={TOK.active}/>
-                </div>
+              <div style={{ flex:1, display:"flex", alignItems:"stretch", justifyContent:"center", gap:8, minHeight:0, paddingTop:6 }}>
+                <VerticalFader val={mvol} set={setMvol} color={TOK.active} h={250}/>
+                <VerticalLevelMeter an={eng.current?.masterAn} identity={TOK.active} h={250} w={6}/>
               </div>
               <span style={{ fontFamily:FONT.mono, fontSize:10, color:TOK.textSec, fontVariantNumeric:"tabular-nums" }}>{(mvol/1.5*100).toFixed(0)}</span>
             </div>
 
             {/* ─── CHANNEL B ─── */}
-            <div style={{ display:"flex", flexDirection:"column", padding:"10px 4px 8px", gap:6, alignItems:"center", borderLeft:`1px solid ${TOK.borderSubtle}` }}>
+            <div style={{ display:"flex", flexDirection:"column", padding:"12px 6px 10px", gap:8, alignItems:"center", borderLeft:`1px solid ${TOK.borderSubtle}` }}>
               <span style={{ fontFamily:FONT.ui, fontSize:11, fontWeight:600, color:TOK.partner, letterSpacing:1.4 }}>B</span>
-              <Knob v={eqB.vol} set={v=>updateEqB("vol",v)} min={0} max={1.5} ctr={1} label="GAIN" color={TOK.partnerVibrant} size={32}/>
-              <Knob v={eqB.hi}  set={v=>updateEqB("hi",v)}  min={-12} max={12} ctr={0} label="HI"   color={TOK.partnerVibrant} size={32}/>
-              <Knob v={eqB.mid} set={v=>updateEqB("mid",v)} min={-12} max={12} ctr={0} label="MID"  color={TOK.partnerVibrant} size={32}/>
-              <Knob v={eqB.lo}  set={v=>updateEqB("lo",v)}  min={-12} max={12} ctr={0} label="LOW"  color={TOK.partnerVibrant} size={32}/>
-              <div style={{ flex:1, display:"flex", alignItems:"flex-end", gap:6, paddingTop:4 }}>
-                <div style={{ width:4, height:64, background:TOK.surface2, borderRadius:2, overflow:"hidden" }}>
-                  <VerticalLevelMeter an={eng.current?.B?.an} color={TOK.partnerVibrant}/>
-                </div>
-                <VerticalFader val={eqB.vol} set={v=>updateEqB("vol",v)} color={TOK.partnerVibrant} h={64}/>
+              <Knob v={eqB.vol} set={v=>updateEqB("vol",v)} min={0} max={1.5} ctr={1} label="GAIN" color={TOK.partnerVibrant} size={28}/>
+              <Knob v={eqB.hi}  set={v=>updateEqB("hi",v)}  min={-12} max={12} ctr={0} label="HI"   color={TOK.partnerVibrant} size={28}/>
+              <Knob v={eqB.mid} set={v=>updateEqB("mid",v)} min={-12} max={12} ctr={0} label="MID"  color={TOK.partnerVibrant} size={28}/>
+              <Knob v={eqB.lo}  set={v=>updateEqB("lo",v)}  min={-12} max={12} ctr={0} label="LOW"  color={TOK.partnerVibrant} size={28}/>
+              <div style={{ flex:1, display:"flex", alignItems:"stretch", justifyContent:"center", gap:8, paddingTop:6, minHeight:0, width:"100%" }}>
+                <VerticalLevelMeter an={eng.current?.B?.an} identity={TOK.partnerVibrant} h={150} w={6}/>
+                <VerticalFader val={eqB.vol} set={v=>updateEqB("vol",v)} color={TOK.partnerVibrant} h={150}/>
               </div>
             </div>
           </div>
@@ -5002,7 +5076,7 @@ export default function CollabMix({ initialPage = "landing", djName = null }) {
 
         {/* ── DECK B (visually PARTNER; control still local per shared-decks model) ── */}
         <div style={{ display:"flex", flexDirection:"column", minWidth:0, minHeight:0, overflow:"hidden" }}>
-          <Deck id="B" ch={eng.current?.B} ctx={eng.current?.ctx} color={TOK.partner} vibrantColor={TOK.partnerVibrant} isYou={false} local remote={pB} onChange={dh("B")} midi={midiEvt} bpmResult={bpm.results["B"]} bpmAnalyze={bpm.analyze} eqHi={eqB.hi} eqMid={eqB.mid} eqLo={eqB.lo} chanVol={eqB.vol} loadFromLibrary={libLoadB} onTrackInfo={handleTrackInfo} onSync={()=>syncDecks("B",bpm.results["A"]?.bpm)} onLibraryTrackDrop={(trackId)=>{const t=lib.library.find(x=>x.id===trackId);if(t)handleLibLoad(t,"B");}} onProgUpdate={handleProgB} onWaveform={setWfB} onSeekReady={onDeckBSeekReady} onToggleReady={onDeckBToggleReady} onCueReady={onDeckBCueReady} onTransportFire={sync.send}/>
+          <Deck id="B" ch={eng.current?.B} ctx={eng.current?.ctx} color={TOK.partner} vibrantColor={TOK.partnerVibrant} isYou={false} djName={sync.partner||"Partner"} local remote={pB} onChange={dh("B")} midi={midiEvt} bpmResult={bpm.results["B"]} bpmAnalyze={bpm.analyze} eqHi={eqB.hi} eqMid={eqB.mid} eqLo={eqB.lo} chanVol={eqB.vol} loadFromLibrary={libLoadB} onTrackInfo={handleTrackInfo} onSync={()=>syncDecks("B",bpm.results["A"]?.bpm)} onLibraryTrackDrop={(trackId)=>{const t=lib.library.find(x=>x.id===trackId);if(t)handleLibLoad(t,"B");}} onProgUpdate={handleProgB} onWaveform={setWfB} onSeekReady={onDeckBSeekReady} onToggleReady={onDeckBToggleReady} onCueReady={onDeckBCueReady} onTransportFire={sync.send}/>
         </div>
 
       </div>
