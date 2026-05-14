@@ -3294,7 +3294,7 @@ function Knob({ v, set, min=-12, max=12, ctr=0, label, color="#C8A96E", size=38,
 // ── Deck ─────────────────────────────────────────────────────
 const HOT_CUE_COLORS=["#C8A96E","#ef4444","#22c55e","#f59e0b"];
 
-function Deck({ id, ch, ctx:ac, color, local, remote, onChange, midi:mt, bpmResult, bpmAnalyze, eqHi=0, eqMid=0, eqLo=0, chanVol=1, loadFromLibrary=null, onTrackInfo=null, onSync=null, syncReady=true, syncLocked=false, onLibraryTrackDrop=null, onProgUpdate=null, onWaveform=null, onSeekReady=null, remoteSeek=null, onToggleReady=null, onCueReady=null, remoteToggle=null, remoteCue=null, onTransportFire=null }) {
+function Deck({ id, ch, ctx:ac, color, local, remote, onChange, midi:mt, bpmResult, bpmAnalyze, eqHi=0, eqMid=0, eqLo=0, chanVol=1, loadFromLibrary=null, onTrackInfo=null, onSync=null, syncReady=true, syncRole=null, onLibraryTrackDrop=null, onProgUpdate=null, onWaveform=null, onSeekReady=null, remoteSeek=null, onToggleReady=null, onCueReady=null, remoteToggle=null, remoteCue=null, onTransportFire=null }) {
   const [buf,setBuf]=useState(null),[name,setName]=useState(null),[play,setPlay]=useState(false);
   const [prog,setProg]=useState(0),[dur,setDur]=useState(0);
   const progRef=useRef(0); // mirror of prog for parent AnimatedZoomedWF without 60fps setState
@@ -3618,9 +3618,26 @@ function Deck({ id, ch, ctx:ac, color, local, remote, onChange, midi:mt, bpmResu
         <div style={{flexShrink:0, padding:"0 14px", borderLeft:BD, display:"flex", flexDirection:"column", alignItems:"flex-end", justifyContent:"center", gap:4, minWidth:96}}>
           {bpmResult?.analyzing&&<div style={{fontSize:7,color:"#f59e0b",fontFamily:"'DM Mono',monospace",animation:"pulse .8s infinite"}}>ANA...</div>}
           <div style={{textAlign:"right"}}>
-            {(()=>{const effectiveBpm=bpmResult?.bpm??remote?.bpm;return(
-            <div style={{fontSize:32, fontFamily:"'DM Mono',monospace", fontWeight:600, color:effectiveBpm?"#C8A96E":"#2a2a3a", lineHeight:0.95, letterSpacing:-0.5, textShadow:effectiveBpm?"0 0 18px #C8A96E22":"none"}}>{effectiveBpm?(effectiveBpm*(bpmResult?.bpm?rate:1)).toFixed(1):"—"}</div>
-            );})()}
+            {(()=>{
+              const effectiveBpm = bpmResult?.bpm ?? remote?.bpm;
+              const rateApplies  = !!bpmResult?.bpm; // local rate only scales when WE'RE driving the deck
+              const adjustedBpm  = effectiveBpm ? effectiveBpm * (rateApplies ? rate : 1) : null;
+              const pctOff       = rateApplies && Math.abs(rate - 1) > 0.001 ? (rate - 1) * 100 : null;
+              const pctColor     = pctOff === null ? null
+                : Math.abs(pctOff) > 10 ? "#ef4444"
+                : Math.abs(pctOff) > 6  ? "#f59e0b"
+                : "#888898";
+              return (
+                <div style={{display:"flex", alignItems:"baseline", gap:6, justifyContent:"flex-end"}}>
+                  <div style={{fontSize:32, fontFamily:"'DM Mono',monospace", fontWeight:600, color:effectiveBpm?"#C8A96E":"#2a2a3a", lineHeight:0.95, letterSpacing:-0.5, textShadow:effectiveBpm?"0 0 18px #C8A96E22":"none"}}>{adjustedBpm!=null?adjustedBpm.toFixed(1):"—"}</div>
+                  {pctOff !== null && (
+                    <div title={`Track natural BPM ${effectiveBpm.toFixed(1)} pitch-adjusted ${pctOff>0?"+":""}${pctOff.toFixed(1)}%`} style={{fontSize:9, fontFamily:"'DM Mono',monospace", color:pctColor, letterSpacing:.3}}>
+                      {pctOff>0?"+":""}{pctOff.toFixed(1)}%
+                    </div>
+                  )}
+                </div>
+              );
+            })()}
             <div style={{fontSize:7, color:"#888898", fontFamily:"'DM Mono',monospace", letterSpacing:2.5, marginTop:2}}>BPM</div>
           </div>
           <VU an={ch?.an} color={color}/>
@@ -3708,22 +3725,27 @@ function Deck({ id, ch, ctx:ac, color, local, remote, onChange, midi:mt, bpmResu
         {onSync&&(()=>{
           const isAnalyzing = !!buf && !bpmResult?.bpm && !!bpmResult?.analyzing;
           const canSync = !!buf && !!bpmResult?.bpm && syncReady;
-          // Active (locked) is clickable too — that's how you turn it OFF.
-          const clickable = canSync || syncLocked;
-          // Four states: locked (filled green + glow + dot), canSync (green outline),
-          // analyzing (amber pulse), disabled (greyed).
+          const isSlave  = syncRole === "slave";
+          const isMaster = syncRole === "master";
+          const isLocked = isSlave || isMaster;
+          const clickable = canSync || isLocked; // locked is clickable too — click to release
+          // States: slave (filled green + glow + dot, label "SYNC"), master
+          // (outlined green, label "MASTER"), canSync (green outline, "SYNC"),
+          // analyzing (amber pulse, "SYNC"), disabled (greyed, "SYNC").
           const tone =
-            syncLocked    ? { bg:"#22c55e44", border:"#22c55e",   color:"#0a1a10", cursor:"pointer",      opacity:1,   pulse:false, glow:true,  dot:true  }
-            : canSync     ? { bg:"#22c55e18", border:"#22c55e66", color:"#22c55e", cursor:"pointer",      opacity:1,   pulse:false, glow:false, dot:false }
-            : isAnalyzing ? { bg:"#f59e0b14", border:"#f59e0b55", color:"#f59e0b", cursor:"progress",    opacity:1,   pulse:true,  glow:false, dot:false }
-            :             { bg:"transparent", border:"#22c55e22", color:"#22c55e44", cursor:"not-allowed", opacity:0.4, pulse:false, glow:false, dot:false };
-          const tip = syncLocked
-            ? "Decks locked together — click to release"
-            : !buf ? "Load a track"
-            : isAnalyzing ? "Analyzing BPM…"
-            : !bpmResult?.bpm ? "Waiting for BPM"
-            : !syncReady ? "Other deck has no BPM yet"
-            : "Match this deck's BPM to the other";
+            isSlave       ? { bg:"#22c55e44",   border:"#22c55e",   color:"#0a1a10",   cursor:"pointer",      opacity:1,   pulse:false, glow:true,  dot:true  }
+            : isMaster    ? { bg:"transparent", border:"#22c55e",   color:"#22c55e",   cursor:"pointer",      opacity:1,   pulse:false, glow:false, dot:false }
+            : canSync     ? { bg:"#22c55e18",   border:"#22c55e66", color:"#22c55e",   cursor:"pointer",      opacity:1,   pulse:false, glow:false, dot:false }
+            : isAnalyzing ? { bg:"#f59e0b14",   border:"#f59e0b55", color:"#f59e0b",   cursor:"progress",     opacity:1,   pulse:true,  glow:false, dot:false }
+            :               { bg:"transparent", border:"#22c55e22", color:"#22c55e44", cursor:"not-allowed",  opacity:0.4, pulse:false, glow:false, dot:false };
+          const label = isMaster ? "MASTER" : "SYNC";
+          const tip = isSlave  ? "This deck is the slave (locked) — click to release"
+            : isMaster         ? "This deck is the master (reference) — click to release"
+            : !buf             ? "Load a track"
+            : isAnalyzing      ? "Analyzing BPM…"
+            : !bpmResult?.bpm  ? "Waiting for BPM"
+            : !syncReady       ? "Other deck has no BPM yet"
+            :                    "Match this deck's BPM to the other";
           return (
             <button
               onClick={clickable ? onSync : undefined}
@@ -3731,7 +3753,7 @@ function Deck({ id, ch, ctx:ac, color, local, remote, onChange, midi:mt, bpmResu
               title={tip}
               style={{height:48,padding:"0 10px",background:tone.bg,border:`1px solid ${tone.border}`,color:tone.color,borderRadius:7,cursor:tone.cursor,opacity:tone.opacity,fontFamily:"'DM Mono',monospace",fontSize:10,fontWeight:700,letterSpacing:1.5,outline:"none",flexShrink:0,boxShadow:tone.glow?`0 0 12px #22c55e88`:"none",animation:tone.pulse?"pulse 1.1s ease-in-out infinite":"none",display:"flex",alignItems:"center",gap:6}}>
               {tone.dot && <span style={{width:6,height:6,borderRadius:"50%",background:"#22c55e",boxShadow:"0 0 6px #22c55e"}}/>}
-              SYNC
+              {label}
             </button>
           );
         })()}
@@ -4262,7 +4284,13 @@ export default function CollabMix({ initialPage = "landing", djName = null }) {
   // TODO: implement continuous tempo lock at the audio engine level.
   // Currently toggle is visual + master-BPM-change-driven only.
   const [syncLocked, setSyncLocked] = useState(false);
-  const lastSlaveDeckRef = useRef(null); // "A" or "B" — remembered across re-renders for the re-sync effect
+  // Slave-deck identity needs both a ref (for stale-deps callbacks) and state
+  // (so the SYNC button visual can branch master vs slave on render).
+  const [lastSlaveDeck, setLastSlaveDeck] = useState(null);
+  const lastSlaveDeckRef = useRef(null);
+  // Auto re-align when user scrubs while locked (Problem 1)
+  const scrubResyncTimerRef     = useRef(null);
+  const lastScrubResyncTimeRef  = useRef(0);
   const [eqA, setEqA]           = useState({hi:0, mid:0, lo:0, vol:1.0, filter:0});
   const [eqB, setEqB]           = useState({hi:0, mid:0, lo:0, vol:1.0, filter:0});
   const lsRef                   = useRef({ deckA:{}, deckB:{}, xfade:.5 });
@@ -4574,6 +4602,7 @@ export default function CollabMix({ initialPage = "landing", djName = null }) {
         setSyncLocked(!!m.value);
         if (m.value && (m.deckId === "A" || m.deckId === "B")) {
           lastSlaveDeckRef.current = m.deckId;
+          setLastSlaveDeck(m.deckId);
         }
       }
     }
@@ -4716,24 +4745,31 @@ export default function CollabMix({ initialPage = "landing", djName = null }) {
     if (slaveBps == null || slaveBphs == null || masterBps == null || masterBphs == null || !slaveDur) {
       console.log("[SYNC] phase data missing, skipping phase alignment", { slaveBps, slaveBphs, masterBps, masterBphs, slaveDur });
     } else {
-      const masterBeatPos  = (masterCurTime - masterBphs) / masterBps;
-      const masterBeatFrac = masterBeatPos - Math.floor(masterBeatPos);
-      const slaveBeatPos   = (slaveCurTime  - slaveBphs)  / slaveBps;
-      const slaveBeatFrac  = slaveBeatPos  - Math.floor(slaveBeatPos);
-      let phaseOffsetBeats = masterBeatFrac - slaveBeatFrac;
-      if (phaseOffsetBeats >  0.5) phaseOffsetBeats -= 1;
-      if (phaseOffsetBeats < -0.5) phaseOffsetBeats += 1;
-      const phaseOffsetSeconds = phaseOffsetBeats * slaveBps;
-      console.log("[SYNC] phase before: master=", masterBeatFrac.toFixed(3), "slave=", slaveBeatFrac.toFixed(3), "offset=", phaseOffsetBeats.toFixed(3), "beats");
+      // Bar-level (4-beat) alignment so we land on the same beat-1 of the bar,
+      // not just any beat. Max nudge is 0.5 bars = 2 beats = ~1s at 120 BPM.
+      // TODO: downbeat detection. Currently assumes first detected beat is
+      // bar 1 beat 1 — sometimes wrong. Beat-grid editing tools are the fix.
+      const beatsPerBar  = 4;
+      const masterBarSec = masterBps * beatsPerBar;
+      const slaveBarSec  = slaveBps  * beatsPerBar;
+      const masterBarPos  = (masterCurTime - masterBphs) / masterBarSec;
+      const masterBarFrac = masterBarPos - Math.floor(masterBarPos);
+      const slaveBarPos   = (slaveCurTime  - slaveBphs)  / slaveBarSec;
+      const slaveBarFrac  = slaveBarPos  - Math.floor(slaveBarPos);
+      let phaseOffsetBars = masterBarFrac - slaveBarFrac;
+      if (phaseOffsetBars >  0.5) phaseOffsetBars -= 1;
+      if (phaseOffsetBars < -0.5) phaseOffsetBars += 1;
+      const phaseOffsetSeconds = phaseOffsetBars * slaveBarSec;
+      console.log("[SYNC] bar phase before: master=", masterBarFrac.toFixed(3), "slave=", slaveBarFrac.toFixed(3), "(in bars)");
       const newSlaveTime = slaveCurTime + phaseOffsetSeconds;
       const newSlaveProg = Math.max(0, Math.min(1, newSlaveTime / slaveDur));
       // seekFnsRef.current[slave] is the local Deck's seek; it already
       // broadcasts seek_request to the partner so their playhead follows.
       seekFnsRef.current[slave]?.(newSlaveProg);
-      console.log("[SYNC] phase nudged slave by", phaseOffsetSeconds.toFixed(3), "seconds (newProg=", newSlaveProg.toFixed(4), ")");
-      const newSlaveBeatPos = (newSlaveTime - slaveBphs) / slaveBps;
-      const newSlaveBeatFrac = newSlaveBeatPos - Math.floor(newSlaveBeatPos);
-      console.log("[SYNC] phase after: master=", masterBeatFrac.toFixed(3), "slave=", newSlaveBeatFrac.toFixed(3));
+      console.log("[SYNC] bar phase nudged slave by", phaseOffsetSeconds.toFixed(3), "seconds (newProg=", newSlaveProg.toFixed(4), ")");
+      const newSlaveBarPos = (newSlaveTime - slaveBphs) / slaveBarSec;
+      const newSlaveBarFrac = newSlaveBarPos - Math.floor(newSlaveBarPos);
+      console.log("[SYNC] bar phase after: master=", masterBarFrac.toFixed(3), "slave=", newSlaveBarFrac.toFixed(3), "(in bars)");
     }
 
     // Broadcast rate so partner mirrors the speed change. Mirrors lsRef pattern
@@ -4767,11 +4803,39 @@ export default function CollabMix({ initialPage = "landing", djName = null }) {
     console.log("[SYNC] toggle ON — clicked deck", clickedDeck, "syncing to master", masterDeck, "bpm=", masterBPM);
     syncDecks(slaveDeck, masterBPM);
     lastSlaveDeckRef.current = slaveDeck;
+    setLastSlaveDeck(slaveDeck);
     setSyncLocked(true);
     const k = `deck${slaveDeck}`;
     lsRef.current[k] = { ...(lsRef.current[k]||{}), syncLocked: true };
     sync.send({ type:"deck_update", deckId: slaveDeck, field: "syncLocked", value: true });
   }, [syncLocked, syncDecks, bpm.results, pA, pB, sync]);
+
+  // Wrapper around sync.send for the Deck's onTransportFire prop. Forwards
+  // every transport event to the partner (existing behavior) AND, when the
+  // event is a scrub (seek_request) while the global lock is engaged, schedules
+  // an auto re-align of the slave to the master. 100ms debounce so the timer
+  // resets if the user keeps dragging; 200ms throttle so the auto-resync
+  // itself (which seeks the slave) can't trigger a sync storm. Re-syncs on
+  // EITHER deck's scrub — slave moved → realign; master moved → reference
+  // changed → realign.
+  const handleTransportFire = useCallback((msg) => {
+    sync.send(msg);
+    if (!syncLocked) return;
+    if (msg?.type !== "seek_request") return;
+    clearTimeout(scrubResyncTimerRef.current);
+    scrubResyncTimerRef.current = setTimeout(() => {
+      const now = Date.now();
+      if (now - lastScrubResyncTimeRef.current < 200) return;
+      const slave = lastSlaveDeckRef.current;
+      if (slave !== "A" && slave !== "B") return;
+      const master = slave === "A" ? "B" : "A";
+      const masterBPM = bpm.results[master]?.bpm || (master === "A" ? pA?.bpm : pB?.bpm);
+      if (!masterBPM) return;
+      lastScrubResyncTimeRef.current = now;
+      console.log("[SYNC] scrub detected while locked — auto re-aligning slave to master");
+      syncDecks(slave, masterBPM);
+    }, 100);
+  }, [syncLocked, bpm.results, pA, pB, syncDecks, sync]);
 
   // While the global lock is engaged, re-fire one-shot sync when the master's
   // BPM ACTUALLY changes (not when partner state churns). Same two safeguards
@@ -5037,7 +5101,7 @@ export default function CollabMix({ initialPage = "landing", djName = null }) {
             <span style={{ fontSize:11, fontFamily:"'DM Sans',sans-serif", fontWeight:500, color:"#7B61FFaa", letterSpacing:.3 }}>{session.name}</span>
           </div>
           <div style={{ flex:1, overflow:"hidden", minHeight:0 }}>
-            <Deck id="A" ch={eng.current?.A} ctx={eng.current?.ctx} color="#7B61FF" local remote={pA} onChange={dh("A")} midi={midiEvt} bpmResult={bpm.results["A"]} bpmAnalyze={bpm.analyze} eqHi={eqA.hi} eqMid={eqA.mid} eqLo={eqA.lo} chanVol={eqA.vol} loadFromLibrary={libLoadA} onTrackInfo={handleTrackInfo} onSync={()=>handleSyncToggle("A")} syncReady={!!(bpm.results["B"]?.bpm || pB?.bpm)} syncLocked={syncLocked} onLibraryTrackDrop={(trackId)=>{const t=lib.library.find(x=>x.id===trackId);if(t)handleLibLoad(t,"A");}} onProgUpdate={handleProgA} onWaveform={setWfA} onSeekReady={onDeckASeekReady} onToggleReady={onDeckAToggleReady} onCueReady={onDeckACueReady} onTransportFire={sync.send}/>
+            <Deck id="A" ch={eng.current?.A} ctx={eng.current?.ctx} color="#7B61FF" local remote={pA} onChange={dh("A")} midi={midiEvt} bpmResult={bpm.results["A"]} bpmAnalyze={bpm.analyze} eqHi={eqA.hi} eqMid={eqA.mid} eqLo={eqA.lo} chanVol={eqA.vol} loadFromLibrary={libLoadA} onTrackInfo={handleTrackInfo} onSync={()=>handleSyncToggle("A")} syncReady={!!(bpm.results["B"]?.bpm || pB?.bpm)} syncRole={syncLocked ? (lastSlaveDeck === "A" ? "slave" : "master") : null} onLibraryTrackDrop={(trackId)=>{const t=lib.library.find(x=>x.id===trackId);if(t)handleLibLoad(t,"A");}} onProgUpdate={handleProgA} onWaveform={setWfA} onSeekReady={onDeckASeekReady} onToggleReady={onDeckAToggleReady} onCueReady={onDeckACueReady} onTransportFire={handleTransportFire}/>
           </div>
         </div>
 
@@ -5136,7 +5200,7 @@ export default function CollabMix({ initialPage = "landing", djName = null }) {
             {sync.partner&&<span style={{ fontSize:11, fontFamily:"'DM Sans',sans-serif", fontWeight:500, color:"#00BFA5aa", letterSpacing:.3 }}>{sync.partner}</span>}
           </div>
           <div style={{ flex:1, overflow:"hidden", minHeight:0 }}>
-            <Deck id="B" ch={eng.current?.B} ctx={eng.current?.ctx} color="#00BFA5" local remote={pB} onChange={dh("B")} midi={midiEvt} bpmResult={bpm.results["B"]} bpmAnalyze={bpm.analyze} eqHi={eqB.hi} eqMid={eqB.mid} eqLo={eqB.lo} chanVol={eqB.vol} loadFromLibrary={libLoadB} onTrackInfo={handleTrackInfo} onSync={()=>handleSyncToggle("B")} syncReady={!!(bpm.results["A"]?.bpm || pA?.bpm)} syncLocked={syncLocked} onLibraryTrackDrop={(trackId)=>{const t=lib.library.find(x=>x.id===trackId);if(t)handleLibLoad(t,"B");}} onProgUpdate={handleProgB} onWaveform={setWfB} onSeekReady={onDeckBSeekReady} onToggleReady={onDeckBToggleReady} onCueReady={onDeckBCueReady} onTransportFire={sync.send}/>
+            <Deck id="B" ch={eng.current?.B} ctx={eng.current?.ctx} color="#00BFA5" local remote={pB} onChange={dh("B")} midi={midiEvt} bpmResult={bpm.results["B"]} bpmAnalyze={bpm.analyze} eqHi={eqB.hi} eqMid={eqB.mid} eqLo={eqB.lo} chanVol={eqB.vol} loadFromLibrary={libLoadB} onTrackInfo={handleTrackInfo} onSync={()=>handleSyncToggle("B")} syncReady={!!(bpm.results["A"]?.bpm || pA?.bpm)} syncRole={syncLocked ? (lastSlaveDeck === "B" ? "slave" : "master") : null} onLibraryTrackDrop={(trackId)=>{const t=lib.library.find(x=>x.id===trackId);if(t)handleLibLoad(t,"B");}} onProgUpdate={handleProgB} onWaveform={setWfB} onSeekReady={onDeckBSeekReady} onToggleReady={onDeckBToggleReady} onCueReady={onDeckBCueReady} onTransportFire={handleTransportFire}/>
           </div>
         </div>
 
