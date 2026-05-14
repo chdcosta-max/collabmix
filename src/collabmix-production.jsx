@@ -2635,7 +2635,14 @@ function useRTC({ engineRef, send }) {
     p.ontrack=({streams})=>{
       console.log('[RTC] incoming track received');
       if(!streams[0])return;
-      if(!remAudio.current){remAudio.current=new Audio();remAudio.current.autoplay=true;}
+      if(!remAudio.current){
+        remAudio.current=new Audio();
+        remAudio.current.autoplay=true;
+        // Append to DOM — some browsers won't drive playback for detached
+        // <audio> elements, even with a live srcObject. Hidden via display:none.
+        remAudio.current.style.display='none';
+        document.body.appendChild(remAudio.current);
+      }
       remAudio.current.srcObject=streams[0];
       remAudio.current.volume=Math.min(1,remVol);
       // Explicit play() so we can observe autoplay-policy rejections and surface them.
@@ -2692,7 +2699,13 @@ function useRTC({ engineRef, send }) {
     try{
       await pc.current.setRemoteDescription(new RTCSessionDescription(sdp));
       for(const c of pend.current){try{await pc.current.addIceCandidate(new RTCIceCandidate(c));}catch{}} pend.current=[];
-    } catch(e){ console.error('[RTC] handleAnswer error:',e); }
+    } catch(e){
+      if (e.name === 'InvalidStateError') {
+        console.log('[RTC] handleAnswer: peer already stable, ignoring late answer (likely glare resolved by remote offer)');
+      } else {
+        console.error('[RTC] handleAnswer error:',e);
+      }
+    }
   },[]);
   const handleIce   = useCallback(async({candidate})=>{ if(!candidate)return; if(pc.current?.remoteDescription){try{await pc.current.addIceCandidate(new RTCIceCandidate(candidate));}catch{}}else pend.current.push(candidate); },[]);
   const endCall     = useCallback(()=>{
@@ -4216,6 +4229,7 @@ export default function CollabMix({ initialPage = "landing", djName = null }) {
   // setTimeout callbacks can read them without stale-closure bugs.
   const partnerRef              = useRef(null); // mirrors sync.partner
   const rtcRef                  = useRef(null); // mirrors latest rtc
+  const isInitiatorRef          = useRef(()=>false); // mirrors latest role-election helper
   const rtcReconnectAttemptsRef = useRef(0);    // increments per rtc_hangup retry
   const rtcReconnectTimerRef    = useRef(null); // pending reconnect timer
   const [rtcReconnectExhausted, setRtcReconnectExhausted] = useState(false);
@@ -4469,9 +4483,10 @@ export default function CollabMix({ initialPage = "landing", djName = null }) {
   const handleWS = useCallback((m) => {
     if (m.type==="rtc_hangup") {
       // Schedule reconnect BEFORE rtc.handleRtc runs endCall, so we use the
-      // most recent attempt count. Skip if partner already gone (they actually
-      // left; server sends partner_left BEFORE rtc_hangup on close).
-      if (partnerRef.current) {
+      // most recent attempt count. Skip if partner already gone (server sends
+      // partner_left BEFORE rtc_hangup on close). Only the elected initiator
+      // retries — the answerer waits for the new offer.
+      if (partnerRef.current && isInitiatorRef.current()) {
         if (rtcReconnectAttemptsRef.current < 3) {
           const attempt = rtcReconnectAttemptsRef.current + 1;
           rtcReconnectAttemptsRef.current = attempt;
@@ -4488,6 +4503,8 @@ export default function CollabMix({ initialPage = "landing", djName = null }) {
           console.log('[RTC] reconnect retries exhausted, giving up');
           setRtcReconnectExhausted(true);
         }
+      } else if (partnerRef.current) {
+        console.log('[RTC] rtc_hangup received as answerer, waiting for initiator to reconnect');
       }
     }
     if (m.type==="joined")        { if(m.partnerState?.deckA)setPA(m.partnerState.deckA); if(m.partnerState?.deckB)setPB(m.partnerState.deckB); }
@@ -4525,6 +4542,19 @@ export default function CollabMix({ initialPage = "landing", djName = null }) {
   // never read stale closures.
   useEffect(() => { partnerRef.current = sync.partner; }, [sync.partner]);
   useEffect(() => { rtcRef.current = rtc; });
+  useEffect(() => { isInitiatorRef.current = isInitiatorRole; }, [isInitiatorRole]);
+
+  // Deterministic role election to avoid WebRTC offer/answer glare.
+  // Lexicographically smaller name initiates; same-name fallback uses URL
+  // ?room= presence (host = no param = initiator). The handleAnswer
+  // InvalidStateError catch is the safety net for any election ambiguity.
+  const isInitiatorRole = useCallback(() => {
+    const myName = session?.name || "";
+    const partnerName = partnerRef.current;
+    if (!partnerName) return false;
+    if (myName !== partnerName) return myName < partnerName;
+    return !new URLSearchParams(window.location.search).get('room');
+  }, [session]);
 
   // Reset reconnect counter when WebRTC successfully connects.
   useEffect(() => {
@@ -4534,23 +4564,27 @@ export default function CollabMix({ initialPage = "landing", djName = null }) {
     }
   }, [rtc.state]);
 
-  // Auto-start WebRTC ~500ms after a partner is detected (covers both "you
-  // joined an existing partner" and "partner joined you"). Both browsers fire;
-  // the second offer to arrive triggers handleOffer which closes the in-flight
-  // pc and answers — current code converges through this glare. Skip if rtc is
-  // already past idle (partner's offer beat us to it).
+  // Auto-start WebRTC ~500ms after a partner is detected. Only the elected
+  // initiator calls startCall; the answerer waits for the incoming offer.
+  // Skip if rtc is already past idle (partner's offer beat us to it).
   useEffect(() => {
     if (!sync.partner) return;
-    console.log('[RTC] partner present (', sync.partner, '), auto-starting call in 500ms');
     rtcReconnectAttemptsRef.current = 0;
     setRtcReconnectExhausted(false);
+    const initiator = isInitiatorRole();
+    console.log(`[RTC] role determination: localName=${session?.name}, partnerName=${sync.partner}, role=${initiator?"initiator":"answerer"}`);
+    if (!initiator) {
+      console.log('[RTC] answerer waiting for incoming offer (not calling startCall)');
+      return;
+    }
+    console.log('[RTC] initiator scheduling startCall in 500ms');
     const timer = setTimeout(() => {
       const r = rtcRef.current;
       if (r && r.state === "idle") r.startCall();
       else console.log('[RTC] auto-start skipped, rtc state was:', r?.state);
     }, 500);
     return () => clearTimeout(timer);
-  }, [sync.partner]);
+  }, [sync.partner, session, isInitiatorRole]);
 
   // Cancel any pending reconnect on unmount.
   useEffect(() => () => clearTimeout(rtcReconnectTimerRef.current), []);
