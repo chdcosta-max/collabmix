@@ -319,6 +319,113 @@ All four are downstream of the missing deck control model. Driver model
 implementation (see DECK CONTROL MODEL section) is the next session.
 
 =================================================================
+MAY 13-14 OVERNIGHT SESSION — MULTI-USER COLLAB FIXES
+=================================================================
+
+WHAT SHIPPED TO PRODUCTION (collabmix.vercel.app):
+
+Bug 6 — Audio routing FIXED (commits 397c62d, 850c952, ac1da26)
+- WebRTC auto-starts on partner_joined (no more manual START STREAM
+  button required)
+- Role election: lexicographic name comparison decides initiator vs
+  answerer to prevent glare
+- Glare-safe handleAnswer: catches InvalidStateError when both sides
+  offered simultaneously
+- DOM-attached remote audio element so browser playback actually fires
+- Auto-reconnect on rtc_hangup with 3-retry cap
+- Autoplay banner fallback for browsers that block initial audio
+- Status pill in top bar: OFFLINE / CONNECTING / STREAMING / FAILED
+
+Bug 5 — SYNC button FIXED (commit e6ae5ae)
+- Uses partner BPM fallback (pA/pB) when local analyzer hasn't run
+- Broadcasts rate changes via deck_update
+- Disabled state with tooltips when SYNC isn't available
+
+SYNC IMPROVEMENTS:
+- Phase alignment using bar fractions (4-beat bars), not single beats
+  (commits 2e40644, then bar math in 37ab4cb)
+- Analyzing state visual on SYNC button (amber pulse) while BPM is
+  being computed (commit 6fb856a)
+- Toggle behavior: click engages, click again releases (commit 83879aa)
+- Global lock model: ONE click syncs BOTH decks (Beatport B2B pattern)
+  (commit 8f5d6f7)
+- Auto re-sync when slave or master deck is scrubbed (commit 37ab4cb)
+- Master/slave visual differentiation: master deck shows "MASTER"
+  outlined, slave shows "SYNC" filled green (commit 37ab4cb)
+- BPM display shows pitch adjustment percentage (+2.1% / -1.8% with
+  color thresholds) (commit 37ab4cb)
+- Infinite re-sync loop fixed: prev-bpm gate + 1s throttle
+  (commit cae2a4b)
+
+PRODUCTION STATUS:
+- Bundle: main-5Yyar07J.js
+- All commits live on collabmix.vercel.app
+- Stale 6-day-old production bundle replaced with current code
+- Discovery during session: GitHub push does NOT auto-deploy to
+  production. BUILD_AND_PUSH.command (vercel --prod --yes) is the
+  canonical promotion path. Production had been stuck on a 6-day-old
+  bundle until we ran the script.
+
+KEY ARCHITECTURAL DECISIONS LOCKED:
+
+1. DECK CONTROL MODEL (locked earlier in session, see DECK CONTROL
+   MODEL section): Shared decks with implicit driver takeover. NO
+   ownership, NO permissions, NO confirmation prompts. Any action on
+   a deck makes that user the driver. This is locked, do not revisit.
+
+2. SYNC MODEL: Single global lock. ONE click on either deck's SYNC
+   button engages sync on both. Clicked deck becomes SLAVE, other
+   becomes MASTER. Click either again to release. This is the
+   Beatport B2B pattern.
+
+REMAINING KNOWN ISSUES (for next session):
+
+1. Audio skip on sync engage. Seek implementation destroys and
+   recreates AudioBufferSourceNode every seek. Smooth seek (brief
+   rate manipulation instead of jump) is the proper fix. ~1-2 hours.
+
+2. Master deck auto-assignment is implicit and confusing. Plan: add
+   explicit "M" button per deck for manual master selection. Default
+   master = currently-playing deck if no explicit selection.
+   ~30-60 min.
+
+3. Sync alignment not perfectly tight. Multiple potential causes:
+   - Beat grid inaccuracy on individual tracks (analyzer's
+     crossValidated=false on some)
+   - Drift after sync engages (no continuous tempo lock)
+   - Downbeat assumption: "first detected beat = bar 1 beat 1"
+     sometimes wrong for tracks with intros
+   - Phase calculation has small timing slack between click and
+     seek apply
+
+4. Beat grid editing UI doesn't exist. Pro DJ tools have manual beat
+   grid editing (half/double BPM toggle, beat offset nudge,
+   click-to-set first beat). This is what fixes case 3 root cause.
+   ~3-5 hours.
+
+5. Bugs 1, 2, 3 (multi-user state desync, partner can't load Deck B)
+   still broken — these need the DRIVER MODEL implementation.
+   ~3-5 hours.
+
+6. Sentry not yet set up. Earlier in session: started, paused on
+   master/main branch confusion (now resolved — master is production).
+   Pick back up cleanly. ~30-40 min.
+
+NEXT SESSION PRIORITY ORDER:
+
+1. Explicit master selector (M button per deck) — small win, removes
+   confusion
+2. Beat grid editing UI — the real fix for "not perfectly synced"
+3. Smooth seek (audio quality polish)
+4. Driver model (Bugs 1, 2, 3 — multi-user state) — biggest remaining
+   impact
+5. Sentry setup — instrument before next dogfood
+6. Next dogfood session with partner once above lands
+
+ALL DESIGN EXPLORATION WORK (design-warm, design-booth, design-decks
+branches) STILL PAUSED until multi-user collab fundamentals are solid.
+
+=================================================================
 ARCHITECTURE DECISIONS (May 4 + May 6-7 + May 7)
 =================================================================
 
@@ -588,28 +695,30 @@ RESOLVED MAY 7 EVENING:
 DOGFOOD READINESS
 =================================================================
 
-UPDATED May 13 late evening — Bug 6 fixed in production
-(397c62d + 850c952 + ac1da26). Audio routes bidirectionally between
-two-browser sessions, verified in Chrome×2 test.
+UPDATED May 13-14 overnight — Bug 6 (audio routing) AND Bug 5 (SYNC)
+both fixed in production. Bundle main-5Yyar07J.js. See MAY 13-14
+OVERNIGHT SESSION section above for the full commit list and the
+SYNC improvements (global lock model, bar-fraction phase alignment,
+master/slave indicators, scrub auto-resync, BPM rate display).
 
-CURRENT STATUS: Solo DJ works. Multi-user audio routing works.
-Multi-user STATE sync and partner deck control are STILL broken
-(Bugs 1, 2, 3, 5 from May 13 dogfood). Not dogfood-ready until
-the driver model lands.
+CURRENT STATUS: Solo DJ works. Multi-user audio routing works. SYNC
+works cross-browser with phase alignment. Multi-user STATE sync and
+partner deck control (Bugs 1, 2, 3) are STILL broken. Not dogfood-
+ready until the driver model lands.
 
 Cleared blockers:
 - ✅ Library data loss across browser restarts (82fd5c6)
 - ✅ OOM crash at moderate library size (38f23ee)
 - ✅ WebRTC audio routing (Bug 6 — fixed May 13 late evening)
+- ✅ SYNC cross-browser (Bug 5 — fixed May 13-14 overnight)
 
 Outstanding blockers for dogfood:
 - ❌ Bug 1: Library row click hardcoded to Deck A
 - ❌ Bug 2: Partner click-to-load on Deck B empty state (needs repro)
 - ❌ Bug 3: Deck state desync between browsers
-- ❌ Bug 5: SYNC button silently no-ops cross-browser
 
 Path forward: implement the DECK CONTROL MODEL (shared decks with
-implicit driver takeover, locked May 13). All four remaining bugs
+implicit driver takeover, locked May 13). All three remaining bugs
 collapse into the driver-model implementation.
 
 =================================================================
