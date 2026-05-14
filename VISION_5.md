@@ -275,6 +275,49 @@ NEXT PRIORITIES:
 4. Fix SYNC (Bug 5) — separate investigation
 5. ALL DESIGN WORK PAUSED until multi-user collab works
 
+MAY 13 LATE EVENING — Bug 6 FIXED (3 commits, deployed to production):
+21. Auto-start + reconnect + status indicator (commit 397c62d)
+    - useRTC: console instrumentation throughout, explicit play() in
+      ontrack with autoplay-blocked detection, document-level one-shot
+      click handler that retries play() on next user gesture.
+    - Parent: useEffect on sync.partner change schedules startCall after
+      500ms; rtc_hangup branch in handleWS schedules retry (3 attempts,
+      1s delay); reconnect counter resets on rtc.state==="connected".
+    - Top bar: AUDIO status pill (OFFLINE / CONNECTING… / STREAMING /
+      FAILED) replacing the prior LIVE-only badge.
+    - Banner below top bar when autoplay is blocked.
+    - Manual START STREAM button retained as fallback.
+22. Role election + glare-safe handleAnswer + DOM-attached audio (850c952)
+    - First preview hit WebRTC offer/answer glare: both browsers fired
+      startCall, both sent offers, both processed each other's offers as
+      answerers, then InvalidStateError on the original answers.
+    - isInitiatorRole helper: lexicographic name compare; same-name
+      fallback to URL ?room= presence (host = no param = initiator).
+      Only the elected initiator calls startCall; answerer waits for
+      incoming offer. Same gate applied to rtc_hangup retry.
+    - handleAnswer: catch InvalidStateError specifically and treat as
+      benign (peer already stable from glare-resolved remote offer).
+    - ontrack: append remote <audio> element to document.body
+      (display:none) — some browsers won't drive playback for detached
+      <audio> elements with srcObject.
+23. TDZ hotfix (commit ac1da26)
+    - 850c952's first preview was a blank page: useEffect mirroring
+      isInitiatorRole into a ref was declared BEFORE the useCallback
+      that defined the helper. React's deps-array evaluation hit the
+      temporal dead zone at first render. Pure reorder fix.
+
+VERIFIED: bidirectional audio routing between two Chrome windows, no
+glare errors, AUDIO pill transitions OFFLINE → CONNECTING → STREAMING.
+
+REMAINING from May 13 dogfood — Bugs 1, 2, 3, 5 still broken:
+- Bug 1: Library row click hardcoded to Deck A (everyone, not just partner)
+- Bug 2: Partner click-to-load on Deck B empty state — needs reproduction
+- Bug 3: Deck state desync between browsers (mirror gate at :3269)
+- Bug 5: SYNC button silently no-ops when target BPM is partner's only
+
+All four are downstream of the missing deck control model. Driver model
+implementation (see DECK CONTROL MODEL section) is the next session.
+
 =================================================================
 ARCHITECTURE DECISIONS (May 4 + May 6-7 + May 7)
 =================================================================
@@ -329,6 +372,64 @@ downscale (200×200 JPEG @0.7) on import keeps thumbnails crisp while
 collapsing the per-track cost ~35×. Together these turn library scale
 from "OOM at 266 tracks" into "linear at ~1.3 MB/track, viable to
 thousands."
+
+=================================================================
+DECK CONTROL MODEL — locked May 13
+=================================================================
+
+DECK CONTROL MODEL: SHARED DECKS WITH IMPLICIT DRIVER TAKEOVER
+
+Both users have full control of both decks at all times. No ownership,
+no permissions, no confirmation prompts.
+
+DRIVER ROLE:
+The "driver" of a deck is whoever last performed any action on it.
+
+Actions that transfer the driver role:
+- Load track
+- Play / pause
+- Scrub / seek
+- BPM change (sync, manual adjust)
+- Loop set / clear
+- Cue trigger / set / clear
+- EQ adjust (GAIN, HI, MID, LOW, filter)
+- Any other deck mutation
+
+DRIVER BEHAVIOR:
+- Driver's browser plays the audio locally for that deck
+- Driver's WebRTC stream carries that deck's audio to the partner
+- Non-driver's browser does NOT play local audio for that deck
+- Non-driver hears that deck via WebRTC from the driver
+- Non-driver's UI mirrors driver's state (track, position, BPM, EQ) via WebSocket
+
+DRIVER TRANSITION:
+- Any action by the non-driver instantly makes them the new driver
+- Old driver's local audio for that deck stops
+- New driver's local audio for that deck starts (from the position synced)
+- WebRTC stream automatically picks up new driver's output
+- NO prompts, NO confirmations, NO popups, NO permission requests
+- Seamless audio handoff (target: <100ms gap)
+
+VISUAL FEEDBACK:
+- Identity colors already in the design (blue = host, violet = partner)
+  extend to indicate driver
+- When YOU are driving a deck, that deck's top border glows with YOUR color
+- When PARTNER is driving a deck, that deck's top border glows with
+  PARTNER's color
+- No text labels, no badges — purely visual
+
+EDGE CASES:
+- Simultaneous actions on same deck: last-write-wins via server timestamp
+- Driver disconnects: deck pauses, partner can take over by performing
+  any action
+- New partner joins: deck states sync to whoever's been driving
+
+REFERENCE: Beatport B2B uses this model. It is the standard expectation
+for online B2B DJing.
+
+THIS DECISION IS LOCKED. Future sessions should NOT revisit "should
+there be an ownership model" — the answer is permanently no. Shared
+control with implicit takeover is the model.
 
 =================================================================
 TESTING SCOREBOARD
@@ -487,22 +588,29 @@ RESOLVED MAY 7 EVENING:
 DOGFOOD READINESS
 =================================================================
 
-UPDATED May 13 evening — see DOGFOOD SESSIONS section above for full
-findings from first real B2B test with Jake.
+UPDATED May 13 late evening — Bug 6 fixed in production
+(397c62d + 850c952 + ac1da26). Audio routes bidirectionally between
+two-browser sessions, verified in Chrome×2 test.
 
-CURRENT STATUS: Solo DJ works. Multi-user collab (audio routing,
-state sync, partner deck control) is NON-FUNCTIONAL. Not
-dogfood-ready until fixed.
+CURRENT STATUS: Solo DJ works. Multi-user audio routing works.
+Multi-user STATE sync and partner deck control are STILL broken
+(Bugs 1, 2, 3, 5 from May 13 dogfood). Not dogfood-ready until
+the driver model lands.
 
-Storage blockers from earlier remain cleared (these were necessary
-but not sufficient):
+Cleared blockers:
 - ✅ Library data loss across browser restarts (82fd5c6)
 - ✅ OOM crash at moderate library size (38f23ee)
+- ✅ WebRTC audio routing (Bug 6 — fixed May 13 late evening)
 
-Previous assessment (NOW SUPERSEDED): "dogfood-ready for one DJ
-partner on 50-150 tracks." That was wrong — it was based on solo
-testing only. First real two-browser session (May 13) revealed
-multi-user collab is broken end-to-end.
+Outstanding blockers for dogfood:
+- ❌ Bug 1: Library row click hardcoded to Deck A
+- ❌ Bug 2: Partner click-to-load on Deck B empty state (needs repro)
+- ❌ Bug 3: Deck state desync between browsers
+- ❌ Bug 5: SYNC button silently no-ops cross-browser
+
+Path forward: implement the DECK CONTROL MODEL (shared decks with
+implicit driver takeover, locked May 13). All four remaining bugs
+collapse into the driver-model implementation.
 
 =================================================================
 RECOMMENDED FIRST ACTIONS NEXT SESSION
