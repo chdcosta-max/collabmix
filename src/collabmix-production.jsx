@@ -92,6 +92,7 @@ function useBPM() {
       if (id === '__err') { console.error('[BPM Worker global error]', e.data.error); return; }
       if (error) console.error('[BPM Worker caught error]', error);
       console.log('[BPM result] id='+id+' bpm='+bpm+' bpf='+beatPhaseFrac+' bps='+beatPeriodSec+' bphs='+beatPhaseSec+' snapped='+(snapped??false)+' debug='+JSON.stringify(_debug));
+      console.log('[BPM] analysis complete for deck', id, 'bpm=', bpm);
       setResults(prev => ({ ...prev, [id]: { bpm, confidence, candidates, beatPhaseFrac: beatPhaseFrac||0, beatPeriodSec: beatPeriodSec||null, beatPhaseSec: beatPhaseSec??null, analyzing: false } }));
     };
     worker.current.onerror = (e) => { console.error('[BPM Worker onerror]', e.message, e.lineno); };
@@ -99,6 +100,7 @@ function useBPM() {
   }, []);
   const analyze = useCallback((buf, id) => {
     if (!buf || !worker.current) return;
+    console.log('[BPM] analysis started for deck', id, '(track loaded)');
     setResults(prev => ({ ...prev, [id]: { ...(prev[id] || {}), analyzing: true } }));
     const cd = [];
     for (let c = 0; c < buf.numberOfChannels; c++) cd.push(buf.getChannelData(c).slice());
@@ -3704,13 +3706,25 @@ function Deck({ id, ch, ctx:ac, color, local, remote, onChange, midi:mt, bpmResu
         </button>
         <button onClick={local?()=>seek(Math.min(1,prog+.005)):undefined} disabled={!local} style={{height:48,width:36,background:"#111118",border:"1px solid #1e1e28",color:local?"#888898":"#2a2a38",borderRadius:6,cursor:local?"pointer":"default",fontFamily:"'DM Mono',monospace",fontSize:13,outline:"none"}}>▸▸</button>
         {onSync&&(()=>{
+          const isAnalyzing = !!buf && !bpmResult?.bpm && !!bpmResult?.analyzing;
           const canSync = !!buf && !!bpmResult?.bpm && syncReady;
+          // Three states: canSync (green active), analyzing (amber pulse), disabled.
+          const tone =
+            canSync     ? { bg:"#22c55e18", border:"#22c55e66", color:"#22c55e", cursor:"pointer",      opacity:1,   pulse:false }
+            : isAnalyzing ? { bg:"#f59e0b14", border:"#f59e0b55", color:"#f59e0b", cursor:"progress",    opacity:1,   pulse:true  }
+            :             { bg:"transparent", border:"#22c55e22", color:"#22c55e44", cursor:"not-allowed", opacity:0.4, pulse:false };
+          const tip = !buf
+            ? "Load a track"
+            : isAnalyzing ? "Analyzing BPM…"
+            : !bpmResult?.bpm ? "Waiting for BPM"
+            : !syncReady ? "Other deck has no BPM yet"
+            : "Match this deck's BPM to the other";
           return (
             <button
               onClick={canSync ? onSync : undefined}
               disabled={!canSync}
-              title={!buf?"Load a track":!bpmResult?.bpm?"Waiting for BPM":!syncReady?"Other deck has no BPM yet":"Match this deck's BPM to the other"}
-              style={{height:48,padding:"0 10px",background:canSync?"#22c55e18":"transparent",border:`1px solid ${canSync?"#22c55e66":"#22c55e22"}`,color:canSync?"#22c55e":"#22c55e44",borderRadius:7,cursor:canSync?"pointer":"not-allowed",opacity:canSync?1:0.4,fontFamily:"'DM Mono',monospace",fontSize:10,fontWeight:700,letterSpacing:1.5,outline:"none",flexShrink:0}}>
+              title={tip}
+              style={{height:48,padding:"0 10px",background:tone.bg,border:`1px solid ${tone.border}`,color:tone.color,borderRadius:7,cursor:tone.cursor,opacity:tone.opacity,fontFamily:"'DM Mono',monospace",fontSize:10,fontWeight:700,letterSpacing:1.5,outline:"none",flexShrink:0,animation:tone.pulse?"pulse 1.1s ease-in-out infinite":"none"}}>
               SYNC
             </button>
           );
