@@ -4759,24 +4759,54 @@ export default function CollabMix({ initialPage = "landing", djName = null }) {
   }, [syncActiveA, syncActiveB, syncDecks, bpm.results, pA, pB, sync]);
 
   // While Deck A is sync-locked, re-fire one-shot sync when Deck B's BPM
-  // changes (e.g., partner loaded a new track on B). Same for B↔A.
-  // Reading the deck-key directly in deps so the effect tracks the value.
+  // ACTUALLY changes (not when partner state churns). Two safeguards:
+  //   1) prev-bpm ref — only fires when the numeric BPM differs from last seen.
+  //      Prevents loop where syncDecks's broadcasts mutate pB → recreate
+  //      syncDecks → re-fire effect → call syncDecks again.
+  //   2) 1s throttle — defense in depth against any other re-trigger source.
+  // syncDecks is intentionally NOT in deps; we read whatever closure version
+  // we have (acceptable since it reads its own state via refs internally).
   const bpmAValue = bpm.results["A"]?.bpm;
   const bpmBValue = bpm.results["B"]?.bpm;
+  const prevMasterBpmARef = useRef(null);
+  const prevMasterBpmBRef = useRef(null);
+  const lastResyncARef    = useRef(0);
+  const lastResyncBRef    = useRef(0);
   useEffect(() => {
-    if (!syncActiveA) return;
-    const targetBPM = bpmBValue || pB?.bpm;
-    if (!targetBPM) return;
+    if (!syncActiveA) { prevMasterBpmARef.current = null; return; }
+    const currentMasterBpm = bpmBValue || pB?.bpm;
+    if (!currentMasterBpm) return;
+    if (currentMasterBpm === prevMasterBpmARef.current) return;
+    if (prevMasterBpmARef.current === null) {
+      // First read after lock — initial sync already ran in handleSyncToggle.
+      prevMasterBpmARef.current = currentMasterBpm;
+      return;
+    }
+    const now = Date.now();
+    if (now - lastResyncARef.current < 1000) return;
+    lastResyncARef.current = now;
+    prevMasterBpmARef.current = currentMasterBpm;
     console.log("[SYNC] master B BPM changed, re-syncing A (locked)");
-    syncDecks("A", targetBPM);
-  }, [syncActiveA, bpmBValue, pB?.bpm, syncDecks]);
+    syncDecks("A", currentMasterBpm);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [syncActiveA, bpmBValue, pB?.bpm]);
   useEffect(() => {
-    if (!syncActiveB) return;
-    const targetBPM = bpmAValue || pA?.bpm;
-    if (!targetBPM) return;
+    if (!syncActiveB) { prevMasterBpmBRef.current = null; return; }
+    const currentMasterBpm = bpmAValue || pA?.bpm;
+    if (!currentMasterBpm) return;
+    if (currentMasterBpm === prevMasterBpmBRef.current) return;
+    if (prevMasterBpmBRef.current === null) {
+      prevMasterBpmBRef.current = currentMasterBpm;
+      return;
+    }
+    const now = Date.now();
+    if (now - lastResyncBRef.current < 1000) return;
+    lastResyncBRef.current = now;
+    prevMasterBpmBRef.current = currentMasterBpm;
     console.log("[SYNC] master A BPM changed, re-syncing B (locked)");
-    syncDecks("B", targetBPM);
-  }, [syncActiveB, bpmAValue, pA?.bpm, syncDecks]);
+    syncDecks("B", currentMasterBpm);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [syncActiveB, bpmAValue, pA?.bpm]);
 
   const updateEqA = useCallback((field, val) => {
     setEqA(e => ({...e, [field]:val}));
