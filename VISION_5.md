@@ -202,6 +202,80 @@ MAY 7 EVENING (two commits — both critical dogfood blockers cleared):
       ~2.6 GB at 2000 tracks.
 
 =================================================================
+DOGFOOD SESSIONS — May 13 evening — CRITICAL FINDINGS
+=================================================================
+
+CONTEXT:
+- Session 1: Tested on design-decks preview
+- Session 2: Tested on production (collabmix.vercel.app, master)
+- Both sessions with same remote partner (Jake)
+- Goal of session 2 was to determine if bugs were
+  design-decks-specific or platform-wide
+
+KEY FINDING: All bugs are platform-wide. Present on master.
+
+WHAT WORKED:
+- Connection: 36ms ping, both browsers connected
+- Chat: messages flow bidirectionally
+- Library import: 16 tracks imported
+- BPM analysis: working
+- Library persistence: working
+- No console errors thrown — bugs are behavioral, not crashes
+
+BUGS FOUND:
+
+Bug 1 — Partner cannot load tracks on Deck B
+- Library row click only offers "Load to Deck A" option for partner
+- No drag-and-drop available for partner
+- Severity: BLOCKING
+
+Bug 2 — Partner click-to-load on Deck B empty state non-functional
+- The music icon affordance does not respond for remote partner
+- Severity: BLOCKING
+
+Bug 3 — Deck A visual/audio state desync between browsers
+- Host loads track X on Deck A → both browsers see X
+- Partner loads Y on Deck A → partner sees Y, audio still plays X
+- Host loads Z on Deck A → host sees Z, partner still sees Y
+- State sync is unreliable/one-way
+- Severity: CRITICAL
+
+Bug 4 — Partner cannot hear audio from Deck B
+- Host loads track on Deck B, host hears audio
+- Partner hears nothing from Deck B
+- Severity: CRITICAL
+
+Bug 5 — SYNC button non-functional
+- Clicking SYNC produces no observable BPM matching
+- Decks had 121.1 and 122 BPM — clear sync target
+- Severity: HIGH
+
+Bug 6 — BIDIRECTIONAL audio routing failure (NEW in session 2)
+- Host loads track → partner can't hear it
+- Partner loads track → host can't hear it
+- Neither direction works
+- Severity: CRITICAL — core platform value broken
+
+CRITICAL ASSESSMENT CHANGE:
+VISION_5 previously said master was "dogfood-ready for one DJ
+partner on 50-150 tracks." That assessment was WRONG. Solo
+functionality works. Multi-user collab is non-functional.
+
+ROOT CAUSE HYPOTHESIS:
+Bugs 1, 2, 4, 6 cluster around audio + state crossing the
+WebSocket/streaming boundary between browsers. Likely related:
+- Audio may not actually be streaming between browsers
+- State replication may be one-way or have race conditions
+- Deck ownership/authority model may be confused
+
+NEXT PRIORITIES:
+1. Debug audio routing layer first (Bug 6) — core platform value
+2. Debug state sync layer (Bug 3) — needed for reliability
+3. Fix partner deck access (Bugs 1, 2) — likely flow from #1
+4. Fix SYNC (Bug 5) — separate investigation
+5. ALL DESIGN WORK PAUSED until multi-user collab works
+
+=================================================================
 ARCHITECTURE DECISIONS (May 4 + May 6-7 + May 7)
 =================================================================
 
@@ -413,14 +487,22 @@ RESOLVED MAY 7 EVENING:
 DOGFOOD READINESS
 =================================================================
 
-The two critical blockers are now cleared:
+UPDATED May 13 evening — see DOGFOOD SESSIONS section above for full
+findings from first real B2B test with Jake.
+
+CURRENT STATUS: Solo DJ works. Multi-user collab (audio routing,
+state sync, partner deck control) is NON-FUNCTIONAL. Not
+dogfood-ready until fixed.
+
+Storage blockers from earlier remain cleared (these were necessary
+but not sufficient):
 - ✅ Library data loss across browser restarts (82fd5c6)
 - ✅ OOM crash at moderate library size (38f23ee)
 
-For dogfood with one DJ partner on 50-150 tracks → **READY**.
-For public beta with random users on arbitrary libraries → still
-needs virtualization + delete UI + import safety + cover-fit polish
-first.
+Previous assessment (NOW SUPERSEDED): "dogfood-ready for one DJ
+partner on 50-150 tracks." That was wrong — it was based on solo
+testing only. First real two-browser session (May 13) revealed
+multi-user collab is broken end-to-end.
 
 =================================================================
 RECOMMENDED FIRST ACTIONS NEXT SESSION
