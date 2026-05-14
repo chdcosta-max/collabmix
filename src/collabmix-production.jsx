@@ -3294,7 +3294,7 @@ function Knob({ v, set, min=-12, max=12, ctr=0, label, color="#C8A96E", size=38,
 // ── Deck ─────────────────────────────────────────────────────
 const HOT_CUE_COLORS=["#C8A96E","#ef4444","#22c55e","#f59e0b"];
 
-function Deck({ id, ch, ctx:ac, color, local, remote, onChange, midi:mt, bpmResult, bpmAnalyze, eqHi=0, eqMid=0, eqLo=0, chanVol=1, loadFromLibrary=null, onTrackInfo=null, onSync=null, syncReady=true, onLibraryTrackDrop=null, onProgUpdate=null, onWaveform=null, onSeekReady=null, remoteSeek=null, onToggleReady=null, onCueReady=null, remoteToggle=null, remoteCue=null, onTransportFire=null }) {
+function Deck({ id, ch, ctx:ac, color, local, remote, onChange, midi:mt, bpmResult, bpmAnalyze, eqHi=0, eqMid=0, eqLo=0, chanVol=1, loadFromLibrary=null, onTrackInfo=null, onSync=null, syncReady=true, syncActive=false, onLibraryTrackDrop=null, onProgUpdate=null, onWaveform=null, onSeekReady=null, remoteSeek=null, onToggleReady=null, onCueReady=null, remoteToggle=null, remoteCue=null, onTransportFire=null }) {
   const [buf,setBuf]=useState(null),[name,setName]=useState(null),[play,setPlay]=useState(false);
   const [prog,setProg]=useState(0),[dur,setDur]=useState(0);
   const progRef=useRef(0); // mirror of prog for parent AnimatedZoomedWF without 60fps setState
@@ -3708,23 +3708,29 @@ function Deck({ id, ch, ctx:ac, color, local, remote, onChange, midi:mt, bpmResu
         {onSync&&(()=>{
           const isAnalyzing = !!buf && !bpmResult?.bpm && !!bpmResult?.analyzing;
           const canSync = !!buf && !!bpmResult?.bpm && syncReady;
-          // Three states: canSync (green active), analyzing (amber pulse), disabled.
+          // Active (locked) is clickable too — that's how you turn it OFF.
+          const clickable = canSync || syncActive;
+          // Four states: locked (filled green + glow + dot), canSync (green outline),
+          // analyzing (amber pulse), disabled (greyed).
           const tone =
-            canSync     ? { bg:"#22c55e18", border:"#22c55e66", color:"#22c55e", cursor:"pointer",      opacity:1,   pulse:false }
-            : isAnalyzing ? { bg:"#f59e0b14", border:"#f59e0b55", color:"#f59e0b", cursor:"progress",    opacity:1,   pulse:true  }
-            :             { bg:"transparent", border:"#22c55e22", color:"#22c55e44", cursor:"not-allowed", opacity:0.4, pulse:false };
-          const tip = !buf
-            ? "Load a track"
+            syncActive    ? { bg:"#22c55e44", border:"#22c55e",   color:"#0a1a10", cursor:"pointer",      opacity:1,   pulse:false, glow:true,  dot:true  }
+            : canSync     ? { bg:"#22c55e18", border:"#22c55e66", color:"#22c55e", cursor:"pointer",      opacity:1,   pulse:false, glow:false, dot:false }
+            : isAnalyzing ? { bg:"#f59e0b14", border:"#f59e0b55", color:"#f59e0b", cursor:"progress",    opacity:1,   pulse:true,  glow:false, dot:false }
+            :             { bg:"transparent", border:"#22c55e22", color:"#22c55e44", cursor:"not-allowed", opacity:0.4, pulse:false, glow:false, dot:false };
+          const tip = syncActive
+            ? "Locked to other deck — click to release"
+            : !buf ? "Load a track"
             : isAnalyzing ? "Analyzing BPM…"
             : !bpmResult?.bpm ? "Waiting for BPM"
             : !syncReady ? "Other deck has no BPM yet"
             : "Match this deck's BPM to the other";
           return (
             <button
-              onClick={canSync ? onSync : undefined}
-              disabled={!canSync}
+              onClick={clickable ? onSync : undefined}
+              disabled={!clickable}
               title={tip}
-              style={{height:48,padding:"0 10px",background:tone.bg,border:`1px solid ${tone.border}`,color:tone.color,borderRadius:7,cursor:tone.cursor,opacity:tone.opacity,fontFamily:"'DM Mono',monospace",fontSize:10,fontWeight:700,letterSpacing:1.5,outline:"none",flexShrink:0,animation:tone.pulse?"pulse 1.1s ease-in-out infinite":"none"}}>
+              style={{height:48,padding:"0 10px",background:tone.bg,border:`1px solid ${tone.border}`,color:tone.color,borderRadius:7,cursor:tone.cursor,opacity:tone.opacity,fontFamily:"'DM Mono',monospace",fontSize:10,fontWeight:700,letterSpacing:1.5,outline:"none",flexShrink:0,boxShadow:tone.glow?`0 0 12px #22c55e88`:"none",animation:tone.pulse?"pulse 1.1s ease-in-out infinite":"none",display:"flex",alignItems:"center",gap:6}}>
+              {tone.dot && <span style={{width:6,height:6,borderRadius:"50%",background:"#22c55e",boxShadow:"0 0 6px #22c55e"}}/>}
               SYNC
             </button>
           );
@@ -4249,6 +4255,12 @@ export default function CollabMix({ initialPage = "landing", djName = null }) {
   // FIX: track actual playback rates so BPM sync display is correct
   const [rateA, setRateA]       = useState(1);
   const [rateB, setRateB]       = useState(1);
+  // SYNC lock state — Traktor-style toggle. ON = deck is locked to the master,
+  // visually highlighted, and re-fires one-shot sync when master BPM changes.
+  // TODO: implement continuous sync re-alignment. Currently toggle is visual
+  // only — sync is still one-shot on each ON click and on master BPM change.
+  const [syncActiveA, setSyncActiveA] = useState(false);
+  const [syncActiveB, setSyncActiveB] = useState(false);
   const [eqA, setEqA]           = useState({hi:0, mid:0, lo:0, vol:1.0, filter:0});
   const [eqB, setEqB]           = useState({hi:0, mid:0, lo:0, vol:1.0, filter:0});
   const lsRef                   = useRef({ deckA:{}, deckB:{}, xfade:.5 });
@@ -4551,6 +4563,13 @@ export default function CollabMix({ initialPage = "landing", djName = null }) {
         if (m.deckId==="A") setEqA(e=>({...e,[localKey]:m.value}));
         else if (m.deckId==="B") setEqB(e=>({...e,[localKey]:m.value}));
       }
+      // Mirror SYNC lock state across browsers — both sides see the same lock
+      // visual regardless of who clicked. Setters from useState are stable so
+      // safe to call from this stale-deps useCallback.
+      if (m.field === "syncActive") {
+        if (m.deckId === "A") setSyncActiveA(!!m.value);
+        else if (m.deckId === "B") setSyncActiveB(!!m.value);
+      }
     }
     if (m.type==="seek_request")   seekFnsRef.current[m.deckId]?.(m.value, true);
     if (m.type==="toggle_request") toggleFnsRef.current[m.deckId]?.(true);
@@ -4717,6 +4736,47 @@ export default function CollabMix({ initialPage = "landing", djName = null }) {
     lsRef.current[k] = { ...(lsRef.current[k]||{}), rate };
     sync.send({ type:"deck_update", deckId: slave, field: "rate", value: rate });
   }, [bpm.results, sync, pA, pB, wfA, wfB]);
+
+  // SYNC button toggle. OFF→ON performs one-shot sync and locks visually;
+  // ON→OFF just clears visual state. Both transitions broadcast.
+  const handleSyncToggle = useCallback((deck) => {
+    const other  = deck === "A" ? "B" : "A";
+    const isActive = deck === "A" ? syncActiveA : syncActiveB;
+    const setActive = deck === "A" ? setSyncActiveA : setSyncActiveB;
+    if (isActive) {
+      console.log("[SYNC] toggle OFF for deck", deck);
+      setActive(false);
+    } else {
+      console.log("[SYNC] toggle ON for deck", deck);
+      const targetBPM = bpm.results[other]?.bpm || (other === "A" ? pA?.bpm : pB?.bpm);
+      syncDecks(deck, targetBPM);
+      setActive(true);
+    }
+    const k = `deck${deck}`;
+    const nextActive = !isActive;
+    lsRef.current[k] = { ...(lsRef.current[k]||{}), syncActive: nextActive };
+    sync.send({ type:"deck_update", deckId: deck, field: "syncActive", value: nextActive });
+  }, [syncActiveA, syncActiveB, syncDecks, bpm.results, pA, pB, sync]);
+
+  // While Deck A is sync-locked, re-fire one-shot sync when Deck B's BPM
+  // changes (e.g., partner loaded a new track on B). Same for B↔A.
+  // Reading the deck-key directly in deps so the effect tracks the value.
+  const bpmAValue = bpm.results["A"]?.bpm;
+  const bpmBValue = bpm.results["B"]?.bpm;
+  useEffect(() => {
+    if (!syncActiveA) return;
+    const targetBPM = bpmBValue || pB?.bpm;
+    if (!targetBPM) return;
+    console.log("[SYNC] master B BPM changed, re-syncing A (locked)");
+    syncDecks("A", targetBPM);
+  }, [syncActiveA, bpmBValue, pB?.bpm, syncDecks]);
+  useEffect(() => {
+    if (!syncActiveB) return;
+    const targetBPM = bpmAValue || pA?.bpm;
+    if (!targetBPM) return;
+    console.log("[SYNC] master A BPM changed, re-syncing B (locked)");
+    syncDecks("B", targetBPM);
+  }, [syncActiveB, bpmAValue, pA?.bpm, syncDecks]);
 
   const updateEqA = useCallback((field, val) => {
     setEqA(e => ({...e, [field]:val}));
@@ -4941,7 +5001,7 @@ export default function CollabMix({ initialPage = "landing", djName = null }) {
             <span style={{ fontSize:11, fontFamily:"'DM Sans',sans-serif", fontWeight:500, color:"#7B61FFaa", letterSpacing:.3 }}>{session.name}</span>
           </div>
           <div style={{ flex:1, overflow:"hidden", minHeight:0 }}>
-            <Deck id="A" ch={eng.current?.A} ctx={eng.current?.ctx} color="#7B61FF" local remote={pA} onChange={dh("A")} midi={midiEvt} bpmResult={bpm.results["A"]} bpmAnalyze={bpm.analyze} eqHi={eqA.hi} eqMid={eqA.mid} eqLo={eqA.lo} chanVol={eqA.vol} loadFromLibrary={libLoadA} onTrackInfo={handleTrackInfo} onSync={()=>syncDecks("A", bpm.results["B"]?.bpm || pB?.bpm)} syncReady={!!(bpm.results["B"]?.bpm || pB?.bpm)} onLibraryTrackDrop={(trackId)=>{const t=lib.library.find(x=>x.id===trackId);if(t)handleLibLoad(t,"A");}} onProgUpdate={handleProgA} onWaveform={setWfA} onSeekReady={onDeckASeekReady} onToggleReady={onDeckAToggleReady} onCueReady={onDeckACueReady} onTransportFire={sync.send}/>
+            <Deck id="A" ch={eng.current?.A} ctx={eng.current?.ctx} color="#7B61FF" local remote={pA} onChange={dh("A")} midi={midiEvt} bpmResult={bpm.results["A"]} bpmAnalyze={bpm.analyze} eqHi={eqA.hi} eqMid={eqA.mid} eqLo={eqA.lo} chanVol={eqA.vol} loadFromLibrary={libLoadA} onTrackInfo={handleTrackInfo} onSync={()=>handleSyncToggle("A")} syncReady={!!(bpm.results["B"]?.bpm || pB?.bpm)} syncActive={syncActiveA} onLibraryTrackDrop={(trackId)=>{const t=lib.library.find(x=>x.id===trackId);if(t)handleLibLoad(t,"A");}} onProgUpdate={handleProgA} onWaveform={setWfA} onSeekReady={onDeckASeekReady} onToggleReady={onDeckAToggleReady} onCueReady={onDeckACueReady} onTransportFire={sync.send}/>
           </div>
         </div>
 
@@ -5040,7 +5100,7 @@ export default function CollabMix({ initialPage = "landing", djName = null }) {
             {sync.partner&&<span style={{ fontSize:11, fontFamily:"'DM Sans',sans-serif", fontWeight:500, color:"#00BFA5aa", letterSpacing:.3 }}>{sync.partner}</span>}
           </div>
           <div style={{ flex:1, overflow:"hidden", minHeight:0 }}>
-            <Deck id="B" ch={eng.current?.B} ctx={eng.current?.ctx} color="#00BFA5" local remote={pB} onChange={dh("B")} midi={midiEvt} bpmResult={bpm.results["B"]} bpmAnalyze={bpm.analyze} eqHi={eqB.hi} eqMid={eqB.mid} eqLo={eqB.lo} chanVol={eqB.vol} loadFromLibrary={libLoadB} onTrackInfo={handleTrackInfo} onSync={()=>syncDecks("B", bpm.results["A"]?.bpm || pA?.bpm)} syncReady={!!(bpm.results["A"]?.bpm || pA?.bpm)} onLibraryTrackDrop={(trackId)=>{const t=lib.library.find(x=>x.id===trackId);if(t)handleLibLoad(t,"B");}} onProgUpdate={handleProgB} onWaveform={setWfB} onSeekReady={onDeckBSeekReady} onToggleReady={onDeckBToggleReady} onCueReady={onDeckBCueReady} onTransportFire={sync.send}/>
+            <Deck id="B" ch={eng.current?.B} ctx={eng.current?.ctx} color="#00BFA5" local remote={pB} onChange={dh("B")} midi={midiEvt} bpmResult={bpm.results["B"]} bpmAnalyze={bpm.analyze} eqHi={eqB.hi} eqMid={eqB.mid} eqLo={eqB.lo} chanVol={eqB.vol} loadFromLibrary={libLoadB} onTrackInfo={handleTrackInfo} onSync={()=>handleSyncToggle("B")} syncReady={!!(bpm.results["A"]?.bpm || pA?.bpm)} syncActive={syncActiveB} onLibraryTrackDrop={(trackId)=>{const t=lib.library.find(x=>x.id===trackId);if(t)handleLibLoad(t,"B");}} onProgUpdate={handleProgB} onWaveform={setWfB} onSeekReady={onDeckBSeekReady} onToggleReady={onDeckBToggleReady} onCueReady={onDeckBCueReady} onTransportFire={sync.send}/>
           </div>
         </div>
 
