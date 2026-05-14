@@ -3468,6 +3468,11 @@ function Deck({ id, ch, ctx:ac, color, local, remote, onChange, midi:mt, bpmResu
   useEffect(()=>{onToggleReady?.(toggle);},[toggle,onToggleReady]);
   useEffect(()=>{onCueReady?.(cue);},[cue,onCueReady]);
   useEffect(()=>{ if(bpmResult?.bpm!=null) onChange?.("bpm", bpmResult.bpm); },[bpmResult?.bpm,onChange]);
+  // Broadcast phase data so partner can phase-align when SYNC fires against a
+  // partner-driven deck. Only the deck owner has these from the analyzer; the
+  // mirror lets the syncing side compute beat offsets across browsers.
+  useEffect(()=>{ if(bpmResult?.beatPhaseSec!=null) onChange?.("beatPhaseSec", bpmResult.beatPhaseSec); },[bpmResult?.beatPhaseSec,onChange]);
+  useEffect(()=>{ if(bpmResult?.beatPeriodSec!=null) onChange?.("beatPeriodSec", bpmResult.beatPeriodSec); },[bpmResult?.beatPeriodSec,onChange]);
   // Mirror remote `playing` state for Deck B button glyph
   const remotePlaying=remote?.playing||false;
   const playVisual=local?play:remotePlaying;
@@ -4628,7 +4633,8 @@ export default function CollabMix({ initialPage = "landing", djName = null }) {
 
   const midi = useMidi({ onAction: handleMidi });
 
-  // FIX: beat sync now updates rateA/rateB state AND deck playback rate
+  // BPM match + beat-phase alignment.
+  // Slave = the deck the user clicked SYNC on (modified). Master = the OTHER deck.
   const syncDecks = useCallback((slave, targetBPM) => {
     const srcBPM = bpm.results[slave]?.bpm;
     console.log("[SYNC] triggered for deck", slave, "sourceBPM=", srcBPM, "targetBPM=", targetBPM);
@@ -4651,12 +4657,52 @@ export default function CollabMix({ initialPage = "landing", djName = null }) {
       if (el?._setRate) el._setRate(rate);
     }
     console.log("[SYNC] applied rate=", rate);
-    // Broadcast so partner mirrors the rate change. Mirrors lsRef pattern
+
+    // Phase alignment — fall back to partner-broadcast phase data when the
+    // master deck is partner-driven and we have no local analyzer result.
+    const master = slave==="A" ? "B" : "A";
+    const masterPartnerState = master==="A" ? pA : pB;
+    const slavePartnerState  = slave==="A"  ? pA : pB;
+    const slaveBps   = bpm.results[slave]?.beatPeriodSec   ?? slavePartnerState?.beatPeriodSec;
+    const slaveBphs  = bpm.results[slave]?.beatPhaseSec    ?? slavePartnerState?.beatPhaseSec;
+    const masterBps  = bpm.results[master]?.beatPeriodSec  ?? masterPartnerState?.beatPeriodSec;
+    const masterBphs = bpm.results[master]?.beatPhaseSec   ?? masterPartnerState?.beatPhaseSec;
+    const slaveDur   = slave==="A"  ? wfA?.dur : wfB?.dur;
+    const slaveProg  = slave==="A"  ? progRefA.current : progRefB.current;
+    const masterProg = master==="A" ? progRefA.current : progRefB.current;
+    const masterDur  = master==="A" ? wfA?.dur : wfB?.dur;
+    const slaveCurTime  = (slaveProg  || 0) * (slaveDur  || 0);
+    const masterCurTime = (masterProg || 0) * (masterDur || 0);
+
+    if (slaveBps == null || slaveBphs == null || masterBps == null || masterBphs == null || !slaveDur) {
+      console.log("[SYNC] phase data missing, skipping phase alignment", { slaveBps, slaveBphs, masterBps, masterBphs, slaveDur });
+    } else {
+      const masterBeatPos  = (masterCurTime - masterBphs) / masterBps;
+      const masterBeatFrac = masterBeatPos - Math.floor(masterBeatPos);
+      const slaveBeatPos   = (slaveCurTime  - slaveBphs)  / slaveBps;
+      const slaveBeatFrac  = slaveBeatPos  - Math.floor(slaveBeatPos);
+      let phaseOffsetBeats = masterBeatFrac - slaveBeatFrac;
+      if (phaseOffsetBeats >  0.5) phaseOffsetBeats -= 1;
+      if (phaseOffsetBeats < -0.5) phaseOffsetBeats += 1;
+      const phaseOffsetSeconds = phaseOffsetBeats * slaveBps;
+      console.log("[SYNC] phase before: master=", masterBeatFrac.toFixed(3), "slave=", slaveBeatFrac.toFixed(3), "offset=", phaseOffsetBeats.toFixed(3), "beats");
+      const newSlaveTime = slaveCurTime + phaseOffsetSeconds;
+      const newSlaveProg = Math.max(0, Math.min(1, newSlaveTime / slaveDur));
+      // seekFnsRef.current[slave] is the local Deck's seek; it already
+      // broadcasts seek_request to the partner so their playhead follows.
+      seekFnsRef.current[slave]?.(newSlaveProg);
+      console.log("[SYNC] phase nudged slave by", phaseOffsetSeconds.toFixed(3), "seconds (newProg=", newSlaveProg.toFixed(4), ")");
+      const newSlaveBeatPos = (newSlaveTime - slaveBphs) / slaveBps;
+      const newSlaveBeatFrac = newSlaveBeatPos - Math.floor(newSlaveBeatPos);
+      console.log("[SYNC] phase after: master=", masterBeatFrac.toFixed(3), "slave=", newSlaveBeatFrac.toFixed(3));
+    }
+
+    // Broadcast rate so partner mirrors the speed change. Mirrors lsRef pattern
     // used elsewhere for deck_update so sync_response carries rate too.
     const k = `deck${slave}`;
     lsRef.current[k] = { ...(lsRef.current[k]||{}), rate };
     sync.send({ type:"deck_update", deckId: slave, field: "rate", value: rate });
-  }, [bpm.results, sync]);
+  }, [bpm.results, sync, pA, pB, wfA, wfB]);
 
   const updateEqA = useCallback((field, val) => {
     setEqA(e => ({...e, [field]:val}));
