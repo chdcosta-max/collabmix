@@ -3292,7 +3292,7 @@ function Knob({ v, set, min=-12, max=12, ctr=0, label, color="#C8A96E", size=38,
 // ── Deck ─────────────────────────────────────────────────────
 const HOT_CUE_COLORS=["#C8A96E","#ef4444","#22c55e","#f59e0b"];
 
-function Deck({ id, ch, ctx:ac, color, local, remote, onChange, midi:mt, bpmResult, bpmAnalyze, eqHi=0, eqMid=0, eqLo=0, chanVol=1, loadFromLibrary=null, onTrackInfo=null, onSync=null, onLibraryTrackDrop=null, onProgUpdate=null, onWaveform=null, onSeekReady=null, remoteSeek=null, onToggleReady=null, onCueReady=null, remoteToggle=null, remoteCue=null, onTransportFire=null }) {
+function Deck({ id, ch, ctx:ac, color, local, remote, onChange, midi:mt, bpmResult, bpmAnalyze, eqHi=0, eqMid=0, eqLo=0, chanVol=1, loadFromLibrary=null, onTrackInfo=null, onSync=null, syncReady=true, onLibraryTrackDrop=null, onProgUpdate=null, onWaveform=null, onSeekReady=null, remoteSeek=null, onToggleReady=null, onCueReady=null, remoteToggle=null, remoteCue=null, onTransportFire=null }) {
   const [buf,setBuf]=useState(null),[name,setName]=useState(null),[play,setPlay]=useState(false);
   const [prog,setProg]=useState(0),[dur,setDur]=useState(0);
   const progRef=useRef(0); // mirror of prog for parent AnimatedZoomedWF without 60fps setState
@@ -3698,7 +3698,18 @@ function Deck({ id, ch, ctx:ac, color, local, remote, onChange, midi:mt, bpmResu
           {playVisual?"⏸":"▶"}
         </button>
         <button onClick={local?()=>seek(Math.min(1,prog+.005)):undefined} disabled={!local} style={{height:48,width:36,background:"#111118",border:"1px solid #1e1e28",color:local?"#888898":"#2a2a38",borderRadius:6,cursor:local?"pointer":"default",fontFamily:"'DM Mono',monospace",fontSize:13,outline:"none"}}>▸▸</button>
-        {onSync&&<button onClick={onSync} disabled={!buf||!bpmResult?.bpm} style={{height:48,padding:"0 10px",background:buf&&bpmResult?.bpm?"#22c55e18":"transparent",border:`1px solid ${buf&&bpmResult?.bpm?"#22c55e66":"#22c55e22"}`,color:buf&&bpmResult?.bpm?"#22c55e":"#22c55e44",borderRadius:7,cursor:buf&&bpmResult?.bpm?"pointer":"default",fontFamily:"'DM Mono',monospace",fontSize:10,fontWeight:700,letterSpacing:1.5,outline:"none",flexShrink:0}}>SYNC</button>}
+        {onSync&&(()=>{
+          const canSync = !!buf && !!bpmResult?.bpm && syncReady;
+          return (
+            <button
+              onClick={canSync ? onSync : undefined}
+              disabled={!canSync}
+              title={!buf?"Load a track":!bpmResult?.bpm?"Waiting for BPM":!syncReady?"Other deck has no BPM yet":"Match this deck's BPM to the other"}
+              style={{height:48,padding:"0 10px",background:canSync?"#22c55e18":"transparent",border:`1px solid ${canSync?"#22c55e66":"#22c55e22"}`,color:canSync?"#22c55e":"#22c55e44",borderRadius:7,cursor:canSync?"pointer":"not-allowed",opacity:canSync?1:0.4,fontFamily:"'DM Mono',monospace",fontSize:10,fontWeight:700,letterSpacing:1.5,outline:"none",flexShrink:0}}>
+              SYNC
+            </button>
+          );
+        })()}
       </div>
 
       <div style={{display:"none"}} data-set-rate={id} ref={el=>{if(el)el._setRate=setRate;}}/>
@@ -4620,9 +4631,16 @@ export default function CollabMix({ initialPage = "landing", djName = null }) {
   // FIX: beat sync now updates rateA/rateB state AND deck playback rate
   const syncDecks = useCallback((slave, targetBPM) => {
     const srcBPM = bpm.results[slave]?.bpm;
-    if (!srcBPM || !targetBPM) return;
+    console.log("[SYNC] triggered for deck", slave, "sourceBPM=", srcBPM, "targetBPM=", targetBPM);
+    if (!srcBPM || !targetBPM) {
+      console.log("[SYNC] no target BPM available, ignoring (srcBPM=", srcBPM, "targetBPM=", targetBPM, ")");
+      return;
+    }
     const rate = targetBPM / srcBPM;
-    if (Math.abs(rate-1) > 0.12) return;
+    if (Math.abs(rate-1) > 0.12) {
+      console.log("[SYNC] ignored, rate", rate, "outside ±12% safety window");
+      return;
+    }
     if (slave==="A") {
       setRateA(rate);
       const el = document.querySelector("[data-set-rate='A']");
@@ -4632,7 +4650,13 @@ export default function CollabMix({ initialPage = "landing", djName = null }) {
       const el = document.querySelector("[data-set-rate='B']");
       if (el?._setRate) el._setRate(rate);
     }
-  }, [bpm.results]);
+    console.log("[SYNC] applied rate=", rate);
+    // Broadcast so partner mirrors the rate change. Mirrors lsRef pattern
+    // used elsewhere for deck_update so sync_response carries rate too.
+    const k = `deck${slave}`;
+    lsRef.current[k] = { ...(lsRef.current[k]||{}), rate };
+    sync.send({ type:"deck_update", deckId: slave, field: "rate", value: rate });
+  }, [bpm.results, sync]);
 
   const updateEqA = useCallback((field, val) => {
     setEqA(e => ({...e, [field]:val}));
@@ -4857,7 +4881,7 @@ export default function CollabMix({ initialPage = "landing", djName = null }) {
             <span style={{ fontSize:11, fontFamily:"'DM Sans',sans-serif", fontWeight:500, color:"#7B61FFaa", letterSpacing:.3 }}>{session.name}</span>
           </div>
           <div style={{ flex:1, overflow:"hidden", minHeight:0 }}>
-            <Deck id="A" ch={eng.current?.A} ctx={eng.current?.ctx} color="#7B61FF" local remote={pA} onChange={dh("A")} midi={midiEvt} bpmResult={bpm.results["A"]} bpmAnalyze={bpm.analyze} eqHi={eqA.hi} eqMid={eqA.mid} eqLo={eqA.lo} chanVol={eqA.vol} loadFromLibrary={libLoadA} onTrackInfo={handleTrackInfo} onSync={()=>syncDecks("A",bpm.results["B"]?.bpm)} onLibraryTrackDrop={(trackId)=>{const t=lib.library.find(x=>x.id===trackId);if(t)handleLibLoad(t,"A");}} onProgUpdate={handleProgA} onWaveform={setWfA} onSeekReady={onDeckASeekReady} onToggleReady={onDeckAToggleReady} onCueReady={onDeckACueReady} onTransportFire={sync.send}/>
+            <Deck id="A" ch={eng.current?.A} ctx={eng.current?.ctx} color="#7B61FF" local remote={pA} onChange={dh("A")} midi={midiEvt} bpmResult={bpm.results["A"]} bpmAnalyze={bpm.analyze} eqHi={eqA.hi} eqMid={eqA.mid} eqLo={eqA.lo} chanVol={eqA.vol} loadFromLibrary={libLoadA} onTrackInfo={handleTrackInfo} onSync={()=>syncDecks("A", bpm.results["B"]?.bpm || pB?.bpm)} syncReady={!!(bpm.results["B"]?.bpm || pB?.bpm)} onLibraryTrackDrop={(trackId)=>{const t=lib.library.find(x=>x.id===trackId);if(t)handleLibLoad(t,"A");}} onProgUpdate={handleProgA} onWaveform={setWfA} onSeekReady={onDeckASeekReady} onToggleReady={onDeckAToggleReady} onCueReady={onDeckACueReady} onTransportFire={sync.send}/>
           </div>
         </div>
 
@@ -4956,7 +4980,7 @@ export default function CollabMix({ initialPage = "landing", djName = null }) {
             {sync.partner&&<span style={{ fontSize:11, fontFamily:"'DM Sans',sans-serif", fontWeight:500, color:"#00BFA5aa", letterSpacing:.3 }}>{sync.partner}</span>}
           </div>
           <div style={{ flex:1, overflow:"hidden", minHeight:0 }}>
-            <Deck id="B" ch={eng.current?.B} ctx={eng.current?.ctx} color="#00BFA5" local remote={pB} onChange={dh("B")} midi={midiEvt} bpmResult={bpm.results["B"]} bpmAnalyze={bpm.analyze} eqHi={eqB.hi} eqMid={eqB.mid} eqLo={eqB.lo} chanVol={eqB.vol} loadFromLibrary={libLoadB} onTrackInfo={handleTrackInfo} onSync={()=>syncDecks("B",bpm.results["A"]?.bpm)} onLibraryTrackDrop={(trackId)=>{const t=lib.library.find(x=>x.id===trackId);if(t)handleLibLoad(t,"B");}} onProgUpdate={handleProgB} onWaveform={setWfB} onSeekReady={onDeckBSeekReady} onToggleReady={onDeckBToggleReady} onCueReady={onDeckBCueReady} onTransportFire={sync.send}/>
+            <Deck id="B" ch={eng.current?.B} ctx={eng.current?.ctx} color="#00BFA5" local remote={pB} onChange={dh("B")} midi={midiEvt} bpmResult={bpm.results["B"]} bpmAnalyze={bpm.analyze} eqHi={eqB.hi} eqMid={eqB.mid} eqLo={eqB.lo} chanVol={eqB.vol} loadFromLibrary={libLoadB} onTrackInfo={handleTrackInfo} onSync={()=>syncDecks("B", bpm.results["A"]?.bpm || pA?.bpm)} syncReady={!!(bpm.results["A"]?.bpm || pA?.bpm)} onLibraryTrackDrop={(trackId)=>{const t=lib.library.find(x=>x.id===trackId);if(t)handleLibLoad(t,"B");}} onProgUpdate={handleProgB} onWaveform={setWfB} onSeekReady={onDeckBSeekReady} onToggleReady={onDeckBToggleReady} onCueReady={onDeckBCueReady} onTransportFire={sync.send}/>
           </div>
         </div>
 
