@@ -4542,7 +4542,6 @@ export default function CollabMix({ initialPage = "landing", djName = null }) {
   // never read stale closures.
   useEffect(() => { partnerRef.current = sync.partner; }, [sync.partner]);
   useEffect(() => { rtcRef.current = rtc; });
-  useEffect(() => { isInitiatorRef.current = isInitiatorRole; }, [isInitiatorRole]);
 
   // Deterministic role election to avoid WebRTC offer/answer glare.
   // Lexicographically smaller name initiates; same-name fallback uses URL
@@ -4555,6 +4554,10 @@ export default function CollabMix({ initialPage = "landing", djName = null }) {
     if (myName !== partnerName) return myName < partnerName;
     return !new URLSearchParams(window.location.search).get('room');
   }, [session]);
+
+  // Mirror role-election helper into a ref so handleWS (stale-deps useCallback)
+  // can call the freshest version. Must follow isInitiatorRole declaration.
+  useEffect(() => { isInitiatorRef.current = isInitiatorRole; }, [isInitiatorRole]);
 
   // Reset reconnect counter when WebRTC successfully connects.
   useEffect(() => {
