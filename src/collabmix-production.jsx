@@ -2599,6 +2599,7 @@ function useRTC({ engineRef, send }) {
   const [state, setState] = useState("idle");
   const [muted, setMuted] = useState(false);
   const [remVol, setRemVol] = useState(0.85);
+  const [autoplayBlocked, setAutoplayBlocked] = useState(false);
   const pc=useRef(null),dest=useRef(null),remAudio=useRef(null),pend=useRef([]),sRef=useRef(send);
   useEffect(()=>{sRef.current=send;},[send]);
 
@@ -2607,30 +2608,92 @@ function useRTC({ engineRef, send }) {
     const d=eng.ctx.createMediaStreamDestination(); eng.master.connect(d); dest.current=d; return d.stream;
   },[engineRef]);
 
+  const tryPlayRemote = useCallback(() => {
+    const a = remAudio.current;
+    if (!a) return;
+    a.play().then(() => {
+      console.log('[RTC] audio element play() succeeded');
+      setAutoplayBlocked(false);
+    }).catch(err => {
+      console.log('[RTC] audio element play() failed:', err.name, err.message);
+      setAutoplayBlocked(true);
+    });
+  }, []);
+
   const mkPC = useCallback(() => {
     if(pc.current)pc.current.close();
     const p=new RTCPeerConnection(ICE); pc.current=p;
     p.onicecandidate=({candidate})=>{if(candidate)sRef.current({type:"rtc_ice",candidate:candidate.toJSON()});};
-    p.oniceconnectionstatechange=()=>{ const s=p.iceConnectionState; if(s==="connected"||s==="completed")setState("connected"); if(s==="failed")setState("failed"); if(s==="closed")setState("idle"); };
-    p.ontrack=({streams})=>{ if(streams[0]){if(!remAudio.current){remAudio.current=new Audio();remAudio.current.autoplay=true;} remAudio.current.srcObject=streams[0]; remAudio.current.volume=Math.min(1,remVol);} };
+    p.oniceconnectionstatechange=()=>{
+      const s=p.iceConnectionState;
+      console.log('[RTC] ice state:', s);
+      if(s==="connected"||s==="completed")setState("connected");
+      if(s==="failed")setState("failed");
+      if(s==="closed")setState("idle");
+    };
+    p.onconnectionstatechange=()=>{ console.log('[RTC] connection state:', p.connectionState); };
+    p.ontrack=({streams})=>{
+      console.log('[RTC] incoming track received');
+      if(!streams[0])return;
+      if(!remAudio.current){remAudio.current=new Audio();remAudio.current.autoplay=true;}
+      remAudio.current.srcObject=streams[0];
+      remAudio.current.volume=Math.min(1,remVol);
+      // Explicit play() so we can observe autoplay-policy rejections and surface them.
+      tryPlayRemote();
+    };
     return p;
-  },[remVol]);
+  },[remVol,tryPlayRemote]);
 
   useEffect(()=>{ if(remAudio.current)remAudio.current.volume=Math.min(1,remVol); },[remVol]);
 
+  // One-time document click handler that retries play() once user has interacted.
+  // Browser autoplay policy blocks <audio>.play() until a user gesture has occurred
+  // on the page; this catches that case without forcing the user to click an exact
+  // banner button.
+  useEffect(()=>{
+    if(!autoplayBlocked) return;
+    const handler = () => { tryPlayRemote(); };
+    document.addEventListener('click', handler, { once: true });
+    return () => document.removeEventListener('click', handler);
+  },[autoplayBlocked,tryPlayRemote]);
+
   const startCall = useCallback(async()=>{
+    console.log('[RTC] startCall fired');
     setState("connecting");
-    try{ const s=capture(); const p=mkPC(); s.getTracks().forEach(t=>p.addTrack(t,s)); const o=await p.createOffer({offerToReceiveAudio:true}); await p.setLocalDescription(o); sRef.current({type:"rtc_offer",sdp:p.localDescription}); setState("offering"); }
-    catch(e){console.error(e);setState("failed");}
+    try{
+      const s=capture(); const p=mkPC();
+      s.getTracks().forEach(t=>p.addTrack(t,s));
+      const o=await p.createOffer({offerToReceiveAudio:true});
+      await p.setLocalDescription(o);
+      sRef.current({type:"rtc_offer",sdp:p.localDescription});
+      console.log('[RTC] offer created and sent');
+      setState("offering");
+    } catch(e){ console.error('[RTC] startCall error:',e); setState("failed"); }
   },[capture,mkPC]);
 
   const handleOffer = useCallback(async({sdp})=>{
+    console.log('[RTC] offer received, answering');
     setState("answering");
-    try{ const s=capture(); const p=mkPC(); s.getTracks().forEach(t=>p.addTrack(t,s)); await p.setRemoteDescription(new RTCSessionDescription(sdp)); for(const c of pend.current){try{await p.addIceCandidate(new RTCIceCandidate(c));}catch{}} pend.current=[]; const a=await p.createAnswer(); await p.setLocalDescription(a); sRef.current({type:"rtc_answer",sdp:p.localDescription}); setState("connecting"); }
-    catch(e){console.error(e);setState("failed");}
+    try{
+      const s=capture(); const p=mkPC();
+      s.getTracks().forEach(t=>p.addTrack(t,s));
+      await p.setRemoteDescription(new RTCSessionDescription(sdp));
+      for(const c of pend.current){try{await p.addIceCandidate(new RTCIceCandidate(c));}catch{}} pend.current=[];
+      const a=await p.createAnswer();
+      await p.setLocalDescription(a);
+      sRef.current({type:"rtc_answer",sdp:p.localDescription});
+      setState("connecting");
+    } catch(e){ console.error('[RTC] handleOffer error:',e); setState("failed"); }
   },[capture,mkPC]);
 
-  const handleAnswer = useCallback(async({sdp})=>{ if(!pc.current)return; try{await pc.current.setRemoteDescription(new RTCSessionDescription(sdp)); for(const c of pend.current){try{await pc.current.addIceCandidate(new RTCIceCandidate(c));}catch{}} pend.current=[];}catch(e){console.error(e);} },[]);
+  const handleAnswer = useCallback(async({sdp})=>{
+    console.log('[RTC] answer received');
+    if(!pc.current)return;
+    try{
+      await pc.current.setRemoteDescription(new RTCSessionDescription(sdp));
+      for(const c of pend.current){try{await pc.current.addIceCandidate(new RTCIceCandidate(c));}catch{}} pend.current=[];
+    } catch(e){ console.error('[RTC] handleAnswer error:',e); }
+  },[]);
   const handleIce   = useCallback(async({candidate})=>{ if(!candidate)return; if(pc.current?.remoteDescription){try{await pc.current.addIceCandidate(new RTCIceCandidate(candidate));}catch{}}else pend.current.push(candidate); },[]);
   const endCall     = useCallback(()=>{
     sRef.current({type:"rtc_hangup"});
@@ -2642,13 +2705,14 @@ function useRTC({ engineRef, send }) {
     }
     dest.current=null;
     if(remAudio.current)remAudio.current.srcObject=null;
+    setAutoplayBlocked(false);
     setState("idle");
   },[engineRef]);
   const toggleMute  = useCallback(()=>{ dest.current?.stream.getTracks().forEach(t=>{t.enabled=muted;}); setMuted(m=>!m); },[muted]);
   const handleRtc   = useCallback((msg)=>{ switch(msg.type){case"rtc_offer":handleOffer(msg);break;case"rtc_answer":handleAnswer(msg);break;case"rtc_ice":handleIce(msg);break;case"rtc_hangup":endCall();break;} },[handleOffer,handleAnswer,handleIce,endCall]);
 
   useEffect(()=>()=>endCall(),[]);
-  return { state, muted, remVol, setRemVol, startCall, endCall, toggleMute, handleRtc };
+  return { state, muted, remVol, setRemVol, autoplayBlocked, startCall, endCall, toggleMute, handleRtc };
 }
 
 // ── MIDI ─────────────────────────────────────────────────────
@@ -4147,6 +4211,14 @@ export default function CollabMix({ initialPage = "landing", djName = null }) {
   const lsRef                   = useRef({ deckA:{}, deckB:{}, xfade:.5 });
   const rateARef                = useRef(null); // DOM refs to call setRate on Deck
   const rateBRef                = useRef(null);
+  // RTC auto-start / auto-reconnect plumbing.
+  // Refs track the latest values so handleWS (a stale-deps useCallback) and
+  // setTimeout callbacks can read them without stale-closure bugs.
+  const partnerRef              = useRef(null); // mirrors sync.partner
+  const rtcRef                  = useRef(null); // mirrors latest rtc
+  const rtcReconnectAttemptsRef = useRef(0);    // increments per rtc_hangup retry
+  const rtcReconnectTimerRef    = useRef(null); // pending reconnect timer
+  const [rtcReconnectExhausted, setRtcReconnectExhausted] = useState(false);
 
   const bpm = useBPM();
   const rec = useRecorder({ engineRef: eng });
@@ -4395,6 +4467,29 @@ export default function CollabMix({ initialPage = "landing", djName = null }) {
   useEffect(()=>{ if(ready) applyFilter("B",eqB.filter); },[eqB.filter,ready]);
 
   const handleWS = useCallback((m) => {
+    if (m.type==="rtc_hangup") {
+      // Schedule reconnect BEFORE rtc.handleRtc runs endCall, so we use the
+      // most recent attempt count. Skip if partner already gone (they actually
+      // left; server sends partner_left BEFORE rtc_hangup on close).
+      if (partnerRef.current) {
+        if (rtcReconnectAttemptsRef.current < 3) {
+          const attempt = rtcReconnectAttemptsRef.current + 1;
+          rtcReconnectAttemptsRef.current = attempt;
+          console.log(`[RTC] rtc_hangup received, attempting reconnect (attempt ${attempt}/3)`);
+          clearTimeout(rtcReconnectTimerRef.current);
+          rtcReconnectTimerRef.current = setTimeout(() => {
+            if (partnerRef.current && rtcRef.current) {
+              rtcRef.current.startCall();
+            } else {
+              console.log('[RTC] partner left during reconnect wait, skipping retry');
+            }
+          }, 1000);
+        } else {
+          console.log('[RTC] reconnect retries exhausted, giving up');
+          setRtcReconnectExhausted(true);
+        }
+      }
+    }
     if (m.type==="joined")        { if(m.partnerState?.deckA)setPA(m.partnerState.deckA); if(m.partnerState?.deckB)setPB(m.partnerState.deckB); }
     if (m.type==="deck_update")    {
       // 1) Mirror partner's deck state for visuals
@@ -4425,6 +4520,40 @@ export default function CollabMix({ initialPage = "landing", djName = null }) {
 
   const sync = useSync({ url: SERVER_URL, onMsg: handleWS });
   const rtc  = useRTC({ engineRef: eng, send: sync.send });
+
+  // Keep refs synced with the latest values so handleWS / setTimeout callbacks
+  // never read stale closures.
+  useEffect(() => { partnerRef.current = sync.partner; }, [sync.partner]);
+  useEffect(() => { rtcRef.current = rtc; });
+
+  // Reset reconnect counter when WebRTC successfully connects.
+  useEffect(() => {
+    if (rtc.state === "connected") {
+      rtcReconnectAttemptsRef.current = 0;
+      setRtcReconnectExhausted(false);
+    }
+  }, [rtc.state]);
+
+  // Auto-start WebRTC ~500ms after a partner is detected (covers both "you
+  // joined an existing partner" and "partner joined you"). Both browsers fire;
+  // the second offer to arrive triggers handleOffer which closes the in-flight
+  // pc and answers — current code converges through this glare. Skip if rtc is
+  // already past idle (partner's offer beat us to it).
+  useEffect(() => {
+    if (!sync.partner) return;
+    console.log('[RTC] partner present (', sync.partner, '), auto-starting call in 500ms');
+    rtcReconnectAttemptsRef.current = 0;
+    setRtcReconnectExhausted(false);
+    const timer = setTimeout(() => {
+      const r = rtcRef.current;
+      if (r && r.state === "idle") r.startCall();
+      else console.log('[RTC] auto-start skipped, rtc state was:', r?.state);
+    }, 500);
+    return () => clearTimeout(timer);
+  }, [sync.partner]);
+
+  // Cancel any pending reconnect on unmount.
+  useEffect(() => () => clearTimeout(rtcReconnectTimerRef.current), []);
 
   // Auto-connect WebSocket on session mount. The original flow opened the
   // socket from <Lobby>'s join() call, but the landing-page bypass shortcut
@@ -4588,7 +4717,23 @@ export default function CollabMix({ initialPage = "landing", djName = null }) {
           </div>
           {sync.connErr && <span style={{ fontSize:9, fontFamily:"'DM Mono',monospace", color:"#ef4444", background:"#ef444411", border:"1px solid #ef444422", borderRadius:4, padding:"1px 8px" }}>{sync.connErr}</span>}
           {sync.partner&&<div style={{ fontSize:9, fontFamily:"'DM Mono',monospace", color:G, background:`${G}0e`, border:`1px solid ${G}28`, borderRadius:5, padding:"2px 10px", letterSpacing:.5 }}>⟺ {sync.partner}</div>}
-          {rtc.state==="connected"&&<div style={{ fontSize:9, fontFamily:"'DM Mono',monospace", color:"#22c55e", background:"#22c55e0d", border:"1px solid #22c55e28", borderRadius:5, padding:"2px 10px", letterSpacing:.5 }}>LIVE</div>}
+          {(() => {
+            // AUDIO status pill — surfaces WebRTC state so users know if partner audio is flowing.
+            const isBusy = ["offering","answering","connecting"].includes(rtc.state);
+            const status =
+              !sync.partner            ? { label:"AUDIO: OFFLINE",       c:"#555562", pulse:false }
+              : rtcReconnectExhausted  ? { label:"AUDIO: FAILED",        c:"#ef4444", pulse:false }
+              : rtc.state==="connected"? { label:"AUDIO: STREAMING",     c:"#22c55e", pulse:false }
+              : rtc.state==="failed"   ? { label:"AUDIO: FAILED",        c:"#ef4444", pulse:false }
+              : isBusy                 ? { label:"AUDIO: CONNECTING…",   c:"#f59e0b", pulse:true  }
+              :                          { label:"AUDIO: CONNECTING…",   c:"#f59e0b", pulse:true  };
+            return (
+              <div style={{ fontSize:9, fontFamily:"'DM Mono',monospace", color:status.c, background:`${status.c}0d`, border:`1px solid ${status.c}33`, borderRadius:5, padding:"2px 10px", letterSpacing:.5, display:"flex", gap:6, alignItems:"center" }}>
+                <div style={{ width:5, height:5, borderRadius:"50%", background:status.c, boxShadow:`0 0 6px ${status.c}`, animation: status.pulse?"pulse .9s infinite":"none" }}/>
+                <span>{status.label}</span>
+              </div>
+            );
+          })()}
           {rec.state==="recording"&&<div style={{ fontSize:9, fontFamily:"'DM Mono',monospace", color:"#ef4444", background:"#ef444411", border:"1px solid #ef444428", borderRadius:5, padding:"2px 10px", animation:"pulse .8s infinite", letterSpacing:.5 }}>REC {String(Math.floor(rec.dur/60)).padStart(2,"0")}:{String(Math.floor(rec.dur%60)).padStart(2,"0")}</div>}
           {midi.active&&<div style={{ fontSize:9, fontFamily:"'DM Mono',monospace", color:G, background:`${G}0d`, border:`1px solid ${G}28`, borderRadius:5, padding:"2px 10px", letterSpacing:.5 }}>MIDI</div>}
         </div>
@@ -4598,6 +4743,15 @@ export default function CollabMix({ initialPage = "landing", djName = null }) {
           <button onClick={leave} style={{ height:24, padding:"0 10px", background:"transparent", border:"1px solid #ef444433", color:"#ef4444", borderRadius:6, cursor:"pointer", fontFamily:"'DM Mono',monospace", fontSize:9, letterSpacing:.5 }}>LEAVE</button>
         </div>
       </div>
+
+      {/* AUTOPLAY-BLOCKED BANNER — shown when the browser blocked the partner audio
+          element from playing. The document-level click handler in useRTC will
+          retry play() on the next click anywhere, so the banner is informational. */}
+      {rtc.autoplayBlocked && (
+        <div style={{ flexShrink:0, padding:"8px 14px", background:"#f59e0b18", borderBottom:"1px solid #f59e0b44", color:"#f59e0b", fontSize:11, fontFamily:"'DM Mono',monospace", letterSpacing:.5, textAlign:"center" }}>
+          🔇 Click anywhere to enable partner audio
+        </div>
+      )}
 
       {/* MAIN CONTENT AREA */}
       <div style={{ flex:1, display:"flex", flexDirection:"column", overflow:"visible", minHeight:0 }}>
