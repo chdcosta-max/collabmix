@@ -3,17 +3,19 @@ import react from '@vitejs/plugin-react'
 import { sentryVitePlugin } from '@sentry/vite-plugin'
 import { resolve } from 'path'
 
+const sentryToken = process.env.SENTRY_AUTH_TOKEN;
+const sentryEnabled = !!sentryToken && !sentryToken.startsWith("PLACEHOLDER");
+
 export default defineConfig({
   plugins: [
     react(),
-    sentryVitePlugin({
+    ...(sentryEnabled ? [sentryVitePlugin({
       org: "mixsync",
       project: "mixsync",
-      authToken: process.env.SENTRY_AUTH_TOKEN,
-      disable: !process.env.SENTRY_AUTH_TOKEN,
+      authToken: sentryToken,
       sourcemaps: { assets: "./dist/**" },
       release: { name: process.env.VERCEL_GIT_COMMIT_SHA || "dev" },
-    }),
+    })] : []),
   ],
   build: {
     sourcemap: true,

@@ -3297,7 +3297,7 @@ function Knob({ v, set, min=-12, max=12, ctr=0, label, color="#C8A96E", size=38,
 // ── Deck ─────────────────────────────────────────────────────
 const HOT_CUE_COLORS=["#C8A96E","#ef4444","#22c55e","#f59e0b"];
 
-function Deck({ id, ch, ctx:ac, color, local, remote, onChange, midi:mt, bpmResult, bpmAnalyze, eqHi=0, eqMid=0, eqLo=0, chanVol=1, loadFromLibrary=null, onTrackInfo=null, onSync=null, syncReady=true, syncRole=null, onLibraryTrackDrop=null, onProgUpdate=null, onWaveform=null, onSeekReady=null, remoteSeek=null, onToggleReady=null, onCueReady=null, remoteToggle=null, remoteCue=null, onTransportFire=null }) {
+function Deck({ id, ch, ctx:ac, color, local, remote, onChange, midi:mt, bpmResult, bpmAnalyze, eqHi=0, eqMid=0, eqLo=0, chanVol=1, loadFromLibrary=null, onTrackInfo=null, onSync=null, syncReady=true, syncRole=null, isMaster=false, onMasterToggle=null, onLibraryTrackDrop=null, onProgUpdate=null, onWaveform=null, onSeekReady=null, remoteSeek=null, onToggleReady=null, onCueReady=null, remoteToggle=null, remoteCue=null, onTransportFire=null }) {
   const [buf,setBuf]=useState(null),[name,setName]=useState(null),[play,setPlay]=useState(false);
   const [prog,setProg]=useState(0),[dur,setDur]=useState(0);
   const progRef=useRef(0); // mirror of prog for parent AnimatedZoomedWF without 60fps setState
@@ -3727,25 +3727,44 @@ function Deck({ id, ch, ctx:ac, color, local, remote, onChange, midi:mt, bpmResu
           {playVisual?"⏸":"▶"}
         </button>
         <button onClick={local?()=>seek(Math.min(1,prog+.005)):undefined} disabled={!local} style={{height:48,width:36,background:"#111118",border:"1px solid #1e1e28",color:local?"#888898":"#2a2a38",borderRadius:6,cursor:local?"pointer":"default",fontFamily:"'DM Mono',monospace",fontSize:13,outline:"none"}}>▸▸</button>
+        {onMasterToggle&&(
+          <button
+            onClick={()=>onMasterToggle(id)}
+            title={isMaster ? "This deck is the master (reference) — click to clear" : "Mark this deck as the SYNC master"}
+            style={{
+              height:48, width:32,
+              background: isMaster ? "#22c55e22" : "transparent",
+              border: `1px solid ${isMaster ? "#22c55e" : "#22c55e44"}`,
+              color: isMaster ? "#22c55e" : "#22c55e88",
+              borderRadius:7,
+              cursor:"pointer",
+              fontFamily:"'DM Mono',monospace",
+              fontSize:11, fontWeight:700, letterSpacing:1,
+              outline:"none", flexShrink:0,
+              boxShadow: isMaster ? "0 0 10px #22c55e55" : "none",
+              transition:"all .15s",
+              display:"flex", alignItems:"center", justifyContent:"center",
+            }}>M</button>
+        )}
         {onSync&&(()=>{
           const isAnalyzing = !!buf && !bpmResult?.bpm && !!bpmResult?.analyzing;
           const canSync = !!buf && !!bpmResult?.bpm && syncReady;
           const isSlave  = syncRole === "slave";
-          const isMaster = syncRole === "master";
-          const isLocked = isSlave || isMaster;
+          const isMasterRole = syncRole === "master";
+          const isLocked = isSlave || isMasterRole;
           const clickable = canSync || isLocked; // locked is clickable too — click to release
           // States: slave (filled green + glow + dot, label "SYNC"), master
           // (outlined green, label "MASTER"), canSync (green outline, "SYNC"),
           // analyzing (amber pulse, "SYNC"), disabled (greyed, "SYNC").
           const tone =
-            isSlave       ? { bg:"#22c55e44",   border:"#22c55e",   color:"#0a1a10",   cursor:"pointer",      opacity:1,   pulse:false, glow:true,  dot:true  }
-            : isMaster    ? { bg:"transparent", border:"#22c55e",   color:"#22c55e",   cursor:"pointer",      opacity:1,   pulse:false, glow:false, dot:false }
-            : canSync     ? { bg:"#22c55e18",   border:"#22c55e66", color:"#22c55e",   cursor:"pointer",      opacity:1,   pulse:false, glow:false, dot:false }
-            : isAnalyzing ? { bg:"#f59e0b14",   border:"#f59e0b55", color:"#f59e0b",   cursor:"progress",     opacity:1,   pulse:true,  glow:false, dot:false }
-            :               { bg:"transparent", border:"#22c55e22", color:"#22c55e44", cursor:"not-allowed",  opacity:0.4, pulse:false, glow:false, dot:false };
-          const label = isMaster ? "MASTER" : "SYNC";
-          const tip = isSlave  ? "This deck is the slave (locked) — click to release"
-            : isMaster         ? "This deck is the master (reference) — click to release"
+            isSlave        ? { bg:"#22c55e44",   border:"#22c55e",   color:"#0a1a10",   cursor:"pointer",      opacity:1,   pulse:false, glow:true,  dot:true  }
+            : isMasterRole ? { bg:"transparent", border:"#22c55e",   color:"#22c55e",   cursor:"pointer",      opacity:1,   pulse:false, glow:false, dot:false }
+            : canSync      ? { bg:"#22c55e18",   border:"#22c55e66", color:"#22c55e",   cursor:"pointer",      opacity:1,   pulse:false, glow:false, dot:false }
+            : isAnalyzing  ? { bg:"#f59e0b14",   border:"#f59e0b55", color:"#f59e0b",   cursor:"progress",     opacity:1,   pulse:true,  glow:false, dot:false }
+            :                { bg:"transparent", border:"#22c55e22", color:"#22c55e44", cursor:"not-allowed",  opacity:0.4, pulse:false, glow:false, dot:false };
+          const label = isMasterRole ? "MASTER" : "SYNC";
+          const tip = isSlave    ? "This deck is the slave (locked) — click to release"
+            : isMasterRole       ? "This deck is the master (reference) — click to release"
             : !buf             ? "Load a track"
             : isAnalyzing      ? "Analyzing BPM…"
             : !bpmResult?.bpm  ? "Waiting for BPM"
@@ -4293,6 +4312,10 @@ export default function CollabMix({ initialPage = "landing", djName = null }) {
   // (so the SYNC button visual can branch master vs slave on render).
   const [lastSlaveDeck, setLastSlaveDeck] = useState(null);
   const lastSlaveDeckRef = useRef(null);
+  // Explicit master selection. null = no explicit master (fall back to implicit
+  // "other deck = master" when SYNC engages). Mirrored across browsers.
+  const [masterDeck, setMasterDeck] = useState(null);
+  const masterDeckRef = useRef(null);
   // Auto re-align when user scrubs while locked (Problem 1)
   const scrubResyncTimerRef     = useRef(null);
   const lastScrubResyncTimeRef  = useRef(0);
@@ -4611,6 +4634,13 @@ export default function CollabMix({ initialPage = "landing", djName = null }) {
           setLastSlaveDeck(m.deckId);
         }
       }
+      // Mirror explicit master selection across browsers. Value is "A", "B",
+      // or null. m.deckId is ignored for this field — masterDeck is global.
+      if (m.field === "masterDeck") {
+        const v = m.value === "A" || m.value === "B" ? m.value : null;
+        masterDeckRef.current = v;
+        setMasterDeck(v);
+      }
     }
     if (m.type==="seek_request")   seekFnsRef.current[m.deckId]?.(m.value, true);
     if (m.type==="toggle_request") toggleFnsRef.current[m.deckId]?.(true);
@@ -4632,6 +4662,7 @@ export default function CollabMix({ initialPage = "landing", djName = null }) {
   // never read stale closures.
   useEffect(() => { partnerRef.current = sync.partner; }, [sync.partner]);
   useEffect(() => { rtcRef.current = rtc; });
+  useEffect(() => { masterDeckRef.current = masterDeck; }, [masterDeck]);
 
   // Mirror live session data (partner, ping) into Sentry context for crash reports.
   useEffect(() => {
@@ -4810,29 +4841,43 @@ export default function CollabMix({ initialPage = "landing", djName = null }) {
     sync.send({ type:"deck_update", deckId: slave, field: "rate", value: rate });
   }, [bpm.results, sync, pA, pB, wfA, wfB]);
 
-  // Global SYNC toggle. clickedDeck is the slave; the other deck is the master.
-  // OFF→ON: run syncDecks(slave→masterBPM), set lock, broadcast (carrying the
-  // slave's deckId so partners know which side is being driven).
-  // ON→OFF: just clear lock, broadcast.
+  // Global SYNC toggle. The slave is the clicked deck (or the not-master deck
+  // when an explicit master is set). Master is whichever has M turned on,
+  // else implicit "the other deck". OFF→ON: run syncDecks(slave→masterBPM),
+  // set lock, broadcast (carrying the slave's deckId so partners know which
+  // side is being driven). ON→OFF: just clear lock, broadcast.
   const handleSyncToggle = useCallback((clickedDeck) => {
-    const slaveDeck  = clickedDeck;
-    const masterDeck = clickedDeck === "A" ? "B" : "A";
     if (syncLocked) {
       console.log("[SYNC] toggle OFF");
       setSyncLocked(false);
-      const broadcastDeck = lastSlaveDeckRef.current || slaveDeck;
+      const broadcastDeck = lastSlaveDeckRef.current || clickedDeck;
       const k = `deck${broadcastDeck}`;
       lsRef.current[k] = { ...(lsRef.current[k]||{}), syncLocked: false };
       sync.send({ type:"deck_update", deckId: broadcastDeck, field: "syncLocked", value: false });
       logEvent("sync", "toggle", { locked: false, slave: broadcastDeck });
       return;
     }
-    const masterBPM = bpm.results[masterDeck]?.bpm || (masterDeck === "A" ? pA?.bpm : pB?.bpm);
+    const explicitMaster = masterDeckRef.current; // "A" | "B" | null
+    let effectiveMaster, slaveDeck, masterMode;
+    if (explicitMaster) {
+      if (clickedDeck === explicitMaster) {
+        console.log("[SYNC] toggle blocked: clicked deck is the explicit master (can't sync a deck to itself)");
+        return;
+      }
+      effectiveMaster = explicitMaster;
+      slaveDeck       = clickedDeck;
+      masterMode      = "explicit";
+    } else {
+      effectiveMaster = clickedDeck === "A" ? "B" : "A";
+      slaveDeck       = clickedDeck;
+      masterMode      = "implicit";
+    }
+    const masterBPM = bpm.results[effectiveMaster]?.bpm || (effectiveMaster === "A" ? pA?.bpm : pB?.bpm);
     if (!masterBPM) {
-      console.log("[SYNC] toggle blocked: no master BPM available");
+      console.log("[SYNC] toggle blocked: no master BPM available (mode=" + masterMode + ", master=" + effectiveMaster + ")");
       return;
     }
-    console.log("[SYNC] toggle ON — clicked deck", clickedDeck, "syncing to master", masterDeck, "bpm=", masterBPM);
+    console.log("[SYNC] toggle ON — slave=", slaveDeck, "master=", effectiveMaster, "mode=", masterMode, "bpm=", masterBPM);
     syncDecks(slaveDeck, masterBPM);
     lastSlaveDeckRef.current = slaveDeck;
     setLastSlaveDeck(slaveDeck);
@@ -4840,8 +4885,30 @@ export default function CollabMix({ initialPage = "landing", djName = null }) {
     const k = `deck${slaveDeck}`;
     lsRef.current[k] = { ...(lsRef.current[k]||{}), syncLocked: true };
     sync.send({ type:"deck_update", deckId: slaveDeck, field: "syncLocked", value: true });
-    logEvent("sync", "toggle", { locked: true, slave: slaveDeck });
+    logEvent("sync", "toggle", { locked: true, slave: slaveDeck, master: effectiveMaster, mode: masterMode });
   }, [syncLocked, syncDecks, bpm.results, pA, pB, sync]);
+
+  // Explicit master toggle. Click M on a deck → mark as master; click again
+  // → clear (no explicit master, SYNC will fall back to implicit logic).
+  // Clicking M on the OTHER deck moves master to that deck (only one master
+  // at a time). Broadcasts to partner. When syncLocked, swapping master also
+  // re-runs syncDecks with the new slave/master roles (handled by the master-
+  // change effect below). Clearing master while locked keeps the current
+  // slave (the re-sync effect will continue using lastSlaveDeck-implicit).
+  const handleMasterToggle = useCallback((deck) => {
+    const cur = masterDeckRef.current;
+    const next = cur === deck ? null : deck;
+    masterDeckRef.current = next;
+    setMasterDeck(next);
+    sync.send({ type:"deck_update", deckId: deck, field: "masterDeck", value: next });
+    if (next == null) {
+      console.log("[MASTER] cleared (no explicit master)");
+      logEvent("sync", "master_set", { master: null });
+    } else {
+      console.log("[MASTER] explicitly set to deck", next);
+      logEvent("sync", "master_set", { master: next });
+    }
+  }, [sync]);
 
   // Wrapper around sync.send for the Deck's onTransportFire prop. Forwards
   // every transport event to the partner (existing behavior) AND, when the
@@ -4861,7 +4928,8 @@ export default function CollabMix({ initialPage = "landing", djName = null }) {
       if (now - lastScrubResyncTimeRef.current < 200) return;
       const slave = lastSlaveDeckRef.current;
       if (slave !== "A" && slave !== "B") return;
-      const master = slave === "A" ? "B" : "A";
+      const explicitMaster = masterDeckRef.current;
+      const master = explicitMaster && explicitMaster !== slave ? explicitMaster : (slave === "A" ? "B" : "A");
       const masterBPM = bpm.results[master]?.bpm || (master === "A" ? pA?.bpm : pB?.bpm);
       if (!masterBPM) return;
       lastScrubResyncTimeRef.current = now;
@@ -4891,7 +4959,8 @@ export default function CollabMix({ initialPage = "landing", djName = null }) {
     }
     const slave = lastSlaveDeckRef.current;
     if (slave !== "A" && slave !== "B") return;
-    const master = slave === "A" ? "B" : "A";
+    const explicitMaster = masterDeckRef.current;
+    const master = explicitMaster && explicitMaster !== slave ? explicitMaster : (slave === "A" ? "B" : "A");
     const currentMasterBpm = (master === "A" ? bpmAValue : bpmBValue) || (master === "A" ? pA?.bpm : pB?.bpm);
     if (!currentMasterBpm) return;
     const prevRef        = master === "A" ? prevMasterBpmARef : prevMasterBpmBRef;
@@ -4910,6 +4979,40 @@ export default function CollabMix({ initialPage = "landing", djName = null }) {
     syncDecks(slave, currentMasterBpm);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [syncLocked, bpmAValue, bpmBValue, pA?.bpm, pB?.bpm]);
+
+  // Mid-lock master swap. When the user changes the explicit master via M
+  // button (or via partner mirror) while syncLocked is true, recompute slave
+  // and re-run syncDecks with the new master/slave assignment.
+  // Clearing master while locked (masterDeck → null) keeps the current slave.
+  useEffect(() => {
+    if (!syncLocked) return;
+    if (!masterDeck) return; // cleared — leave current slave alone
+    const currentSlave = lastSlaveDeckRef.current;
+    if (masterDeck === currentSlave) {
+      // Swap: master was just set to the deck that is currently slave. New
+      // slave becomes the previous master (the other deck).
+      const newSlave = masterDeck === "A" ? "B" : "A";
+      const masterBPM = bpm.results[masterDeck]?.bpm || (masterDeck === "A" ? pA?.bpm : pB?.bpm);
+      if (!masterBPM) return;
+      console.log("[SYNC] master swap mid-lock — new slave=", newSlave, "new master=", masterDeck);
+      lastSlaveDeckRef.current = newSlave;
+      setLastSlaveDeck(newSlave);
+      // Reset per-master prev-BPM refs so the BPM-change effect re-baselines.
+      prevMasterBpmARef.current = null;
+      prevMasterBpmBRef.current = null;
+      syncDecks(newSlave, masterBPM);
+    } else {
+      // Master set to the deck that is NOT the current slave — slave stays,
+      // but the new master may have a different BPM. Re-run syncDecks.
+      const masterBPM = bpm.results[masterDeck]?.bpm || (masterDeck === "A" ? pA?.bpm : pB?.bpm);
+      if (!masterBPM) return;
+      console.log("[SYNC] master set mid-lock to non-slave deck — re-aligning slave=", currentSlave, "to master=", masterDeck);
+      prevMasterBpmARef.current = null;
+      prevMasterBpmBRef.current = null;
+      syncDecks(currentSlave, masterBPM);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [masterDeck, syncLocked]);
 
   const updateEqA = useCallback((field, val) => {
     setEqA(e => ({...e, [field]:val}));
@@ -5137,7 +5240,7 @@ export default function CollabMix({ initialPage = "landing", djName = null }) {
             <span style={{ fontSize:11, fontFamily:"'DM Sans',sans-serif", fontWeight:500, color:"#7B61FFaa", letterSpacing:.3 }}>{session.name}</span>
           </div>
           <div style={{ flex:1, overflow:"hidden", minHeight:0 }}>
-            <Deck id="A" ch={eng.current?.A} ctx={eng.current?.ctx} color="#7B61FF" local remote={pA} onChange={dh("A")} midi={midiEvt} bpmResult={bpm.results["A"]} bpmAnalyze={bpm.analyze} eqHi={eqA.hi} eqMid={eqA.mid} eqLo={eqA.lo} chanVol={eqA.vol} loadFromLibrary={libLoadA} onTrackInfo={handleTrackInfo} onSync={()=>handleSyncToggle("A")} syncReady={!!(bpm.results["B"]?.bpm || pB?.bpm)} syncRole={syncLocked ? (lastSlaveDeck === "A" ? "slave" : "master") : null} onLibraryTrackDrop={(trackId)=>{const t=lib.library.find(x=>x.id===trackId);if(t)handleLibLoad(t,"A");}} onProgUpdate={handleProgA} onWaveform={setWfA} onSeekReady={onDeckASeekReady} onToggleReady={onDeckAToggleReady} onCueReady={onDeckACueReady} onTransportFire={handleTransportFire}/>
+            <Deck id="A" ch={eng.current?.A} ctx={eng.current?.ctx} color="#7B61FF" local remote={pA} onChange={dh("A")} midi={midiEvt} bpmResult={bpm.results["A"]} bpmAnalyze={bpm.analyze} eqHi={eqA.hi} eqMid={eqA.mid} eqLo={eqA.lo} chanVol={eqA.vol} loadFromLibrary={libLoadA} onTrackInfo={handleTrackInfo} onSync={()=>handleSyncToggle("A")} syncReady={!!(bpm.results["B"]?.bpm || pB?.bpm)} syncRole={syncLocked ? (lastSlaveDeck === "A" ? "slave" : "master") : null} isMaster={masterDeck === "A"} onMasterToggle={handleMasterToggle} onLibraryTrackDrop={(trackId)=>{const t=lib.library.find(x=>x.id===trackId);if(t)handleLibLoad(t,"A");}} onProgUpdate={handleProgA} onWaveform={setWfA} onSeekReady={onDeckASeekReady} onToggleReady={onDeckAToggleReady} onCueReady={onDeckACueReady} onTransportFire={handleTransportFire}/>
           </div>
         </div>
 
@@ -5236,7 +5339,7 @@ export default function CollabMix({ initialPage = "landing", djName = null }) {
             {sync.partner&&<span style={{ fontSize:11, fontFamily:"'DM Sans',sans-serif", fontWeight:500, color:"#00BFA5aa", letterSpacing:.3 }}>{sync.partner}</span>}
           </div>
           <div style={{ flex:1, overflow:"hidden", minHeight:0 }}>
-            <Deck id="B" ch={eng.current?.B} ctx={eng.current?.ctx} color="#00BFA5" local remote={pB} onChange={dh("B")} midi={midiEvt} bpmResult={bpm.results["B"]} bpmAnalyze={bpm.analyze} eqHi={eqB.hi} eqMid={eqB.mid} eqLo={eqB.lo} chanVol={eqB.vol} loadFromLibrary={libLoadB} onTrackInfo={handleTrackInfo} onSync={()=>handleSyncToggle("B")} syncReady={!!(bpm.results["A"]?.bpm || pA?.bpm)} syncRole={syncLocked ? (lastSlaveDeck === "B" ? "slave" : "master") : null} onLibraryTrackDrop={(trackId)=>{const t=lib.library.find(x=>x.id===trackId);if(t)handleLibLoad(t,"B");}} onProgUpdate={handleProgB} onWaveform={setWfB} onSeekReady={onDeckBSeekReady} onToggleReady={onDeckBToggleReady} onCueReady={onDeckBCueReady} onTransportFire={handleTransportFire}/>
+            <Deck id="B" ch={eng.current?.B} ctx={eng.current?.ctx} color="#00BFA5" local remote={pB} onChange={dh("B")} midi={midiEvt} bpmResult={bpm.results["B"]} bpmAnalyze={bpm.analyze} eqHi={eqB.hi} eqMid={eqB.mid} eqLo={eqB.lo} chanVol={eqB.vol} loadFromLibrary={libLoadB} onTrackInfo={handleTrackInfo} onSync={()=>handleSyncToggle("B")} syncReady={!!(bpm.results["A"]?.bpm || pA?.bpm)} syncRole={syncLocked ? (lastSlaveDeck === "B" ? "slave" : "master") : null} isMaster={masterDeck === "B"} onMasterToggle={handleMasterToggle} onLibraryTrackDrop={(trackId)=>{const t=lib.library.find(x=>x.id===trackId);if(t)handleLibLoad(t,"B");}} onProgUpdate={handleProgB} onWaveform={setWfB} onSeekReady={onDeckBSeekReady} onToggleReady={onDeckBToggleReady} onCueReady={onDeckBCueReady} onTransportFire={handleTransportFire}/>
           </div>
         </div>
 
