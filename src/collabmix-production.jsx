@@ -4316,6 +4316,11 @@ export default function CollabMix({ initialPage = "landing", djName = null }) {
   // "other deck = master" when SYNC engages). Mirrored across browsers.
   const [masterDeck, setMasterDeck] = useState(null);
   const masterDeckRef = useRef(null);
+  // Per-deck play-start timestamp for auto-master detection on SYNC engage.
+  // The deck that started playing FIRST is the natural master.
+  // Updated from BOTH local owner-driven play (via dh) and partner-driven play
+  // (via handleWS deck_update branch) so it tracks whichever side is driving.
+  const deckPlayStartRef = useRef({ A: null, B: null });
   // Auto re-align when user scrubs while locked (Problem 1)
   const scrubResyncTimerRef     = useRef(null);
   const lastScrubResyncTimeRef  = useRef(0);
@@ -4612,6 +4617,12 @@ export default function CollabMix({ initialPage = "landing", djName = null }) {
     if (m.type==="deck_update")    {
       // 1) Mirror partner's deck state for visuals
       (m.deckId==="A"?setPA:setPB)(p=>({...(p||{}),[m.field]:m.value}));
+      // Track partner-driven play-start for auto-master detection. The local
+      // owner-driven path updates deckPlayStartRef inside dh; this branch
+      // covers the case where the partner is driving the deck.
+      if (m.field === "playing" && (m.deckId === "A" || m.deckId === "B")) {
+        deckPlayStartRef.current[m.deckId] = m.value ? Date.now() : null;
+      }
       // 2) Shared mixer (Option C): apply EQ / vol / filter changes to MY local
       // engine too, so partner's knob moves alter audio on both browsers.
       // Field names used over the wire: eqHi/eqMid/eqLo/vol/filter.
@@ -4858,19 +4869,34 @@ export default function CollabMix({ initialPage = "landing", djName = null }) {
       return;
     }
     const explicitMaster = masterDeckRef.current; // "A" | "B" | null
-    let effectiveMaster, slaveDeck, masterMode;
+    let effectiveMaster, slaveDeck = clickedDeck, masterMode;
     if (explicitMaster) {
       if (clickedDeck === explicitMaster) {
         console.log("[SYNC] toggle blocked: clicked deck is the explicit master (can't sync a deck to itself)");
         return;
       }
       effectiveMaster = explicitMaster;
-      slaveDeck       = clickedDeck;
       masterMode      = "explicit";
+      console.log("[SYNC] explicit master: deck", effectiveMaster);
     } else {
-      effectiveMaster = clickedDeck === "A" ? "B" : "A";
-      slaveDeck       = clickedDeck;
-      masterMode      = "implicit";
+      // Auto-detect: deck that started playing FIRST is master.
+      const tA = deckPlayStartRef.current.A;
+      const tB = deckPlayStartRef.current.B;
+      let auto = null;
+      if (tA && tB)      auto = tA < tB ? "A" : "B";
+      else if (tA)       auto = "A";
+      else if (tB)       auto = "B";
+      if (auto && auto !== clickedDeck) {
+        effectiveMaster = auto;
+        masterMode      = "auto";
+        console.log("[SYNC] auto-master: deck", effectiveMaster, "(playing longer)");
+      } else {
+        // No auto signal, or user clicked the deck that's been playing longer.
+        // Fall back to implicit "other deck" rule — clicked deck is slave.
+        effectiveMaster = clickedDeck === "A" ? "B" : "A";
+        masterMode      = "implicit";
+        console.log("[SYNC] implicit master: deck", effectiveMaster, "(no auto signal or clicked auto-master)");
+      }
     }
     const masterBPM = bpm.results[effectiveMaster]?.bpm || (effectiveMaster === "A" ? pA?.bpm : pB?.bpm);
     if (!masterBPM) {
@@ -4885,6 +4911,14 @@ export default function CollabMix({ initialPage = "landing", djName = null }) {
     const k = `deck${slaveDeck}`;
     lsRef.current[k] = { ...(lsRef.current[k]||{}), syncLocked: true };
     sync.send({ type:"deck_update", deckId: slaveDeck, field: "syncLocked", value: true });
+    // Light up the M indicator on the effective master so the user sees which
+    // deck is the reference. They can override with the M button at any time.
+    // Skip if already set explicitly (no need to re-broadcast).
+    if (!explicitMaster) {
+      masterDeckRef.current = effectiveMaster;
+      setMasterDeck(effectiveMaster);
+      sync.send({ type:"deck_update", deckId: effectiveMaster, field: "masterDeck", value: effectiveMaster });
+    }
     logEvent("sync", "toggle", { locked: true, slave: slaveDeck, master: effectiveMaster, mode: masterMode });
   }, [syncLocked, syncDecks, bpm.results, pA, pB, sync]);
 
@@ -4980,37 +5014,34 @@ export default function CollabMix({ initialPage = "landing", djName = null }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [syncLocked, bpmAValue, bpmBValue, pA?.bpm, pB?.bpm]);
 
-  // Mid-lock master swap. When the user changes the explicit master via M
-  // button (or via partner mirror) while syncLocked is true, recompute slave
-  // and re-run syncDecks with the new master/slave assignment.
-  // Clearing master while locked (masterDeck → null) keeps the current slave.
+  // Mid-lock master change. Metadata-only — never touches audio rates.
+  // - If masterDeck moved onto the deck that was slave, swap roles
+  //   (update lastSlaveDeckRef → the other deck). Rates STAY.
+  // - Clear prev-BPM/throttle/scrub gates so the next BPM change or scrub
+  //   event can fire re-alignment with the new master/slave pairing.
+  // - Clearing master while locked (masterDeck → null) keeps the current
+  //   slave and leaves audio untouched.
+  // The user already got the alignment they wanted from the original SYNC
+  // press; switching master is metadata only. Future events (scrub on either
+  // deck, master BPM change) trigger fresh alignment via their dedicated
+  // effects with the new master/slave assignment.
   useEffect(() => {
     if (!syncLocked) return;
-    if (!masterDeck) return; // cleared — leave current slave alone
+    if (!masterDeck) return; // cleared — leave current slave alone, gates unchanged
     const currentSlave = lastSlaveDeckRef.current;
     if (masterDeck === currentSlave) {
-      // Swap: master was just set to the deck that is currently slave. New
-      // slave becomes the previous master (the other deck).
       const newSlave = masterDeck === "A" ? "B" : "A";
-      const masterBPM = bpm.results[masterDeck]?.bpm || (masterDeck === "A" ? pA?.bpm : pB?.bpm);
-      if (!masterBPM) return;
-      console.log("[SYNC] master swap mid-lock — new slave=", newSlave, "new master=", masterDeck);
       lastSlaveDeckRef.current = newSlave;
       setLastSlaveDeck(newSlave);
-      // Reset per-master prev-BPM refs so the BPM-change effect re-baselines.
-      prevMasterBpmARef.current = null;
-      prevMasterBpmBRef.current = null;
-      syncDecks(newSlave, masterBPM);
+      console.log("[SYNC] role swap via M — new slave=", newSlave, "new master=", masterDeck, "(audio unchanged)");
     } else {
-      // Master set to the deck that is NOT the current slave — slave stays,
-      // but the new master may have a different BPM. Re-run syncDecks.
-      const masterBPM = bpm.results[masterDeck]?.bpm || (masterDeck === "A" ? pA?.bpm : pB?.bpm);
-      if (!masterBPM) return;
-      console.log("[SYNC] master set mid-lock to non-slave deck — re-aligning slave=", currentSlave, "to master=", masterDeck);
-      prevMasterBpmARef.current = null;
-      prevMasterBpmBRef.current = null;
-      syncDecks(currentSlave, masterBPM);
+      console.log("[SYNC] master changed mid-lock — slave=", currentSlave, "master=", masterDeck, "(audio unchanged)");
     }
+    prevMasterBpmARef.current = null;
+    prevMasterBpmBRef.current = null;
+    lastResyncARef.current = 0;
+    lastResyncBRef.current = 0;
+    lastScrubResyncTimeRef.current = 0;
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [masterDeck, syncLocked]);
 
@@ -5029,6 +5060,9 @@ export default function CollabMix({ initialPage = "landing", djName = null }) {
   }, []);
 
   const dh = (id) => (field, value) => {
+    if (field === "playing") {
+      deckPlayStartRef.current[id] = value ? Date.now() : null;
+    }
     const k = `deck${id}`;
     lsRef.current[k] = { ...(lsRef.current[k]||{}), [field]: value };
     sync.send({ type:"deck_update", deckId:id, field, value });
