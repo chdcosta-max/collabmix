@@ -1,3 +1,37 @@
+import * as Sentry from "@sentry/react";
+
+Sentry.init({
+  dsn: "https://250727774480086ad89445a3d938a223@o4511385896943616.ingest.us.sentry.io/4511385926107137",
+  integrations: [
+    Sentry.browserTracingIntegration(),
+    Sentry.replayIntegration({
+      maskAllText: false,
+      maskAllInputs: true,
+      blockAllMedia: false,
+    }),
+  ],
+  replaysSessionSampleRate: 0.1,
+  replaysOnErrorSampleRate: 1.0,
+  tracesSampleRate: 1.0,
+  ignoreErrors: [
+    /extension/i,
+    /chrome-extension/i,
+    "ResizeObserver loop limit exceeded",
+    "ResizeObserver loop completed with undelivered notifications",
+    "NetworkError when attempting to fetch resource",
+    "Failed to fetch",
+    "AbortError",
+    "The user aborted a request",
+  ],
+  sendDefaultPii: false,
+  environment: import.meta.env.MODE,
+  release: import.meta.env.VITE_SENTRY_RELEASE || "dev",
+  beforeSend(event, hint) {
+    if (window.location.hostname === "localhost") return null;
+    return event;
+  },
+});
+
 import { StrictMode } from 'react'
 import { createRoot } from 'react-dom/client'
 import './index.css'
@@ -9,8 +43,39 @@ function Root() {
   return <CollabMix initialPage={hasRoomParam ? "lobby" : "landing"} />
 }
 
+function ErrorFallback() {
+  return (
+    <div style={{
+      position: "fixed", inset: 0, display: "flex", alignItems: "center", justifyContent: "center",
+      background: "#0a0a0a", color: "#e6e6e6", fontFamily: "'DM Mono', monospace", padding: 24,
+    }}>
+      <div style={{
+        maxWidth: 420, width: "100%", textAlign: "center",
+        background: "#141414", border: "1px solid #2a2a2a", borderRadius: 12, padding: "32px 28px",
+      }}>
+        <div style={{
+          fontFamily: "'Cormorant Garamond', serif", fontSize: 28, marginBottom: 12, color: "#f0f0f0",
+        }}>Something went wrong</div>
+        <div style={{ fontSize: 12, opacity: 0.7, marginBottom: 24, lineHeight: 1.5 }}>
+          An unexpected error occurred. The error has been reported.
+        </div>
+        <button
+          onClick={() => window.location.reload()}
+          style={{
+            background: "#5B8FF9", color: "#0a0a0a", border: "none", borderRadius: 6,
+            padding: "10px 22px", fontFamily: "'DM Mono', monospace", fontSize: 12,
+            letterSpacing: 1, cursor: "pointer", textTransform: "uppercase", fontWeight: 600,
+          }}
+        >Try again</button>
+      </div>
+    </div>
+  );
+}
+
 createRoot(document.getElementById('root')).render(
   <StrictMode>
-    <Root />
+    <Sentry.ErrorBoundary fallback={<ErrorFallback />} showDialog={false}>
+      <Root />
+    </Sentry.ErrorBoundary>
   </StrictMode>,
 )

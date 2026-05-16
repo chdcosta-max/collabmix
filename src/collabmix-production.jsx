@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef, useCallback, useMemo } from "react";
 import { WORKER_SRC } from "./bpm-worker-source.js";
+import { logEvent, setSessionContext, captureHandledError } from "./utils/telemetry.js";
 
 // ═══════════════════════════════════════════════════════════════
 //  MIX//SYNC  — PRODUCTION READY
@@ -2569,6 +2570,7 @@ function useSync({ url, onMsg }) {
       const w = new WebSocket(url); ws.current = w;
       w.onopen = () => {
         setStatus("connected");
+        logEvent("ws", "connected", { roomCode: roomId });
         w.send(JSON.stringify({ type:"join", roomId, djName }));
         pt.current = setInterval(() => send({ type:"ping", clientTime:Date.now() }), 3000);
       };
@@ -2582,7 +2584,7 @@ function useSync({ url, onMsg }) {
         cb.current?.(m);
       };
       w.onerror = () => { setStatus("error"); setConnErr("Could not connect to server. Check the URL."); };
-      w.onclose = () => { setStatus("disconnected"); clearInterval(pt.current); };
+      w.onclose = (ev) => { logEvent("ws", "disconnected", { roomCode: roomId, reason: ev?.reason || null, code: ev?.code ?? null }); setStatus("disconnected"); clearInterval(pt.current); };
     } catch(e) {
       setStatus("error"); setConnErr("Invalid server URL.");
     }
@@ -2633,7 +2635,7 @@ function useRTC({ engineRef, send }) {
       if(s==="failed")setState("failed");
       if(s==="closed")setState("idle");
     };
-    p.onconnectionstatechange=()=>{ console.log('[RTC] connection state:', p.connectionState); };
+    p.onconnectionstatechange=()=>{ console.log('[RTC] connection state:', p.connectionState); logEvent("rtc", "connection_state", { state: p.connectionState }); };
     p.ontrack=({streams})=>{
       console.log('[RTC] incoming track received');
       if(!streams[0])return;
@@ -2677,7 +2679,7 @@ function useRTC({ engineRef, send }) {
       sRef.current({type:"rtc_offer",sdp:p.localDescription});
       console.log('[RTC] offer created and sent');
       setState("offering");
-    } catch(e){ console.error('[RTC] startCall error:',e); setState("failed"); }
+    } catch(e){ console.error('[RTC] startCall error:',e); captureHandledError(e, { operation: "rtc_startCall" }); setState("failed"); }
   },[capture,mkPC]);
 
   const handleOffer = useCallback(async({sdp})=>{
@@ -2692,7 +2694,7 @@ function useRTC({ engineRef, send }) {
       await p.setLocalDescription(a);
       sRef.current({type:"rtc_answer",sdp:p.localDescription});
       setState("connecting");
-    } catch(e){ console.error('[RTC] handleOffer error:',e); setState("failed"); }
+    } catch(e){ console.error('[RTC] handleOffer error:',e); captureHandledError(e, { operation: "rtc_handleOffer" }); setState("failed"); }
   },[capture,mkPC]);
 
   const handleAnswer = useCallback(async({sdp})=>{
@@ -2706,6 +2708,7 @@ function useRTC({ engineRef, send }) {
         console.log('[RTC] handleAnswer: peer already stable, ignoring late answer (likely glare resolved by remote offer)');
       } else {
         console.error('[RTC] handleAnswer error:',e);
+        captureHandledError(e, { operation: "rtc_handleAnswer" });
       }
     }
   },[]);
@@ -3452,8 +3455,10 @@ function Deck({ id, ch, ctx:ac, color, local, remote, onChange, midi:mt, bpmResu
     if(play){
       off.current=Math.min(buf.duration,off.current+(ac.currentTime-st.current));
       stop_();setPlay(false);onChange?.("playing",false);
+      logEvent("deck", "play_toggled", { deck: id, isPlaying: false });
     } else {
       play_(off.current);setPlay(true);onChange?.("playing",true);
+      logEvent("deck", "play_toggled", { deck: id, isPlaying: true });
     }
   },[buf,play,ac,rate,id,onTransportFire]);
   const seek  =useCallback((p, fromRemote=false)=>{
@@ -4459,6 +4464,7 @@ export default function CollabMix({ initialPage = "landing", djName = null }) {
     if (deck === "A") setLibLoadA({ track, file, ts: Date.now() });
     else              setLibLoadB({ track, file, ts: Date.now() });
     setPlayingTrack(track);
+    logEvent("deck", "track_loaded", { deck, trackId: track.id, title: track.title, artist: track.artist });
     // Defer library-side BPM/key analysis until track is loaded onto a deck.
     // Prevents bulk decoding 100s of tracks at import time which causes OOM.
     if (file && !track.analyzed && lib.queueAnalysis) {
@@ -4627,6 +4633,31 @@ export default function CollabMix({ initialPage = "landing", djName = null }) {
   useEffect(() => { partnerRef.current = sync.partner; }, [sync.partner]);
   useEffect(() => { rtcRef.current = rtc; });
 
+  // Mirror live session data (partner, ping) into Sentry context for crash reports.
+  useEffect(() => {
+    if (!session) return;
+    const isHost = !new URLSearchParams(window.location.search).has("room");
+    setSessionContext({
+      djName: session.name,
+      roomCode: session.room,
+      isHost,
+      partnerName: sync.partner || null,
+      ping: sync.ping ?? null,
+    });
+  }, [session, sync.partner, sync.ping]);
+
+  // Cmd+Shift+E (or Ctrl+Shift+E) — throw a test error so Sentry capture can be verified.
+  useEffect(() => {
+    const onKey = (e) => {
+      if ((e.metaKey || e.ctrlKey) && e.shiftKey && (e.key === "E" || e.key === "e")) {
+        e.preventDefault();
+        throw new Error("Sentry test error — triggered by Cmd+Shift+E");
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
+
   // Deterministic role election to avoid WebRTC offer/answer glare.
   // Lexicographically smaller name initiates; same-name fallback uses URL
   // ?room= presence (host = no param = initiator). The handleAnswer
@@ -4793,6 +4824,7 @@ export default function CollabMix({ initialPage = "landing", djName = null }) {
       const k = `deck${broadcastDeck}`;
       lsRef.current[k] = { ...(lsRef.current[k]||{}), syncLocked: false };
       sync.send({ type:"deck_update", deckId: broadcastDeck, field: "syncLocked", value: false });
+      logEvent("sync", "toggle", { locked: false, slave: broadcastDeck });
       return;
     }
     const masterBPM = bpm.results[masterDeck]?.bpm || (masterDeck === "A" ? pA?.bpm : pB?.bpm);
@@ -4808,6 +4840,7 @@ export default function CollabMix({ initialPage = "landing", djName = null }) {
     const k = `deck${slaveDeck}`;
     lsRef.current[k] = { ...(lsRef.current[k]||{}), syncLocked: true };
     sync.send({ type:"deck_update", deckId: slaveDeck, field: "syncLocked", value: true });
+    logEvent("sync", "toggle", { locked: true, slave: slaveDeck });
   }, [syncLocked, syncDecks, bpm.results, pA, pB, sync]);
 
   // Wrapper around sync.send for the Deck's onTransportFire prop. Forwards
@@ -4904,6 +4937,9 @@ export default function CollabMix({ initialPage = "landing", djName = null }) {
     eng.current = createEngine();
     setReady(true); setSession(info); setPage("session");
     sync.connect(info.room, info.name);
+    const isHost = !new URLSearchParams(window.location.search).has("room");
+    setSessionContext({ djName: info.name, roomCode: info.room, isHost });
+    logEvent("session", "room_joined", { roomCode: info.room, isHost });
     // Persist session so library app can link back and page reloads auto-rejoin
     try {
       localStorage.setItem("cm_session", JSON.stringify({
