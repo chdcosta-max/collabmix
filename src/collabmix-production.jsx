@@ -3491,6 +3491,9 @@ function Deck({ id, ch, ctx:ac, color, local, remote, onChange, midi:mt, bpmResu
     const ab=await f.arrayBuffer();
     const d=await ac.decodeAudioData(ab);
     stop_();setPlay(false);setProg(0);off.current=0;
+    // Reset rate to 1 — old sync-imposed rate from a prior track would scale
+    // the new track's BPM display incorrectly. Parent's rateA/B mirror via dh.
+    setRate(1);onChange?.("rate",1);
     setBuf(d);setDur(d.duration);onChange?.("duration",d.duration);
     const n=(trackMeta?.title)||f.name.replace(/\.[^.]+$/,"");
     setName(n);onChange?.("trackName",n);
@@ -3634,7 +3637,7 @@ function Deck({ id, ch, ctx:ac, color, local, remote, onChange, midi:mt, bpmResu
                 : "#888898";
               return (
                 <div style={{display:"flex", alignItems:"baseline", gap:6, justifyContent:"flex-end"}}>
-                  <div style={{fontSize:32, fontFamily:"'DM Mono',monospace", fontWeight:600, color:effectiveBpm?"#C8A96E":"#2a2a3a", lineHeight:0.95, letterSpacing:-0.5, textShadow:effectiveBpm?"0 0 18px #C8A96E22":"none"}}>{adjustedBpm!=null?adjustedBpm.toFixed(1):"—"}</div>
+                  <div title={effectiveBpm?`Natural BPM ${effectiveBpm.toFixed(1)}${pctOff!==null?` · pitch ${pctOff>0?"+":""}${pctOff.toFixed(1)}%`:""}`:undefined} style={{fontSize:32, fontFamily:"'DM Mono',monospace", fontWeight:600, color:effectiveBpm?"#C8A96E":"#2a2a3a", lineHeight:0.95, letterSpacing:-0.5, textShadow:effectiveBpm?"0 0 18px #C8A96E22":"none"}}>{adjustedBpm!=null?adjustedBpm.toFixed(1):"—"}</div>
                   {pctOff !== null && (
                     <div title={`Track natural BPM ${effectiveBpm.toFixed(1)} pitch-adjusted ${pctOff>0?"+":""}${pctOff.toFixed(1)}%`} style={{fontSize:9, fontFamily:"'DM Mono',monospace", color:pctColor, letterSpacing:.3}}>
                       {pctOff>0?"+":""}{pctOff.toFixed(1)}%
@@ -4321,6 +4324,10 @@ export default function CollabMix({ initialPage = "landing", djName = null }) {
   // Updated from BOTH local owner-driven play (via dh) and partner-driven play
   // (via handleWS deck_update branch) so it tracks whichever side is driving.
   const deckPlayStartRef = useRef({ A: null, B: null });
+  // Re-entry guard for handleSyncToggle. Production logs showed OFF→ON
+  // sequences firing twice in succession without user double-clicks. Drop
+  // invocations within 200ms of the last one to suppress duplicates.
+  const lastSyncToggleMsRef = useRef(0);
   // Auto re-align when user scrubs while locked (Problem 1)
   const scrubResyncTimerRef     = useRef(null);
   const lastScrubResyncTimeRef  = useRef(0);
@@ -4774,6 +4781,24 @@ export default function CollabMix({ initialPage = "landing", djName = null }) {
 
   const midi = useMidi({ onAction: handleMidi });
 
+  // Master's EFFECTIVE BPM (natural × current rate). When a deck has been
+  // rate-adjusted by a prior sync, sync targets must use its effective BPM,
+  // not its raw natural BPM — otherwise the slave aligns to the wrong tempo.
+  // Local-driven deck: rate lives in rateA/rateB. Partner-driven deck: rate
+  // is mirrored in pA?.rate / pB?.rate (broadcast by syncDecks via deck_update).
+  const getEffectiveMasterBpm = useCallback((master) => {
+    const natural = bpm.results[master]?.bpm || (master === "A" ? pA?.bpm : pB?.bpm);
+    if (!natural) return null;
+    const localRate = master === "A" ? rateA : rateB;
+    const partnerRate = master === "A" ? pA?.rate : pB?.rate;
+    // Use local rate when we have local BPM (we own the analysis path), else
+    // fall back to partner-broadcast rate. Default 1.
+    const rate = bpm.results[master]?.bpm ? localRate : (partnerRate || 1);
+    const effective = natural * (rate || 1);
+    console.log("[SYNC] master effective BPM: natural=" + natural.toFixed(2) + " rate=" + (rate||1).toFixed(4) + " effective=" + effective.toFixed(2));
+    return effective;
+  }, [bpm.results, pA, pB, rateA, rateB]);
+
   // BPM match + beat-phase alignment.
   // Slave = the deck the user clicked SYNC on (modified). Master = the OTHER deck.
   const syncDecks = useCallback((slave, targetBPM) => {
@@ -4858,6 +4883,12 @@ export default function CollabMix({ initialPage = "landing", djName = null }) {
   // set lock, broadcast (carrying the slave's deckId so partners know which
   // side is being driven). ON→OFF: just clear lock, broadcast.
   const handleSyncToggle = useCallback((clickedDeck) => {
+    const now = Date.now();
+    if (now - lastSyncToggleMsRef.current < 200) {
+      console.log("[SYNC] toggle ignored: re-entry guard (<200ms since last toggle)");
+      return;
+    }
+    lastSyncToggleMsRef.current = now;
     if (syncLocked) {
       console.log("[SYNC] toggle OFF");
       setSyncLocked(false);
@@ -4898,12 +4929,12 @@ export default function CollabMix({ initialPage = "landing", djName = null }) {
         console.log("[SYNC] implicit master: deck", effectiveMaster, "(no auto signal or clicked auto-master)");
       }
     }
-    const masterBPM = bpm.results[effectiveMaster]?.bpm || (effectiveMaster === "A" ? pA?.bpm : pB?.bpm);
+    const masterBPM = getEffectiveMasterBpm(effectiveMaster);
     if (!masterBPM) {
       console.log("[SYNC] toggle blocked: no master BPM available (mode=" + masterMode + ", master=" + effectiveMaster + ")");
       return;
     }
-    console.log("[SYNC] toggle ON — slave=", slaveDeck, "master=", effectiveMaster, "mode=", masterMode, "bpm=", masterBPM);
+    console.log("[SYNC] toggle ON — slave=", slaveDeck, "master=", effectiveMaster, "mode=", masterMode, "effectiveBpm=", masterBPM);
     syncDecks(slaveDeck, masterBPM);
     lastSlaveDeckRef.current = slaveDeck;
     setLastSlaveDeck(slaveDeck);
@@ -4920,7 +4951,7 @@ export default function CollabMix({ initialPage = "landing", djName = null }) {
       sync.send({ type:"deck_update", deckId: effectiveMaster, field: "masterDeck", value: effectiveMaster });
     }
     logEvent("sync", "toggle", { locked: true, slave: slaveDeck, master: effectiveMaster, mode: masterMode });
-  }, [syncLocked, syncDecks, bpm.results, pA, pB, sync]);
+  }, [syncLocked, syncDecks, bpm.results, pA, pB, sync, getEffectiveMasterBpm]);
 
   // Explicit master toggle. Click M on a deck → mark as master; click again
   // → clear (no explicit master, SYNC will fall back to implicit logic).
@@ -4964,13 +4995,13 @@ export default function CollabMix({ initialPage = "landing", djName = null }) {
       if (slave !== "A" && slave !== "B") return;
       const explicitMaster = masterDeckRef.current;
       const master = explicitMaster && explicitMaster !== slave ? explicitMaster : (slave === "A" ? "B" : "A");
-      const masterBPM = bpm.results[master]?.bpm || (master === "A" ? pA?.bpm : pB?.bpm);
+      const masterBPM = getEffectiveMasterBpm(master);
       if (!masterBPM) return;
       lastScrubResyncTimeRef.current = now;
       console.log("[SYNC] scrub detected while locked — auto re-aligning slave to master");
       syncDecks(slave, masterBPM);
     }, 100);
-  }, [syncLocked, bpm.results, pA, pB, syncDecks, sync]);
+  }, [syncLocked, bpm.results, pA, pB, syncDecks, sync, getEffectiveMasterBpm]);
 
   // While the global lock is engaged, re-fire one-shot sync when the master's
   // BPM ACTUALLY changes (not when partner state churns). Same two safeguards
@@ -5009,8 +5040,11 @@ export default function CollabMix({ initialPage = "landing", djName = null }) {
     if (now - lastResyncRef.current < 1000) return;
     lastResyncRef.current = now;
     prevRef.current = currentMasterBpm;
-    console.log(`[SYNC] master ${master} BPM changed, re-syncing ${slave} (locked)`);
-    syncDecks(slave, currentMasterBpm);
+    // Gate uses NATURAL BPM (detects analyzer-reanalysis / new track), but the
+    // sync target must be the master's EFFECTIVE BPM (natural × current rate).
+    const targetBpm = getEffectiveMasterBpm(master) ?? currentMasterBpm;
+    console.log(`[SYNC] master ${master} BPM changed, re-syncing ${slave} (locked) targetEffective=`, targetBpm);
+    syncDecks(slave, targetBpm);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [syncLocked, bpmAValue, bpmBValue, pA?.bpm, pB?.bpm]);
 
@@ -5062,6 +5096,10 @@ export default function CollabMix({ initialPage = "landing", djName = null }) {
   const dh = (id) => (field, value) => {
     if (field === "playing") {
       deckPlayStartRef.current[id] = value ? Date.now() : null;
+    }
+    if (field === "rate") {
+      if (id === "A") setRateA(value);
+      else if (id === "B") setRateB(value);
     }
     const k = `deck${id}`;
     lsRef.current[k] = { ...(lsRef.current[k]||{}), [field]: value };
