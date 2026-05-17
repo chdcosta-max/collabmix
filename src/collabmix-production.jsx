@@ -1029,10 +1029,11 @@ function TrackRow({track, onLoadA, onLoadB, isRec, reasons, canLoad, previewTrac
       {/* Duration */}
       <div style={{fontSize:11,fontFamily:"'DM Mono',monospace",color:"#888898",textAlign:"right"}}>{fmt(track.duration)}</div>
 
-      {/* A / B load buttons */}
-      <div style={{display:"flex",gap:3,opacity:hov&&canLoad?1:0,transition:"opacity .1s"}}>
-        {onLoadA&&<button onClick={e=>{e.stopPropagation();onLoadA(track);}} style={{padding:"2px 8px",fontSize:9,fontFamily:"'DM Mono',monospace",background:`${G}12`,border:`1px solid ${G}2a`,color:G,borderRadius:4,cursor:"pointer",letterSpacing:.5}}>A</button>}
-        {onLoadB&&<button onClick={e=>{e.stopPropagation();onLoadB(track);}} style={{padding:"2px 8px",fontSize:9,fontFamily:"'DM Mono',monospace",background:"#C8A96E12",border:"1px solid #C8A96E2a",color:"#C8A96E",borderRadius:4,cursor:"pointer",letterSpacing:.5}}>B</button>}
+      {/* A / B load buttons — color-coded to deck identity (violet / teal) so
+          users can see they have two destinations, not one. */}
+      <div style={{display:"flex",gap:4,opacity:hov&&canLoad?1:0,transition:"opacity .1s"}}>
+        {onLoadA&&<button onClick={e=>{e.stopPropagation();onLoadA(track);}} title="Load to Deck A" style={{padding:"4px 10px",fontSize:11,fontWeight:700,fontFamily:"'DM Mono',monospace",background:"#7B61FF1f",border:"1px solid #7B61FF66",color:"#7B61FF",borderRadius:5,cursor:"pointer",letterSpacing:.5}}>→A</button>}
+        {onLoadB&&<button onClick={e=>{e.stopPropagation();onLoadB(track);}} title="Load to Deck B" style={{padding:"4px 10px",fontSize:11,fontWeight:700,fontFamily:"'DM Mono',monospace",background:"#00BFA51f",border:"1px solid #00BFA566",color:"#00BFA5",borderRadius:5,cursor:"pointer",letterSpacing:.5}}>→B</button>}
       </div>
     </div>
   );
@@ -4658,10 +4659,21 @@ export default function CollabMix({ initialPage = "landing", djName = null }) {
     // Loader-is-driver: this user is now the audio source of truth for this deck.
     // Optimistic local set + broadcast; server echoes back to confirm (also
     // notifies partner). When solo, sync.send is a no-op.
+    // Track metadata is included so partner can paint title/artist/BPM/key
+    // immediately on receive, before the audio-decode-triggered deck_update
+    // chain fires with the rest (waveform, duration).
     const driverName = sessionRef.current?.name || null;
     if (driverName) {
       setDeckDrivers(prev => prev[deck] === driverName ? prev : { ...prev, [deck]: driverName });
-      syncRef.current?.send?.({ type: "deck_driver_change", deckId: deck, driverName });
+      const trackMeta = {
+        id: track.id,
+        title: track.title || track.filename || null,
+        artist: track.artist || null,
+        bpm: track.bpm || null,
+        key: track.key || null,
+        duration: track.duration || null,
+      };
+      syncRef.current?.send?.({ type: "deck_driver_change", deckId: deck, driverName, track: trackMeta });
     }
     // Defer library-side BPM/key analysis until track is loaded onto a deck.
     // Prevents bulk decoding 100s of tracks at import time which causes OOM.
@@ -4791,9 +4803,25 @@ export default function CollabMix({ initialPage = "landing", djName = null }) {
       if (m.deckDrivers) setDeckDrivers({ A: m.deckDrivers.A ?? null, B: m.deckDrivers.B ?? null });
     }
     if (m.type==="deck_driver_change") {
-      const { deckId, driverName } = m;
+      const { deckId, driverName, track } = m;
       if (deckId === "A" || deckId === "B") {
         setDeckDrivers(prev => prev[deckId] === (driverName ?? null) ? prev : { ...prev, [deckId]: driverName ?? null });
+        // If the broadcast carries track metadata AND it's not from me, paint
+        // it into partner state immediately. Maps the trackMeta fields onto
+        // the same pA/pB shape that the Deck's existing remote.* fallback
+        // reads, so the partner deck shows title/artist/bpm/key without
+        // waiting for the loader's decode-triggered deck_update broadcasts.
+        if (track && m.from !== sessionRef.current?.name) {
+          const setter = deckId === "A" ? setPA : setPB;
+          setter(p => ({
+            ...(p||{}),
+            trackName: track.title || null,
+            artist: track.artist || null,
+            bpm: track.bpm || null,
+            key: track.key || null,
+            duration: track.duration || null,
+          }));
+        }
       }
     }
     if (m.type==="deck_update")    {
@@ -5450,7 +5478,19 @@ export default function CollabMix({ initialPage = "landing", djName = null }) {
         return (
           <div style={{ flexShrink:0, background:"#020208", borderBottom:"1px solid #16161e" }}>
             {hasA && (
-              <div style={{ position:"relative", minHeight:wfH, flexShrink:0 }}>
+              <div
+                onDragOver={e=>e.preventDefault()}
+                onDrop={e=>{
+                  e.preventDefault(); e.stopPropagation();
+                  try {
+                    const d = JSON.parse(e.dataTransfer.getData("application/json"));
+                    if (d?.trackId) {
+                      const t = lib.library.find(x => x.id === d.trackId);
+                      if (t) handleLibLoad(t, "A");
+                    }
+                  } catch {}
+                }}
+                style={{ position:"relative", minHeight:wfH, flexShrink:0 }}>
                 <div style={{ position:"absolute", top:6, left:10, zIndex:2, display:"flex", gap:8, alignItems:"center", pointerEvents:"none" }}>
                   <div style={{ width:5, height:5, borderRadius:"50%", background:"#C8A96E", boxShadow:"0 0 6px #C8A96E" }}/>
                   <span style={{ fontSize:9, fontFamily:"'DM Mono',monospace", fontWeight:700, color:"#C8A96E88", letterSpacing:2 }}>A</span>
@@ -5476,7 +5516,19 @@ export default function CollabMix({ initialPage = "landing", djName = null }) {
             )}
             {hasA && hasB && <div style={{ height:1, background:"#0d0d18" }}/>}
             {hasB && (
-              <div style={{ position:"relative", minHeight:wfH, flexShrink:0 }}>
+              <div
+                onDragOver={e=>e.preventDefault()}
+                onDrop={e=>{
+                  e.preventDefault(); e.stopPropagation();
+                  try {
+                    const d = JSON.parse(e.dataTransfer.getData("application/json"));
+                    if (d?.trackId) {
+                      const t = lib.library.find(x => x.id === d.trackId);
+                      if (t) handleLibLoad(t, "B");
+                    }
+                  } catch {}
+                }}
+                style={{ position:"relative", minHeight:wfH, flexShrink:0 }}>
                 <div style={{ position:"absolute", top:6, left:10, zIndex:2, display:"flex", gap:8, alignItems:"center", pointerEvents:"none" }}>
                   <div style={{ width:5, height:5, borderRadius:"50%", background:"#00BFA5", boxShadow:"0 0 6px #00BFA5" }}/>
                   <span style={{ fontSize:9, fontFamily:"'DM Mono',monospace", fontWeight:700, color:"#00BFA588", letterSpacing:2 }}>B</span>
