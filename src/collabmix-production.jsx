@@ -2975,11 +2975,15 @@ function AnimatedZoomedWF({ bands, dur, progRef, onSeek, h=96, windowSec=8, beat
       //  - tickRailPad governs where beat-grid ticks center vertically (visual
       //    positioning, anchored relative to the canvas edges).
       //  - ampPad governs how far the audio amplitude renders from the edge —
-      //    making it larger than tickRailPad compresses the waveform toward the
-      //    centerline so there's empty space between the audio shape and the
-      //    tick marks above/below.
+      //    reduced from 26 to 8 css px per side after diagnostic showed the
+      //    old value was reserving 58% of canvas height for empty padding,
+      //    capping maxH_css at ~18 even when drop heights computed to 100%
+      //    maxH. New maxH_css ≈ 37, drops literally double their visible
+      //    height. Beat grid ticks now overlap the top/bottom of the
+      //    amplitude region; that's intentional — ticks render AFTER the
+      //    waveform fills so they read on top of any tall peaks.
       const tickRailPad=Math.round(18*dpr);
-      const ampPad=Math.round(26*dpr);
+      const ampPad=Math.round(8*dpr);
       const ampTop=ampPad;
       const ampBottom=physH-ampPad;
       const drawH=ampBottom-ampTop;
