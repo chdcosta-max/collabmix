@@ -4328,6 +4328,13 @@ export default function CollabMix({ initialPage = "landing", djName = null }) {
   // sequences firing twice in succession without user double-clicks. Drop
   // invocations within 200ms of the last one to suppress duplicates.
   const lastSyncToggleMsRef = useRef(0);
+  // Locked session tempo (effective BPM at the moment of sync engagement).
+  // Once stored, BOTH decks target this BPM until sync is released — including
+  // the master deck. Loading a new track on EITHER deck while locked re-rates
+  // that deck to match the session tempo, not the new track's natural BPM.
+  // Master role is preserved (visual indicator, phase reference) but its
+  // current effective BPM is held to the session tempo.
+  const sessionTempoRef = useRef(null);
   // Auto re-align when user scrubs while locked (Problem 1)
   const scrubResyncTimerRef     = useRef(null);
   const lastScrubResyncTimeRef  = useRef(0);
@@ -4995,73 +5002,87 @@ export default function CollabMix({ initialPage = "landing", djName = null }) {
       if (slave !== "A" && slave !== "B") return;
       const explicitMaster = masterDeckRef.current;
       const master = explicitMaster && explicitMaster !== slave ? explicitMaster : (slave === "A" ? "B" : "A");
-      const masterBPM = getEffectiveMasterBpm(master);
-      if (!masterBPM) return;
+      // Once locked, session tempo is the target — not the master's current
+      // effective BPM, which may have drifted (e.g., master just loaded a new
+      // track and hasn't been re-rated by the track-change effect yet).
+      const target = sessionTempoRef.current ?? getEffectiveMasterBpm(master);
+      if (!target) return;
       lastScrubResyncTimeRef.current = now;
-      console.log("[SYNC] scrub detected while locked — auto re-aligning slave to master");
-      syncDecks(slave, masterBPM);
+      console.log("[SYNC] scrub detected while locked — auto re-aligning slave to session tempo", target.toFixed(2));
+      syncDecks(slave, target);
     }, 100);
   }, [syncLocked, bpm.results, pA, pB, syncDecks, sync, getEffectiveMasterBpm]);
 
-  // While the global lock is engaged, re-fire one-shot sync when the master's
-  // BPM ACTUALLY changes (not when partner state churns). Same two safeguards
-  // as the per-deck version: per-master prev-bpm ref + 1s throttle.
-  // Master is whichever deck is NOT the lastSlaveDeckRef; we keep both per-
-  // master refs so toggling OFF then ON with a different slave starts fresh.
-  // syncDecks intentionally NOT in deps (closure version is fine since it
-  // reads its own state via refs internally).
   const bpmAValue = bpm.results["A"]?.bpm;
   const bpmBValue = bpm.results["B"]?.bpm;
-  const prevMasterBpmARef = useRef(null);
-  const prevMasterBpmBRef = useRef(null);
-  const lastResyncARef    = useRef(0);
-  const lastResyncBRef    = useRef(0);
+
+  // Capture or release the session tempo on syncLocked transitions. Both
+  // engagement and partner-driven mirror updates go through this single
+  // effect, so the tempo stays consistent on both browsers.
+  useEffect(() => {
+    if (syncLocked) {
+      const slave = lastSlaveDeckRef.current;
+      const explicitMaster = masterDeckRef.current;
+      const master = explicitMaster && explicitMaster !== slave ? explicitMaster : (slave === "A" ? "B" : "A");
+      const tempo = getEffectiveMasterBpm(master);
+      if (tempo) {
+        sessionTempoRef.current = tempo;
+        console.log("[SYNC] session tempo locked at", tempo.toFixed(2), "(master=", master, ")");
+      }
+    } else {
+      if (sessionTempoRef.current !== null) {
+        console.log("[SYNC] session tempo released (was", sessionTempoRef.current.toFixed(2), ")");
+      }
+      sessionTempoRef.current = null;
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [syncLocked]);
+
+  // Track-change detection. Once sync is locked, the session tempo is the
+  // source of truth for BOTH decks. When a new track is loaded and analyzed
+  // on EITHER deck, re-rate that deck to match the session tempo (and re-
+  // align its phase to the other deck via syncDecks's existing phase logic).
+  // Detection uses each deck's natural BPM (bpm.results[X].bpm, with partner
+  // pX.bpm fallback). Per-deck prev refs skip the initial baseline read so
+  // we only fire on actual changes, not on first detection after lock.
+  const prevBpmARef = useRef(null);
+  const prevBpmBRef = useRef(null);
   useEffect(() => {
     if (!syncLocked) {
-      prevMasterBpmARef.current = null;
-      prevMasterBpmBRef.current = null;
+      prevBpmARef.current = null;
+      prevBpmBRef.current = null;
       return;
     }
-    const slave = lastSlaveDeckRef.current;
-    if (slave !== "A" && slave !== "B") return;
-    const explicitMaster = masterDeckRef.current;
-    const master = explicitMaster && explicitMaster !== slave ? explicitMaster : (slave === "A" ? "B" : "A");
-    const currentMasterBpm = (master === "A" ? bpmAValue : bpmBValue) || (master === "A" ? pA?.bpm : pB?.bpm);
-    if (!currentMasterBpm) return;
-    const prevRef        = master === "A" ? prevMasterBpmARef : prevMasterBpmBRef;
-    const lastResyncRef  = master === "A" ? lastResyncARef    : lastResyncBRef;
-    if (currentMasterBpm === prevRef.current) return;
-    if (prevRef.current === null) {
-      // First read after lock — initial sync already ran in handleSyncToggle.
-      prevRef.current = currentMasterBpm;
-      return;
+    const tempo = sessionTempoRef.current;
+    if (!tempo) return;
+    for (const deck of ["A", "B"]) {
+      const localBpm = bpm.results[deck]?.bpm;
+      const remoteBpm = deck === "A" ? pA?.bpm : pB?.bpm;
+      const naturalBpm = localBpm || remoteBpm;
+      if (!naturalBpm) continue;
+      const prevRef = deck === "A" ? prevBpmARef : prevBpmBRef;
+      if (prevRef.current === null) {
+        prevRef.current = naturalBpm;
+        continue;
+      }
+      if (prevRef.current === naturalBpm) continue;
+      prevRef.current = naturalBpm;
+      console.log(`[SYNC] track changed on deck ${deck} while locked — re-aligning to session tempo ${tempo.toFixed(2)}`);
+      syncDecks(deck, tempo);
     }
-    const now = Date.now();
-    if (now - lastResyncRef.current < 1000) return;
-    lastResyncRef.current = now;
-    prevRef.current = currentMasterBpm;
-    // Gate uses NATURAL BPM (detects analyzer-reanalysis / new track), but the
-    // sync target must be the master's EFFECTIVE BPM (natural × current rate).
-    const targetBpm = getEffectiveMasterBpm(master) ?? currentMasterBpm;
-    console.log(`[SYNC] master ${master} BPM changed, re-syncing ${slave} (locked) targetEffective=`, targetBpm);
-    syncDecks(slave, targetBpm);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [syncLocked, bpmAValue, bpmBValue, pA?.bpm, pB?.bpm]);
 
   // Mid-lock master change. Metadata-only — never touches audio rates.
   // - If masterDeck moved onto the deck that was slave, swap roles
   //   (update lastSlaveDeckRef → the other deck). Rates STAY.
-  // - Clear prev-BPM/throttle/scrub gates so the next BPM change or scrub
-  //   event can fire re-alignment with the new master/slave pairing.
-  // - Clearing master while locked (masterDeck → null) keeps the current
-  //   slave and leaves audio untouched.
-  // The user already got the alignment they wanted from the original SYNC
-  // press; switching master is metadata only. Future events (scrub on either
-  // deck, master BPM change) trigger fresh alignment via their dedicated
-  // effects with the new master/slave assignment.
+  // - Clear scrub-resync throttle so a fresh scrub can re-align with the
+  //   new master/slave pairing.
+  // - Session tempo is NOT changed by an M-button flip — switching master
+  //   is metadata only, the session tempo stays where it was locked.
   useEffect(() => {
     if (!syncLocked) return;
-    if (!masterDeck) return; // cleared — leave current slave alone, gates unchanged
+    if (!masterDeck) return;
     const currentSlave = lastSlaveDeckRef.current;
     if (masterDeck === currentSlave) {
       const newSlave = masterDeck === "A" ? "B" : "A";
@@ -5071,10 +5092,6 @@ export default function CollabMix({ initialPage = "landing", djName = null }) {
     } else {
       console.log("[SYNC] master changed mid-lock — slave=", currentSlave, "master=", masterDeck, "(audio unchanged)");
     }
-    prevMasterBpmARef.current = null;
-    prevMasterBpmBRef.current = null;
-    lastResyncARef.current = 0;
-    lastResyncBRef.current = 0;
     lastScrubResyncTimeRef.current = 0;
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [masterDeck, syncLocked]);
