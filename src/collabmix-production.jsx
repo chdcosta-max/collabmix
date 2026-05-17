@@ -2925,6 +2925,8 @@ function AnimatedZoomedWF({ bands, dur, progRef, onSeek, h=96, windowSec=8, beat
   // because no column has bass=mid=high=1.0 simultaneously). Recomputed
   // once per bands-identity change; cheap (one linear pass over 24k).
   const envMaxRef=useRef({bands:null,maxVal:1});
+  // Temporary one-shot verification log — fires once per draw-loop instance.
+  const dimsLoggedRef=useRef(false);
   const beatPhaseFracRef=useRef(beatPhaseFrac);
   const beatPeriodSecRef=useRef(beatPeriodSec);
   const gridOffsetMsRef=useRef(gridOffsetMs);
@@ -2983,13 +2985,18 @@ function AnimatedZoomedWF({ bands, dur, progRef, onSeek, h=96, windowSec=8, beat
       //    amplitude region; that's intentional — ticks render AFTER the
       //    waveform fills so they read on top of any tall peaks.
       const tickRailPad=Math.round(18*dpr);
-      const ampPad=Math.round(18*dpr);
+      const ampPad=Math.round(28*dpr);
       const ampTop=ampPad;
       const ampBottom=physH-ampPad;
       const drawH=ampBottom-ampTop;
       const center=(ampTop+ampBottom)>>1;
       // maxH keeps top (center-envH ≥ ampTop) and bottom (center+1+envH ≤ ampBottom).
       const maxH=Math.max(0,Math.min(center-ampTop,ampBottom-1-center));
+      if(!dimsLoggedRef.current){
+        const deckId=deckColorRef.current==='#7B61FF'?'A':deckColorRef.current==='#00BFA5'?'B':'?';
+        console.log(`[WF-DIMS ${deckId}] canvasCss=${canvas.clientWidth}x${canvas.clientHeight} physCanvas=${physW}x${physH} dpr=${dpr} ampPad=${(ampPad/dpr).toFixed(0)}css/${ampPad}phys maxH=${(maxH/dpr).toFixed(1)}css/${maxH}phys`);
+        dimsLoggedRef.current=true;
+      }
       const bands=bandsRef.current;
 
       ctx.fillStyle='#030308';
@@ -5676,7 +5683,7 @@ export default function CollabMix({ initialPage = "landing", djName = null }) {
         // maxH collapse, which was visually flattening drops despite the
         // height math being correct. Deck panels below shift down to make
         // room; their fixed 288px row stays intact.
-        const wfH = 90;
+        const wfH = 120;
         return (
           <div style={{ flexShrink:0, background:"#020208", borderBottom:"1px solid #16161e" }}>
             {hasA && (
