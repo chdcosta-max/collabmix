@@ -239,6 +239,7 @@ self.onmessage=function(e){
   const SNAP_THRESH=onKMx*0.30;       // matches L220 first-beat threshold
   const halfBeatFrames=floatBeatLag*0.5;
   let snapCount=0,maxDelta=0;
+  const msPerFrame=1000/ar;
   for(let i=0;i<dpBeats.length;i++){
     const f=dpBeats[i];
     const s=f-SNAP_WIN<0?0:f-SNAP_WIN, e=f+SNAP_WIN>=nf?nf-1:f+SNAP_WIN;
@@ -247,12 +248,37 @@ self.onmessage=function(e){
       const k=onK[j]-onP[j];
       if(k>bestVal){bestVal=k;bestF=j;}
     }
-    if(bestF<0||bestF===f) continue;                 // no kick above threshold, or already on it
-    if(i>0&&bestF<dpBeats[i-1]+halfBeatFrames) continue; // monotonic guard
-    const delta=bestF>f?bestF-f:f-bestF;
-    if(delta>maxDelta) maxDelta=delta;
-    dpBeats[i]=bestF;
-    snapCount++;
+    const noKick=bestF<0;
+    const onSameFrame=!noKick&&bestF===f;
+    const monoBlock=!noKick&&!onSameFrame&&i>0&&bestF<dpBeats[i-1]+halfBeatFrames;
+    const willSnap=!noKick&&!onSameFrame&&!monoBlock;
+    if(willSnap){
+      const delta=bestF>f?bestF-f:f-bestF;
+      if(delta>maxDelta) maxDelta=delta;
+      dpBeats[i]=bestF;
+      snapCount++;
+    }
+    // Per-beat diagnostic for 3 representative beats per track. Logs the
+    // window contents around the snap target so we can see the shape of
+    // the rising edge and decide whether argmax lands at attack onset or
+    // somewhere later on the rise.
+    if(i===50||i===100||i===200){
+      const targetF=willSnap?bestF:f;
+      const vicRad=5;
+      const vs=targetF-vicRad<0?0:targetF-vicRad;
+      const ve=targetF+vicRad>=nf?nf-1:targetF+vicRad;
+      const vals=[];
+      for(let j=vs;j<=ve;j++) vals.push((onK[j]-onP[j]).toFixed(3));
+      let status;
+      if(willSnap){
+        const d=bestF-f;
+        status='snap='+bestF+' delta='+(d>=0?'+':'')+d+' ('+(d>=0?'+':'')+(d*msPerFrame).toFixed(0)+'ms)';
+      } else if(noKick) status='no-kick-above-threshold (DP stays)';
+      else if(onSameFrame) status='already-on-kick (dp==argmax)';
+      else status='monotonic-block (would-be snap='+bestF+')';
+      console.log('[SNAP-DEBUG] '+id+' beat '+i+': dp='+f+' win=['+s+'..'+e+'] '+status);
+      console.log('  vicinity (frames '+vs+'-'+ve+'): '+vals.join(', '));
+    }
   }
   console.log('[BPM-SNAP] track',id,': snapped '+snapCount+'/'+dpBeats.length+' beats, max delta '+maxDelta+' frames');
 
