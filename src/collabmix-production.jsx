@@ -3022,14 +3022,13 @@ function AnimatedZoomedWF({ bands, dur, progRef, onSeek, h=96, windowSec=8, beat
           colB[dx]=b; colM[dx]=m; colH[dx]=hh;
         }
 
-        // Compute heights + cache env per column. Gamma 1.8 produces dramatic
-        // height variation across the source data's natural env distribution
-        // (verified p10≈0.15, p50≈0.51, p90≈0.86 on real EDM tracks via
-        // tools/bpm-test-harness/wf-env-diagnostic.mjs). That maps to roughly
-        // 4% / 30% / 75% of maxH — breakdowns sit as a thin line, drops
-        // tower toward full height. Steeper than 1.8 starts making verse
-        // sections feel cramped; gentler than 1.6 flattens the drop.
-        const GAMMA=1.8;
+        // Compute heights + cache env per column. Gamma 2.2 strongly compresses
+        // mid-range so drops dominate visually. Across the source distribution
+        // (p10≈0.15, p50≈0.51, p90≈0.86 verified via
+        // tools/bpm-test-harness/wf-env-diagnostic.mjs) this maps to roughly
+        // 1.5% / 22% / 70% of maxH — breakdowns sit as a thin line, verses
+        // are modest, builds clearly rise, drops tower toward full height.
+        const GAMMA=2.2;
         for(let dx=0;dx<physW;dx++){
           const bv=colB[dx], mv=colM[dx], hv=colH[dx];
           const env=bv>mv?(bv>hv?bv:hv):(mv>hv?mv:hv);
