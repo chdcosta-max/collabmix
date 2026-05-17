@@ -2925,9 +2925,6 @@ function AnimatedZoomedWF({ bands, dur, progRef, onSeek, h=96, windowSec=8, beat
   // because no column has bass=mid=high=1.0 simultaneously). Recomputed
   // once per bands-identity change; cheap (one linear pass over 24k).
   const envMaxRef=useRef({bands:null,maxVal:1});
-  // Diagnostic — one-shot per bands identity. Reset on bands change in the
-  // useEffect below; consumed once in the draw loop after heights compute.
-  const diagRef=useRef({bands:null,renderDone:false});
   const beatPhaseFracRef=useRef(beatPhaseFrac);
   const beatPeriodSecRef=useRef(beatPeriodSec);
   const gridOffsetMsRef=useRef(gridOffsetMs);
@@ -2935,49 +2932,7 @@ function AnimatedZoomedWF({ bands, dur, progRef, onSeek, h=96, windowSec=8, beat
   const deckColorRef=useRef(deckColor);
   useEffect(()=>{durRef.current=dur;},[dur]);
   useEffect(()=>{seekRef.current=onSeek;},[onSeek]);
-  useEffect(()=>{
-    bandsRef.current=bands;
-    if(bands?.bass?.length && diagRef.current.bands!==bands){
-      const bArr=bands.bass, mArr=bands.mid, hArr=bands.high;
-      const srcLen=bArr.length;
-      let mx=0;
-      const envs=new Float32Array(srcLen);
-      for(let i=0;i<srcLen;i++){
-        const v=0.7*bArr[i]+0.2*mArr[i]+0.1*hArr[i];
-        envs[i]=v;
-        if(v>mx) mx=v;
-      }
-      const divisor=mx>0.0001?mx:1;
-      for(let i=0;i<srcLen;i++) envs[i]/=divisor;
-      const sorted=Array.from(envs).sort((a,b)=>a-b);
-      const pct=p=>sorted[Math.min(srcLen-1,Math.floor(srcLen*p))];
-      let sum=0; for(let i=0;i<srcLen;i++) sum+=sorted[i];
-      console.log("[WF-DIAG] source bands arrived", {
-        deckColor: deckColorRef.current,
-        srcLen,
-        bassWMaxDivisor: divisor.toFixed(3),
-        srcEnvDist: {
-          min: sorted[0].toFixed(3),
-          p10: pct(0.10).toFixed(3),
-          p50: pct(0.50).toFixed(3),
-          p90: pct(0.90).toFixed(3),
-          p99: pct(0.99).toFixed(3),
-          max: sorted[srcLen-1].toFixed(3),
-          avg: (sum/srcLen).toFixed(3),
-        },
-        sampleSrcEnv: {
-          i0: envs[0]?.toFixed(3),
-          i1000: envs[1000]?.toFixed(3),
-          i5000: envs[5000]?.toFixed(3),
-          i10000: envs[10000]?.toFixed(3),
-          i15000: envs[15000]?.toFixed(3),
-          i20000: envs[20000]?.toFixed(3),
-          iLast: envs[srcLen-1]?.toFixed(3),
-        },
-      });
-      diagRef.current={bands,renderDone:false};
-    }
-  },[bands]);
+  useEffect(()=>{bandsRef.current=bands;},[bands]);
   useEffect(()=>{beatPhaseFracRef.current=beatPhaseFrac;},[beatPhaseFrac]);
   useEffect(()=>{beatPeriodSecRef.current=beatPeriodSec;},[beatPeriodSec]);
   useEffect(()=>{gridOffsetMsRef.current=gridOffsetMs;},[gridOffsetMs]);
@@ -3118,65 +3073,6 @@ function AnimatedZoomedWF({ bands, dur, progRef, onSeek, h=96, windowSec=8, beat
           let h=Math.pow(env,GAMMA)*maxH;
           if(env>LIFT_TH) h+=maxH*LIFT_AMT*(env-LIFT_TH)/(1-LIFT_TH);
           heights[dx]=h<maxH?h:maxH;
-        }
-
-        // Diagnostic — fires once per bands change after first heights compute.
-        if(diagRef.current.bands===bands&&!diagRef.current.renderDone){
-          const sortedH=Array.from(heights.slice(0,physW)).sort((a,b)=>a-b);
-          const sortedE=Array.from(envs.slice(0,physW)).sort((a,b)=>a-b);
-          const pctH=p=>sortedH[Math.min(physW-1,Math.floor(physW*p))];
-          const pctE=p=>sortedE[Math.min(physW-1,Math.floor(physW*p))];
-          let sumH=0; for(let i=0;i<physW;i++) sumH+=sortedH[i];
-          let above80=0, below10=0;
-          for(let i=0;i<physW;i++){
-            if(heights[i]>=maxH*0.8) above80++;
-            if(heights[i]<=maxH*0.1) below10++;
-          }
-          console.log("[WF-DIAG] first render after track load", {
-            deckColor: deckColorRef.current,
-            canvasCss: {w: canvas.clientWidth, h: canvas.clientHeight},
-            canvasPhys: {w: physW, h: physH},
-            dpr,
-            ampPad: ampPad,
-            tickRailPad: tickRailPad,
-            maxH: maxH,
-            envDivisor: envDivisor.toFixed(3),
-            windowSec,
-            spp: spp.toFixed(3),
-            envStats: {
-              min: sortedE[0]?.toFixed(3),
-              p10: pctE(0.10)?.toFixed(3),
-              p50: pctE(0.50)?.toFixed(3),
-              p90: pctE(0.90)?.toFixed(3),
-              p99: pctE(0.99)?.toFixed(3),
-              max: sortedE[physW-1]?.toFixed(3),
-            },
-            heightStatsPhysPx: {
-              min: sortedH[0]?.toFixed(2),
-              max: sortedH[physW-1]?.toFixed(2),
-              avg: (sumH/physW).toFixed(2),
-            },
-            heightAsPctMaxH: {
-              p10: (pctH(0.10)/maxH*100).toFixed(1)+'%',
-              p50: (pctH(0.50)/maxH*100).toFixed(1)+'%',
-              p90: (pctH(0.90)/maxH*100).toFixed(1)+'%',
-              p99: (pctH(0.99)/maxH*100).toFixed(1)+'%',
-              max: (sortedH[physW-1]/maxH*100).toFixed(1)+'%',
-            },
-            columnCounts: {
-              above80pctMaxH: above80,
-              below10pctMaxH: below10,
-              total: physW,
-            },
-            sampleHeightsPhysPx: {
-              col_0: heights[0]?.toFixed(2),
-              col_q1: heights[(physW>>2)]?.toFixed(2),
-              col_mid: heights[(physW>>1)]?.toFixed(2),
-              col_q3: heights[((physW*3)>>2)]?.toFixed(2),
-              col_last: heights[physW-1]?.toFixed(2),
-            },
-          });
-          diagRef.current.renderDone=true;
         }
 
         // Parse deck color → rgb for all three passes below.
