@@ -2935,10 +2935,15 @@ function AnimatedZoomedWF({ bands, dur, progRef, onSeek, h=96, windowSec=8, beat
 
       const dur2=durRef.current;
       const prog2=progRef?.current??0;
-      const center=physH>>1;
-      // maxH leaves row `center` reserved for the hairline and stays in bounds
-      // for even physH (top: 0..center-1, bottom: center+1..physH-1).
-      const maxH=Math.min(center,physH-1-center);
+      // Reserve top + bottom rails so beat-grid ticks aren't covered by waveform
+      // amplitude pixels. Amplitude renders only in the middle band [ampTop, ampBottom].
+      const railPad=Math.round(12*dpr);
+      const ampTop=railPad;
+      const ampBottom=physH-railPad;
+      const drawH=ampBottom-ampTop;
+      const center=(ampTop+ampBottom)>>1;
+      // maxH keeps top (center-envH ≥ ampTop) and bottom (center+1+envH ≤ ampBottom).
+      const maxH=Math.max(0,Math.min(center-ampTop,ampBottom-1-center));
       const bands=bandsRef.current;
 
       ctx.fillStyle='#030308';
@@ -3040,10 +3045,13 @@ function AnimatedZoomedWF({ bands, dur, progRef, onSeek, h=96, windowSec=8, beat
         const densityPer100px=(visibleBeats*100)/Math.max(1,physW);
         const showOffBeats=densityPer100px<=50;
 
-        // Sizes — multiply by dpr so CSS-pixel spec stays consistent across HiDPI.
-        const offTickH=Math.max(1,Math.round(3*dpr));
-        const downTickH=Math.max(1,Math.round(6*dpr));
-        const phraseTickH=Math.max(1,Math.round(8*dpr));
+        // Sizes — CSS-pixel spec scaled by dpr. Ticks render inside the top + bottom
+        // rails (offset by tickGap from the canvas edge) so they're never overlapped
+        // by waveform pixels.
+        const tickGap=Math.max(1,Math.round(2*dpr));
+        const offTickH=Math.max(1,Math.round(4*dpr));
+        const downTickH=Math.max(1,Math.round(8*dpr));
+        const phraseTickH=Math.max(1,Math.round(10*dpr));
         const lineW=Math.max(1,Math.round(1*dpr));
         const phraseTickW=Math.max(1,Math.round(2*dpr));
 
@@ -3058,8 +3066,8 @@ function AnimatedZoomedWF({ bands, dur, progRef, onSeek, h=96, windowSec=8, beat
         const phraseRGB=`${dr},${dg},${db}`;
 
         // Pre-build fill styles (avoid string churn in hot loop).
-        const OFF_FILL='rgba(255,255,255,0.30)';
-        const DOWN_FILL='rgba(255,255,255,0.80)';
+        const OFF_FILL='rgba(255,255,255,0.40)';
+        const DOWN_FILL='rgba(255,255,255,0.90)';
         const DOWN_LINE='rgba(255,255,255,0.12)';
         const PHRASE_FILL=`rgba(${phraseRGB},1.0)`;
         const PHRASE_LINE=`rgba(${phraseRGB},0.25)`;
@@ -3073,22 +3081,25 @@ function AnimatedZoomedWF({ bands, dur, progRef, onSeek, h=96, windowSec=8, beat
           const isDownbeat=(n%4===0);
 
           if(isPhrase){
+            // Phrase: full-height identity-color line + larger edge ticks in rails.
             ctx.fillStyle=PHRASE_LINE;
             ctx.fillRect(Math.floor(x)-(lineW>>1),0,lineW,physH);
             ctx.fillStyle=PHRASE_FILL;
             const px=Math.floor(x-phraseTickW/2);
-            ctx.fillRect(px,0,phraseTickW,phraseTickH);
-            ctx.fillRect(px,physH-phraseTickH,phraseTickW,phraseTickH);
+            ctx.fillRect(px,tickGap,phraseTickW,phraseTickH);
+            ctx.fillRect(px,physH-tickGap-phraseTickH,phraseTickW,phraseTickH);
           }else if(isDownbeat){
+            // Downbeat: faint full-height white line + medium edge ticks in rails.
             ctx.fillStyle=DOWN_LINE;
             ctx.fillRect(Math.floor(x),0,lineW,physH);
             ctx.fillStyle=DOWN_FILL;
-            ctx.fillRect(Math.floor(x),0,lineW,downTickH);
-            ctx.fillRect(Math.floor(x),physH-downTickH,lineW,downTickH);
+            ctx.fillRect(Math.floor(x),tickGap,lineW,downTickH);
+            ctx.fillRect(Math.floor(x),physH-tickGap-downTickH,lineW,downTickH);
           }else if(showOffBeats){
+            // Off-beat: small edge ticks only, no through-line.
             ctx.fillStyle=OFF_FILL;
-            ctx.fillRect(Math.floor(x),0,lineW,offTickH);
-            ctx.fillRect(Math.floor(x),physH-offTickH,lineW,offTickH);
+            ctx.fillRect(Math.floor(x),tickGap,lineW,offTickH);
+            ctx.fillRect(Math.floor(x),physH-tickGap-offTickH,lineW,offTickH);
           }
         }
       }
