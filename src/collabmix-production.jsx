@@ -5629,7 +5629,13 @@ export default function CollabMix({ initialPage = "landing", djName = null }) {
             </div>
           );
         }
-        const wfH = (hasA && hasB) ? 70 : 90; // 1 deck loaded → 90; both → 70 each — pro-DJ-tool proportions
+        // Each waveform always renders at the single-deck height — when both
+        // decks are loaded the waveform SECTION doubles in total vertical
+        // area instead of each canvas shrinking. Splitting fixed space made
+        // maxH collapse, which was visually flattening drops despite the
+        // height math being correct. Deck panels below shift down to make
+        // room; their fixed 288px row stays intact.
+        const wfH = 90;
         return (
           <div style={{ flexShrink:0, background:"#020208", borderBottom:"1px solid #16161e" }}>
             {hasA && (
