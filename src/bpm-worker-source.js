@@ -302,35 +302,18 @@ self.onmessage=function(e){
   const phMax=Math.max(phSc[0],phSc[1],phSc[2],phSc[3]);
   const phMin=Math.min(phSc[0],phSc[1],phSc[2],phSc[3]);
   if(phMax>0 && (phMax-phMin)/phMax < 0.25) bestPh=0;
-  // Precise beat period from snap-corrected DP beats — TRIMMED MEAN of
-  // consecutive intervals (10% off each end). Pure mean got pulled by
-  // single mis-snapped endpoint or drift accumulated across long tracks;
-  // pure median snapped to a single integer-frame interval and lost the
-  // sub-frame precision that mean recovers by averaging across the
-  // integer-frame distribution. Trimmed mean is the middle ground —
-  // discards the worst snap edge cases AND preserves frame-quantization
-  // precision in the bulk. Computed BEFORE the bar-1 anchor so we can
-  // extrapolate the anchor by bars.
-  const meanPeriodSec=dpBeats.length>=2
+  // Precise beat period from snap-corrected DP beats — plain MEAN
+  // (lastBeat-firstBeat / n-1). Median/trimmed-mean alternatives tested
+  // and rejected: median snaps to a single integer-frame interval and
+  // loses sub-frame precision; trimmed mean still drifted on long tracks.
+  // Plain mean's frame-quantization averaging gives best precision on
+  // clean tracks AND the BPM-snap below catches integer-tempo'd tracks
+  // where mean is slightly off. Computed BEFORE the bar-1 anchor so we
+  // can extrapolate the anchor by bars.
+  const beatPeriodSec=dpBeats.length>=2
     ?(dpBeats[dpBeats.length-1]-dpBeats[0])/(dpBeats.length-1)/ar
     :(60/bChk);
-  let medianPeriodSec=meanPeriodSec, trimmedMeanPeriodSec=meanPeriodSec;
-  if(dpBeats.length>=3){
-    const intervals=new Float32Array(dpBeats.length-1);
-    for(let i=1;i<dpBeats.length;i++) intervals[i-1]=dpBeats[i]-dpBeats[i-1];
-    intervals.sort(); // Float32Array.sort defaults to numeric ascending
-    const m=intervals.length;
-    const medianFrames=m%2?intervals[m>>1]:(intervals[(m>>1)-1]+intervals[m>>1])*0.5;
-    medianPeriodSec=medianFrames/ar;
-    // Trim 10% off each end (round down so we keep ≥1 sample even for tiny n).
-    const trim=Math.floor(m*0.10);
-    const lo=trim, hi=m-trim;
-    let sum=0,count=0;
-    for(let i=lo;i<hi;i++){sum+=intervals[i];count++;}
-    trimmedMeanPeriodSec=count>0?(sum/count)/ar:meanPeriodSec;
-  }
-  const beatPeriodSec=trimmedMeanPeriodSec;
-  console.log('[BPM-PERIOD] track',id,': mean='+meanPeriodSec.toFixed(6)+'s ('+(60/meanPeriodSec).toFixed(3)+') median='+medianPeriodSec.toFixed(6)+'s ('+(60/medianPeriodSec).toFixed(3)+') trimmed='+trimmedMeanPeriodSec.toFixed(6)+'s ('+(60/trimmedMeanPeriodSec).toFixed(3)+')');
+  console.log('[BPM-PERIOD] track',id,': mean='+beatPeriodSec.toFixed(6)+'s ('+(60/beatPeriodSec).toFixed(3)+')');
 
   // BPM snap: snap bpm and beatPeriodSec to clean integer values when we have
   // strong evidence the track is integer-tempo'd. Modern EDM is produced at
@@ -343,13 +326,19 @@ self.onmessage=function(e){
   // DP-mean averages over hundreds of beats — when it lands within 0.05 of an
   // integer, the track is genuinely integer-tempo'd.
   const periodIntegerLocked = bpmFromPeriod !== null && Math.abs(bpmFromPeriod - intBpm) < 0.05;
-  // Branch 2: two independent estimators converge near integer.
-  // For tracks where DP-mean is slightly off (e.g. Starseed at 121.155) but
-  // both DP-mean and autocorrelation agree closely AND both are near integer,
-  // we have strong evidence the track is integer-tempo'd despite estimator noise.
+  // Branch 2: two independent estimators both round to the same integer.
+  // Symmetric form — autocorrelation BPM (bpm) AND beat-mean BPM
+  // (bpmFromPeriod) must each individually be within 0.25 of intBpm. The
+  // old form gated on |bpm - bpmFromPeriod| < 0.07 which was too tight:
+  // estimator noise routinely exceeded 0.1 even on integer-tempo'd tracks
+  // (e.g. Home In The Sky: bpm=121.1, bpmFromPeriod=120.892, both round to
+  // 121, but |Δ|=0.208 failed the old check). Symmetric form catches that
+  // track AND stays safe against false-snap on truly fractional BPMs
+  // because both estimators must independently sit within 0.25 of integer
+  // (a true 121.4 BPM track fails first check the same as before).
   const crossValidated = bpmFromPeriod !== null
     && Math.abs(bpm - intBpm) < 0.25
-    && Math.abs(bpm - bpmFromPeriod) < 0.07;
+    && Math.abs(bpmFromPeriod - intBpm) < 0.25;
   // Outer guard: never snap if autocorrelation BPM is more than 0.5 from integer.
   const withinOuterGuard = Math.abs(bpm - intBpm) < 0.5;
   let finalBpm = bpm;
