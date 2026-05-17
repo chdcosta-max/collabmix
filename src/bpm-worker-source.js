@@ -235,7 +235,7 @@ self.onmessage=function(e){
   // constraint prevents reordering (a beat can't snap earlier than the
   // previous beat + half a beat). Runs BEFORE beatPeriodSec and bar-phase
   // scoring so every downstream step sees the corrected beat positions.
-  const SNAP_WIN=10;                  // ±10 frames ≈ ±50ms at ar≈200
+  const SNAP_WIN=20;                  // ±20 frames ≈ ±100ms at ar≈200
   const SNAP_THRESH=onKMx*0.30;       // matches L220 first-beat threshold
   const halfBeatFrames=floatBeatLag*0.5;
   let snapCount=0,maxDelta=0;
@@ -302,13 +302,26 @@ self.onmessage=function(e){
   const phMax=Math.max(phSc[0],phSc[1],phSc[2],phSc[3]);
   const phMin=Math.min(phSc[0],phSc[1],phSc[2],phSc[3]);
   if(phMax>0 && (phMax-phMin)/phMax < 0.25) bestPh=0;
-  // Precise beat period from DP-tracked beats — mean interval across all detected beats.
-  // Avoids the rounding drift that comes from using bpm (rv rounds to 0.1 BPM).
-  // Over a 5-min track this is accurate to under 0.1ms per beat vs ~100ms+ from rounded bpm.
-  // Computed BEFORE the bar-1 anchor so we can extrapolate the anchor backward by bars.
-  const beatPeriodSec=dpBeats.length>=2
+  // Precise beat period from snap-corrected DP beats — MEDIAN of consecutive
+  // intervals (was mean: lastBeat-firstBeat / n-1, which got pulled by any
+  // single mis-snapped beat at either endpoint or by drift accumulated
+  // across a long track). Median is robust to ~25% outlier intervals,
+  // which matches the snap-fail rate observed on real tracks. Computed
+  // BEFORE the bar-1 anchor so we can extrapolate the anchor by bars.
+  const meanPeriodSec=dpBeats.length>=2
     ?(dpBeats[dpBeats.length-1]-dpBeats[0])/(dpBeats.length-1)/ar
     :(60/bChk);
+  let beatPeriodSec=meanPeriodSec;
+  if(dpBeats.length>=3){
+    const intervals=new Float32Array(dpBeats.length-1);
+    for(let i=1;i<dpBeats.length;i++) intervals[i-1]=dpBeats[i]-dpBeats[i-1];
+    // Sort in place (Float32Array supports sort with default numeric compare).
+    intervals.sort();
+    const m=intervals.length;
+    const medianFrames=m%2?intervals[m>>1]:(intervals[(m>>1)-1]+intervals[m>>1])*0.5;
+    beatPeriodSec=medianFrames/ar;
+  }
+  console.log('[BPM-PERIOD] track',id,': mean=',meanPeriodSec.toFixed(6),'s (bpm='+ (60/meanPeriodSec).toFixed(3) +') median=',beatPeriodSec.toFixed(6),'s (bpm='+ (60/beatPeriodSec).toFixed(3) +')');
 
   // BPM snap: snap bpm and beatPeriodSec to clean integer values when we have
   // strong evidence the track is integer-tempo'd. Modern EDM is produced at
