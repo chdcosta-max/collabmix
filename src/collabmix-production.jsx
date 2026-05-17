@@ -3022,13 +3022,17 @@ function AnimatedZoomedWF({ bands, dur, progRef, onSeek, h=96, windowSec=8, beat
           colB[dx]=b; colM[dx]=m; colH[dx]=hh;
         }
 
-        // Compute heights + cache env per column for the brightness/weight passes.
-        const GAMMA=1.4;
+        // Compute heights + cache env per column for the brightness/weight
+        // passes. Height formula: linear interp 30%→100% of maxH with env, so
+        // drops literally tower over verses while quiet sections keep a 30%
+        // floor for silhouette continuity. True silence (env<=0.01) still
+        // reads zero so intro/outro pauses don't show a phantom envelope.
+        const H_FLOOR=0.30, H_RANGE=0.70;
         for(let dx=0;dx<physW;dx++){
           const bv=colB[dx], mv=colM[dx], hv=colH[dx];
           const env=bv>mv?(bv>hv?bv:hv):(mv>hv?mv:hv);
           envs[dx]=env;
-          heights[dx]=env<=0?0:Math.min(maxH,Math.pow(env,GAMMA)*maxH);
+          heights[dx]=env<=0.01?0:Math.min(maxH,maxH*(H_FLOOR+env*H_RANGE));
         }
 
         // Parse deck color → rgb for all three passes below.
