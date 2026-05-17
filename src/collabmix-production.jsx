@@ -3947,8 +3947,20 @@ function Deck({ id, ch, ctx:ac, color, local, remote, onChange, midi:mt, bpmResu
     load(file, track);
   },[loadFromLibrary]);
 
-  // Expose rate setter for beat sync (called from parent)
-  useEffect(()=>{ if(src.current?.playbackRate){ src.current.playbackRate.setTargetAtTime(rate,ac?.currentTime||0,.05); } },[rate,ac]);
+  // Expose rate setter for beat sync (called from parent). Use a short
+  // linearRamp instead of setTargetAtTime: the latter is asymptotic and
+  // NEVER REACHES the target value, leaving a permanent ~10⁻⁵ offset that
+  // accumulated as ~30ms drift per 5 min of synced playback. linearRamp
+  // hits the exact target value at end of ramp; 5ms ramp duration is
+  // inaudible but eliminates the rate-change click.
+  useEffect(()=>{
+    if(!src.current?.playbackRate) return;
+    const pr=src.current.playbackRate;
+    const now=ac?.currentTime||0;
+    pr.cancelScheduledValues(now);
+    pr.setValueAtTime(pr.value,now);
+    pr.linearRampToValueAtTime(rate,now+0.005);
+  },[rate,ac]);
 
   const fmt=(s)=>`${String(Math.floor(Math.max(0,s)/60)).padStart(2,"0")}:${String(Math.floor(Math.max(0,s)%60)).padStart(2,"0")}`;
   const cur=prog*dur;
@@ -5384,6 +5396,15 @@ export default function CollabMix({ initialPage = "landing", djName = null }) {
   // side is being driven). ON→OFF: just clear lock, broadcast.
   const handleSyncToggle = useCallback((clickedDeck) => {
     const now = Date.now();
+    console.log('[SYNC-STATE] entering toggle', {
+      clickedDeck,
+      syncLocked,
+      rateA, rateB,
+      masterDeck: masterDeckRef.current,
+      lastSlave: lastSlaveDeckRef.current,
+      progA: progRefA.current,
+      progB: progRefB.current,
+    });
     if (now - lastSyncToggleMsRef.current < 200) {
       console.log("[SYNC] toggle ignored: re-entry guard (<200ms since last toggle)");
       return;
@@ -5396,6 +5417,28 @@ export default function CollabMix({ initialPage = "landing", djName = null }) {
       const k = `deck${broadcastDeck}`;
       lsRef.current[k] = { ...(lsRef.current[k]||{}), syncLocked: false };
       sync.send({ type:"deck_update", deckId: broadcastDeck, field: "syncLocked", value: false });
+      // Reset rate state on both decks back to natural so the next sync
+      // engage targets the master's true natural BPM (not its still-rated
+      // post-previous-sync effective BPM). Calling _setRate via the DOM
+      // hook propagates to Deck's internal rate state which then triggers
+      // the rate-update useEffect that ramps playbackRate to 1.0.
+      setRateA(1); setRateB(1);
+      const elA = document.querySelector("[data-set-rate='A']");
+      const elB = document.querySelector("[data-set-rate='B']");
+      if (elA?._setRate) elA._setRate(1);
+      if (elB?._setRate) elB._setRate(1);
+      // Broadcast rate=1 so partner mirrors the reset.
+      lsRef.current.deckA = { ...(lsRef.current.deckA||{}), rate: 1 };
+      lsRef.current.deckB = { ...(lsRef.current.deckB||{}), rate: 1 };
+      sync.send({ type:"deck_update", deckId: "A", field: "rate", value: 1 });
+      sync.send({ type:"deck_update", deckId: "B", field: "rate", value: 1 });
+      // Clear sticky auto-master + slave so next engage re-detects fresh.
+      // (Explicit M-button master selections clear too — user can re-set
+      //  if desired. Keeps mental model simple: "unsync = clean slate".)
+      masterDeckRef.current = null;
+      setMasterDeck(null);
+      lastSlaveDeckRef.current = null;
+      setLastSlaveDeck(null);
       logEvent("sync", "toggle", { locked: false, slave: broadcastDeck });
       return;
     }
@@ -5451,7 +5494,7 @@ export default function CollabMix({ initialPage = "landing", djName = null }) {
       sync.send({ type:"deck_update", deckId: effectiveMaster, field: "masterDeck", value: effectiveMaster });
     }
     logEvent("sync", "toggle", { locked: true, slave: slaveDeck, master: effectiveMaster, mode: masterMode });
-  }, [syncLocked, syncDecks, bpm.results, pA, pB, sync, getEffectiveMasterBpm]);
+  }, [syncLocked, syncDecks, bpm.results, pA, pB, sync, getEffectiveMasterBpm, rateA, rateB]);
 
   // Explicit master toggle. Click M on a deck → mark as master; click again
   // → clear (no explicit master, SYNC will fall back to implicit logic).
