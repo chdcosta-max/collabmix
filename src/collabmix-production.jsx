@@ -2925,8 +2925,6 @@ function AnimatedZoomedWF({ bands, dur, progRef, onSeek, h=96, windowSec=8, beat
   // because no column has bass=mid=high=1.0 simultaneously). Recomputed
   // once per bands-identity change; cheap (one linear pass over 24k).
   const envMaxRef=useRef({bands:null,maxVal:1});
-  // Temporary one-shot diagnostic — fires once per bands change.
-  const diagRef=useRef({bands:null,done:false});
   const beatPhaseFracRef=useRef(beatPhaseFrac);
   const beatPeriodSecRef=useRef(beatPeriodSec);
   const gridOffsetMsRef=useRef(gridOffsetMs);
@@ -3075,27 +3073,6 @@ function AnimatedZoomedWF({ bands, dur, progRef, onSeek, h=96, windowSec=8, beat
           let h=Math.pow(env,GAMMA)*maxH;
           if(env>LIFT_TH) h+=maxH*LIFT_AMT*(env-LIFT_TH)/(1-LIFT_TH);
           heights[dx]=h<maxH?h:maxH;
-        }
-
-        if(diagRef.current.bands!==bands){
-          const sortedH=Array.from(heights.slice(0,physW)).sort((a,b)=>a-b);
-          const sortedE=Array.from(envs.slice(0,physW)).sort((a,b)=>a-b);
-          const pctH=p=>sortedH[Math.min(physW-1,Math.floor(physW*p))];
-          const pctE=p=>sortedE[Math.min(physW-1,Math.floor(physW*p))];
-          const deckId=deckColorRef.current==='#7B61FF'?'A':deckColorRef.current==='#00BFA5'?'B':'?';
-          console.log(`[WF-DIAG ${deckId}]`,{
-            canvasCss:{w:canvas.clientWidth,h:canvas.clientHeight},
-            canvasPhys:{w:physW,h:physH},
-            dpr,
-            ampPad,
-            maxH_phys:maxH,
-            maxH_css:(maxH/dpr).toFixed(1),
-            env:{p50:pctE(0.5)?.toFixed(3),p99:pctE(0.99)?.toFixed(3),max:sortedE[physW-1]?.toFixed(3)},
-            height_phys:{p50:pctH(0.5)?.toFixed(1),p99:pctH(0.99)?.toFixed(1),max:sortedH[physW-1]?.toFixed(1)},
-            height_css:{p50:(pctH(0.5)/dpr).toFixed(1),p99:(pctH(0.99)/dpr).toFixed(1),max:(sortedH[physW-1]/dpr).toFixed(1)},
-            height_pctMaxH:{p50:(pctH(0.5)/maxH*100).toFixed(0)+'%',p99:(pctH(0.99)/maxH*100).toFixed(0)+'%',max:(sortedH[physW-1]/maxH*100).toFixed(0)+'%'},
-          });
-          diagRef.current={bands,done:true};
         }
 
         // Parse deck color → rgb for all three passes below.
