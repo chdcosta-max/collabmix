@@ -3365,7 +3365,7 @@ function Knob({ v, set, min=-12, max=12, ctr=0, label, color="#C8A96E", size=38,
 // ── Deck ─────────────────────────────────────────────────────
 const HOT_CUE_COLORS=["#C8A96E","#ef4444","#22c55e","#f59e0b"];
 
-function Deck({ id, ch, ctx:ac, color, local, remote, onChange, midi:mt, bpmResult, bpmAnalyze, eqHi=0, eqMid=0, eqLo=0, chanVol=1, loadFromLibrary=null, onTrackInfo=null, onSync=null, syncReady=true, syncRole=null, isMaster=false, onMasterToggle=null, onLibraryTrackDrop=null, onProgUpdate=null, onWaveform=null, onSeekReady=null, remoteSeek=null, onToggleReady=null, onCueReady=null, remoteToggle=null, remoteCue=null, onTransportFire=null }) {
+function Deck({ id, ch, ctx:ac, color, local, remote, onChange, midi:mt, bpmResult, bpmAnalyze, eqHi=0, eqMid=0, eqLo=0, chanVol=1, loadFromLibrary=null, onTrackInfo=null, onSync=null, syncReady=true, syncRole=null, isMaster=false, onMasterToggle=null, onLibraryTrackDrop=null, onProgUpdate=null, onWaveform=null, onSeekReady=null, remoteSeek=null, onToggleReady=null, onCueReady=null, remoteToggle=null, remoteCue=null, onTransportFire=null, isDriver=true }) {
   const [buf,setBuf]=useState(null),[name,setName]=useState(null),[play,setPlay]=useState(false);
   const [prog,setProg]=useState(0),[dur,setDur]=useState(0);
   const progRef=useRef(0); // mirror of prog for parent AnimatedZoomedWF without 60fps setState
@@ -3512,14 +3512,23 @@ function Deck({ id, ch, ctx:ac, color, local, remote, onChange, midi:mt, bpmResu
     }; tick(); };
 
   const toggle=useCallback((fromRemote=false)=>{
-    // (A) Broadcast — always when local user clicked, regardless of buf
-    if(!fromRemote) onTransportFire?.({type:"toggle_request", deckId:id});
-    // (B) Spectator path — no local audio buffer
-    if(!buf){
-      if(!fromRemote) setPlay(p=>!p); // optimistic UI; mirror effect corrects if wrong
+    // Driver model: only the driver mutates audio + broadcasts the new state.
+    // Non-driver click → send toggle_request to driver (one-way), do nothing
+    // locally. Non-driver receive of toggle_request → ignore (not addressed
+    // to me). Driver receive of toggle_request → execute as if local click,
+    // suppressing the outgoing request (it was sent BY the asker, not us).
+    if (!isDriver) {
+      if (!fromRemote) onTransportFire?.({ type:"toggle_request", deckId:id });
       return;
     }
-    // (C) Owner path — local buf exists, drive audio engine
+    // Driver path: toggle locally + broadcast via dh→deck_update. The
+    // deck_update IS the state sync — no toggle_request needed from the driver.
+    if(!buf){
+      // Driver with no buf shouldn't happen (loader-is-driver), but defensively
+      // flip local play state so UI doesn't lock.
+      if(!fromRemote) setPlay(p=>!p);
+      return;
+    }
     if(play){
       off.current=Math.min(buf.duration,off.current+(ac.currentTime-st.current));
       stop_();setPlay(false);onChange?.("playing",false);
@@ -3528,17 +3537,53 @@ function Deck({ id, ch, ctx:ac, color, local, remote, onChange, midi:mt, bpmResu
       play_(off.current);setPlay(true);onChange?.("playing",true);
       logEvent("deck", "play_toggled", { deck: id, isPlaying: true });
     }
-  },[buf,play,ac,rate,id,onTransportFire]);
+  },[buf,play,ac,rate,id,onTransportFire,isDriver]);
   const seek  =useCallback((p, fromRemote=false)=>{
     // Clamp to [0, 1] — guards against unclamped callers (small WF onClick,
     // network seek_request) feeding negative or >1 fractions. Without this,
     // negative p stores a negative off.current that crashes the next play_()
     // with "AudioBufferSourceNode.start: offset less than minimum bound (0)".
     const pc=Math.max(0,Math.min(1,p));
-    if(!fromRemote) onTransportFire?.({type:"seek_request", deckId:id, value:pc});
+    // Driver model gate (same shape as toggle).
+    if (!isDriver) {
+      if (!fromRemote) onTransportFire?.({ type:"seek_request", deckId:id, value:pc });
+      return;
+    }
     const o=pc*(buf?.duration||0);off.current=o;if(play)play_(o);else{setProg(pc);progRef.current=pc;onProgUpdate?.(pc);}onChange?.("progress",pc);
-  },[buf,play,rate,id,onTransportFire]);
-  const cue   =useCallback((fromRemote=false)=>{ if(!fromRemote) onTransportFire?.({type:"cue_request", deckId:id}); off.current=0;setProg(0);progRef.current=0;onProgUpdate?.(0);if(play){stop_();setPlay(false);onChange?.("playing",false);}onChange?.("progress",0); },[play,id,onTransportFire]);
+  },[buf,play,rate,id,onTransportFire,isDriver]);
+  const cue   =useCallback((fromRemote=false)=>{
+    // Driver model gate (same shape as toggle).
+    if (!isDriver) {
+      if (!fromRemote) onTransportFire?.({ type:"cue_request", deckId:id });
+      return;
+    }
+    off.current=0;setProg(0);progRef.current=0;onProgUpdate?.(0);
+    if(play){stop_();setPlay(false);onChange?.("playing",false);}
+    onChange?.("progress",0);
+  },[play,id,onTransportFire,isDriver]);
+  // Driver handoff — when partner takes over this deck (isDriver transitions
+  // true→false), stop local audio and clear local track state so the display
+  // falls back to remote.* (partner's track info via deck_update). Without
+  // this, stale local buf + name would shadow remote and the visual would
+  // show the OLD track even after partner loaded a new one.
+  const prevIsDriverRef = useRef(undefined);
+  useEffect(() => {
+    const wasDriver = prevIsDriverRef.current;
+    prevIsDriverRef.current = isDriver;
+    if (wasDriver === true && isDriver === false) {
+      stop_();
+      setPlay(false);
+      setBuf(null);
+      setName(null);
+      setTrackArtist(null);
+      setDur(0);
+      setDeckKey(null);
+      setProg(0);
+      off.current = 0;
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isDriver]);
+
   useEffect(()=>{onSeekReady?.(seek);},[seek,onSeekReady]);
   useEffect(()=>{onToggleReady?.(toggle);},[toggle,onToggleReady]);
   useEffect(()=>{onCueReady?.(cue);},[cue,onCueReady]);
@@ -3548,9 +3593,13 @@ function Deck({ id, ch, ctx:ac, color, local, remote, onChange, midi:mt, bpmResu
   // mirror lets the syncing side compute beat offsets across browsers.
   useEffect(()=>{ if(bpmResult?.beatPhaseSec!=null) onChange?.("beatPhaseSec", bpmResult.beatPhaseSec); },[bpmResult?.beatPhaseSec,onChange]);
   useEffect(()=>{ if(bpmResult?.beatPeriodSec!=null) onChange?.("beatPeriodSec", bpmResult.beatPeriodSec); },[bpmResult?.beatPeriodSec,onChange]);
-  // Mirror remote `playing` state for Deck B button glyph
+  // Mirror remote `playing` state for Deck B button glyph.
+  // Driver-aware: when partner drives this deck, show their play state from
+  // remote.playing (mirrored via deck_update). When I drive, show my local
+  // `play`. Old `local` flag is true for both decks now (shared decks); the
+  // isDriver check replaces it as the source-of-truth gate.
   const remotePlaying=remote?.playing||false;
-  const playVisual=local?play:remotePlaying;
+  const playVisual=isDriver?play:remotePlaying;
   const enabled=local||!!remoteToggle;
   const cueEnabled=local||!!remoteCue;
 
@@ -5450,7 +5499,7 @@ export default function CollabMix({ initialPage = "landing", djName = null }) {
             {deckDrivers.A && <span style={{ fontSize:11, fontFamily:"'DM Sans',sans-serif", fontWeight:500, color:"#7B61FFaa", letterSpacing:.3 }}>{deckDrivers.A === session.name ? `${deckDrivers.A} (you)` : deckDrivers.A}</span>}
           </div>
           <div style={{ flex:1, overflow:"hidden", minHeight:0 }}>
-            <Deck id="A" ch={eng.current?.A} ctx={eng.current?.ctx} color="#7B61FF" local remote={pA} onChange={dh("A")} midi={midiEvt} bpmResult={bpm.results["A"]} bpmAnalyze={bpm.analyze} eqHi={eqA.hi} eqMid={eqA.mid} eqLo={eqA.lo} chanVol={eqA.vol} loadFromLibrary={libLoadA} onTrackInfo={handleTrackInfo} onSync={()=>handleSyncToggle("A")} syncReady={!!(bpm.results["B"]?.bpm || pB?.bpm)} syncRole={syncLocked ? (lastSlaveDeck === "A" ? "slave" : "master") : null} isMaster={masterDeck === "A"} onMasterToggle={handleMasterToggle} onLibraryTrackDrop={(trackId)=>{const t=lib.library.find(x=>x.id===trackId);if(t)handleLibLoad(t,"A");}} onProgUpdate={handleProgA} onWaveform={setWfA} onSeekReady={onDeckASeekReady} onToggleReady={onDeckAToggleReady} onCueReady={onDeckACueReady} onTransportFire={handleTransportFire}/>
+            <Deck id="A" ch={eng.current?.A} ctx={eng.current?.ctx} color="#7B61FF" local remote={pA} onChange={dh("A")} midi={midiEvt} bpmResult={bpm.results["A"]} bpmAnalyze={bpm.analyze} eqHi={eqA.hi} eqMid={eqA.mid} eqLo={eqA.lo} chanVol={eqA.vol} loadFromLibrary={libLoadA} onTrackInfo={handleTrackInfo} onSync={()=>handleSyncToggle("A")} syncReady={!!(bpm.results["B"]?.bpm || pB?.bpm)} syncRole={syncLocked ? (lastSlaveDeck === "A" ? "slave" : "master") : null} isMaster={masterDeck === "A"} onMasterToggle={handleMasterToggle} onLibraryTrackDrop={(trackId)=>{const t=lib.library.find(x=>x.id===trackId);if(t)handleLibLoad(t,"A");}} onProgUpdate={handleProgA} onWaveform={setWfA} onSeekReady={onDeckASeekReady} onToggleReady={onDeckAToggleReady} onCueReady={onDeckACueReady} onTransportFire={handleTransportFire} isDriver={!deckDrivers.A || deckDrivers.A === session.name}/>
           </div>
         </div>
 
@@ -5549,7 +5598,7 @@ export default function CollabMix({ initialPage = "landing", djName = null }) {
             {deckDrivers.B && <span style={{ fontSize:11, fontFamily:"'DM Sans',sans-serif", fontWeight:500, color:"#00BFA5aa", letterSpacing:.3 }}>{deckDrivers.B === session.name ? `${deckDrivers.B} (you)` : deckDrivers.B}</span>}
           </div>
           <div style={{ flex:1, overflow:"hidden", minHeight:0 }}>
-            <Deck id="B" ch={eng.current?.B} ctx={eng.current?.ctx} color="#00BFA5" local remote={pB} onChange={dh("B")} midi={midiEvt} bpmResult={bpm.results["B"]} bpmAnalyze={bpm.analyze} eqHi={eqB.hi} eqMid={eqB.mid} eqLo={eqB.lo} chanVol={eqB.vol} loadFromLibrary={libLoadB} onTrackInfo={handleTrackInfo} onSync={()=>handleSyncToggle("B")} syncReady={!!(bpm.results["A"]?.bpm || pA?.bpm)} syncRole={syncLocked ? (lastSlaveDeck === "B" ? "slave" : "master") : null} isMaster={masterDeck === "B"} onMasterToggle={handleMasterToggle} onLibraryTrackDrop={(trackId)=>{const t=lib.library.find(x=>x.id===trackId);if(t)handleLibLoad(t,"B");}} onProgUpdate={handleProgB} onWaveform={setWfB} onSeekReady={onDeckBSeekReady} onToggleReady={onDeckBToggleReady} onCueReady={onDeckBCueReady} onTransportFire={handleTransportFire}/>
+            <Deck id="B" ch={eng.current?.B} ctx={eng.current?.ctx} color="#00BFA5" local remote={pB} onChange={dh("B")} midi={midiEvt} bpmResult={bpm.results["B"]} bpmAnalyze={bpm.analyze} eqHi={eqB.hi} eqMid={eqB.mid} eqLo={eqB.lo} chanVol={eqB.vol} loadFromLibrary={libLoadB} onTrackInfo={handleTrackInfo} onSync={()=>handleSyncToggle("B")} syncReady={!!(bpm.results["A"]?.bpm || pA?.bpm)} syncRole={syncLocked ? (lastSlaveDeck === "B" ? "slave" : "master") : null} isMaster={masterDeck === "B"} onMasterToggle={handleMasterToggle} onLibraryTrackDrop={(trackId)=>{const t=lib.library.find(x=>x.id===trackId);if(t)handleLibLoad(t,"B");}} onProgUpdate={handleProgB} onWaveform={setWfB} onSeekReady={onDeckBSeekReady} onToggleReady={onDeckBToggleReady} onCueReady={onDeckBCueReady} onTransportFire={handleTransportFire} isDriver={!deckDrivers.B || deckDrivers.B === session.name}/>
           </div>
         </div>
 
