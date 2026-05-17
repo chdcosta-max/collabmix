@@ -243,27 +243,39 @@ self.onmessage=function(e){
   for(let i=0;i<dpBeats.length;i++){
     const f=dpBeats[i];
     const s=f-SNAP_WIN<0?0:f-SNAP_WIN, e=f+SNAP_WIN>=nf?nf-1:f+SNAP_WIN;
-    let bestF=-1, bestVal=SNAP_THRESH;
+    // Pass 1: argmax of kick-exclusive onset across the window — confirms a
+    // real kick exists in this region above SNAP_THRESH.
+    let argmaxF=-1, argmaxVal=SNAP_THRESH;
     for(let j=s;j<=e;j++){
       const k=onK[j]-onP[j];
-      if(k>bestVal){bestVal=k;bestF=j;}
+      if(k>argmaxVal){argmaxVal=k;argmaxF=j;}
     }
-    const noKick=bestF<0;
-    const onSameFrame=!noKick&&bestF===f;
-    const monoBlock=!noKick&&!onSameFrame&&i>0&&bestF<dpBeats[i-1]+halfBeatFrames;
+    // Pass 2: walk FORWARD from window start to find the EARLIEST spike that
+    // reaches 50% of argmaxVal. The 5 ms onset envelope on a 40-60 Hz signal
+    // oscillates (RMS catches different carrier phases per frame), producing
+    // 2-3 positive spikes per kick. argmax often sits on the 2nd or 3rd
+    // (mid-decay); the FIRST significant spike is the attack ramp.
+    let snapTargetF=argmaxF;
+    if(argmaxF>=0){
+      const firstRiseThresh=argmaxVal*0.5;
+      for(let j=s;j<argmaxF;j++){
+        if(onK[j]-onP[j]>firstRiseThresh){snapTargetF=j;break;}
+      }
+    }
+    const noKick=argmaxF<0;
+    const onSameFrame=!noKick&&snapTargetF===f;
+    const monoBlock=!noKick&&!onSameFrame&&i>0&&snapTargetF<dpBeats[i-1]+halfBeatFrames;
     const willSnap=!noKick&&!onSameFrame&&!monoBlock;
     if(willSnap){
-      const delta=bestF>f?bestF-f:f-bestF;
+      const delta=snapTargetF>f?snapTargetF-f:f-snapTargetF;
       if(delta>maxDelta) maxDelta=delta;
-      dpBeats[i]=bestF;
+      dpBeats[i]=snapTargetF;
       snapCount++;
     }
-    // Per-beat diagnostic for 3 representative beats per track. Logs the
-    // window contents around the snap target so we can see the shape of
-    // the rising edge and decide whether argmax lands at attack onset or
-    // somewhere later on the rise.
+    // Per-beat diagnostic for 3 representative beats per track. Logs both
+    // argmax and the first-rise pick so we can see when they differ.
     if(i===50||i===100||i===200){
-      const targetF=willSnap?bestF:f;
+      const targetF=willSnap?snapTargetF:f;
       const vicRad=5;
       const vs=targetF-vicRad<0?0:targetF-vicRad;
       const ve=targetF+vicRad>=nf?nf-1:targetF+vicRad;
@@ -271,11 +283,12 @@ self.onmessage=function(e){
       for(let j=vs;j<=ve;j++) vals.push((onK[j]-onP[j]).toFixed(3));
       let status;
       if(willSnap){
-        const d=bestF-f;
-        status='snap='+bestF+' delta='+(d>=0?'+':'')+d+' ('+(d>=0?'+':'')+(d*msPerFrame).toFixed(0)+'ms)';
+        const d=snapTargetF-f;
+        const rb=snapTargetF!==argmaxF?' (argmax='+argmaxF+' rolled-back '+(argmaxF-snapTargetF)+'f)':'';
+        status='snap='+snapTargetF+' delta='+(d>=0?'+':'')+d+' ('+(d>=0?'+':'')+(d*msPerFrame).toFixed(0)+'ms)'+rb;
       } else if(noKick) status='no-kick-above-threshold (DP stays)';
-      else if(onSameFrame) status='already-on-kick (dp==argmax)';
-      else status='monotonic-block (would-be snap='+bestF+')';
+      else if(onSameFrame) status='already-on-kick (dp==snapTarget)';
+      else status='monotonic-block (would-be snap='+snapTargetF+')';
       console.log('[SNAP-DEBUG] '+id+' beat '+i+': dp='+f+' win=['+s+'..'+e+'] '+status);
       console.log('  vicinity (frames '+vs+'-'+ve+'): '+vals.join(', '));
     }
