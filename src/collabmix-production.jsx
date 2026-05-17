@@ -1048,7 +1048,7 @@ function TrackRow({track, onLoadA, onLoadB, isRec, reasons, canLoad, previewTrac
 // LibraryPanel function is kept immediately below as a reference while we
 // iterate on this new layout — nothing else in the app references it directly
 // once the swap is made.
-function LibraryPanelV2({ lib, onLoad, playingTrack, previewTrackId, onPreview, onDelete, chat, onSendChat, me }) {
+function LibraryPanelV2({ lib, onLoad, playingTrack, deckATrackId:deckATrackIdProp=null, deckBTrackId:deckBTrackIdProp=null, previewTrackId, onPreview, onDelete, chat, onSendChat, me }) {
   const G = "#C8A96E";
   const BG = "#080810";
   const BG2 = "#0D0C1A";
@@ -1090,8 +1090,8 @@ function LibraryPanelV2({ lib, onLoad, playingTrack, previewTrackId, onPreview, 
   // Mock "loaded on deck" state so the row indicator can be visually demonstrated
   // in the prototype. When real tracks are loaded this would come from the parent's
   // deck-track state.
-  const deckATrackId = useMock ? "m2"  : (playingTrack?.id || null);
-  const deckBTrackId = useMock ? "m5"  : null;
+  const deckATrackId = useMock ? "m2"  : (deckATrackIdProp || null);
+  const deckBTrackId = useMock ? "m5"  : (deckBTrackIdProp || null);
   const DECK_A_CLR = "#7B61FF"; // violet
   const DECK_B_CLR = "#00BFA5"; // teal
 
@@ -1125,6 +1125,11 @@ function LibraryPanelV2({ lib, onLoad, playingTrack, previewTrackId, onPreview, 
   // Suggestions panel — slides in from the right. Source deck is whichever is
   // currently loaded (A takes priority if both are loaded).
   const [showSuggestions, setShowSuggestions] = useState(false);
+
+  // Hover-revealed →A / →B chips on each track row. Click row body still
+  // defaults to deck A (preserves muscle memory); the chips give an explicit
+  // path to deck B without adding visual clutter at rest.
+  const [hoveredRowId, setHoveredRowId] = useState(null);
 
   // Queue/chat split — persisted fraction of the right rail devoted to the queue.
   const [queueFraction, setQueueFraction] = useState(() => {
@@ -1573,14 +1578,15 @@ function LibraryPanelV2({ lib, onLoad, playingTrack, previewTrackId, onPreview, 
             const baseBg = deckClr ? `${deckClr}12` : "transparent";
             return (
               <div key={t.id} onClick={() => { console.log('[ROW-CLICK]',{id:t.id,title:t.title,artist:t.artist}); onLoad(t, "A"); }}
-                onMouseEnter={e => e.currentTarget.style.background = deckClr ? `${deckClr}22` : BG2}
-                onMouseLeave={e => e.currentTarget.style.background = baseBg}
+                onMouseEnter={e => { e.currentTarget.style.background = deckClr ? `${deckClr}22` : BG2; setHoveredRowId(t.id); }}
+                onMouseLeave={e => { e.currentTarget.style.background = baseBg; setHoveredRowId(null); }}
                 style={{
                   display: "flex", alignItems: "center", gap: 10,
                   padding: "6px 10px 6px 7px", cursor: "pointer", opacity: played && !deckClr ? 0.55 : 1,
                   borderRadius: 4, marginBottom: 1,
                   background: baseBg,
                   borderLeft: `3px solid ${deckClr || "transparent"}`,
+                  position: "relative",
                 }}>
                 {/* Deck badge (replaces analysis dot when loaded on a deck), else analysis dot. */}
                 {deckClr ? (
@@ -1631,6 +1637,21 @@ function LibraryPanelV2({ lib, onLoad, playingTrack, previewTrackId, onPreview, 
                 <div style={{ width: 42, textAlign: "right", fontFamily: "'DM Mono',monospace", fontSize: 10, color: MUTED }}>
                   {fmtDur(t.duration)}
                 </div>
+                {/* Hover-revealed deck-load chips. Overlay the right edge of
+                    the row (over the BPM/key/energy/duration columns) only
+                    while this row is hovered; chips themselves stopPropagation
+                    so they don't trigger the row's default load-to-A click.
+                    Matches TrackRow chip visual language (lines ~1037-1038). */}
+                {hoveredRowId === t.id && (
+                  <div style={{ position: "absolute", right: 8, top: "50%", transform: "translateY(-50%)", display: "flex", gap: 4, alignItems: "center", pointerEvents: "auto" }}>
+                    <button onClick={e => { e.stopPropagation(); onLoad(t, "A"); }}
+                      title="Load to Deck A"
+                      style={{ padding: "4px 10px", fontSize: 11, fontWeight: 700, fontFamily: "'DM Mono',monospace", background: `${DECK_A_CLR}1f`, border: `1px solid ${DECK_A_CLR}66`, color: DECK_A_CLR, borderRadius: 5, cursor: "pointer", letterSpacing: 0.5 }}>→A</button>
+                    <button onClick={e => { e.stopPropagation(); onLoad(t, "B"); }}
+                      title="Load to Deck B"
+                      style={{ padding: "4px 10px", fontSize: 11, fontWeight: 700, fontFamily: "'DM Mono',monospace", background: `${DECK_B_CLR}1f`, border: `1px solid ${DECK_B_CLR}66`, color: DECK_B_CLR, borderRadius: 5, cursor: "pointer", letterSpacing: 0.5 }}>→B</button>
+                  </div>
+                )}
               </div>
             );
           })}
@@ -3308,17 +3329,35 @@ function AnimatedZoomedWF({ bands, dur, progRef, onSeek, h=96, windowSec=8, beat
     return()=>{cancelAnimationFrame(raf.current); ro.disconnect();};
   },[h,windowSec,progRef]);
 
-  const onClick=e=>{
-    const canvas=ref.current;
-    const b=bandsRef.current;
-    if(!seekRef.current||!canvas||!durRef.current||!b?.bass?.length) return;
-    const r=canvas.getBoundingClientRect(), W=r.width, clickX=e.clientX-r.left;
-    const len=b.bass.length;
-    const viewPx=(windowSec/durRef.current)*len;
-    const srcX=(progRef?.current??0)*len-viewPx/2;
-    seekRef.current(Math.max(0,Math.min(1,(srcX+clickX/W*viewPx)/len)));
-  };
-  return <canvas ref={ref} onClick={onClick} style={{width:'100%',height:h,background:'#030308',cursor:'crosshair',display:'block'}}/>;
+  // Drag-only seek: mousedown arms dragging, mousemove (while held) scrubs,
+  // mouseup releases. A bare click without movement does nothing — prevents
+  // accidental seeks when the user just looks at the big waveform. The small
+  // per-deck WF retains click-to-seek for quick navigation.
+  useEffect(()=>{
+    const canvas=ref.current; if(!canvas) return;
+    let dragging=false;
+    const seekAt=(clientX)=>{
+      const b=bandsRef.current;
+      if(!seekRef.current||!durRef.current||!b?.bass?.length) return;
+      const r=canvas.getBoundingClientRect(), W=r.width, mouseX=clientX-r.left;
+      const len=b.bass.length;
+      const viewPx=(windowSec/durRef.current)*len;
+      const srcX=(progRef?.current??0)*len-viewPx/2;
+      seekRef.current(Math.max(0,Math.min(1,(srcX+mouseX/W*viewPx)/len)));
+    };
+    const onDown=(e)=>{ dragging=true; e.preventDefault(); };
+    const onMove=(e)=>{ if(dragging) seekAt(e.clientX); };
+    const onUp  =()=>{ dragging=false; };
+    canvas.addEventListener('mousedown',onDown);
+    window.addEventListener('mousemove',onMove);
+    window.addEventListener('mouseup',onUp);
+    return ()=>{
+      canvas.removeEventListener('mousedown',onDown);
+      window.removeEventListener('mousemove',onMove);
+      window.removeEventListener('mouseup',onUp);
+    };
+  },[windowSec,progRef]);
+  return <canvas ref={ref} style={{width:'100%',height:h,background:'#030308',cursor:'ew-resize',display:'block',userSelect:'none'}}/>;
 }
 
 // ── Scrolling zoomed waveform (Rekordbox-style) ───────────────
@@ -3886,6 +3925,13 @@ function Deck({ id, ch, ctx:ac, color, local, remote, onChange, midi:mt, bpmResu
     const ab=await f.arrayBuffer();
     const d=await ac.decodeAudioData(ab);
     stop_();setPlay(false);setProg(0);off.current=0;
+    // Reset position-bookkeeping refs too. Without this, the visual playhead
+    // shows the prior track's last position until tick() runs again, and the
+    // parent's progRefA/B remains stale (broadcast to partner, fed into sync
+    // engine). Rebase st.current so any tick frame that fires between here
+    // and the next play_() computes elapsed=0 (no spurious advancement).
+    progRef.current=0;onProgUpdate?.(0);
+    if(ac)st.current=ac.currentTime;
     // Reset rate to 1 — old sync-imposed rate from a prior track would scale
     // the new track's BPM display incorrectly. Parent's rateA/B mirror via dh.
     setRate(1);onChange?.("rate",1);
@@ -6097,6 +6143,8 @@ export default function CollabMix({ initialPage = "landing", djName = null }) {
           lib={lib}
           onLoad={handleLibLoad}
           playingTrack={playingTrack}
+          deckATrackId={libLoadA?.track?.id || null}
+          deckBTrackId={libLoadB?.track?.id || null}
           previewTrackId={previewTrackId}
           onPreview={handlePreview}
           onDelete={handleDeleteTrack}
