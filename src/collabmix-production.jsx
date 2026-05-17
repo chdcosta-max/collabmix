@@ -1126,10 +1126,9 @@ function LibraryPanelV2({ lib, onLoad, playingTrack, deckATrackId:deckATrackIdPr
   // currently loaded (A takes priority if both are loaded).
   const [showSuggestions, setShowSuggestions] = useState(false);
 
-  // Hover-revealed →A / →B chips on each track row. Click row body still
-  // defaults to deck A (preserves muscle memory); the chips give an explicit
-  // path to deck B without adding visual clutter at rest.
-  const [hoveredRowId, setHoveredRowId] = useState(null);
+  // (Removed hoveredRowId — A/B chips are now always-visible on the left of
+  // each row instead of hover-revealed. Hover-reveal hid the load-to-B path
+  // for users who didn't move the mouse over the row.)
 
   // Queue/chat split — persisted fraction of the right rail devoted to the queue.
   const [queueFraction, setQueueFraction] = useState(() => {
@@ -1578,34 +1577,43 @@ function LibraryPanelV2({ lib, onLoad, playingTrack, deckATrackId:deckATrackIdPr
             const baseBg = deckClr ? `${deckClr}12` : "transparent";
             return (
               <div key={t.id} onClick={() => { console.log('[ROW-CLICK]',{id:t.id,title:t.title,artist:t.artist}); onLoad(t, "A"); }}
-                onMouseEnter={e => { e.currentTarget.style.background = deckClr ? `${deckClr}22` : BG2; setHoveredRowId(t.id); }}
-                onMouseLeave={e => { e.currentTarget.style.background = baseBg; setHoveredRowId(null); }}
+                onMouseEnter={e => { e.currentTarget.style.background = deckClr ? `${deckClr}22` : BG2; }}
+                onMouseLeave={e => { e.currentTarget.style.background = baseBg; }}
                 style={{
-                  display: "flex", alignItems: "center", gap: 10,
+                  display: "flex", alignItems: "center", gap: 8,
                   padding: "6px 10px 6px 7px", cursor: "pointer", opacity: played && !deckClr ? 0.55 : 1,
                   borderRadius: 4, marginBottom: 1,
                   background: baseBg,
                   borderLeft: `3px solid ${deckClr || "transparent"}`,
-                  position: "relative",
                 }}>
-                {/* Deck badge (replaces analysis dot when loaded on a deck), else analysis dot. */}
-                {deckClr ? (
-                  <div title={`Loaded on Deck ${onDeckA ? "A" : "B"}`} style={{
-                    width: 18, height: 18, borderRadius: 3, flexShrink: 0,
-                    background: deckClr, color: "#0a0a10",
-                    display: "flex", alignItems: "center", justifyContent: "center",
-                    fontSize: 10, fontFamily: "'DM Mono',monospace", fontWeight: 700,
-                    boxShadow: `0 0 8px ${deckClr}88`,
-                  }}>{onDeckA ? "A" : "B"}</div>
-                ) : (
-                  <div title={t.analyzed ? "Analyzed" : "Metadata only"} style={{
-                    width: 6, height: 6, borderRadius: 3, flexShrink: 0,
-                    background: t.analyzed ? G : MUTED,
-                    boxShadow: t.analyzed ? `0 0 6px ${G}55` : "none",
-                    opacity: t.analyzed ? 1 : 0.55,
-                    marginLeft: 6, marginRight: 6,
-                  }} />
-                )}
+                {/* Analysis status dot — small, before the load buttons. */}
+                <div title={t.analyzed ? "Analyzed" : "Metadata only"} style={{
+                  width: 5, height: 5, borderRadius: 3, flexShrink: 0,
+                  background: t.analyzed ? G : MUTED,
+                  boxShadow: t.analyzed ? `0 0 6px ${G}55` : "none",
+                  opacity: t.analyzed ? 1 : 0.55,
+                }} />
+                {/* Always-visible deck-load buttons. A/B at left of each row.
+                    Button is filled when the track is currently loaded on that
+                    deck (replaces the prior deck-badge indicator). Click
+                    stopPropagation so they don't double-fire the row's
+                    default-load-to-A click. */}
+                <button onClick={e => { e.stopPropagation(); onLoad(t, "A"); }}
+                  title="Load to Deck A"
+                  style={{ padding: "3px 9px", fontSize: 11, fontWeight: 700, fontFamily: "'DM Mono',monospace",
+                    background: onDeckA ? `${DECK_A_CLR}` : `${DECK_A_CLR}1f`,
+                    border: `1px solid ${onDeckA ? DECK_A_CLR : DECK_A_CLR + "66"}`,
+                    color: onDeckA ? "#0a0a10" : DECK_A_CLR,
+                    borderRadius: 4, cursor: "pointer", letterSpacing: 0.5, flexShrink: 0,
+                    boxShadow: onDeckA ? `0 0 8px ${DECK_A_CLR}88` : "none" }}>A</button>
+                <button onClick={e => { e.stopPropagation(); onLoad(t, "B"); }}
+                  title="Load to Deck B"
+                  style={{ padding: "3px 9px", fontSize: 11, fontWeight: 700, fontFamily: "'DM Mono',monospace",
+                    background: onDeckB ? `${DECK_B_CLR}` : `${DECK_B_CLR}1f`,
+                    border: `1px solid ${onDeckB ? DECK_B_CLR : DECK_B_CLR + "66"}`,
+                    color: onDeckB ? "#0a0a10" : DECK_B_CLR,
+                    borderRadius: 4, cursor: "pointer", letterSpacing: 0.5, flexShrink: 0,
+                    boxShadow: onDeckB ? `0 0 8px ${DECK_B_CLR}88` : "none" }}>B</button>
                 <div style={{
                   width: 32, height: 32, background: BG3, borderRadius: 3, flexShrink: 0,
                   backgroundImage: artwork ? `url(${artwork})` : undefined,
@@ -1637,21 +1645,6 @@ function LibraryPanelV2({ lib, onLoad, playingTrack, deckATrackId:deckATrackIdPr
                 <div style={{ width: 42, textAlign: "right", fontFamily: "'DM Mono',monospace", fontSize: 10, color: MUTED }}>
                   {fmtDur(t.duration)}
                 </div>
-                {/* Hover-revealed deck-load chips. Overlay the right edge of
-                    the row (over the BPM/key/energy/duration columns) only
-                    while this row is hovered; chips themselves stopPropagation
-                    so they don't trigger the row's default load-to-A click.
-                    Matches TrackRow chip visual language (lines ~1037-1038). */}
-                {hoveredRowId === t.id && (
-                  <div style={{ position: "absolute", right: 8, top: "50%", transform: "translateY(-50%)", display: "flex", gap: 4, alignItems: "center", pointerEvents: "auto" }}>
-                    <button onClick={e => { e.stopPropagation(); onLoad(t, "A"); }}
-                      title="Load to Deck A"
-                      style={{ padding: "4px 10px", fontSize: 11, fontWeight: 700, fontFamily: "'DM Mono',monospace", background: `${DECK_A_CLR}1f`, border: `1px solid ${DECK_A_CLR}66`, color: DECK_A_CLR, borderRadius: 5, cursor: "pointer", letterSpacing: 0.5 }}>→A</button>
-                    <button onClick={e => { e.stopPropagation(); onLoad(t, "B"); }}
-                      title="Load to Deck B"
-                      style={{ padding: "4px 10px", fontSize: 11, fontWeight: 700, fontFamily: "'DM Mono',monospace", background: `${DECK_B_CLR}1f`, border: `1px solid ${DECK_B_CLR}66`, color: DECK_B_CLR, borderRadius: 5, cursor: "pointer", letterSpacing: 0.5 }}>→B</button>
-                  </div>
-                )}
               </div>
             );
           })}
