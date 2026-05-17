@@ -4735,16 +4735,10 @@ export default function CollabMix({ initialPage = "landing", djName = null }) {
       if (m.field === "playing" && (m.deckId === "A" || m.deckId === "B")) {
         deckPlayStartRef.current[m.deckId] = m.value ? Date.now() : null;
       }
-      // 2) Shared mixer (Option C): apply EQ / vol / filter changes to MY local
-      // engine too, so partner's knob moves alter audio on both browsers.
-      // Field names used over the wire: eqHi/eqMid/eqLo/vol/filter.
-      // Local eq state keys: hi/mid/lo/vol/filter (vol+filter share names).
-      const FIELD_MAP = { eqHi:"hi", eqMid:"mid", eqLo:"lo", vol:"vol", filter:"filter" };
-      const localKey = FIELD_MAP[m.field];
-      if (localKey != null) {
-        if (m.deckId==="A") setEqA(e=>({...e,[localKey]:m.value}));
-        else if (m.deckId==="B") setEqB(e=>({...e,[localKey]:m.value}));
-      }
+      // EQ / channel volume / filter are PER-USER mix preferences (driver
+      // model decision). Ignore remote values here — each DJ controls their
+      // own monitoring. Old build (pre driver-model) still broadcasts these;
+      // dropping them on receive is the forward-compatible upgrade path.
       // Mirror global SYNC lock across browsers — both sides see the same lock
       // visual regardless of who clicked. m.deckId carries which deck the
       // remote-clicker designated as slave; we remember that so the re-sync
@@ -5196,18 +5190,15 @@ export default function CollabMix({ initialPage = "landing", djName = null }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [masterDeck, syncLocked]);
 
+  // EQ / channel volume / filter are PER-USER mix preferences — not broadcast,
+  // not mirrored across browsers. Each DJ adjusts for their own monitoring.
+  // Matches Beatport B2B reality where each DJ has their own headphone mix.
   const updateEqA = useCallback((field, val) => {
     setEqA(e => ({...e, [field]:val}));
-    const wsField = field==="vol"?"vol":field==="filter"?"filter":`eq${field.charAt(0).toUpperCase()+field.slice(1)}`;
-    lsRef.current.deckA = {...(lsRef.current.deckA||{}), [wsField]:val};
-    sync.send({type:"deck_update", deckId:"A", field:wsField, value:val});
   }, []);
 
   const updateEqB = useCallback((field, val) => {
     setEqB(e => ({...e, [field]:val}));
-    const wsField = field==="vol"?"vol":field==="filter"?"filter":`eq${field.charAt(0).toUpperCase()+field.slice(1)}`;
-    lsRef.current.deckB = {...(lsRef.current.deckB||{}), [wsField]:val};
-    sync.send({type:"deck_update", deckId:"B", field:wsField, value:val});
   }, []);
 
   const dh = (id) => (field, value) => {
@@ -5220,6 +5211,15 @@ export default function CollabMix({ initialPage = "landing", djName = null }) {
     }
     const k = `deck${id}`;
     lsRef.current[k] = { ...(lsRef.current[k]||{}), [field]: value };
+    // Driver-only broadcast: only the user who currently drives this deck
+    // broadcasts per-deck state. Suppresses last-write-wins races when both
+    // users render both decks. When deck has no driver (empty deck, solo
+    // mode pre-load), broadcast proceeds — preserves existing behavior.
+    // Global fields (syncLocked, masterDeck) broadcast via separate paths
+    // (handleSyncToggle / handleMasterToggle) and aren't affected.
+    const driver = deckDriversRef.current?.[id];
+    const myName = sessionRef.current?.name;
+    if (driver && myName && driver !== myName) return;
     sync.send({ type:"deck_update", deckId:id, field, value });
   };
 
