@@ -3055,12 +3055,24 @@ function AnimatedZoomedWF({ bands, dur, progRef, onSeek, h=96, windowSec=8, beat
         }
         const envDivisor=envMaxRef.current.maxVal;
 
+        // Heights: gamma 1.4 base curve + additive lift for env > 0.7. The
+        // lift adds up to 0.20*maxH for the very top of the distribution
+        // (env=1.0) and zero below env=0.7, so verses (env~0.46) and
+        // breakdowns (env~0.10) stay where they were while drops push toward
+        // — and frequently saturate at — full height, reading as a clear
+        // dominant block. envs[] still holds the pre-lift env so the
+        // brightness overlay and centerline weight band consume the same
+        // signal they did before.
         const GAMMA=1.4;
+        const LIFT_TH=0.7, LIFT_AMT=0.20;
         for(let dx=0;dx<physW;dx++){
           const bv=colB[dx], mv=colM[dx], hv=colH[dx];
           const env=(0.7*bv+0.2*mv+0.1*hv)/envDivisor;
           envs[dx]=env;
-          heights[dx]=env<=0?0:Math.min(maxH,Math.pow(env,GAMMA)*maxH);
+          if(env<=0){heights[dx]=0;continue;}
+          let h=Math.pow(env,GAMMA)*maxH;
+          if(env>LIFT_TH) h+=maxH*LIFT_AMT*(env-LIFT_TH)/(1-LIFT_TH);
+          heights[dx]=h<maxH?h:maxH;
         }
 
         // Parse deck color → rgb for all three passes below.
