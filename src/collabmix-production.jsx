@@ -3564,9 +3564,11 @@ function Deck({ id, ch, ctx:ac, color, local, remote, onChange, midi:mt, bpmResu
   const playRef=useRef(play);
   const rateRef=useRef(rate);
   const isDriverRef=useRef(isDriver);
-  useEffect(()=>{ playRef.current=play; },[play]);
+  const bufRef=useRef(buf);
+  useEffect(()=>{ bufRef.current=buf; },[buf]);
+  useEffect(()=>{ playRef.current=play; console.log('[PLAY-STATE] deck',id,'play prop/state changed to '+play+', src.current='+!!src.current+', ac='+!!ac); },[play,id,ac]);
   useEffect(()=>{ rateRef.current=rate; },[rate]);
-  useEffect(()=>{ isDriverRef.current=isDriver; },[isDriver]);
+  useEffect(()=>{ isDriverRef.current=isDriver; console.log('[PLAY-STATE] deck',id,'isDriver changed to '+isDriver); },[isDriver,id]);
   // EQ is now passed as props: eqHi, eqMid, eqLo, chanVol
   const remProgRef=useRef(0),remTimeRef=useRef(0),remRateRef=useRef(0),remRaf=useRef(null);
   const lastProgBroadcastRef=useRef(0);
@@ -3665,9 +3667,9 @@ function Deck({ id, ch, ctx:ac, color, local, remote, onChange, midi:mt, bpmResu
   const sfx=`DECK_${id}`;
   useEffect(()=>{ if(!mt||!local)return; const{actionKey:ak,value:v}=mt; if(ak===`${sfx}_PLAY`&&v===true)toggle(); if(ak===`${sfx}_CUE`&&v===true)cue(); },[mt]);
 
-  const stop_=()=>{ if(src.current){src.current.onended=null;try{src.current.stop();}catch{}src.current.disconnect();src.current=null;}cancelAnimationFrame(raf.current); };
+  const stop_=()=>{ console.log('[PLAY-STATE] deck',id,'stop_() called, destroying source (hadSrc='+!!src.current+')'); if(src.current){src.current.onended=null;try{src.current.stop();}catch{}src.current.disconnect();src.current=null;}cancelAnimationFrame(raf.current); };
 
-  const play_=(o)=>{ if(!buf||!ch||!ac)return; stop_(); if(ac.state==="suspended")ac.resume();
+  const play_=(o)=>{ if(!buf||!ch||!ac){console.log('[PLAY-STATE] deck',id,'play_() bailed early: hasBuf='+!!buf+' hasCh='+!!ch+' hasAc='+!!ac); return;} console.log('[PLAY-STATE] deck',id,'play_() creating source at offset',o); stop_(); if(ac.state==="suspended")ac.resume();
     const s=ac.createBufferSource(); s.buffer=buf; s.playbackRate.value=rate; s.connect(ch.trim);
     const lr=loopRef.current;
     if(lr.active&&lr.start!==null){s.loop=true;s.loopStart=lr.start*buf.duration;s.loopEnd=(lr.end??1)*buf.duration;}
@@ -3696,6 +3698,7 @@ function Deck({ id, ch, ctx:ac, color, local, remote, onChange, midi:mt, bpmResu
     }; tick(); };
 
   const toggle=useCallback((fromRemote=false)=>{
+    console.log('[PLAY-STATE] deck',id,'toggle() called, fromRemote='+fromRemote+' currentPlay='+play+' isDriver='+isDriver+' hasBuf='+!!buf);
     // Driver model: only the driver mutates audio + broadcasts the new state.
     // Non-driver click → send toggle_request to driver (one-way), do nothing
     // locally. Non-driver receive of toggle_request → ignore (not addressed
@@ -3770,6 +3773,15 @@ function Deck({ id, ch, ctx:ac, color, local, remote, onChange, midi:mt, bpmResu
     const isDriverNow = isDriverRef.current;
     const playNow = playRef.current;
     const rateNow = rateRef.current;
+    console.log('[NUDGE-CHECK] deck', id, {
+      playRefCurrent: playRef.current,
+      isDriverRefCurrent: isDriverRef.current,
+      rateRefCurrent: rateRef.current,
+      hasSrc: !!src.current,
+      hasAc: !!ac,
+      hasBuf: !!bufRef.current,
+      offCurrent: off.current,
+    });
     if (!isDriverNow || !playNow || !src.current || !ac) {
       console.log('[NUDGE-DEBUG] deck', id, 'skip', { isDriver: isDriverNow, play: playNow, hasSrc: !!src.current });
       return;
