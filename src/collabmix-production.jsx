@@ -2918,6 +2918,13 @@ function AnimatedZoomedWF({ bands, dur, progRef, onSeek, h=96, windowSec=8, beat
   // so without this the draw loop closure would hold a stale (initial) bands value
   // and never pick up new arrays when a track finishes analyzing.
   const bandsRef=useRef(bands);
+  // Cached per-track max of bass-weighted env (0.7b+0.2m+0.1h) across the
+  // full 24k source columns. Used to renormalize the per-column env in
+  // Pass 2 so the loudest column on the track maps to 1.0 after the
+  // weighted-sum reduction (which otherwise tops out around 0.85-0.95
+  // because no column has bass=mid=high=1.0 simultaneously). Recomputed
+  // once per bands-identity change; cheap (one linear pass over 24k).
+  const envMaxRef=useRef({bands:null,maxVal:1});
   const beatPhaseFracRef=useRef(beatPhaseFrac);
   const beatPeriodSecRef=useRef(beatPeriodSec);
   const gridOffsetMsRef=useRef(gridOffsetMs);
@@ -3023,22 +3030,35 @@ function AnimatedZoomedWF({ bands, dur, progRef, onSeek, h=96, windowSec=8, beat
         }
 
         // Compute heights + cache env per column. Env is BASS-WEIGHTED
-        // (0.7 bass + 0.2 mid + 0.1 high) rather than max(b,m,h) — in EDM/
-        // house, drops are defined by sub-bass + kick, so weighting bass
-        // hardest means hats/pads/vocals can't keep env high during
-        // breakdowns and verses, widening the visible drop-vs-verse
-        // contrast. envs[] is also consumed by the brightness overlay and
-        // centerline weight band below, so drops also visibly brighten +
-        // thicken on the same signal.
+        // (0.7 bass + 0.2 mid + 0.1 high), then renormalized to per-track
+        // max so the loudest column maps to 1.0 (otherwise weighted sum
+        // tops out around 0.85-0.95 and drops never touch full height).
+        // envs[] is also consumed by the brightness overlay and centerline
+        // weight band, so drops also visibly brighten + thicken on the
+        // same signal.
         //
-        // Gamma 2.2 strongly compresses mid-range so the bass-weighted env
-        // gets a steep climb at the top — drops tower while verses stay
-        // modest. Small WF in deck panel keeps env=max(b,m,h) for full
-        // detail at h=40.
-        const GAMMA=2.2;
+        // Gamma 1.4 tuned for the renormalized bass-weighted distribution:
+        // breakdowns ~5% maxH (thin line), verses ~34% maxH (medium),
+        // drops 80-100% maxH (tower with headroom). Small WF keeps
+        // env=max(b,m,h) for full detail at h=40.
+
+        // Recompute per-track bass-weighted max if bands changed (cached
+        // by bands identity; one linear pass over ~24k source columns).
+        if(envMaxRef.current.bands!==bands){
+          const srcLen=bArr.length;
+          let mx=0;
+          for(let i=0;i<srcLen;i++){
+            const v=0.7*bArr[i]+0.2*mArr[i]+0.1*hArr[i];
+            if(v>mx) mx=v;
+          }
+          envMaxRef.current={bands,maxVal:mx>0.0001?mx:1};
+        }
+        const envDivisor=envMaxRef.current.maxVal;
+
+        const GAMMA=1.4;
         for(let dx=0;dx<physW;dx++){
           const bv=colB[dx], mv=colM[dx], hv=colH[dx];
-          const env=0.7*bv+0.2*mv+0.1*hv;
+          const env=(0.7*bv+0.2*mv+0.1*hv)/envDivisor;
           envs[dx]=env;
           heights[dx]=env<=0?0:Math.min(maxH,Math.pow(env,GAMMA)*maxH);
         }
