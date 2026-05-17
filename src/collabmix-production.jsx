@@ -2856,20 +2856,9 @@ function WF({ bands, peaks, freq, prog, onSeek, h=80, hotCues=[], loopStart=null
       }
       ctx.globalAlpha=1;
 
-      // ── Pass 3: centerline weight band. 1px-wide rect per column whose
-      // height scales 0..3 css px with amplitude. Brightest version of color.
-      const cr=Math.min(255,r+30), cg2=Math.min(255,g+30), cb=Math.min(255,b+30);
-      ctx.fillStyle=`rgb(${cr},${cg2},${cb})`;
-      for(let x=0;x<W;x++){
-        const env=envs[x];
-        if(env<0.05) continue;
-        const tPx=Math.max(1,Math.min(maxH,Math.round(env*3)));
-        const tHalf=tPx>>1;
-        const playedMul=x<px?1.30:1.0;
-        ctx.globalAlpha=Math.min(1,Math.pow(env,0.5)*0.80*playedMul);
-        ctx.fillRect(x,center-tHalf,1,tPx);
-      }
-      ctx.globalAlpha=1;
+      // (Centerline weight band intentionally omitted on the small WF —
+      // at h=40 there's not enough vertical space; it read as a divider
+      // line rather than "energy" and added visual noise.)
 
       // ── Playhead marker ──
       ctx.fillStyle='rgba(0,0,0,0.35)'; ctx.fillRect(px-1,0,4,H);
@@ -3056,13 +3045,15 @@ function AnimatedZoomedWF({ bands, dur, progRef, onSeek, h=96, windowSec=8, beat
         ctx.fillStyle='rgba(255,255,255,0.06)';
         ctx.fillRect(0,center,physW,1);
 
-        // ── Pass 2a: smooth filled envelope path at DIM baseline. This is the
-        // silhouette floor — fills the gaps between 1px columns with antialiased
-        // diagonals so the overall shape reads as a flowing organic line.
+        // ── Pass 2a: smooth filled envelope path at very DIM baseline.
+        // This is the silhouette floor only — fills gaps between per-column
+        // brightness rects with antialiased diagonals so the overall shape
+        // reads continuous. Kept low so the brightness overlay does the
+        // visual work; quiet sections should look almost translucent.
         const baseGrad=ctx.createLinearGradient(0,center-maxH,0,center+maxH);
-        baseGrad.addColorStop(0,`rgba(${dr},${dg},${db},0.22)`);
-        baseGrad.addColorStop(0.5,`rgba(${dr},${dg},${db},0.40)`);
-        baseGrad.addColorStop(1,`rgba(${dr},${dg},${db},0.22)`);
+        baseGrad.addColorStop(0,`rgba(${dr},${dg},${db},0.10)`);
+        baseGrad.addColorStop(0.5,`rgba(${dr},${dg},${db},0.18)`);
+        baseGrad.addColorStop(1,`rgba(${dr},${dg},${db},0.10)`);
         ctx.fillStyle=baseGrad;
         ctx.beginPath();
         ctx.moveTo(0,center);
@@ -3072,34 +3063,35 @@ function AnimatedZoomedWF({ bands, dur, progRef, onSeek, h=96, windowSec=8, beat
         ctx.closePath();
         ctx.fill();
 
-        // ── Pass 2b: per-column brightness overlay. Each column gets a 1px
-        // vertical bar across the envelope with alpha scaled to its amplitude:
-        // quiet sections stay at baseline (~0.22 from Pass 2a), loud transients
-        // composite up toward ~0.85 total. Per-column 1px rects keep amplitude
-        // boundaries vertically sharp — kicks/snares pop as crisp edges.
+        // ── Pass 2b: per-column brightness overlay. Aggressive dynamic range —
+        // gamma 0.55 stretches the curve so peaks dominate (env=0.5 → ~0.69
+        // alpha, env=1.0 → ~0.95). Combined with the very dim Pass 2a baseline,
+        // quiet sections stay translucent (~0.15 total) while loud drops
+        // composite up near 0.98. Per-column 1px rects keep amplitude
+        // transitions vertically sharp — kicks/snares pop as crisp edges.
         ctx.fillStyle=`rgb(${dr},${dg},${db})`;
         for(let dx=0;dx<physW;dx++){
           const h=heights[dx];
           if(h<=0) continue;
           const env=envs[dx];
-          ctx.globalAlpha=Math.pow(env,0.75)*0.70;
+          ctx.globalAlpha=Math.min(1,Math.pow(env,0.55)*0.95);
           ctx.fillRect(dx,center-h,1,h*2+1);
         }
         ctx.globalAlpha=1;
 
         // ── Pass 2c: centerline weight band. Per-column 1px rect centered on
-        // the centerline whose height scales with amplitude (0..7 css px),
-        // drawn in a brightened version of the deck color. This is the "bass
-        // weight" — visually obvious thicker pulse under loud drops.
-        const cr=Math.min(255,dr+30), cg=Math.min(255,dg+30), cb=Math.min(255,db+30);
+        // the centerline whose height scales 0..10 css px with amplitude,
+        // drawn in a brightened version of the deck color. The "bass weight"
+        // — visually obvious thicker pulse under loud drops.
+        const cr=Math.min(255,dr+40), cg=Math.min(255,dg+40), cb=Math.min(255,db+40);
         ctx.fillStyle=`rgb(${cr},${cg},${cb})`;
-        const bandMaxPx=Math.round(7*dpr);
+        const bandMaxPx=Math.round(10*dpr);
         for(let dx=0;dx<physW;dx++){
           const env=envs[dx];
           if(env<0.05) continue; // skip near-silence
-          const tPx=Math.max(1,Math.min(bandMaxPx,Math.round(env*7*dpr)));
+          const tPx=Math.max(1,Math.min(bandMaxPx,Math.round(env*10*dpr)));
           const tHalf=tPx>>1;
-          ctx.globalAlpha=Math.pow(env,0.5)*0.95;
+          ctx.globalAlpha=Math.min(1,Math.pow(env,0.5));
           ctx.fillRect(dx,center-tHalf,1,tPx);
         }
         ctx.globalAlpha=1;
