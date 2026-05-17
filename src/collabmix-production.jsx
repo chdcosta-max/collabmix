@@ -2878,7 +2878,7 @@ function WF({ bands, peaks, freq, prog, onSeek, h=80, hotCues=[], loopStart=null
 //
 // 60fps RAF. ResizeObserver watches the canvas — the draw loop never reads
 // clientWidth.
-function AnimatedZoomedWF({ bands, dur, progRef, onSeek, h=96, windowSec=8, beatPhaseFrac=null, beatPeriodSec=null, gridOffsetMs=0, bpmNudge=0 }) {
+function AnimatedZoomedWF({ bands, dur, progRef, onSeek, h=96, windowSec=8, beatPhaseFrac=null, beatPeriodSec=null, gridOffsetMs=0, bpmNudge=0, deckColor="#FFFFFF" }) {
   const ref=useRef(null);
   const raf=useRef(null);
   const colBufRef=useRef(null); // {bv, mv, hv: Float32Array, len} — per-column MAX scratch
@@ -2893,6 +2893,7 @@ function AnimatedZoomedWF({ bands, dur, progRef, onSeek, h=96, windowSec=8, beat
   const beatPeriodSecRef=useRef(beatPeriodSec);
   const gridOffsetMsRef=useRef(gridOffsetMs);
   const bpmNudgeRef=useRef(bpmNudge);
+  const deckColorRef=useRef(deckColor);
   useEffect(()=>{durRef.current=dur;},[dur]);
   useEffect(()=>{seekRef.current=onSeek;},[onSeek]);
   useEffect(()=>{bandsRef.current=bands;},[bands]);
@@ -2900,6 +2901,7 @@ function AnimatedZoomedWF({ bands, dur, progRef, onSeek, h=96, windowSec=8, beat
   useEffect(()=>{beatPeriodSecRef.current=beatPeriodSec;},[beatPeriodSec]);
   useEffect(()=>{gridOffsetMsRef.current=gridOffsetMs;},[gridOffsetMs]);
   useEffect(()=>{bpmNudgeRef.current=bpmNudge;},[bpmNudge]);
+  useEffect(()=>{deckColorRef.current=deckColor;},[deckColor]);
 
   useEffect(()=>{
     const canvas=ref.current; if(!canvas) return;
@@ -3011,16 +3013,14 @@ function AnimatedZoomedWF({ bands, dur, progRef, onSeek, h=96, windowSec=8, beat
         ctx.fillRect(0,center,physW,1);
       }
 
-      // ── Anchored beat grid — drawn on top of the bars, beneath the playhead.
-      // Uses worker-computed firstDownbeat (beatPhaseFrac * beatPeriodSec) and
-      // drift-free DP period. Skips silently if either value is missing so no
-      // fallback to rounded-BPM spacing (which drifts by beat-widths over a track).
+      // ── Premium beat grid — three-tier edge markers with downbeat + phrase emphasis.
+      // Off-beats: small edge ticks only (no through-line). Downbeats: bigger edge
+      // ticks + faint full-height white line. Phrase markers (every 16 beats): largest
+      // edge ticks in deck identity color + slightly stronger identity-colored full
+      // line. Hidden when BPM analysis hasn't run yet (refs null) or deck empty.
       const beatPhaseFrac=beatPhaseFracRef.current;
       const beatPeriodSec=beatPeriodSecRef.current;
       if(beatPhaseFrac!=null&&beatPeriodSec!=null&&dur2>0){
-        // Effective period for beat SPACING — factors in the user's BPM nudge.
-        // Position (firstDownbeatSec) is anchored off the original detected period
-        // so "shift grid start" and "tighten beat spacing" are independent knobs.
         const bpmNudge=bpmNudgeRef.current;
         const effectivePeriod=bpmNudge!==0
           ?60/(60/beatPeriodSec+bpmNudge)
@@ -3033,22 +3033,62 @@ function AnimatedZoomedWF({ bands, dur, progRef, onSeek, h=96, windowSec=8, beat
         const maxTime=currentTimeSec+halfWinSec+effectivePeriod;
         const startN=Math.ceil((minTime-firstDownbeatSec)/effectivePeriod);
         const endN=Math.floor((Math.min(dur2,maxTime)-firstDownbeatSec)/effectivePeriod);
+
+        // Zoom thinning: if off-beat density would exceed ~50 ticks per 100px,
+        // suppress off-beats (downbeats + phrase markers always render).
+        const visibleBeats=Math.max(0,endN-startN+1);
+        const densityPer100px=(visibleBeats*100)/Math.max(1,physW);
+        const showOffBeats=densityPer100px<=50;
+
+        // Sizes — multiply by dpr so CSS-pixel spec stays consistent across HiDPI.
+        const offTickH=Math.max(1,Math.round(3*dpr));
+        const downTickH=Math.max(1,Math.round(6*dpr));
+        const phraseTickH=Math.max(1,Math.round(8*dpr));
+        const lineW=Math.max(1,Math.round(1*dpr));
+        const phraseTickW=Math.max(1,Math.round(2*dpr));
+
+        // Parse deck identity color once for rgba alpha blends.
+        const dc=deckColorRef.current||'#FFFFFF';
+        let dr=255,dg=255,db=255;
+        if(dc.length>=7&&dc[0]==='#'){
+          dr=parseInt(dc.slice(1,3),16)|0;
+          dg=parseInt(dc.slice(3,5),16)|0;
+          db=parseInt(dc.slice(5,7),16)|0;
+        }
+        const phraseRGB=`${dr},${dg},${db}`;
+
+        // Pre-build fill styles (avoid string churn in hot loop).
+        const OFF_FILL='rgba(255,255,255,0.30)';
+        const DOWN_FILL='rgba(255,255,255,0.80)';
+        const DOWN_LINE='rgba(255,255,255,0.12)';
+        const PHRASE_FILL=`rgba(${phraseRGB},1.0)`;
+        const PHRASE_LINE=`rgba(${phraseRGB},0.25)`;
+
         for(let n=startN;n<=endN;n++){
           const beatTime=firstDownbeatSec+n*effectivePeriod;
           if(beatTime<0) continue; // no grid before t=0 — audio doesn't exist there
           const x=(physW>>1)+(beatTime-currentTimeSec)*pxPerSec;
-          if(x<0||x>physW) continue;
+          if(x<-phraseTickW||x>physW+phraseTickW) continue;
+          const isPhrase=(n%16===0);
           const isDownbeat=(n%4===0);
-          ctx.fillStyle=isDownbeat?'rgba(239,68,68,0.90)':'rgba(237,232,223,0.20)';
-          ctx.fillRect(Math.floor(x),0,isDownbeat?2:1,physH);
-          if(isDownbeat){
-            ctx.fillStyle='rgba(239,68,68,1.0)';
-            ctx.beginPath();
-            ctx.moveTo(Math.floor(x)-4,0);
-            ctx.lineTo(Math.floor(x)+5,0);
-            ctx.lineTo(Math.floor(x)+0.5,6);
-            ctx.closePath();
-            ctx.fill();
+
+          if(isPhrase){
+            ctx.fillStyle=PHRASE_LINE;
+            ctx.fillRect(Math.floor(x)-(lineW>>1),0,lineW,physH);
+            ctx.fillStyle=PHRASE_FILL;
+            const px=Math.floor(x-phraseTickW/2);
+            ctx.fillRect(px,0,phraseTickW,phraseTickH);
+            ctx.fillRect(px,physH-phraseTickH,phraseTickW,phraseTickH);
+          }else if(isDownbeat){
+            ctx.fillStyle=DOWN_LINE;
+            ctx.fillRect(Math.floor(x),0,lineW,physH);
+            ctx.fillStyle=DOWN_FILL;
+            ctx.fillRect(Math.floor(x),0,lineW,downTickH);
+            ctx.fillRect(Math.floor(x),physH-downTickH,lineW,downTickH);
+          }else if(showOffBeats){
+            ctx.fillStyle=OFF_FILL;
+            ctx.fillRect(Math.floor(x),0,lineW,offTickH);
+            ctx.fillRect(Math.floor(x),physH-offTickH,lineW,offTickH);
           }
         }
       }
@@ -5301,7 +5341,7 @@ export default function CollabMix({ initialPage = "landing", djName = null }) {
                     <button key={i} onClick={()=>setWfZoom(i)} style={{ height:18, padding:"0 7px", fontSize:8, fontFamily:"'DM Mono',monospace", letterSpacing:.5, background:wfZoom===i?"#C8A96E22":"transparent", border:`1px solid ${wfZoom===i?"#C8A96E88":"#ffffff18"}`, color:wfZoom===i?"#C8A96E":"#ffffff44", borderRadius:4, cursor:"pointer", outline:"none" }}>{lbl}</button>
                   ))}
                 </div>
-                <AnimatedZoomedWF bands={wfA} dur={wfA?.dur||0} progRef={progRefA} onSeek={seekDeckA} h={wfH} windowSec={WF_WINDOWS[wfZoom]} beatPhaseFrac={bpm.results["A"]?.beatPhaseFrac??null} beatPeriodSec={bpm.results["A"]?.beatPeriodSec??null} gridOffsetMs={gridOffsetA} bpmNudge={bpmNudgeA*0.01}/>
+                <AnimatedZoomedWF bands={wfA} dur={wfA?.dur||0} progRef={progRefA} onSeek={seekDeckA} h={wfH} windowSec={WF_WINDOWS[wfZoom]} beatPhaseFrac={bpm.results["A"]?.beatPhaseFrac??null} beatPeriodSec={bpm.results["A"]?.beatPeriodSec??null} gridOffsetMs={gridOffsetA} bpmNudge={bpmNudgeA*0.01} deckColor="#7B61FF"/>
               </div>
             )}
             {hasA && hasB && <div style={{ height:1, background:"#0d0d18" }}/>}
@@ -5311,7 +5351,7 @@ export default function CollabMix({ initialPage = "landing", djName = null }) {
                   <div style={{ width:5, height:5, borderRadius:"50%", background:"#00BFA5", boxShadow:"0 0 6px #00BFA5" }}/>
                   <span style={{ fontSize:9, fontFamily:"'DM Mono',monospace", fontWeight:700, color:"#00BFA588", letterSpacing:2 }}>B</span>
                 </div>
-                <AnimatedZoomedWF bands={wfB} dur={wfB?.dur||0} progRef={progRefB} onSeek={seekDeckB} h={wfH} windowSec={WF_WINDOWS[wfZoom]} beatPhaseFrac={bpm.results["B"]?.beatPhaseFrac??null} beatPeriodSec={bpm.results["B"]?.beatPeriodSec??null} gridOffsetMs={gridOffsetB} bpmNudge={bpmNudgeB*0.01}/>
+                <AnimatedZoomedWF bands={wfB} dur={wfB?.dur||0} progRef={progRefB} onSeek={seekDeckB} h={wfH} windowSec={WF_WINDOWS[wfZoom]} beatPhaseFrac={bpm.results["B"]?.beatPhaseFrac??null} beatPeriodSec={bpm.results["B"]?.beatPeriodSec??null} gridOffsetMs={gridOffsetB} bpmNudge={bpmNudgeB*0.01} deckColor="#00BFA5"/>
               </div>
             )}
           </div>
