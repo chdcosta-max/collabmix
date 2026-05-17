@@ -2795,40 +2795,68 @@ function WF({ bands, peaks, freq, prog, onSeek, h=80, hotCues=[], loopStart=null
 
     if(bArr){
       const len=bArr.length;
-      // Overview: solid energy envelope — 2px bars, 1px gap → 3px step
-      const BAR=2, GAP=1, STEP=BAR+GAP;
-      for(let x=0;x<W;x+=STEP){
-        // Peak-hold per band across this bar's range so transients stay sharp.
-        const i0=Math.floor(x*len/W), i1=Math.min(len-1,Math.floor((x+STEP)*len/W));
+      // Beatport-style smooth filled envelope, mirrored around center.
+      // Per-pixel envelope = max of bass/mid/high. Trace as single closed
+      // path so antialiased edges read as a flowing organic silhouette.
+      const center=H/2;
+      const maxH=H/2 - 1;
+      const GAMMA=1.4;
+      const heights=new Float32Array(W);
+      for(let x=0;x<W;x++){
+        const i0=Math.floor(x*len/W), i1=Math.min(len-1,Math.floor((x+1)*len/W));
         let bv=0,mv=0,hv=0;
         for(let k=i0;k<=i1;k++){
           const bk=bArr[k]||0; if(bk>bv)bv=bk;
           const mk=mArr?mArr[k]||0:0; if(mk>mv)mv=mk;
           const hk=hArr?hArr[k]||0:0; if(hk>hv)hv=hk;
         }
+        const env=bv>mv?(bv>hv?bv:hv):(mv>hv?mv:hv);
+        heights[x]=env<=0?0:Math.min(maxH,Math.pow(env,GAMMA)*maxH);
+      }
 
-        // Gamma correction for punch: quiet parts visible, loud parts dominant
-        const amp=Math.pow(bv*0.55+mv*0.32+hv*0.13, 0.38);
-        const totalH=Math.max(1.5, amp*(H-2));
+      // Parse color → rgb. Default to deck identity color; played portion
+      // gets full alpha, unplayed dimmed so you can read progress at a glance.
+      const c=color||'#ffffff';
+      let r=255,g=255,b=255;
+      if(c.length>=7&&c[0]==='#'){
+        r=parseInt(c.slice(1,3),16)|0;
+        g=parseInt(c.slice(3,5),16)|0;
+        b=parseInt(c.slice(5,7),16)|0;
+      }
 
-        const bw=bv*2.2, mw=mv*1.3, hw=hv*1.2;
-        const sum=bw+mw+hw||1;
-        const bH=Math.max(0,(bw/sum)*totalH);
-        const mH=Math.max(0,(mw/sum)*totalH);
-        const hH=Math.max(0,(hw/sum)*totalH);
+      // Build the envelope path once — reuse for dim full + bright clipped pass.
+      const tracePath=()=>{
+        ctx.beginPath();
+        ctx.moveTo(0,center);
+        for(let x=0;x<W;x++) ctx.lineTo(x+0.5,center-heights[x]);
+        ctx.lineTo(W,center);
+        for(let x=W-1;x>=0;x--) ctx.lineTo(x+0.5,center+heights[x]);
+        ctx.closePath();
+      };
 
-        const played=x<px;
-        const base=H;
+      // Full envelope dimmed (unplayed look).
+      const dimGrad=ctx.createLinearGradient(0,center-maxH,0,center+maxH);
+      dimGrad.addColorStop(0,`rgba(${r},${g},${b},0.28)`);
+      dimGrad.addColorStop(0.5,`rgba(${r},${g},${b},0.50)`);
+      dimGrad.addColorStop(1,`rgba(${r},${g},${b},0.28)`);
+      ctx.fillStyle=dimGrad;
+      tracePath();
+      ctx.fill();
 
-        // Bass (blue)
-        ctx.fillStyle=played?'#44aaff':'#1e5599';
-        if(bH>0.5)ctx.fillRect(x,base-bH,BAR,bH);
-        // Mid (brand gold)
-        ctx.fillStyle=played?'#C8A96E':'#8A7548';
-        if(mH>0.5)ctx.fillRect(x,base-bH-mH,BAR,mH);
-        // High (off-white tips)
-        ctx.fillStyle=played?'#EDE8DF':'#8A857E';
-        if(hH>0.5)ctx.fillRect(x,base-bH-mH-hH,BAR,hH);
+      // Played portion (left of playhead) — same color, brighter alpha.
+      if(px>0){
+        ctx.save();
+        ctx.beginPath();
+        ctx.rect(0,0,px,H);
+        ctx.clip();
+        const brightGrad=ctx.createLinearGradient(0,center-maxH,0,center+maxH);
+        brightGrad.addColorStop(0,`rgba(${r},${g},${b},0.55)`);
+        brightGrad.addColorStop(0.5,`rgba(${r},${g},${b},0.95)`);
+        brightGrad.addColorStop(1,`rgba(${r},${g},${b},0.55)`);
+        ctx.fillStyle=brightGrad;
+        tracePath();
+        ctx.fill();
+        ctx.restore();
       }
 
       // ── Playhead marker ──
@@ -2868,23 +2896,20 @@ function WF({ bands, peaks, freq, prog, onSeek, h=80, hotCues=[], loopStart=null
   return <canvas ref={ref} onClick={onClick} style={{width:"100%",height:h,background:"#030306",cursor:onSeek?"crosshair":"default",display:"block"}}/>;
 }
 
-// ── AnimatedZoomedWF — Rekordbox-style zoomed waveform ──
-// Dense per-column rendering mirrored around a horizontal center line. Every
-// display column is drawn independently above and below center. GAMMA > 1
-// crushes quiet content toward zero so transients spike sharply out of a
-// near-silent baseline; FLOOR gates low-level hum entirely so intros/breakdowns
-// render as background instead of a uniform slab.
-//
-// Colors follow Rekordbox: deep blue bass body (drawn on top) with warm gold
-// mid/high envelope showing through above the bass whenever higher-freq
-// content exceeds bass at that instant. No white tips.
+// ── AnimatedZoomedWF — Beatport-style smooth zoomed waveform ──
+// Per-column max amplitude is sampled into a heights buffer, then traced as
+// a single filled path: top sweep left→right at center-h, bottom sweep
+// right→left at center+h, closed and filled in one stroke. Antialiased path
+// edges produce a continuous organic silhouette rather than the staircase
+// look of per-column 1px rects. Single deck-identity color with a subtle
+// vertical gradient (brighter at center, dimmer at peaks) for body.
 //
 // 60fps RAF. ResizeObserver watches the canvas — the draw loop never reads
 // clientWidth.
 function AnimatedZoomedWF({ bands, dur, progRef, onSeek, h=96, windowSec=8, beatPhaseFrac=null, beatPeriodSec=null, gridOffsetMs=0, bpmNudge=0, deckColor="#FFFFFF" }) {
   const ref=useRef(null);
   const raf=useRef(null);
-  const colBufRef=useRef(null); // {bv, mv, hv: Float32Array, len} — per-column MAX scratch
+  const colBufRef=useRef(null); // {bv, mv, hv, heights: Float32Array, len} — per-column scratch
   const sizeRef=useRef({physW:0,physH:0,dirty:true});
   const durRef=useRef(dur);
   const seekRef=useRef(onSeek);
@@ -2970,10 +2995,11 @@ function AnimatedZoomedWF({ bands, dur, progRef, onSeek, h=96, windowSec=8, beat
             bv:new Float32Array(physW+64),
             mv:new Float32Array(physW+64),
             hv:new Float32Array(physW+64),
+            heights:new Float32Array(physW+64),
             len:physW+64,
           };
         }
-        const {bv:colB,mv:colM,hv:colH}=colBufRef.current;
+        const {bv:colB,mv:colM,hv:colH,heights}=colBufRef.current;
 
         // ── Pass 1: MAX amplitude per column. For sub-sample zoom (spp<1),
         // nearest-neighbor replication keeps the source peaks visible. ──
@@ -2994,33 +3020,40 @@ function AnimatedZoomedWF({ bands, dur, progRef, onSeek, h=96, windowSec=8, beat
           colB[dx]=b; colM[dx]=m; colH[dx]=hh;
         }
 
-        // ── Pass 2: continuous dense render. Every column with signal draws a
-        // 1px-wide mirrored spike. GAMMA=2.0 supplies the dynamic range —
-        // squaring amplitudes pushes quiet content down sharply (env=0.2 → 4%
-        // height) while loud content stays tall (env=0.9 → 81%). MIN_H=2
-        // guarantees any column with any signal is visible as at least a 2px
-        // pip, so the waveform reads as a continuous silhouette with no gaps.
-        const GAMMA=2.5;
-        const BOOST=1.2;
-        const MIN_H=4;
-        const GOLD='#E8A340';
-        const BLUE='#2A7FE8';
+        // ── Pass 2: smooth filled envelope (Beatport-style). Lower gamma
+        // gives the envelope body — fuller through quiet sections — rather
+        // than the spiky crushed look of gamma=2.5. Trace top-then-bottom
+        // as a single closed path so antialiased edges produce a continuous
+        // organic silhouette instead of staircase 1px rects.
+        const GAMMA=1.4;
         for(let dx=0;dx<physW;dx++){
           const bv=colB[dx], mv=colM[dx], hv=colH[dx];
           const env=bv>mv?(bv>hv?bv:hv):(mv>hv?mv:hv);
-          if(env<=0) continue;
-          const envH=Math.min(maxH,Math.max(MIN_H,Math.round(Math.pow(env,GAMMA)*BOOST*maxH)));
-          const bassH=bv<=0?0:Math.min(envH,Math.max(MIN_H,Math.round(Math.pow(bv,GAMMA)*BOOST*maxH)));
-
-          ctx.fillStyle=GOLD;
-          ctx.fillRect(dx,center-envH,1,envH); // top
-          ctx.fillRect(dx,center+1,1,envH);    // bottom — same height, symmetric
-          if(bassH>0){
-            ctx.fillStyle=BLUE;
-            ctx.fillRect(dx,center-bassH,1,bassH);
-            ctx.fillRect(dx,center+1,1,bassH);
-          }
+          heights[dx]=env<=0?0:Math.min(maxH,Math.pow(env,GAMMA)*maxH);
         }
+
+        // Parse deck color → rgb. Subtle vertical gradient: brighter at
+        // center, dimmer at peaks. Gives the envelope body without two-tone.
+        const dc=deckColorRef.current||'#FFFFFF';
+        let dr=255,dg=255,db=255;
+        if(dc.length>=7&&dc[0]==='#'){
+          dr=parseInt(dc.slice(1,3),16)|0;
+          dg=parseInt(dc.slice(3,5),16)|0;
+          db=parseInt(dc.slice(5,7),16)|0;
+        }
+        const grad=ctx.createLinearGradient(0,center-maxH,0,center+maxH);
+        grad.addColorStop(0,`rgba(${dr},${dg},${db},0.55)`);
+        grad.addColorStop(0.5,`rgba(${dr},${dg},${db},0.95)`);
+        grad.addColorStop(1,`rgba(${dr},${dg},${db},0.55)`);
+        ctx.fillStyle=grad;
+
+        ctx.beginPath();
+        ctx.moveTo(0,center);
+        for(let dx=0;dx<physW;dx++) ctx.lineTo(dx+0.5,center-heights[dx]);
+        ctx.lineTo(physW,center);
+        for(let dx=physW-1;dx>=0;dx--) ctx.lineTo(dx+0.5,center+heights[dx]);
+        ctx.closePath();
+        ctx.fill();
 
         // Faint center hairline.
         ctx.fillStyle='rgba(255,255,255,0.06)';
