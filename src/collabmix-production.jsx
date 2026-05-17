@@ -3101,14 +3101,16 @@ function AnimatedZoomedWF({ bands, dur, progRef, onSeek, h=96, windowSec=8, beat
         ctx.fillRect(0,center,physW,1);
 
         // ── Pass 2a: smooth filled envelope path at very DIM baseline.
-        // Silhouette path uses selective quadratic curves — when three
-        // consecutive columns trend monotonically (all rising or all
-        // falling) the middle point becomes a curve control point with
-        // the segment endpoint at the midpoint to the next column. When
-        // direction reverses (peak or trough = transient) we fall back
-        // to lineTo so kicks/snares keep their sharp vertical edges.
-        // After filling, a thin sub-pixel stroke in the same color
-        // anti-aliases the silhouette boundary for a softer outline.
+        // Silhouette path uses selective quadratic curves — three
+        // consecutive monotonic columns get smoothed via quadraticCurveTo
+        // (control = middle point, endpoint = midpoint to next). BUT if
+        // either neighbor delta exceeds STEEP_THRESH (25% of maxH per
+        // column), force lineTo regardless of monotonicity — this
+        // preserves the near-vertical jump on kick/snare onsets where
+        // the amplitude rapidly climbs over 1-2 columns. Both top and
+        // bottom sweeps share the same check (based on |heights[]| only)
+        // so kick edges stay symmetric around the centerline.
+        const STEEP_THRESH=maxH*0.25;
         const baseGrad=ctx.createLinearGradient(0,center-maxH,0,center+maxH);
         baseGrad.addColorStop(0,`rgba(${dr},${dg},${db},0.10)`);
         baseGrad.addColorStop(0.5,`rgba(${dr},${dg},${db},0.18)`);
@@ -3119,10 +3121,12 @@ function AnimatedZoomedWF({ bands, dur, progRef, onSeek, h=96, windowSec=8, beat
         // Top sweep — selective curve smoothing.
         if(physW>0) ctx.lineTo(0.5,center-heights[0]);
         for(let dx=1;dx<physW-1;dx++){
-          const yPrev=center-heights[dx-1];
-          const yCur=center-heights[dx];
-          const yNext=center-heights[dx+1];
-          const monotonic=(yPrev<yCur&&yCur<yNext)||(yPrev>yCur&&yCur>yNext);
+          const hPrev=heights[dx-1], hCur=heights[dx], hNext=heights[dx+1];
+          const yPrev=center-hPrev, yCur=center-hCur, yNext=center-hNext;
+          const dF=hNext>hCur?hNext-hCur:hCur-hNext;
+          const dB=hCur>hPrev?hCur-hPrev:hPrev-hCur;
+          const steep=dF>STEEP_THRESH||dB>STEEP_THRESH;
+          const monotonic=!steep&&((yPrev<yCur&&yCur<yNext)||(yPrev>yCur&&yCur>yNext));
           if(monotonic){
             const midX=dx+1, midY=(yCur+yNext)*0.5;
             ctx.quadraticCurveTo(dx+0.5,yCur,midX,midY);
@@ -3132,13 +3136,15 @@ function AnimatedZoomedWF({ bands, dur, progRef, onSeek, h=96, windowSec=8, beat
         }
         if(physW>1) ctx.lineTo(physW-0.5,center-heights[physW-1]);
         ctx.lineTo(physW,center);
-        // Bottom sweep (mirror) — same selective smoothing.
+        // Bottom sweep (mirror) — same checks based on heights[].
         if(physW>0) ctx.lineTo(physW-0.5,center+heights[physW-1]);
         for(let dx=physW-2;dx>0;dx--){
-          const yPrev=center+heights[dx+1];
-          const yCur=center+heights[dx];
-          const yNext=center+heights[dx-1];
-          const monotonic=(yPrev<yCur&&yCur<yNext)||(yPrev>yCur&&yCur>yNext);
+          const hPrev=heights[dx+1], hCur=heights[dx], hNext=heights[dx-1];
+          const yPrev=center+hPrev, yCur=center+hCur, yNext=center+hNext;
+          const dF=hNext>hCur?hNext-hCur:hCur-hNext;
+          const dB=hCur>hPrev?hCur-hPrev:hPrev-hCur;
+          const steep=dF>STEEP_THRESH||dB>STEEP_THRESH;
+          const monotonic=!steep&&((yPrev<yCur&&yCur<yNext)||(yPrev>yCur&&yCur>yNext));
           if(monotonic){
             const midX=dx, midY=(yCur+yNext)*0.5;
             ctx.quadraticCurveTo(dx+0.5,yCur,midX,midY);
