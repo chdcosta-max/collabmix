@@ -3536,7 +3536,7 @@ function Knob({ v, set, min=-12, max=12, ctr=0, label, color="#C8A96E", size=38,
 // ── Deck ─────────────────────────────────────────────────────
 const HOT_CUE_COLORS=["#C8A96E","#ef4444","#22c55e","#f59e0b"];
 
-function Deck({ id, ch, ctx:ac, color, local, remote, onChange, midi:mt, bpmResult, bpmAnalyze, eqHi=0, eqMid=0, eqLo=0, chanVol=1, loadFromLibrary=null, onTrackInfo=null, onSync=null, syncReady=true, syncRole=null, isMaster=false, onMasterToggle=null, onLibraryTrackDrop=null, onProgUpdate=null, onWaveform=null, onSeekReady=null, remoteSeek=null, onToggleReady=null, onCueReady=null, remoteToggle=null, remoteCue=null, onTransportFire=null, isDriver=true }) {
+function Deck({ id, ch, ctx:ac, color, local, remote, onChange, midi:mt, bpmResult, bpmAnalyze, eqHi=0, eqMid=0, eqLo=0, chanVol=1, loadFromLibrary=null, onTrackInfo=null, onSync=null, syncReady=true, syncRole=null, isMaster=false, onMasterToggle=null, onLibraryTrackDrop=null, onProgUpdate=null, onWaveform=null, onSeekReady=null, remoteSeek=null, onToggleReady=null, onCueReady=null, remoteToggle=null, remoteCue=null, onTransportFire=null, isDriver=true, onNudgeReady=null }) {
   const [buf,setBuf]=useState(null),[name,setName]=useState(null),[play,setPlay]=useState(false);
   const [prog,setProg]=useState(0),[dur,setDur]=useState(0);
   const progRef=useRef(0); // mirror of prog for parent AnimatedZoomedWF without 60fps setState
@@ -3554,6 +3554,9 @@ function Deck({ id, ch, ctx:ac, color, local, remote, onChange, midi:mt, bpmResu
   const [loopEnd,setLoopEnd]=useState(null);
   const loopRef=useRef({active:false,start:null,end:null});
   const src=useRef(null),st=useRef(0),off=useRef(0),raf=useRef(null),fr=useRef(null);
+  // Pending nudge bookkeeping (see nudgeRate below).
+  const nudgeT=useRef(null);
+  const nudgeSrcRef=useRef(null);
   // EQ is now passed as props: eqHi, eqMid, eqLo, chanVol
   const remProgRef=useRef(0),remTimeRef=useRef(0),remRateRef=useRef(0),remRaf=useRef(null);
   const lastProgBroadcastRef=useRef(0);
@@ -3732,6 +3735,71 @@ function Deck({ id, ch, ctx:ac, color, local, remote, onChange, midi:mt, bpmResu
     if(play){stop_();setPlay(false);onChange?.("playing",false);}
     onChange?.("progress",0);
   },[play,id,onTransportFire,isDriver]);
+
+  // ── nudgeRate(offsetSec, rampDurMs=200) — smooth-seek primitive for small
+  // sync-time corrections. Briefly modulates playbackRate in a triangle (up
+  // to peakRate at T/2, back to rate at T) so the source plays exactly
+  // offsetSec more (or less) audio over rampDurSec wall clock. NO destroy/
+  // recreate of the source = no click.
+  //
+  // Math: ∫ rate(t) dt over [0,T] with triangle = T/2 × (rate + peakRate).
+  // Extra over constant-rate baseline = T/2 × (peakRate − rate).
+  // For extra == offsetSec: peakRate − rate = 2 × offsetSec / T.
+  //
+  // Rate excursion capped at ±15% to prevent audible pitch artifacts; if a
+  // requested nudge would exceed the cap, the ramp duration extends.
+  //
+  // off.current bookkeeping fires at ramp end (setTimeout) so the
+  // pause/resume offset reflects the audio shift. Pre-existing limitation:
+  // tick() is rate-unaware so the visual playhead lags actual audio by up
+  // to offsetSec DURING the ramp, then jumps to correct value at end.
+  // For sync-time use, offsetSec ≤ 30 ms typical → visual jump is ≤3 px.
+  const nudgeRate = useCallback((offsetSec, rampDurMs=200) => {
+    if (!isDriver || !play || !src.current || !ac) {
+      console.log('[NUDGE-DEBUG] deck', id, 'skip', { isDriver, play, hasSrc: !!src.current });
+      return;
+    }
+    // Clamp magnitude to ±50ms.
+    let offSec = offsetSec;
+    if (offSec > 0.05) offSec = 0.05;
+    if (offSec < -0.05) offSec = -0.05;
+    let rampDurSec = rampDurMs / 1000;
+    let deltaRate = 2 * offSec / rampDurSec;
+    const RATE_CAP = 0.15 * rate;
+    if (Math.abs(deltaRate) > RATE_CAP) {
+      // Extend duration to keep rate change within cap.
+      rampDurSec = 2 * Math.abs(offSec) / RATE_CAP;
+      rampDurMs = rampDurSec * 1000;
+      deltaRate = offSec > 0 ? RATE_CAP : -RATE_CAP;
+    }
+    const peakRate = rate + deltaRate;
+    const now = ac.currentTime;
+    // Cancel any pending ramp from a prior nudge — both the scheduled rate
+    // changes on the source AND the off.current bookkeeping timeout.
+    if (nudgeT.current) { clearTimeout(nudgeT.current); nudgeT.current = null; }
+    try {
+      src.current.playbackRate.cancelScheduledValues(now);
+      src.current.playbackRate.setValueAtTime(rate, now);
+      src.current.playbackRate.linearRampToValueAtTime(peakRate, now + rampDurSec / 2);
+      src.current.playbackRate.linearRampToValueAtTime(rate, now + rampDurSec);
+    } catch (e) {
+      console.warn('[NUDGE] rate ramp scheduling failed:', e);
+      return;
+    }
+    // Schedule the bookkeeping update for ramp end. Skip if the source
+    // got recreated by a seek/load in the meantime (generation check).
+    const stampedSrc = src.current;
+    nudgeSrcRef.current = stampedSrc;
+    nudgeT.current = setTimeout(() => {
+      if (src.current === stampedSrc) {
+        off.current += offSec;
+      }
+      nudgeT.current = null;
+    }, rampDurMs + 5);
+    console.log('[NUDGE-DEBUG] deck', id, ':', 'offsetMs=' + (offSec * 1000).toFixed(2),
+      'rampMs=' + rampDurMs.toFixed(0), 'rate=' + rate.toFixed(3),
+      'peakRate=' + peakRate.toFixed(3), 'deltaPct=' + ((deltaRate / rate) * 100).toFixed(2));
+  }, [isDriver, play, rate, id, ac]);
   // Driver handoff — when partner takes over this deck (isDriver transitions
   // true→false), stop local audio and clear local track state so the display
   // falls back to remote.* (partner's track info via deck_update). Without
@@ -3758,6 +3826,7 @@ function Deck({ id, ch, ctx:ac, color, local, remote, onChange, midi:mt, bpmResu
   useEffect(()=>{onSeekReady?.(seek);},[seek,onSeekReady]);
   useEffect(()=>{onToggleReady?.(toggle);},[toggle,onToggleReady]);
   useEffect(()=>{onCueReady?.(cue);},[cue,onCueReady]);
+  useEffect(()=>{onNudgeReady?.(nudgeRate);},[nudgeRate,onNudgeReady]);
   useEffect(()=>{ if(bpmResult?.bpm!=null) onChange?.("bpm", bpmResult.bpm); },[bpmResult?.bpm,onChange]);
   // Broadcast phase data so partner can phase-align when SYNC fires against a
   // partner-driven deck. Only the deck owner has these from the analyzer; the
@@ -4690,14 +4759,31 @@ export default function CollabMix({ initialPage = "landing", djName = null }) {
   const seekFnsRef = useRef({ A:null, B:null });
   const toggleFnsRef = useRef({ A:null, B:null });
   const cueFnsRef = useRef({ A:null, B:null });
+  const nudgeFnsRef = useRef({ A:null, B:null });
   const onDeckASeekReady = useCallback((fn) => { seekFnsRef.current.A = fn; }, []);
   const onDeckBSeekReady = useCallback((fn) => { seekFnsRef.current.B = fn; }, []);
   const onDeckAToggleReady = useCallback((fn) => { toggleFnsRef.current.A = fn; }, []);
   const onDeckACueReady = useCallback((fn) => { cueFnsRef.current.A = fn; }, []);
   const onDeckBToggleReady = useCallback((fn) => { toggleFnsRef.current.B = fn; }, []);
   const onDeckBCueReady = useCallback((fn) => { cueFnsRef.current.B = fn; }, []);
+  const onDeckANudgeReady = useCallback((fn) => { nudgeFnsRef.current.A = fn; }, []);
+  const onDeckBNudgeReady = useCallback((fn) => { nudgeFnsRef.current.B = fn; }, []);
   const seekDeckA = useCallback((p) => { seekFnsRef.current.A?.(p); }, []);
   const seekDeckB = useCallback((p) => { seekFnsRef.current.B?.(p); }, []);
+  // Test helper — expose nudge on window so we can drive it from the
+  // browser console before wiring cross-correlation. Usage:
+  //   window.cmNudge('A', 0.02)         // 20ms forward, default 200ms ramp
+  //   window.cmNudge('B', -0.015, 300)  // 15ms backward, 300ms ramp
+  // Remove once cross-correlation lands and this stops being useful.
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    window.cmNudge = (deck, offsetSec, rampDurMs) => {
+      const fn = nudgeFnsRef.current[deck];
+      if (!fn) { console.warn('[cmNudge] no nudge fn for deck', deck); return; }
+      fn(offsetSec, rampDurMs);
+    };
+    return () => { try { delete window.cmNudge; } catch {} };
+  }, []);
   // Partner-mirror waveforms — when a deck_update from partner brings
   // waveform arrays for THEIR loaded track, paint them into wfA/wfB so the
   // top zoomed waveform shows what they're playing. Local loads on the
@@ -5766,7 +5852,7 @@ export default function CollabMix({ initialPage = "landing", djName = null }) {
             {deckDrivers.A && <span style={{ fontSize:11, fontFamily:"'DM Sans',sans-serif", fontWeight:500, color:"#7B61FFaa", letterSpacing:.3 }}>{deckDrivers.A === session.name ? `${deckDrivers.A} (you)` : deckDrivers.A}</span>}
           </div>
           <div style={{ flex:1, overflow:"hidden", minHeight:0 }}>
-            <Deck id="A" ch={eng.current?.A} ctx={eng.current?.ctx} color="#7B61FF" local remote={pA} onChange={dh("A")} midi={midiEvt} bpmResult={bpm.results["A"]} bpmAnalyze={bpm.analyze} eqHi={eqA.hi} eqMid={eqA.mid} eqLo={eqA.lo} chanVol={eqA.vol} loadFromLibrary={libLoadA} onTrackInfo={handleTrackInfo} onSync={()=>handleSyncToggle("A")} syncReady={!!(bpm.results["B"]?.bpm || pB?.bpm)} syncRole={syncLocked ? (lastSlaveDeck === "A" ? "slave" : "master") : null} isMaster={masterDeck === "A"} onMasterToggle={handleMasterToggle} onLibraryTrackDrop={(trackId)=>{const t=lib.library.find(x=>x.id===trackId);if(t)handleLibLoad(t,"A");}} onProgUpdate={handleProgA} onWaveform={setWfA} onSeekReady={onDeckASeekReady} onToggleReady={onDeckAToggleReady} onCueReady={onDeckACueReady} onTransportFire={handleTransportFire} isDriver={!deckDrivers.A || deckDrivers.A === session.name}/>
+            <Deck id="A" ch={eng.current?.A} ctx={eng.current?.ctx} color="#7B61FF" local remote={pA} onChange={dh("A")} midi={midiEvt} bpmResult={bpm.results["A"]} bpmAnalyze={bpm.analyze} eqHi={eqA.hi} eqMid={eqA.mid} eqLo={eqA.lo} chanVol={eqA.vol} loadFromLibrary={libLoadA} onTrackInfo={handleTrackInfo} onSync={()=>handleSyncToggle("A")} syncReady={!!(bpm.results["B"]?.bpm || pB?.bpm)} syncRole={syncLocked ? (lastSlaveDeck === "A" ? "slave" : "master") : null} isMaster={masterDeck === "A"} onMasterToggle={handleMasterToggle} onLibraryTrackDrop={(trackId)=>{const t=lib.library.find(x=>x.id===trackId);if(t)handleLibLoad(t,"A");}} onProgUpdate={handleProgA} onWaveform={setWfA} onSeekReady={onDeckASeekReady} onToggleReady={onDeckAToggleReady} onCueReady={onDeckACueReady} onNudgeReady={onDeckANudgeReady} onTransportFire={handleTransportFire} isDriver={!deckDrivers.A || deckDrivers.A === session.name}/>
           </div>
         </div>
 
@@ -5865,7 +5951,7 @@ export default function CollabMix({ initialPage = "landing", djName = null }) {
             {deckDrivers.B && <span style={{ fontSize:11, fontFamily:"'DM Sans',sans-serif", fontWeight:500, color:"#00BFA5aa", letterSpacing:.3 }}>{deckDrivers.B === session.name ? `${deckDrivers.B} (you)` : deckDrivers.B}</span>}
           </div>
           <div style={{ flex:1, overflow:"hidden", minHeight:0 }}>
-            <Deck id="B" ch={eng.current?.B} ctx={eng.current?.ctx} color="#00BFA5" local remote={pB} onChange={dh("B")} midi={midiEvt} bpmResult={bpm.results["B"]} bpmAnalyze={bpm.analyze} eqHi={eqB.hi} eqMid={eqB.mid} eqLo={eqB.lo} chanVol={eqB.vol} loadFromLibrary={libLoadB} onTrackInfo={handleTrackInfo} onSync={()=>handleSyncToggle("B")} syncReady={!!(bpm.results["A"]?.bpm || pA?.bpm)} syncRole={syncLocked ? (lastSlaveDeck === "B" ? "slave" : "master") : null} isMaster={masterDeck === "B"} onMasterToggle={handleMasterToggle} onLibraryTrackDrop={(trackId)=>{const t=lib.library.find(x=>x.id===trackId);if(t)handleLibLoad(t,"B");}} onProgUpdate={handleProgB} onWaveform={setWfB} onSeekReady={onDeckBSeekReady} onToggleReady={onDeckBToggleReady} onCueReady={onDeckBCueReady} onTransportFire={handleTransportFire} isDriver={!deckDrivers.B || deckDrivers.B === session.name}/>
+            <Deck id="B" ch={eng.current?.B} ctx={eng.current?.ctx} color="#00BFA5" local remote={pB} onChange={dh("B")} midi={midiEvt} bpmResult={bpm.results["B"]} bpmAnalyze={bpm.analyze} eqHi={eqB.hi} eqMid={eqB.mid} eqLo={eqB.lo} chanVol={eqB.vol} loadFromLibrary={libLoadB} onTrackInfo={handleTrackInfo} onSync={()=>handleSyncToggle("B")} syncReady={!!(bpm.results["A"]?.bpm || pA?.bpm)} syncRole={syncLocked ? (lastSlaveDeck === "B" ? "slave" : "master") : null} isMaster={masterDeck === "B"} onMasterToggle={handleMasterToggle} onLibraryTrackDrop={(trackId)=>{const t=lib.library.find(x=>x.id===trackId);if(t)handleLibLoad(t,"B");}} onProgUpdate={handleProgB} onWaveform={setWfB} onSeekReady={onDeckBSeekReady} onToggleReady={onDeckBToggleReady} onCueReady={onDeckBCueReady} onNudgeReady={onDeckBNudgeReady} onTransportFire={handleTransportFire} isDriver={!deckDrivers.B || deckDrivers.B === session.name}/>
           </div>
         </div>
 
