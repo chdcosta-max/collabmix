@@ -11,7 +11,7 @@ export default defineConfig({
     react(),
     ...(sentryEnabled ? [sentryVitePlugin({
       org: "mixsync",
-      project: "mixsync",
+      project: "javascript-react",
       authToken: sentryToken,
       sourcemaps: { assets: "./dist/**" },
       release: { name: process.env.VERCEL_GIT_COMMIT_SHA || "dev" },
