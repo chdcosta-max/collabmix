@@ -3055,12 +3055,13 @@ function AnimatedZoomedWF({ bands, dur, progRef, onSeek, h=96, windowSec=8, beat
         }
         const envDivisor=envMaxRef.current.maxVal;
 
-        // Heights: gamma 1.4 base curve + additive lift for env > 0.7. The
-        // lift adds up to 0.20*maxH for the very top of the distribution
-        // (env=1.0) and zero below env=0.7, so verses (env~0.46) and
-        // breakdowns (env~0.10) stay where they were while drops push toward
-        // — and frequently saturate at — full height, reading as a clear
-        // dominant block. envs[] still holds the pre-lift env so the
+        // Heights: gamma 1.4 base curve compressed to [0.05, 0.90] of maxH
+        // (0.85 multiplier + 0.05 floor) so quiet sections always show a
+        // visible silhouette ≈5% of maxH instead of vanishing — matches
+        // Beatport's "always-on" breakdown look. Lift on top adds up to
+        // 0.20*maxH for env > 0.7 so drops still push toward full height.
+        // Hard silence (env ≤ 0.01) gates to zero so pre/post-track stays
+        // black. envs[] still holds the pre-lift bass-weighted env so the
         // brightness overlay and centerline weight band consume the same
         // signal they did before.
         const GAMMA=1.4;
@@ -3069,8 +3070,8 @@ function AnimatedZoomedWF({ bands, dur, progRef, onSeek, h=96, windowSec=8, beat
           const bv=colB[dx], mv=colM[dx], hv=colH[dx];
           const env=(0.7*bv+0.2*mv+0.1*hv)/envDivisor;
           envs[dx]=env;
-          if(env<=0){heights[dx]=0;continue;}
-          let h=Math.pow(env,GAMMA)*maxH;
+          if(env<=0.01){heights[dx]=0;continue;}
+          let h=(Math.pow(env,GAMMA)*0.85+0.05)*maxH;
           if(env>LIFT_TH) h+=maxH*LIFT_AMT*(env-LIFT_TH)/(1-LIFT_TH);
           heights[dx]=h<maxH?h:maxH;
         }
