@@ -2797,11 +2797,14 @@ function WF({ bands, peaks, freq, prog, onSeek, h=80, hotCues=[], loopStart=null
       const len=bArr.length;
       // Beatport-style smooth filled envelope, mirrored around center.
       // Per-pixel envelope = max of bass/mid/high. Trace as single closed
-      // path so antialiased edges read as a flowing organic silhouette.
+      // path for the silhouette, then layer per-column brightness + centerline
+      // weight on top to give loud sections visual pop without rounding off
+      // transient peaks.
       const center=H/2;
       const maxH=H/2 - 1;
       const GAMMA=1.4;
       const heights=new Float32Array(W);
+      const envs=new Float32Array(W);
       for(let x=0;x<W;x++){
         const i0=Math.floor(x*len/W), i1=Math.min(len-1,Math.floor((x+1)*len/W));
         let bv=0,mv=0,hv=0;
@@ -2811,11 +2814,12 @@ function WF({ bands, peaks, freq, prog, onSeek, h=80, hotCues=[], loopStart=null
           const hk=hArr?hArr[k]||0:0; if(hk>hv)hv=hk;
         }
         const env=bv>mv?(bv>hv?bv:hv):(mv>hv?mv:hv);
+        envs[x]=env;
         heights[x]=env<=0?0:Math.min(maxH,Math.pow(env,GAMMA)*maxH);
       }
 
-      // Parse color → rgb. Default to deck identity color; played portion
-      // gets full alpha, unplayed dimmed so you can read progress at a glance.
+      // Parse color → rgb. Played portion (left of playhead) gets a brighter
+      // alpha multiplier so you can still read progress at a glance.
       const c=color||'#ffffff';
       let r=255,g=255,b=255;
       if(c.length>=7&&c[0]==='#'){
@@ -2824,40 +2828,48 @@ function WF({ bands, peaks, freq, prog, onSeek, h=80, hotCues=[], loopStart=null
         b=parseInt(c.slice(5,7),16)|0;
       }
 
-      // Build the envelope path once — reuse for dim full + bright clipped pass.
-      const tracePath=()=>{
-        ctx.beginPath();
-        ctx.moveTo(0,center);
-        for(let x=0;x<W;x++) ctx.lineTo(x+0.5,center-heights[x]);
-        ctx.lineTo(W,center);
-        for(let x=W-1;x>=0;x--) ctx.lineTo(x+0.5,center+heights[x]);
-        ctx.closePath();
-      };
-
-      // Full envelope dimmed (unplayed look).
-      const dimGrad=ctx.createLinearGradient(0,center-maxH,0,center+maxH);
-      dimGrad.addColorStop(0,`rgba(${r},${g},${b},0.28)`);
-      dimGrad.addColorStop(0.5,`rgba(${r},${g},${b},0.50)`);
-      dimGrad.addColorStop(1,`rgba(${r},${g},${b},0.28)`);
-      ctx.fillStyle=dimGrad;
-      tracePath();
+      // ── Pass 1: smooth filled envelope path at DIM baseline (silhouette).
+      const baseGrad=ctx.createLinearGradient(0,center-maxH,0,center+maxH);
+      baseGrad.addColorStop(0,`rgba(${r},${g},${b},0.18)`);
+      baseGrad.addColorStop(0.5,`rgba(${r},${g},${b},0.32)`);
+      baseGrad.addColorStop(1,`rgba(${r},${g},${b},0.18)`);
+      ctx.fillStyle=baseGrad;
+      ctx.beginPath();
+      ctx.moveTo(0,center);
+      for(let x=0;x<W;x++) ctx.lineTo(x+0.5,center-heights[x]);
+      ctx.lineTo(W,center);
+      for(let x=W-1;x>=0;x--) ctx.lineTo(x+0.5,center+heights[x]);
+      ctx.closePath();
       ctx.fill();
 
-      // Played portion (left of playhead) — same color, brighter alpha.
-      if(px>0){
-        ctx.save();
-        ctx.beginPath();
-        ctx.rect(0,0,px,H);
-        ctx.clip();
-        const brightGrad=ctx.createLinearGradient(0,center-maxH,0,center+maxH);
-        brightGrad.addColorStop(0,`rgba(${r},${g},${b},0.55)`);
-        brightGrad.addColorStop(0.5,`rgba(${r},${g},${b},0.95)`);
-        brightGrad.addColorStop(1,`rgba(${r},${g},${b},0.55)`);
-        ctx.fillStyle=brightGrad;
-        tracePath();
-        ctx.fill();
-        ctx.restore();
+      // ── Pass 2: per-column amplitude overlay. Brightens loud columns with
+      // a 1px vertical rect across the envelope at alpha ∝ amplitude. Played
+      // columns get a 1.4× multiplier so the played region reads brighter.
+      ctx.fillStyle=`rgb(${r},${g},${b})`;
+      for(let x=0;x<W;x++){
+        const h=heights[x];
+        if(h<=0) continue;
+        const env=envs[x];
+        const playedMul=x<px?1.40:1.0;
+        ctx.globalAlpha=Math.min(1,Math.pow(env,0.75)*0.55*playedMul);
+        ctx.fillRect(x,center-h,1,h*2+1);
       }
+      ctx.globalAlpha=1;
+
+      // ── Pass 3: centerline weight band. 1px-wide rect per column whose
+      // height scales 0..3 css px with amplitude. Brightest version of color.
+      const cr=Math.min(255,r+30), cg2=Math.min(255,g+30), cb=Math.min(255,b+30);
+      ctx.fillStyle=`rgb(${cr},${cg2},${cb})`;
+      for(let x=0;x<W;x++){
+        const env=envs[x];
+        if(env<0.05) continue;
+        const tPx=Math.max(1,Math.min(maxH,Math.round(env*3)));
+        const tHalf=tPx>>1;
+        const playedMul=x<px?1.30:1.0;
+        ctx.globalAlpha=Math.min(1,Math.pow(env,0.5)*0.80*playedMul);
+        ctx.fillRect(x,center-tHalf,1,tPx);
+      }
+      ctx.globalAlpha=1;
 
       // ── Playhead marker ──
       ctx.fillStyle='rgba(0,0,0,0.35)'; ctx.fillRect(px-1,0,4,H);
@@ -2996,10 +3008,11 @@ function AnimatedZoomedWF({ bands, dur, progRef, onSeek, h=96, windowSec=8, beat
             mv:new Float32Array(physW+64),
             hv:new Float32Array(physW+64),
             heights:new Float32Array(physW+64),
+            envs:new Float32Array(physW+64),
             len:physW+64,
           };
         }
-        const {bv:colB,mv:colM,hv:colH,heights}=colBufRef.current;
+        const {bv:colB,mv:colM,hv:colH,heights,envs}=colBufRef.current;
 
         // ── Pass 1: MAX amplitude per column. For sub-sample zoom (spp<1),
         // nearest-neighbor replication keeps the source peaks visible. ──
@@ -3020,20 +3033,16 @@ function AnimatedZoomedWF({ bands, dur, progRef, onSeek, h=96, windowSec=8, beat
           colB[dx]=b; colM[dx]=m; colH[dx]=hh;
         }
 
-        // ── Pass 2: smooth filled envelope (Beatport-style). Lower gamma
-        // gives the envelope body — fuller through quiet sections — rather
-        // than the spiky crushed look of gamma=2.5. Trace top-then-bottom
-        // as a single closed path so antialiased edges produce a continuous
-        // organic silhouette instead of staircase 1px rects.
+        // Compute heights + cache env per column for the brightness/weight passes.
         const GAMMA=1.4;
         for(let dx=0;dx<physW;dx++){
           const bv=colB[dx], mv=colM[dx], hv=colH[dx];
           const env=bv>mv?(bv>hv?bv:hv):(mv>hv?mv:hv);
+          envs[dx]=env;
           heights[dx]=env<=0?0:Math.min(maxH,Math.pow(env,GAMMA)*maxH);
         }
 
-        // Parse deck color → rgb. Subtle vertical gradient: brighter at
-        // center, dimmer at peaks. Gives the envelope body without two-tone.
+        // Parse deck color → rgb for all three passes below.
         const dc=deckColorRef.current||'#FFFFFF';
         let dr=255,dg=255,db=255;
         if(dc.length>=7&&dc[0]==='#'){
@@ -3041,12 +3050,20 @@ function AnimatedZoomedWF({ bands, dur, progRef, onSeek, h=96, windowSec=8, beat
           dg=parseInt(dc.slice(3,5),16)|0;
           db=parseInt(dc.slice(5,7),16)|0;
         }
-        const grad=ctx.createLinearGradient(0,center-maxH,0,center+maxH);
-        grad.addColorStop(0,`rgba(${dr},${dg},${db},0.55)`);
-        grad.addColorStop(0.5,`rgba(${dr},${dg},${db},0.95)`);
-        grad.addColorStop(1,`rgba(${dr},${dg},${db},0.55)`);
-        ctx.fillStyle=grad;
 
+        // Faint center hairline behind the envelope so silent sections still
+        // read as a defined waveform line, not a void.
+        ctx.fillStyle='rgba(255,255,255,0.06)';
+        ctx.fillRect(0,center,physW,1);
+
+        // ── Pass 2a: smooth filled envelope path at DIM baseline. This is the
+        // silhouette floor — fills the gaps between 1px columns with antialiased
+        // diagonals so the overall shape reads as a flowing organic line.
+        const baseGrad=ctx.createLinearGradient(0,center-maxH,0,center+maxH);
+        baseGrad.addColorStop(0,`rgba(${dr},${dg},${db},0.22)`);
+        baseGrad.addColorStop(0.5,`rgba(${dr},${dg},${db},0.40)`);
+        baseGrad.addColorStop(1,`rgba(${dr},${dg},${db},0.22)`);
+        ctx.fillStyle=baseGrad;
         ctx.beginPath();
         ctx.moveTo(0,center);
         for(let dx=0;dx<physW;dx++) ctx.lineTo(dx+0.5,center-heights[dx]);
@@ -3055,9 +3072,37 @@ function AnimatedZoomedWF({ bands, dur, progRef, onSeek, h=96, windowSec=8, beat
         ctx.closePath();
         ctx.fill();
 
-        // Faint center hairline.
-        ctx.fillStyle='rgba(255,255,255,0.06)';
-        ctx.fillRect(0,center,physW,1);
+        // ── Pass 2b: per-column brightness overlay. Each column gets a 1px
+        // vertical bar across the envelope with alpha scaled to its amplitude:
+        // quiet sections stay at baseline (~0.22 from Pass 2a), loud transients
+        // composite up toward ~0.85 total. Per-column 1px rects keep amplitude
+        // boundaries vertically sharp — kicks/snares pop as crisp edges.
+        ctx.fillStyle=`rgb(${dr},${dg},${db})`;
+        for(let dx=0;dx<physW;dx++){
+          const h=heights[dx];
+          if(h<=0) continue;
+          const env=envs[dx];
+          ctx.globalAlpha=Math.pow(env,0.75)*0.70;
+          ctx.fillRect(dx,center-h,1,h*2+1);
+        }
+        ctx.globalAlpha=1;
+
+        // ── Pass 2c: centerline weight band. Per-column 1px rect centered on
+        // the centerline whose height scales with amplitude (0..7 css px),
+        // drawn in a brightened version of the deck color. This is the "bass
+        // weight" — visually obvious thicker pulse under loud drops.
+        const cr=Math.min(255,dr+30), cg=Math.min(255,dg+30), cb=Math.min(255,db+30);
+        ctx.fillStyle=`rgb(${cr},${cg},${cb})`;
+        const bandMaxPx=Math.round(7*dpr);
+        for(let dx=0;dx<physW;dx++){
+          const env=envs[dx];
+          if(env<0.05) continue; // skip near-silence
+          const tPx=Math.max(1,Math.min(bandMaxPx,Math.round(env*7*dpr)));
+          const tHalf=tPx>>1;
+          ctx.globalAlpha=Math.pow(env,0.5)*0.95;
+          ctx.fillRect(dx,center-tHalf,1,tPx);
+        }
+        ctx.globalAlpha=1;
       }
 
       // ── Premium beat grid — three-tier edge markers with downbeat + phrase emphasis.
