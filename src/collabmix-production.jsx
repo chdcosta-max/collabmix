@@ -2935,11 +2935,17 @@ function AnimatedZoomedWF({ bands, dur, progRef, onSeek, h=96, windowSec=8, beat
 
       const dur2=durRef.current;
       const prog2=progRef?.current??0;
-      // Reserve top + bottom rails so beat-grid ticks aren't covered by waveform
-      // amplitude pixels. Amplitude renders only in the middle band [ampTop, ampBottom].
-      const railPad=Math.round(18*dpr);
-      const ampTop=railPad;
-      const ampBottom=physH-railPad;
+      // Two independent paddings:
+      //  - tickRailPad governs where beat-grid ticks center vertically (visual
+      //    positioning, anchored relative to the canvas edges).
+      //  - ampPad governs how far the audio amplitude renders from the edge —
+      //    making it larger than tickRailPad compresses the waveform toward the
+      //    centerline so there's empty space between the audio shape and the
+      //    tick marks above/below.
+      const tickRailPad=Math.round(18*dpr);
+      const ampPad=Math.round(26*dpr);
+      const ampTop=ampPad;
+      const ampBottom=physH-ampPad;
       const drawH=ampBottom-ampTop;
       const center=(ampTop+ampBottom)>>1;
       // maxH keeps top (center-envH ≥ ampTop) and bottom (center+1+envH ≤ ampBottom).
@@ -3055,12 +3061,14 @@ function AnimatedZoomedWF({ bands, dur, progRef, onSeek, h=96, windowSec=8, beat
         const downTickW=Math.max(1,Math.round(2*dpr));  // 2px — downbeat ticks
         const phraseTickW=Math.max(1,Math.round(2*dpr));// 2px — phrase ticks + phrase through-line
 
-        // Centered Y positions (precomputed; constant per frame).
-        const offTopY=Math.max(0,Math.floor((railPad-offTickH)/2));
+        // Centered Y positions (precomputed; constant per frame). Uses tickRailPad
+        // so tick placement stays anchored to the canvas edges even when ampPad
+        // grows independently to compress the waveform.
+        const offTopY=Math.max(0,Math.floor((tickRailPad-offTickH)/2));
         const offBotY=physH-offTickH-offTopY;
-        const downTopY=Math.max(0,Math.floor((railPad-downTickH)/2));
+        const downTopY=Math.max(0,Math.floor((tickRailPad-downTickH)/2));
         const downBotY=physH-downTickH-downTopY;
-        const phraseTopY=Math.max(0,Math.floor((railPad-phraseTickH)/2));
+        const phraseTopY=Math.max(0,Math.floor((tickRailPad-phraseTickH)/2));
         const phraseBotY=physH-phraseTickH-phraseTopY;
 
         // Parse deck identity color once for rgba alpha blends.
