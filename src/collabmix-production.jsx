@@ -3022,16 +3022,23 @@ function AnimatedZoomedWF({ bands, dur, progRef, onSeek, h=96, windowSec=8, beat
           colB[dx]=b; colM[dx]=m; colH[dx]=hh;
         }
 
-        // Compute heights + cache env per column. Gamma 2.2 strongly compresses
-        // mid-range so drops dominate visually. Across the source distribution
-        // (p10≈0.15, p50≈0.51, p90≈0.86 verified via
-        // tools/bpm-test-harness/wf-env-diagnostic.mjs) this maps to roughly
-        // 1.5% / 22% / 70% of maxH — breakdowns sit as a thin line, verses
-        // are modest, builds clearly rise, drops tower toward full height.
+        // Compute heights + cache env per column. Env is BASS-WEIGHTED
+        // (0.7 bass + 0.2 mid + 0.1 high) rather than max(b,m,h) — in EDM/
+        // house, drops are defined by sub-bass + kick, so weighting bass
+        // hardest means hats/pads/vocals can't keep env high during
+        // breakdowns and verses, widening the visible drop-vs-verse
+        // contrast. envs[] is also consumed by the brightness overlay and
+        // centerline weight band below, so drops also visibly brighten +
+        // thicken on the same signal.
+        //
+        // Gamma 2.2 strongly compresses mid-range so the bass-weighted env
+        // gets a steep climb at the top — drops tower while verses stay
+        // modest. Small WF in deck panel keeps env=max(b,m,h) for full
+        // detail at h=40.
         const GAMMA=2.2;
         for(let dx=0;dx<physW;dx++){
           const bv=colB[dx], mv=colM[dx], hv=colH[dx];
-          const env=bv>mv?(bv>hv?bv:hv):(mv>hv?mv:hv);
+          const env=0.7*bv+0.2*mv+0.1*hv;
           envs[dx]=env;
           heights[dx]=env<=0?0:Math.min(maxH,Math.pow(env,GAMMA)*maxH);
         }
