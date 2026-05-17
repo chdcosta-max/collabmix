@@ -251,13 +251,18 @@ self.onmessage=function(e){
       if(k>argmaxVal){argmaxVal=k;argmaxF=j;}
     }
     // Pass 2: walk FORWARD from window start to find the EARLIEST spike that
-    // reaches 50% of argmaxVal. The 5 ms onset envelope on a 40-60 Hz signal
+    // reaches 40% of argmaxVal. The 5 ms onset envelope on a 40-60 Hz signal
     // oscillates (RMS catches different carrier phases per frame), producing
     // 2-3 positive spikes per kick. argmax often sits on the 2nd or 3rd
     // (mid-decay); the FIRST significant spike is the attack ramp.
+    //
+    // Gate: only roll back when argmax is meaningfully above noise
+    // (argmaxVal > 2 × SNAP_THRESH). On weak kicks, 40% of argmaxVal sits
+    // close to noise floor and we'd snap to spurious early rises (observed
+    // on harness: 03 Aliens beat 200 rolled back to window edge -100ms).
     let snapTargetF=argmaxF;
-    if(argmaxF>=0){
-      const firstRiseThresh=argmaxVal*0.5;
+    if(argmaxF>=0&&argmaxVal>SNAP_THRESH*2){
+      const firstRiseThresh=argmaxVal*0.4;
       for(let j=s;j<argmaxF;j++){
         if(onK[j]-onP[j]>firstRiseThresh){snapTargetF=j;break;}
       }
