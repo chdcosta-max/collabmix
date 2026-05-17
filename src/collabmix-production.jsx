@@ -3713,9 +3713,20 @@ function Deck({ id, ch, ctx:ac, color, local, remote, onChange, midi:mt, bpmResu
     // One-pole IIR lowpass coefficients: bass<300Hz, bass+mid<3500Hz
     const aB=Math.exp(-2*Math.PI*300/sr);
     const aM=Math.exp(-2*Math.PI*3500/sr);
-    const bassArr=new Float32Array(WF_W);
-    const midArr=new Float32Array(WF_W);
-    const highArr=new Float32Array(WF_W);
+    // RMS+peak hybrid sampling per bucket. Pure max-per-bucket made dense
+    // sections look spiky (every kick = tall column, decay between kicks =
+    // short column → alternating teeth). The 80% RMS share fills the wall
+    // with sustained energy so drops read as a thick band; the 20% peak
+    // share keeps each kick visibly punching through the wall as a brighter
+    // accent column. Per-column max(b,m,h) downstream still preserves the
+    // per-band character.
+    const bassSq=new Float64Array(WF_W);
+    const midSq=new Float64Array(WF_W);
+    const highSq=new Float64Array(WF_W);
+    const bassPeak=new Float32Array(WF_W);
+    const midPeak=new Float32Array(WF_W);
+    const highPeak=new Float32Array(WF_W);
+    const counts=new Uint32Array(WF_W);
     // Float step — flooring here quantized away the tail ~0.25% of coverage at
     // 44.1 kHz (step=165 → bands cover 179.6 s of a 180 s track). That made the
     // effective bands frame-rate (sr/step) exceed the renderer's assumed rate
@@ -3735,10 +3746,24 @@ function Deck({ id, ch, ctx:ac, color, local, remote, onChange, midi:mt, bpmResu
         const bv=Math.abs(lpB);
         const mv=Math.abs(lpM-lpB);  // band: 300-3500Hz
         const hv=Math.abs(s-lpM);    // band: >3500Hz
-        if(bv>bassArr[x])bassArr[x]=bv;
-        if(mv>midArr[x])midArr[x]=mv;
-        if(hv>highArr[x])highArr[x]=hv;
+        bassSq[x]+=bv*bv;
+        midSq[x]+=mv*mv;
+        highSq[x]+=hv*hv;
+        if(bv>bassPeak[x])bassPeak[x]=bv;
+        if(mv>midPeak[x])midPeak[x]=mv;
+        if(hv>highPeak[x])highPeak[x]=hv;
+        counts[x]++;
       }
+    }
+    // Blend RMS (80%) + peak (20%) per bucket per band.
+    const bassArr=new Float32Array(WF_W);
+    const midArr=new Float32Array(WF_W);
+    const highArr=new Float32Array(WF_W);
+    for(let x=0;x<WF_W;x++){
+      const c=counts[x]||1;
+      bassArr[x]=Math.sqrt(bassSq[x]/c)*0.8+bassPeak[x]*0.2;
+      midArr[x]=Math.sqrt(midSq[x]/c)*0.8+midPeak[x]*0.2;
+      highArr[x]=Math.sqrt(highSq[x]/c)*0.8+highPeak[x]*0.2;
     }
     // Normalize each band independently to 0-1
     const normBand=(arr)=>{let mx=0;for(let i=0;i<arr.length;i++)mx=Math.max(mx,arr[i]);if(mx<0.0001)return new Array(arr.length).fill(0);const out=new Array(arr.length);for(let i=0;i<arr.length;i++)out[i]=Math.round(arr[i]/mx*1000)/1000;return out;};
