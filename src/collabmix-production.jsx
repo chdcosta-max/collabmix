@@ -3016,14 +3016,6 @@ function AnimatedZoomedWF({ bands, dur, progRef, onSeek, h=96, windowSec=8, beat
         // Faint center hairline.
         ctx.fillStyle='rgba(255,255,255,0.06)';
         ctx.fillRect(0,center,physW,1);
-
-        // Amplitude-band edge hairlines — visually define where the waveform
-        // ends and the tick rail begins. Drawn on top so loud peaks don't
-        // obscure the boundary.
-        const railLineW=Math.max(1,Math.round(1*dpr));
-        ctx.fillStyle='rgba(255,255,255,0.25)';
-        ctx.fillRect(0,ampTop,physW,railLineW);
-        ctx.fillRect(0,ampBottom-railLineW,physW,railLineW);
       }
 
       // ── Premium beat grid — three-tier edge markers with downbeat + phrase emphasis.
