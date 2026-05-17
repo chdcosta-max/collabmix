@@ -228,6 +228,34 @@ self.onmessage=function(e){
     for(let i=0;i<dpBeats.length;i++){if(Math.max(0,on[dpBeats[i]])>onTh){firstBeatDpIdx=i;break;}}
   }
 
+  // ── Per-beat kick snap. Each DP beat gets pulled to the nearest strong
+  // kick within ±50ms using kick-exclusive onset (onK − onP) to avoid
+  // latching onto snares whose sub-bass bleeds into 40-60Hz. Gated by
+  // kick threshold so drumless intro/breakdown beats stay put. Monotonic
+  // constraint prevents reordering (a beat can't snap earlier than the
+  // previous beat + half a beat). Runs BEFORE beatPeriodSec and bar-phase
+  // scoring so every downstream step sees the corrected beat positions.
+  const SNAP_WIN=10;                  // ±10 frames ≈ ±50ms at ar≈200
+  const SNAP_THRESH=onKMx*0.30;       // matches L220 first-beat threshold
+  const halfBeatFrames=floatBeatLag*0.5;
+  let snapCount=0,maxDelta=0;
+  for(let i=0;i<dpBeats.length;i++){
+    const f=dpBeats[i];
+    const s=f-SNAP_WIN<0?0:f-SNAP_WIN, e=f+SNAP_WIN>=nf?nf-1:f+SNAP_WIN;
+    let bestF=-1, bestVal=SNAP_THRESH;
+    for(let j=s;j<=e;j++){
+      const k=onK[j]-onP[j];
+      if(k>bestVal){bestVal=k;bestF=j;}
+    }
+    if(bestF<0||bestF===f) continue;                 // no kick above threshold, or already on it
+    if(i>0&&bestF<dpBeats[i-1]+halfBeatFrames) continue; // monotonic guard
+    const delta=bestF>f?bestF-f:f-bestF;
+    if(delta>maxDelta) maxDelta=delta;
+    dpBeats[i]=bestF;
+    snapCount++;
+  }
+  console.log('[BPM-SNAP] track',id,': snapped '+snapCount+'/'+dpBeats.length+' beats, max delta '+maxDelta+' frames');
+
   // Determine BAR PHASE: which of 4 beats is the bar downbeat (beat 1)?
   // Score each of 4 phase offsets (0,1,2,3) against kick onset across all dpBeats.
   // The offset with the highest cumulative kick strength = bar downbeat phase.
