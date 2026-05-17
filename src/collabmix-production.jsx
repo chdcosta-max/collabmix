@@ -4558,6 +4558,27 @@ export default function CollabMix({ initialPage = "landing", djName = null }) {
   const deckDriversRef = useRef(deckDrivers);
   useEffect(() => { deckDriversRef.current = deckDrivers; }, [deckDrivers]);
 
+  // Driver audio routing: when partner drives a deck, mute its local engine
+  // chain so my master mix only contains decks I drive. Audio for the
+  // partner-driven deck reaches me via their WebRTC stream (their master is
+  // the mix of decks they drive). Without this, both browsers would double-
+  // play any deck both have loaded, and partner-driven decks I never loaded
+  // would emit silence locally while WebRTC delivers the real audio — but
+  // since I can't drive a deck I don't have a buffer for, the only case that
+  // matters is: partner drives → mute local. setTargetAtTime ramps over
+  // ~20ms to avoid a click on driver handoff.
+  useEffect(() => {
+    const e = eng.current;
+    if (!e?.ctx || !e?.A || !e?.B) return;
+    const myName = session?.name;
+    const tc = 0.02;
+    for (const id of ["A", "B"]) {
+      const driver = deckDrivers[id];
+      const open = !driver || driver === myName;
+      try { e[id].trim.gain.setTargetAtTime(open ? 1 : 0, e.ctx.currentTime, tc); } catch {}
+    }
+  }, [deckDrivers, session, ready]);
+
   const handleTrackInfo = useCallback((deckId, trackMeta) => {
     if (trackMeta) setPlayingTrack(trackMeta);
   }, []);
