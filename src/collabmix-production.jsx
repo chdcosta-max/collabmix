@@ -3022,17 +3022,19 @@ function AnimatedZoomedWF({ bands, dur, progRef, onSeek, h=96, windowSec=8, beat
           colB[dx]=b; colM[dx]=m; colH[dx]=hh;
         }
 
-        // Compute heights + cache env per column for the brightness/weight
-        // passes. Height formula: linear interp 30%→100% of maxH with env, so
-        // drops literally tower over verses while quiet sections keep a 30%
-        // floor for silhouette continuity. True silence (env<=0.01) still
-        // reads zero so intro/outro pauses don't show a phantom envelope.
-        const H_FLOOR=0.30, H_RANGE=0.70;
+        // Compute heights + cache env per column. Gamma 1.8 produces dramatic
+        // height variation across the source data's natural env distribution
+        // (verified p10≈0.15, p50≈0.51, p90≈0.86 on real EDM tracks via
+        // tools/bpm-test-harness/wf-env-diagnostic.mjs). That maps to roughly
+        // 4% / 30% / 75% of maxH — breakdowns sit as a thin line, drops
+        // tower toward full height. Steeper than 1.8 starts making verse
+        // sections feel cramped; gentler than 1.6 flattens the drop.
+        const GAMMA=1.8;
         for(let dx=0;dx<physW;dx++){
           const bv=colB[dx], mv=colM[dx], hv=colH[dx];
           const env=bv>mv?(bv>hv?bv:hv):(mv>hv?mv:hv);
           envs[dx]=env;
-          heights[dx]=env<=0.01?0:Math.min(maxH,maxH*(H_FLOOR+env*H_RANGE));
+          heights[dx]=env<=0?0:Math.min(maxH,Math.pow(env,GAMMA)*maxH);
         }
 
         // Parse deck color → rgb for all three passes below.
