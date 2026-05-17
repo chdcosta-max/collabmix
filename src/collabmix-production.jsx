@@ -2937,7 +2937,7 @@ function AnimatedZoomedWF({ bands, dur, progRef, onSeek, h=96, windowSec=8, beat
       const prog2=progRef?.current??0;
       // Reserve top + bottom rails so beat-grid ticks aren't covered by waveform
       // amplitude pixels. Amplitude renders only in the middle band [ampTop, ampBottom].
-      const railPad=Math.round(12*dpr);
+      const railPad=Math.round(8*dpr);
       const ampTop=railPad;
       const ampBottom=physH-railPad;
       const drawH=ampBottom-ampTop;
@@ -3057,9 +3057,9 @@ function AnimatedZoomedWF({ bands, dur, progRef, onSeek, h=96, windowSec=8, beat
         // rails (offset by tickGap from the canvas edge) so they're never overlapped
         // by waveform pixels.
         const tickGap=Math.max(1,Math.round(2*dpr));
-        const offTickH=Math.max(1,Math.round(6*dpr));
+        const offTickH=Math.max(1,Math.round(4*dpr));
         const downTickH=Math.max(1,Math.round(10*dpr));
-        const phraseTickH=Math.max(1,Math.round(12*dpr));
+        const phraseTickH=Math.max(1,Math.round(14*dpr));
         const lineW=Math.max(1,Math.round(1*dpr));
         const phraseTickW=Math.max(1,Math.round(2*dpr));
 
@@ -3074,11 +3074,11 @@ function AnimatedZoomedWF({ bands, dur, progRef, onSeek, h=96, windowSec=8, beat
         const phraseRGB=`${dr},${dg},${db}`;
 
         // Pre-build fill styles (avoid string churn in hot loop).
-        const OFF_FILL='rgba(255,255,255,0.60)';
+        const OFF_FILL='rgba(255,255,255,0.50)';
         const DOWN_FILL='rgba(255,255,255,1.0)';
-        const DOWN_LINE='rgba(255,255,255,0.20)';
+        const DOWN_LINE='rgba(255,255,255,0.15)';
         const PHRASE_FILL=`rgba(${phraseRGB},1.0)`;
-        const PHRASE_LINE=`rgba(${phraseRGB},0.40)`;
+        const PHRASE_LINE=`rgba(${phraseRGB},0.50)`;
 
         for(let n=startN;n<=endN;n++){
           const beatTime=firstDownbeatSec+n*effectivePeriod;
@@ -3089,9 +3089,9 @@ function AnimatedZoomedWF({ bands, dur, progRef, onSeek, h=96, windowSec=8, beat
           const isDownbeat=(n%4===0);
 
           if(isPhrase){
-            // Phrase: full-height identity-color line + larger edge ticks in rails.
+            // Phrase: full-height 2px identity-color line + larger edge ticks in rails.
             ctx.fillStyle=PHRASE_LINE;
-            ctx.fillRect(Math.floor(x)-(lineW>>1),0,lineW,physH);
+            ctx.fillRect(Math.floor(x)-(phraseTickW>>1),0,phraseTickW,physH);
             ctx.fillStyle=PHRASE_FILL;
             const px=Math.floor(x-phraseTickW/2);
             ctx.fillRect(px,tickGap,phraseTickW,phraseTickH);
@@ -5335,7 +5335,7 @@ export default function CollabMix({ initialPage = "landing", djName = null }) {
             </div>
           );
         }
-        const wfH = (hasA && hasB) ? 110 : 140; // 1 deck loaded → 140; both → 110 each
+        const wfH = (hasA && hasB) ? 70 : 90; // 1 deck loaded → 90; both → 70 each — pro-DJ-tool proportions
         return (
           <div style={{ flexShrink:0, background:"#020208", borderBottom:"1px solid #16161e" }}>
             {hasA && (
