@@ -963,7 +963,7 @@ function TrackRow({track, onLoadA, onLoadB, isRec, reasons, canLoad, previewTrac
         if(onDragStart)onDragStart(track);
       }}
       onContextMenu={e=>{e.preventDefault();setCtxMenu({x:e.clientX,y:e.clientY});}}
-      style={{display:"grid",gridTemplateColumns:"28px 36px 1fr 70px 44px 70px 44px 64px",gap:6,alignItems:"center",padding:"5px 10px",background:isRec?"#22c55e07":hov?"#18182299":"transparent",borderBottom:"1px solid #14141e88",transition:"background .1s",position:"relative",cursor:"grab"}}
+      style={{display:"grid",gridTemplateColumns:"28px 36px 1fr 70px 44px 70px 44px 84px",gap:6,alignItems:"center",padding:"5px 10px",background:isRec?"#22c55e07":hov?"#18182299":"transparent",borderBottom:"1px solid #14141e88",transition:"background .1s",position:"relative",cursor:"grab"}}
     >
       {/* Context menu */}
       {ctxMenu&&(
@@ -1030,8 +1030,10 @@ function TrackRow({track, onLoadA, onLoadB, isRec, reasons, canLoad, previewTrac
       <div style={{fontSize:11,fontFamily:"'DM Mono',monospace",color:"#888898",textAlign:"right"}}>{fmt(track.duration)}</div>
 
       {/* A / B load buttons — color-coded to deck identity (violet / teal) so
-          users can see they have two destinations, not one. */}
-      <div style={{display:"flex",gap:4,opacity:hov&&canLoad?1:0,transition:"opacity .1s"}}>
+          users can see they have two destinations, not one. Always visible at
+          55% opacity so users discover them without needing to hover-and-wait;
+          full opacity on row hover. */}
+      <div style={{display:"flex",gap:4,opacity:canLoad?(hov?1:0.55):0,transition:"opacity .15s"}}>
         {onLoadA&&<button onClick={e=>{e.stopPropagation();onLoadA(track);}} title="Load to Deck A" style={{padding:"4px 10px",fontSize:11,fontWeight:700,fontFamily:"'DM Mono',monospace",background:"#7B61FF1f",border:"1px solid #7B61FF66",color:"#7B61FF",borderRadius:5,cursor:"pointer",letterSpacing:.5}}>→A</button>}
         {onLoadB&&<button onClick={e=>{e.stopPropagation();onLoadB(track);}} title="Load to Deck B" style={{padding:"4px 10px",fontSize:11,fontWeight:700,fontFamily:"'DM Mono',monospace",background:"#00BFA51f",border:"1px solid #00BFA566",color:"#00BFA5",borderRadius:5,cursor:"pointer",letterSpacing:.5}}>→B</button>}
       </div>
@@ -4663,6 +4665,8 @@ export default function CollabMix({ initialPage = "landing", djName = null }) {
     // immediately on receive, before the audio-decode-triggered deck_update
     // chain fires with the rest (waveform, duration).
     const driverName = sessionRef.current?.name || null;
+    const wsState = syncRef.current?.status;
+    console.log('[DRIVER-SEND]', { deck, driverName, wsState, hasSync: !!syncRef.current?.send, trackTitle: track.title });
     if (driverName) {
       setDeckDrivers(prev => prev[deck] === driverName ? prev : { ...prev, [deck]: driverName });
       const trackMeta = {
@@ -4674,6 +4678,9 @@ export default function CollabMix({ initialPage = "landing", djName = null }) {
         duration: track.duration || null,
       };
       syncRef.current?.send?.({ type: "deck_driver_change", deckId: deck, driverName, track: trackMeta });
+      console.log('[DRIVER-SEND] dispatched', { deck, driverName });
+    } else {
+      console.warn('[DRIVER-SEND] no driverName — sessionRef.current?.name was null/empty');
     }
     // Defer library-side BPM/key analysis until track is loaded onto a deck.
     // Prevents bulk decoding 100s of tracks at import time which causes OOM.
@@ -4804,6 +4811,7 @@ export default function CollabMix({ initialPage = "landing", djName = null }) {
     }
     if (m.type==="deck_driver_change") {
       const { deckId, driverName, track } = m;
+      console.log('[DRIVER-RECV]', { deckId, driverName, from: m.from, myName: sessionRef.current?.name, hasTrack: !!track, trackTitle: track?.title });
       if (deckId === "A" || deckId === "B") {
         setDeckDrivers(prev => prev[deckId] === (driverName ?? null) ? prev : { ...prev, [deckId]: driverName ?? null });
         // If the broadcast carries track metadata AND it's not from me, paint
@@ -4822,7 +4830,13 @@ export default function CollabMix({ initialPage = "landing", djName = null }) {
             duration: track.duration || null,
           }));
         }
+      } else {
+        console.warn('[DRIVER-RECV] ignored — invalid deckId', deckId);
       }
+    }
+    if (m.type==="master_vol_update") {
+      // Shared master fader — mirror partner's level into my engine + UI.
+      setMvol(m.value);
     }
     if (m.type==="deck_update")    {
       // 1) Mirror partner's deck state for visuals
@@ -4981,7 +4995,7 @@ export default function CollabMix({ initialPage = "landing", djName = null }) {
   const handleMidi = useCallback(({actionKey,value}) => {
     setMidiEvt({actionKey,value,ts:Date.now()});
     if (actionKey==="CROSSFADER") { setXf(value); applyXF(value); sync.send({type:"xfade_update",value}); }
-    if (actionKey==="MASTER_VOL") setMvol(value*1.5);
+    if (actionKey==="MASTER_VOL") { const mv=value*1.5; setMvol(mv); lsRef.current.masterVol=mv; sync.send({type:"master_vol_update",value:mv}); }
   }, [applyXF, sync]);
 
   const midi = useMidi({ onAction: handleMidi });
@@ -5316,12 +5330,14 @@ export default function CollabMix({ initialPage = "landing", djName = null }) {
   // SHARED fields bypass the driver gate — both users twist any knob on any
   // deck and all changes broadcast/apply both ways. These are CONTROL fields
   // (mixer state), not AUDIO source fields. Crossfader + master volume use
-  // their own message types (xfade_update etc) and never reach dh.
+  // their own message types (xfade_update / master_vol_update) and never
+  // reach dh. "masterVol" is in the set for defensive consistency in case
+  // any future code path routes master vol through dh.
   // DRIVER-ONLY fields (the implicit complement): playing, progress, rate,
   // duration, trackName, artist, key, bpm, beatPhaseSec, beatPeriodSec,
   // waveformBass/Mid/High — i.e. anything that describes WHAT is playing or
   // WHERE the playhead is. Only the deck's driver should overwrite those.
-  const SHARED_FIELDS = new Set(["eqHi","eqMid","eqLo","vol","filter"]);
+  const SHARED_FIELDS = new Set(["eqHi","eqMid","eqLo","vol","filter","masterVol"]);
   const dh = (id) => (field, value) => {
     if (field === "playing") {
       deckPlayStartRef.current[id] = value ? Date.now() : null;
@@ -5344,6 +5360,9 @@ export default function CollabMix({ initialPage = "landing", djName = null }) {
   };
 
   const setXfLocal = (v) => { setXf(v); applyXF(v); lsRef.current.xfade=v; sync.send({type:"xfade_update",value:v}); };
+  // Shared master fader — wrap setMvol so every move broadcasts. lsRef carries
+  // it forward as masterVol for sync_response replay to new joiners.
+  const setMvolLocal = (v) => { setMvol(v); lsRef.current.masterVol=v; sync.send({type:"master_vol_update",value:v}); };
 
   const join = (info) => {
     eng.current = createEngine();
@@ -5623,7 +5642,7 @@ export default function CollabMix({ initialPage = "landing", djName = null }) {
               {/* Master fader */}
               <div style={{ flex:1, display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"center", gap:3, minHeight:0 }}>
                 <div style={{ fontSize:7, fontFamily:"'DM Mono',monospace", color:"#C8A96E99", letterSpacing:2 }}>MASTER</div>
-                <VerticalFader val={mvol} set={setMvol} color="#C8A96E" h={150}/>
+                <VerticalFader val={mvol} set={setMvolLocal} color="#C8A96E" h={150}/>
                 <div style={{ fontSize:7, fontFamily:"'DM Mono',monospace", color:"#C8A96E99" }}>{(mvol/1.5*100).toFixed(0)}%</div>
               </div>
               {/* Session info */}
