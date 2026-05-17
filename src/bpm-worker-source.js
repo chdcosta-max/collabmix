@@ -228,77 +228,202 @@ self.onmessage=function(e){
     for(let i=0;i<dpBeats.length;i++){if(Math.max(0,on[dpBeats[i]])>onTh){firstBeatDpIdx=i;break;}}
   }
 
-  // ── Per-beat kick snap. Each DP beat gets pulled to the nearest strong
-  // kick within ±50ms using kick-exclusive onset (onK − onP) to avoid
-  // latching onto snares whose sub-bass bleeds into 40-60Hz. Gated by
-  // kick threshold so drumless intro/breakdown beats stay put. Monotonic
-  // constraint prevents reordering (a beat can't snap earlier than the
-  // previous beat + half a beat). Runs BEFORE beatPeriodSec and bar-phase
-  // scoring so every downstream step sees the corrected beat positions.
-  const SNAP_WIN=20;                  // ±20 frames ≈ ±100ms at ar≈200
-  const SNAP_THRESH=onKMx*0.30;       // matches L220 first-beat threshold
+  // ── Per-beat beat-position refinement. Two algorithms behind one kill-
+  // switch: legacy frame-resolution snap (USE_LEGACY_FRAME_SNAP=true) or
+  // sample-resolution refinement using raw audio (default). Both produce
+  // dpBeatsFloat[] — fractional frame positions for downstream period +
+  // bar-anchor computation. Bar phase scoring downstream floors to int
+  // when indexing onK/onP (bucket-resolution).
+  const USE_LEGACY_FRAME_SNAP = false;
   const halfBeatFrames=floatBeatLag*0.5;
-  let snapCount=0,maxDelta=0;
   const msPerFrame=1000/ar;
-  for(let i=0;i<dpBeats.length;i++){
-    const f=dpBeats[i];
-    const s=f-SNAP_WIN<0?0:f-SNAP_WIN, e=f+SNAP_WIN>=nf?nf-1:f+SNAP_WIN;
-    // Pass 1: argmax of kick-exclusive onset across the window — confirms a
-    // real kick exists in this region above SNAP_THRESH.
-    let argmaxF=-1, argmaxVal=SNAP_THRESH;
-    for(let j=s;j<=e;j++){
-      const k=onK[j]-onP[j];
-      if(k>argmaxVal){argmaxVal=k;argmaxF=j;}
+  const dpBeatsFloat = new Float64Array(dpBeats.length);
+
+  if (USE_LEGACY_FRAME_SNAP) {
+    // Legacy frame-resolution kick snap (first-rise rollback on onK−onP).
+    // Preserved verbatim for one-flag revert. Produces integer-frame snaps
+    // and stores them in dpBeatsFloat as integers for downstream interop.
+    const SNAP_WIN=20;
+    const SNAP_THRESH=onKMx*0.30;
+    let snapCount=0,maxDelta=0;
+    for(let i=0;i<dpBeats.length;i++){
+      const f=dpBeats[i];
+      const s=f-SNAP_WIN<0?0:f-SNAP_WIN, e=f+SNAP_WIN>=nf?nf-1:f+SNAP_WIN;
+      let argmaxF=-1, argmaxVal=SNAP_THRESH;
+      for(let j=s;j<=e;j++){
+        const k=onK[j]-onP[j];
+        if(k>argmaxVal){argmaxVal=k;argmaxF=j;}
+      }
+      let snapTargetF=argmaxF;
+      if(argmaxF>=0&&argmaxVal>SNAP_THRESH*2){
+        const firstRiseThresh=argmaxVal*0.4;
+        for(let j=s;j<argmaxF;j++){
+          if(onK[j]-onP[j]>firstRiseThresh){snapTargetF=j;break;}
+        }
+      }
+      const noKick=argmaxF<0;
+      const onSameFrame=!noKick&&snapTargetF===f;
+      const monoBlock=!noKick&&!onSameFrame&&i>0&&snapTargetF<dpBeats[i-1]+halfBeatFrames;
+      const willSnap=!noKick&&!onSameFrame&&!monoBlock;
+      if(willSnap){
+        const delta=snapTargetF>f?snapTargetF-f:f-snapTargetF;
+        if(delta>maxDelta) maxDelta=delta;
+        dpBeats[i]=snapTargetF;
+        snapCount++;
+      }
+      dpBeatsFloat[i] = dpBeats[i];
     }
-    // Pass 2: walk FORWARD from window start to find the EARLIEST spike that
-    // reaches 40% of argmaxVal. The 5 ms onset envelope on a 40-60 Hz signal
-    // oscillates (RMS catches different carrier phases per frame), producing
-    // 2-3 positive spikes per kick. argmax often sits on the 2nd or 3rd
-    // (mid-decay); the FIRST significant spike is the attack ramp.
+    console.log('[BPM-SNAP] track',id,'(legacy): snapped '+snapCount+'/'+dpBeats.length+' beats, max delta '+maxDelta+' frames');
+  } else {
+    // ── Sample-level transient refinement ──────────────────────────────────
+    // Per beat: extract a ±50ms window of raw audio centered on the DP frame,
+    // bandpass to 40-200Hz, compute power envelope smoothed over 1.5ms,
+    // half-wave-rectified first derivative, argmax with parabolic interp for
+    // sub-sample precision. Filter is fed a slightly larger window (+10ms
+    // each side) so warmup happens in padding, not in the analysis region.
     //
-    // Gate: only roll back when argmax is meaningfully above noise
-    // (argmaxVal > 2 × SNAP_THRESH). On weak kicks, 40% of argmaxVal sits
-    // close to noise floor and we'd snap to spurious early rises (observed
-    // on harness: 03 Aliens beat 200 rolled back to window edge -100ms).
-    let snapTargetF=argmaxF;
-    if(argmaxF>=0&&argmaxVal>SNAP_THRESH*2){
-      const firstRiseThresh=argmaxVal*0.4;
-      for(let j=s;j<argmaxF;j++){
-        if(onK[j]-onP[j]>firstRiseThresh){snapTargetF=j;break;}
+    // Three confidence gates (silence / flat / edge) fall back to the DP
+    // integer frame when refinement isn't trustworthy. Monotonic guard
+    // prevents reordering. dpBeatsFloat[] is sample-accurate fractional
+    // frame index; downstream period + anchor get sub-frame precision.
+    //
+    // Estimated accuracy: ±1-2ms on sharp-kick tracks, ±3-5ms on soft-kick
+    // (deep house/dub techno) where attack ramp is gentler.
+    const beatPeriodSecEst = floatBeatLag / ar;
+    const halfWinSec = Math.min(0.05, beatPeriodSecEst * 0.4); // ±50ms cap
+    const halfWinSamples = Math.round(sr * halfWinSec);
+    const padSamples = Math.round(sr * 0.010); // 10ms IIR warmup pad
+    const smoothWin = Math.max(8, Math.round(sr * 0.0015)); // ~1.5ms (64 samples @ 44.1k)
+    const edgeMargin = Math.max(4, Math.round(sr * 0.001)); // 1ms edge margin
+    const halfBeatSamples = floatBeatLag * hop / 2;
+    const TRANSIENT_RATIO = 3.0;
+
+    // Cheap global silence reference — mean of mono squared over whole track.
+    let monoSumSq = 0;
+    for (let i = 0; i < len; i++) { const s = mono[i]; monoSumSq += s * s; }
+    const monoMeanPower = monoSumSq / Math.max(1, len);
+    const SILENCE_POWER = monoMeanPower * 0.05; // 5% of mean ≈ effectively silent
+
+    let refineCount = 0, refineSkipSilence = 0, refineSkipFlat = 0;
+    let refineSkipEdge = 0, refineSkipMono = 0;
+    let deltaSumMs = 0, deltaAbsSumMs = 0;
+    const debugBeats = { 50: null, 100: null, 200: null };
+
+    for (let i = 0; i < dpBeats.length; i++) {
+      const f = dpBeats[i];
+      const centerSample = f * hop;
+      const winStart = Math.max(0, centerSample - halfWinSamples);
+      const winEnd = Math.min(len, centerSample + halfWinSamples);
+      const winLen = winEnd - winStart;
+      const isDebugBeat = (i === 50 || i === 100 || i === 200);
+
+      let refinedSample = -1, reason = 'ok';
+      let argmaxIdx = -1, frac = 0, maxPow = 0, maxDiff = 0, meanDiff = 0;
+
+      if (winLen < smoothWin * 4) {
+        reason = 'too-narrow'; refineSkipEdge++;
+      } else {
+        // Extract with padding for filter warmup
+        const padStart = Math.max(0, winStart - padSamples);
+        const padEnd = Math.min(len, winEnd + padSamples);
+        const padded = mono.subarray(padStart, padEnd);
+        const filtered = bp(padded, sr, 40, 200);
+        // Analyze only the inner [winStart..winEnd] region of the filtered output
+        const innerOffset = winStart - padStart;
+
+        const power = new Float32Array(winLen);
+        for (let j = 0; j < winLen; j++) {
+          const v = filtered[innerOffset + j];
+          const p = v * v;
+          power[j] = p;
+          if (p > maxPow) maxPow = p;
+        }
+
+        if (maxPow < SILENCE_POWER) {
+          reason = 'silence'; refineSkipSilence++;
+        } else {
+          // Smoothed power via running sum (O(N))
+          const smoothed = new Float32Array(winLen);
+          let runSum = 0;
+          for (let j = 0; j < winLen; j++) {
+            runSum += power[j];
+            if (j >= smoothWin) runSum -= power[j - smoothWin];
+            const denom = j + 1 < smoothWin ? j + 1 : smoothWin;
+            smoothed[j] = runSum / denom;
+          }
+          // Half-wave-rectified first difference
+          const diff = new Float32Array(winLen);
+          let sumDiff = 0;
+          for (let j = 1; j < winLen; j++) {
+            const d = smoothed[j] - smoothed[j - 1];
+            const dr = d > 0 ? d : 0;
+            diff[j] = dr;
+            if (dr > maxDiff) maxDiff = dr;
+            sumDiff += dr;
+          }
+          meanDiff = sumDiff / Math.max(1, winLen - 1);
+          if (maxDiff / Math.max(1e-12, meanDiff) < TRANSIENT_RATIO) {
+            reason = 'flat'; refineSkipFlat++;
+          } else {
+            // argmax(diff)
+            argmaxIdx = 1;
+            for (let j = 2; j < winLen; j++) {
+              if (diff[j] > diff[argmaxIdx]) argmaxIdx = j;
+            }
+            if (argmaxIdx < edgeMargin || argmaxIdx > winLen - edgeMargin - 1) {
+              reason = 'edge'; refineSkipEdge++;
+            } else {
+              // Parabolic interpolation for sub-sample precision
+              const yL = diff[argmaxIdx - 1], yC = diff[argmaxIdx], yR = diff[argmaxIdx + 1];
+              const denom = yL - 2 * yC + yR;
+              if (denom < 0) {
+                frac = (yL - yR) / (2 * denom);
+                if (frac > 0.5) frac = 0.5;
+                else if (frac < -0.5) frac = -0.5;
+              }
+              const candidate = winStart + argmaxIdx + frac;
+              // Monotonic guard
+              const prevSample = i > 0 ? dpBeatsFloat[i - 1] * hop : -Infinity;
+              if (candidate < prevSample + halfBeatSamples) {
+                reason = 'mono'; refineSkipMono++;
+              } else {
+                refinedSample = candidate;
+              }
+            }
+          }
+        }
+      }
+
+      if (refinedSample >= 0) {
+        dpBeatsFloat[i] = refinedSample / hop;
+        refineCount++;
+        const dMs = (refinedSample - centerSample) / sr * 1000;
+        deltaSumMs += dMs;
+        deltaAbsSumMs += Math.abs(dMs);
+      } else {
+        dpBeatsFloat[i] = f; // fall back to DP integer frame
+      }
+
+      if (isDebugBeat) {
+        const targetSample = refinedSample >= 0 ? refinedSample : centerSample;
+        const dMs = (targetSample - centerSample) / sr * 1000;
+        console.log('[REFINE-DEBUG] ' + id + ' beat ' + i +
+          ': dpFrame=' + f + ' dpMs=' + (centerSample / sr * 1000).toFixed(2) +
+          ' refinedMs=' + (targetSample / sr * 1000).toFixed(2) +
+          ' delta=' + (dMs >= 0 ? '+' : '') + dMs.toFixed(2) + 'ms' +
+          ' reason=' + reason +
+          (reason === 'ok' ? ' (argmaxIdx=' + argmaxIdx + '/' + winLen + ' frac=' + frac.toFixed(3) + ')' :
+            ' (maxPow=' + maxPow.toExponential(2) + ' maxDiff/mean=' + (meanDiff > 0 ? (maxDiff / meanDiff).toFixed(2) : 'NA') + ')'));
       }
     }
-    const noKick=argmaxF<0;
-    const onSameFrame=!noKick&&snapTargetF===f;
-    const monoBlock=!noKick&&!onSameFrame&&i>0&&snapTargetF<dpBeats[i-1]+halfBeatFrames;
-    const willSnap=!noKick&&!onSameFrame&&!monoBlock;
-    if(willSnap){
-      const delta=snapTargetF>f?snapTargetF-f:f-snapTargetF;
-      if(delta>maxDelta) maxDelta=delta;
-      dpBeats[i]=snapTargetF;
-      snapCount++;
-    }
-    // Per-beat diagnostic for 3 representative beats per track. Logs both
-    // argmax and the first-rise pick so we can see when they differ.
-    if(i===50||i===100||i===200){
-      const targetF=willSnap?snapTargetF:f;
-      const vicRad=5;
-      const vs=targetF-vicRad<0?0:targetF-vicRad;
-      const ve=targetF+vicRad>=nf?nf-1:targetF+vicRad;
-      const vals=[];
-      for(let j=vs;j<=ve;j++) vals.push((onK[j]-onP[j]).toFixed(3));
-      let status;
-      if(willSnap){
-        const d=snapTargetF-f;
-        const rb=snapTargetF!==argmaxF?' (argmax='+argmaxF+' rolled-back '+(argmaxF-snapTargetF)+'f)':'';
-        status='snap='+snapTargetF+' delta='+(d>=0?'+':'')+d+' ('+(d>=0?'+':'')+(d*msPerFrame).toFixed(0)+'ms)'+rb;
-      } else if(noKick) status='no-kick-above-threshold (DP stays)';
-      else if(onSameFrame) status='already-on-kick (dp==snapTarget)';
-      else status='monotonic-block (would-be snap='+snapTargetF+')';
-      console.log('[SNAP-DEBUG] '+id+' beat '+i+': dp='+f+' win=['+s+'..'+e+'] '+status);
-      console.log('  vicinity (frames '+vs+'-'+ve+'): '+vals.join(', '));
-    }
+    const meanDeltaMs = refineCount > 0 ? deltaSumMs / refineCount : 0;
+    const meanAbsDeltaMs = refineCount > 0 ? deltaAbsSumMs / refineCount : 0;
+    console.log('[REFINE-STATS] track ' + id + ': refined ' + refineCount + '/' + dpBeats.length +
+      ' beats, mean delta=' + (meanDeltaMs >= 0 ? '+' : '') + meanDeltaMs.toFixed(2) + 'ms' +
+      ' mean|delta|=' + meanAbsDeltaMs.toFixed(2) + 'ms' +
+      ' (skipSilence=' + refineSkipSilence + ' skipFlat=' + refineSkipFlat +
+      ' skipEdge=' + refineSkipEdge + ' skipMono=' + refineSkipMono + ')');
   }
-  console.log('[BPM-SNAP] track',id,': snapped '+snapCount+'/'+dpBeats.length+' beats, max delta '+maxDelta+' frames');
 
   // Determine BAR PHASE: which of 4 beats is the bar downbeat (beat 1)?
   // Score each of 4 phase offsets (0,1,2,3) against kick onset across all dpBeats.
@@ -324,7 +449,10 @@ self.onmessage=function(e){
   const phSc=[0,0,0,0];
   const phScWin=5;
   for(let i=0;i<dpBeats.length;i++){
-    const f=dpBeats[i];
+    // Use floor(dpBeatsFloat) so phase scoring centers on the refined kick
+    // position. onK/envK are 5ms-hop arrays, so frame-resolution is fine
+    // for the ±5-frame scoring window.
+    const f=Math.floor(dpBeatsFloat[i]);
     const s=f-phScWin<0?0:f-phScWin, e=f+phScWin>=nf?nf-1:f+phScWin;
     let acc=0;
     for(let k=s;k<=e;k++){
@@ -355,7 +483,7 @@ self.onmessage=function(e){
   // where mean is slightly off. Computed BEFORE the bar-1 anchor so we
   // can extrapolate the anchor by bars.
   const beatPeriodSec=dpBeats.length>=2
-    ?(dpBeats[dpBeats.length-1]-dpBeats[0])/(dpBeats.length-1)/ar
+    ?(dpBeatsFloat[dpBeats.length-1]-dpBeatsFloat[0])/(dpBeats.length-1)/ar
     :(60/bChk);
   console.log('[BPM-PERIOD] track',id,': mean='+beatPeriodSec.toFixed(6)+'s ('+(60/beatPeriodSec).toFixed(3)+')');
 
@@ -426,7 +554,9 @@ self.onmessage=function(e){
   // ran from i=0, so no firstBeatDpIdx offset needed).
   const earliestDpIdx=Math.min(bestPh,dpBeats.length-1);
   const barFrames=beatPeriodSec*ar*4;
-  let barDownbeatFrame=dpBeats[earliestDpIdx]||0;
+  // Use refined fractional frame so the anchor is sample-accurate, not
+  // rounded to nearest 5ms frame.
+  let barDownbeatFrame=dpBeatsFloat[earliestDpIdx]||0;
   while(barDownbeatFrame-barFrames>=0) barDownbeatFrame-=barFrames;
 
   // beatPhaseFrac is the anchor's beat-index from track start. Using beatPeriodSec
