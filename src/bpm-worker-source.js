@@ -302,26 +302,35 @@ self.onmessage=function(e){
   const phMax=Math.max(phSc[0],phSc[1],phSc[2],phSc[3]);
   const phMin=Math.min(phSc[0],phSc[1],phSc[2],phSc[3]);
   if(phMax>0 && (phMax-phMin)/phMax < 0.25) bestPh=0;
-  // Precise beat period from snap-corrected DP beats — MEDIAN of consecutive
-  // intervals (was mean: lastBeat-firstBeat / n-1, which got pulled by any
-  // single mis-snapped beat at either endpoint or by drift accumulated
-  // across a long track). Median is robust to ~25% outlier intervals,
-  // which matches the snap-fail rate observed on real tracks. Computed
-  // BEFORE the bar-1 anchor so we can extrapolate the anchor by bars.
+  // Precise beat period from snap-corrected DP beats — TRIMMED MEAN of
+  // consecutive intervals (10% off each end). Pure mean got pulled by
+  // single mis-snapped endpoint or drift accumulated across long tracks;
+  // pure median snapped to a single integer-frame interval and lost the
+  // sub-frame precision that mean recovers by averaging across the
+  // integer-frame distribution. Trimmed mean is the middle ground —
+  // discards the worst snap edge cases AND preserves frame-quantization
+  // precision in the bulk. Computed BEFORE the bar-1 anchor so we can
+  // extrapolate the anchor by bars.
   const meanPeriodSec=dpBeats.length>=2
     ?(dpBeats[dpBeats.length-1]-dpBeats[0])/(dpBeats.length-1)/ar
     :(60/bChk);
-  let beatPeriodSec=meanPeriodSec;
+  let medianPeriodSec=meanPeriodSec, trimmedMeanPeriodSec=meanPeriodSec;
   if(dpBeats.length>=3){
     const intervals=new Float32Array(dpBeats.length-1);
     for(let i=1;i<dpBeats.length;i++) intervals[i-1]=dpBeats[i]-dpBeats[i-1];
-    // Sort in place (Float32Array supports sort with default numeric compare).
-    intervals.sort();
+    intervals.sort(); // Float32Array.sort defaults to numeric ascending
     const m=intervals.length;
     const medianFrames=m%2?intervals[m>>1]:(intervals[(m>>1)-1]+intervals[m>>1])*0.5;
-    beatPeriodSec=medianFrames/ar;
+    medianPeriodSec=medianFrames/ar;
+    // Trim 10% off each end (round down so we keep ≥1 sample even for tiny n).
+    const trim=Math.floor(m*0.10);
+    const lo=trim, hi=m-trim;
+    let sum=0,count=0;
+    for(let i=lo;i<hi;i++){sum+=intervals[i];count++;}
+    trimmedMeanPeriodSec=count>0?(sum/count)/ar:meanPeriodSec;
   }
-  console.log('[BPM-PERIOD] track',id,': mean=',meanPeriodSec.toFixed(6),'s (bpm='+ (60/meanPeriodSec).toFixed(3) +') median=',beatPeriodSec.toFixed(6),'s (bpm='+ (60/beatPeriodSec).toFixed(3) +')');
+  const beatPeriodSec=trimmedMeanPeriodSec;
+  console.log('[BPM-PERIOD] track',id,': mean='+meanPeriodSec.toFixed(6)+'s ('+(60/meanPeriodSec).toFixed(3)+') median='+medianPeriodSec.toFixed(6)+'s ('+(60/medianPeriodSec).toFixed(3)+') trimmed='+trimmedMeanPeriodSec.toFixed(6)+'s ('+(60/trimmedMeanPeriodSec).toFixed(3)+')');
 
   // BPM snap: snap bpm and beatPeriodSec to clean integer values when we have
   // strong evidence the track is integer-tempo'd. Modern EDM is produced at
