@@ -3557,6 +3557,16 @@ function Deck({ id, ch, ctx:ac, color, local, remote, onChange, midi:mt, bpmResu
   // Pending nudge bookkeeping (see nudgeRate below).
   const nudgeT=useRef(null);
   const nudgeSrcRef=useRef(null);
+  // Always-current refs for volatile state read by nudgeRate. Avoids stale
+  // closure where nudgeRate captured at registration time held an old
+  // play / rate / isDriver value (observed: registered function reported
+  // play=false even after user pressed play and audio was audible).
+  const playRef=useRef(play);
+  const rateRef=useRef(rate);
+  const isDriverRef=useRef(isDriver);
+  useEffect(()=>{ playRef.current=play; },[play]);
+  useEffect(()=>{ rateRef.current=rate; },[rate]);
+  useEffect(()=>{ isDriverRef.current=isDriver; },[isDriver]);
   // EQ is now passed as props: eqHi, eqMid, eqLo, chanVol
   const remProgRef=useRef(0),remTimeRef=useRef(0),remRateRef=useRef(0),remRaf=useRef(null);
   const lastProgBroadcastRef=useRef(0);
@@ -3755,8 +3765,13 @@ function Deck({ id, ch, ctx:ac, color, local, remote, onChange, midi:mt, bpmResu
   // to offsetSec DURING the ramp, then jumps to correct value at end.
   // For sync-time use, offsetSec ≤ 30 ms typical → visual jump is ≤3 px.
   const nudgeRate = useCallback((offsetSec, rampDurMs=200) => {
-    if (!isDriver || !play || !src.current || !ac) {
-      console.log('[NUDGE-DEBUG] deck', id, 'skip', { isDriver, play, hasSrc: !!src.current });
+    // Read volatile state through refs — useCallback closure is stable
+    // across play/rate/isDriver changes, so deps include only [id, ac].
+    const isDriverNow = isDriverRef.current;
+    const playNow = playRef.current;
+    const rateNow = rateRef.current;
+    if (!isDriverNow || !playNow || !src.current || !ac) {
+      console.log('[NUDGE-DEBUG] deck', id, 'skip', { isDriver: isDriverNow, play: playNow, hasSrc: !!src.current });
       return;
     }
     // Clamp magnitude to ±50ms.
@@ -3765,23 +3780,23 @@ function Deck({ id, ch, ctx:ac, color, local, remote, onChange, midi:mt, bpmResu
     if (offSec < -0.05) offSec = -0.05;
     let rampDurSec = rampDurMs / 1000;
     let deltaRate = 2 * offSec / rampDurSec;
-    const RATE_CAP = 0.15 * rate;
+    const RATE_CAP = 0.15 * rateNow;
     if (Math.abs(deltaRate) > RATE_CAP) {
       // Extend duration to keep rate change within cap.
       rampDurSec = 2 * Math.abs(offSec) / RATE_CAP;
       rampDurMs = rampDurSec * 1000;
       deltaRate = offSec > 0 ? RATE_CAP : -RATE_CAP;
     }
-    const peakRate = rate + deltaRate;
+    const peakRate = rateNow + deltaRate;
     const now = ac.currentTime;
     // Cancel any pending ramp from a prior nudge — both the scheduled rate
     // changes on the source AND the off.current bookkeeping timeout.
     if (nudgeT.current) { clearTimeout(nudgeT.current); nudgeT.current = null; }
     try {
       src.current.playbackRate.cancelScheduledValues(now);
-      src.current.playbackRate.setValueAtTime(rate, now);
+      src.current.playbackRate.setValueAtTime(rateNow, now);
       src.current.playbackRate.linearRampToValueAtTime(peakRate, now + rampDurSec / 2);
-      src.current.playbackRate.linearRampToValueAtTime(rate, now + rampDurSec);
+      src.current.playbackRate.linearRampToValueAtTime(rateNow, now + rampDurSec);
     } catch (e) {
       console.warn('[NUDGE] rate ramp scheduling failed:', e);
       return;
@@ -3797,9 +3812,9 @@ function Deck({ id, ch, ctx:ac, color, local, remote, onChange, midi:mt, bpmResu
       nudgeT.current = null;
     }, rampDurMs + 5);
     console.log('[NUDGE-DEBUG] deck', id, ':', 'offsetMs=' + (offSec * 1000).toFixed(2),
-      'rampMs=' + rampDurMs.toFixed(0), 'rate=' + rate.toFixed(3),
-      'peakRate=' + peakRate.toFixed(3), 'deltaPct=' + ((deltaRate / rate) * 100).toFixed(2));
-  }, [isDriver, play, rate, id, ac]);
+      'rampMs=' + rampDurMs.toFixed(0), 'rate=' + rateNow.toFixed(3),
+      'peakRate=' + peakRate.toFixed(3), 'deltaPct=' + ((deltaRate / rateNow) * 100).toFixed(2));
+  }, [id, ac]);
   // Driver handoff — when partner takes over this deck (isDriver transitions
   // true→false), stop local audio and clear local track state so the display
   // falls back to remote.* (partner's track info via deck_update). Without
