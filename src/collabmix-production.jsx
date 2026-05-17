@@ -5454,31 +5454,32 @@ export default function CollabMix({ initialPage = "landing", djName = null }) {
     if (slaveBps == null || slaveBphs == null || masterBps == null || masterBphs == null || !slaveDur) {
       console.log("[SYNC] phase data missing, skipping phase alignment", { slaveBps, slaveBphs, masterBps, masterBphs, slaveDur });
     } else {
-      // Bar-level (4-beat) alignment so we land on the same beat-1 of the bar,
-      // not just any beat. Max nudge is 0.5 bars = 2 beats = ~1s at 120 BPM.
-      // TODO: downbeat detection. Currently assumes first detected beat is
-      // bar 1 beat 1 — sometimes wrong. Beat-grid editing tools are the fix.
-      const beatsPerBar  = 4;
-      const masterBarSec = masterBps * beatsPerBar;
-      const slaveBarSec  = slaveBps  * beatsPerBar;
-      const masterBarPos  = (masterCurTime - masterBphs) / masterBarSec;
-      const masterBarFrac = masterBarPos - Math.floor(masterBarPos);
-      const slaveBarPos   = (slaveCurTime  - slaveBphs)  / slaveBarSec;
-      const slaveBarFrac  = slaveBarPos  - Math.floor(slaveBarPos);
-      let phaseOffsetBars = masterBarFrac - slaveBarFrac;
-      if (phaseOffsetBars >  0.5) phaseOffsetBars -= 1;
-      if (phaseOffsetBars < -0.5) phaseOffsetBars += 1;
-      const phaseOffsetSeconds = phaseOffsetBars * slaveBarSec;
-      console.log("[SYNC] bar phase before: master=", masterBarFrac.toFixed(3), "slave=", slaveBarFrac.toFixed(3), "(in bars)");
+      // Beat-level alignment — align slave's next beat to master's next beat.
+      // Max nudge ±0.5 beat = ~250ms at 120 BPM (vs ±0.5 bar ≈ 1s with the
+      // prior bar-alignment math, which could jump up to 2 beats in either
+      // direction whenever the misdetected "first beat" landed mid-bar).
+      // Beat alignment is the DJ-tool standard; phrase alignment (matching
+      // downbeats) is a manual mix exercise via cue points and not attempted
+      // here. slaveBps / masterBps name is misleading — these are beat PERIODS
+      // in seconds, not beats-per-second. Kept as-is to minimize diff churn.
+      const masterBeatPos  = (masterCurTime - masterBphs) / masterBps;
+      const masterBeatFrac = masterBeatPos - Math.floor(masterBeatPos);
+      const slaveBeatPos   = (slaveCurTime  - slaveBphs)  / slaveBps;
+      const slaveBeatFrac  = slaveBeatPos  - Math.floor(slaveBeatPos);
+      let phaseOffsetBeats = masterBeatFrac - slaveBeatFrac;
+      if (phaseOffsetBeats >  0.5) phaseOffsetBeats -= 1;
+      if (phaseOffsetBeats < -0.5) phaseOffsetBeats += 1;
+      const phaseOffsetSeconds = phaseOffsetBeats * slaveBps;
+      console.log("[SYNC] beat phase before: master=", masterBeatFrac.toFixed(3), "slave=", slaveBeatFrac.toFixed(3), "(in beats)");
       const newSlaveTime = slaveCurTime + phaseOffsetSeconds;
       const newSlaveProg = Math.max(0, Math.min(1, newSlaveTime / slaveDur));
       // seekFnsRef.current[slave] is the local Deck's seek; it already
       // broadcasts seek_request to the partner so their playhead follows.
       seekFnsRef.current[slave]?.(newSlaveProg);
-      console.log("[SYNC] bar phase nudged slave by", phaseOffsetSeconds.toFixed(3), "seconds (newProg=", newSlaveProg.toFixed(4), ")");
-      const newSlaveBarPos = (newSlaveTime - slaveBphs) / slaveBarSec;
-      const newSlaveBarFrac = newSlaveBarPos - Math.floor(newSlaveBarPos);
-      console.log("[SYNC] bar phase after: master=", masterBarFrac.toFixed(3), "slave=", newSlaveBarFrac.toFixed(3), "(in bars)");
+      console.log("[SYNC] beat phase nudged slave by", phaseOffsetSeconds.toFixed(3), "seconds (newProg=", newSlaveProg.toFixed(4), ")");
+      const newSlaveBeatPos = (newSlaveTime - slaveBphs) / slaveBps;
+      const newSlaveBeatFrac = newSlaveBeatPos - Math.floor(newSlaveBeatPos);
+      console.log("[SYNC] beat phase after: master=", masterBeatFrac.toFixed(3), "slave=", newSlaveBeatFrac.toFixed(3), "(in beats)");
     }
 
     // Broadcast rate so partner mirrors the speed change. Mirrors lsRef pattern
