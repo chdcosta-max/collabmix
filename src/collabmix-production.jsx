@@ -3110,7 +3110,7 @@ function AnimatedZoomedWF({ bands, dur, progRef, onSeek, h=96, windowSec=8, beat
         // the amplitude rapidly climbs over 1-2 columns. Both top and
         // bottom sweeps share the same check (based on |heights[]| only)
         // so kick edges stay symmetric around the centerline.
-        const STEEP_THRESH=maxH*0.25;
+        const STEEP_THRESH=maxH*0.15;
         const baseGrad=ctx.createLinearGradient(0,center-maxH,0,center+maxH);
         baseGrad.addColorStop(0,`rgba(${dr},${dg},${db},0.10)`);
         baseGrad.addColorStop(0.5,`rgba(${dr},${dg},${db},0.18)`);
