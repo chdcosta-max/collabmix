@@ -3016,6 +3016,14 @@ function AnimatedZoomedWF({ bands, dur, progRef, onSeek, h=96, windowSec=8, beat
         // Faint center hairline.
         ctx.fillStyle='rgba(255,255,255,0.06)';
         ctx.fillRect(0,center,physW,1);
+
+        // Amplitude-band edge hairlines — visually define where the waveform
+        // ends and the tick rail begins. Drawn on top so loud peaks don't
+        // obscure the boundary.
+        const railLineW=Math.max(1,Math.round(1*dpr));
+        ctx.fillStyle='rgba(255,255,255,0.20)';
+        ctx.fillRect(0,ampTop,physW,railLineW);
+        ctx.fillRect(0,ampBottom-railLineW,physW,railLineW);
       }
 
       // ── Premium beat grid — three-tier edge markers with downbeat + phrase emphasis.
@@ -3049,9 +3057,9 @@ function AnimatedZoomedWF({ bands, dur, progRef, onSeek, h=96, windowSec=8, beat
         // rails (offset by tickGap from the canvas edge) so they're never overlapped
         // by waveform pixels.
         const tickGap=Math.max(1,Math.round(2*dpr));
-        const offTickH=Math.max(1,Math.round(4*dpr));
-        const downTickH=Math.max(1,Math.round(8*dpr));
-        const phraseTickH=Math.max(1,Math.round(10*dpr));
+        const offTickH=Math.max(1,Math.round(6*dpr));
+        const downTickH=Math.max(1,Math.round(10*dpr));
+        const phraseTickH=Math.max(1,Math.round(12*dpr));
         const lineW=Math.max(1,Math.round(1*dpr));
         const phraseTickW=Math.max(1,Math.round(2*dpr));
 
@@ -3066,11 +3074,11 @@ function AnimatedZoomedWF({ bands, dur, progRef, onSeek, h=96, windowSec=8, beat
         const phraseRGB=`${dr},${dg},${db}`;
 
         // Pre-build fill styles (avoid string churn in hot loop).
-        const OFF_FILL='rgba(255,255,255,0.40)';
-        const DOWN_FILL='rgba(255,255,255,0.90)';
-        const DOWN_LINE='rgba(255,255,255,0.12)';
+        const OFF_FILL='rgba(255,255,255,0.60)';
+        const DOWN_FILL='rgba(255,255,255,1.0)';
+        const DOWN_LINE='rgba(255,255,255,0.20)';
         const PHRASE_FILL=`rgba(${phraseRGB},1.0)`;
-        const PHRASE_LINE=`rgba(${phraseRGB},0.25)`;
+        const PHRASE_LINE=`rgba(${phraseRGB},0.40)`;
 
         for(let n=startN;n<=endN;n++){
           const beatTime=firstDownbeatSec+n*effectivePeriod;
