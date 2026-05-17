@@ -592,6 +592,157 @@ SESSION TIME ESTIMATE:
   will save 20-30 min/deploy going forward
 
 =================================================================
+MAY 16-17 LATE NIGHT SESSION — DRIVER MODEL + SHARED MIXER
+=================================================================
+
+WHAT SHIPPED TO PRODUCTION (collabmix.vercel.app):
+
+Beat grid display (premium edge-marker style):
+- Three-tier hierarchy: off-beats (every beat), downbeats (every
+  4 beats, white with through-line), phrase markers (every 16 beats,
+  deck identity color, larger ticks + stronger through-line)
+- Tick rails above and below waveform with breathing room — ticks
+  never overlap waveform amplitude
+- Through-waveform lines on downbeats and phrase markers only;
+  off-beats stay clean
+- Deck identity colors for phrase markers (violet for A: #7B61FF,
+  teal for B: #00BFA5)
+- Iterated multiple times for visibility and proportion (commits
+  6665374, 8561363, d47eaab, 95e02f8, cfea19f, 0d4aae6, 3e7131c)
+- Final config: 70px canvas (both decks loaded), 18px tick rails
+  + 26px amplitude pad (waveform compressed toward centerline so
+  ticks float in clear space)
+
+Driver model (multi-user collab — Bugs 1, 2, 3 from May 13 dogfood):
+- Server-side per-deck driver state tracking
+  (collabmix-server commit 318b42d)
+- deck_driver_change broadcast on track LOAD; loader becomes driver
+- Client driver state synced from server (commit 0edf542)
+- Driver-only deck_update broadcast gate via SHARED_FIELDS
+  allowlist (commit 2232c7b — gate was added universally; later
+  refined in fe0a21f to skip mixer fields)
+- Non-driver mutes local audio output via trim.gain ramp; partner-
+  driven decks come through WebRTC mix (commit 6575340)
+- Track metadata propagates instantly on driver change — title,
+  artist, BPM, key, duration all in the deck_driver_change payload
+  so partner paints immediately without waiting for the loader's
+  decode (commit ce632f2 client + 6b8daf5 server)
+- Track-display + play/pause inversion fixes — Deck.toggle/seek/cue
+  hard-gate on isDriver, non-drivers send *_request and mutate
+  nothing locally; lost-driver useEffect clears local buf/name so
+  remote.* takes over the display (commit 979dda5)
+- Shared mixer EQ / vol / filter broadcast both ways
+  (commit fe0a21f) — initially decided per-user, user wanted fully
+  shared everything
+- Master volume sync via new master_vol_update message type
+  (collabmix-server commit bd1c588), A/B hover buttons always
+  visible at 55% opacity (was hover-only and undiscoverable), and
+  driver-propagation debug logs added pending two-browser
+  diagnosis (commit c2e4781)
+
+Vercel + infra:
+- Vercel Production Branch confirmed set to master (was changed
+  May 16) — git push origin master auto-deploys to prod
+- Upgraded to Vercel Pro tier mid-session; build queue dropped
+  from ~2 min to <1 min, saved meaningful time on this many
+  consecutive deploys
+
+KEY ARCHITECTURAL DECISIONS LOCKED:
+
+1. DECK CONTROL (carried from prior sessions): shared decks with
+   implicit driver takeover. Both DJs can do anything to either
+   deck. No ownership, no permissions, no prompts. LOCKED — do
+   not revisit.
+
+2. DRIVER MODEL (locked this session): "Loader is the driver"
+   pattern. Loading a track on a deck makes that user the audio
+   source of truth for that deck. Other actions (play/pause/scrub/
+   SYNC/cue) by the non-driver relay through *_request control
+   commands; the driver executes them and broadcasts new state via
+   deck_update. NO cross-user file transfer — files stay local to
+   each user. Driver transitions only on track LOAD.
+
+3. SHARED MIXER (locked this session): ALL mixer controls sync
+   across browsers — EQ Hi/Mid/Lo, channel volume, gain, filter,
+   crossfader, master volume. Per-user-mix model was attempted in
+   2232c7b and rejected by user; reverted in fe0a21f. Both DJs see
+   and control every knob. The SHARED_FIELDS allowlist in dh
+   carves out which fields bypass the driver-only broadcast gate.
+
+4. LIBRARY MODEL: each user has their own library — no cross-user
+   file sharing. But everyone sees track metadata on partner's
+   loaded tracks (via instant deck_driver_change payload + the
+   subsequent dh→deck_update chain). Each DJ "brings their own
+   crates" — the physical B2B equivalent of two USB drives.
+
+KNOWN ISSUES STILL OPEN (for next session):
+
+1. Driver propagation may be asymmetric between browsers. Reported
+   in two-browser test that Browser 1 loading a new track on Deck B
+   doesn't always reach Browser 2, while the reverse works.
+   Instrumentation added in commit c2e4781 — next session's
+   two-browser test will reveal where messages drop. Look for
+   [DRIVER-SEND] and [DRIVER-RECV] in browser console + the
+   "broadcast to peers=[...]" line in Railway server logs.
+
+2. SYNC engine bypasses the driver gate via direct sync.send calls
+   in syncDecks. Non-driver can engage SYNC on a deck. Edge case
+   behavior under driver swaps is unclear — needs explicit
+   two-browser test.
+
+3. Stale local playhead on partner takeover. When a driver loses
+   the deck, the lost-driver useEffect stops audio and clears
+   visible state, but if they regain driver later, the old offset
+   state may need reset. Future polish, not breaking.
+
+4. Name collisions break driver model. Two DJs with identical
+   session.name = broken (server stores name as the driver ID and
+   the client compares names for self-check). Should pass a stable
+   deviceId alongside name in future. Real-world DJs will pick
+   different names, so this is a defensive concern.
+
+5. Audio skip on sync engage. Still using destroy-and-recreate
+   AudioBufferSourceNode for seek. Needs smooth seek implementation
+   (brief rate manipulation crossfade). ~1-2 hours.
+
+6. Beat grid alignment quality still uneven across tracks.
+   Analyzer's crossValidated=false on many tracks. Beat grid
+   editing UI deferred — needed only when sync alignment actually
+   fails repeatedly in real use; better to wait for dogfood data
+   before building it.
+
+NEXT SESSION PRIORITY ORDER:
+
+1. Verify driver propagation works in two-browser test with the
+   new debug logs. Fix any remaining drop points based on what the
+   logs show.
+2. Test SYNC behavior across browsers thoroughly — verify it
+   doesn't break under driver swaps mid-mix.
+3. Verify master volume sync and A/B hover buttons render
+   correctly (both were shipped without two-browser validation
+   tonight).
+4. Dogfood session with partner Jake — first real multi-user test
+   with all this work live.
+5. Based on dogfood findings: identify what actually needs fixing
+   (smooth seek? beat grid editing? waveform polish? something
+   else we haven't anticipated?).
+6. Defer to dogfood data — don't pre-optimize anything that
+   doesn't surface as a real problem in use.
+
+ALL DESIGN EXPLORATION work (design-warm, design-booth, design-decks
+branches) STILL PAUSED. Resume only after dogfood validates platform
+works.
+
+SESSION TIME ESTIMATE:
+- Tonight: ~14+ hours active work
+- Total across May 13 + May 16 + May 16-17 sessions: roughly
+  equivalent to 4-5 weeks of conventional senior engineering team
+  output
+- Mix//Sync is now functionally complete for multi-user B2B
+  testing — modulo the driver propagation bug awaiting next-
+  session diagnosis
+
+=================================================================
 ARCHITECTURE DECISIONS (May 4 + May 6-7 + May 7)
 =================================================================
 
