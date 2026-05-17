@@ -1158,6 +1158,193 @@ WORKING RULES
   evictable.
 
 =================================================================
+MAY 17 — WAVEFORM POLISH + BPM ANALYZER + SYNC INFRASTRUCTURE
+=================================================================
+
+### WAVEFORM SHIPPED (DONE)
+- Smooth filled envelope replacing blocky bars (commits 2287bd6 through
+  e04812a, ~12 commits)
+- Bass-weighted env (0.7 bass + 0.2 mid + 0.1 high), renormalization,
+  gamma 1.4
+- Additive lift for drops (env > 0.7 columns), no floor
+- Canvas geometry: wfH=120, ampPad=28, maxH≈31.5 css
+- Selective curve smoothing with steep-rise sharp edges
+  (STEEP_THRESH = maxH * 0.15)
+- Beat grid markers have clean ~20px separation from waveform peaks
+- Both decks identical rendering (single function AnimatedZoomedWF,
+  only deckColor differs)
+- AA stroke around path for sub-pixel smoothness
+
+### WAVEFORM — REMAINING POLISH (NEXT SESSION)
+User clarification on kick transient shape:
+- Goal: kicks should look like a triangle laid on its side
+- LEFT edge of kick = near-vertical wall (attack moment, completely
+  flat-to-vertical rise)
+- RIGHT side = slopes down gradually as kick decays
+- Currently: steep-rise detection at 0.15 threshold creates sharper
+  edges but LEFT edge still slightly rounded
+- Want: attack edge should look like a perfectly vertical line
+
+Investigation paths for next session:
+1. Asymmetric edge detection: force flat lineTo on LEFT side of rise,
+   smooth slope on right
+2. Multi-column attack handling: detected kicks draw left edge as
+   single vertical line
+3. Pre-attack flat baseline: ensure column before kick is at exact
+   baseline
+
+### BPM ANALYZER WORK
+
+Per-beat kick snap pass shipped (commits 88df063 through 5532546):
+- ±100ms search window
+- Kick-exclusive onset (onK - onP) for snap targets
+- First-rise rollback at 40% threshold to find attack moment, not peak
+- Safety gate: only rollback when argmaxVal > 2 × SNAP_THRESH
+  (prevents weak-kick false rollbacks)
+- Monotonic constraint prevents reordering
+
+Symmetric crossValidated thresholds (commit c277a9f):
+- Changed from |bpm - bpmFromPeriod| < 0.07 to
+  |bpmFromPeriod - intBpm| < 0.25 (symmetric with first check)
+- DRIFT ELIMINATED on tracks where both BPM estimators agree within
+  ±0.25 of integer
+- Home In The Sky now snaps to integer 121 BPM
+
+Sample-level transient refinement shipped (commit d07b92f):
+- Replaces frame-resolution snap with sub-sample precision
+- Per-beat ±50ms window in raw audio samples (44.1kHz resolution)
+- Bandpass 40-200 Hz + power envelope (1.5ms smoothing) +
+  half-wave-rectified derivative
+- Parabolic interpolation around argmax for sub-sample precision
+- Three confidence gates: silence, no-transient ratio, edge-of-window
+- Monotonic guard preserved
+- New parallel dpBeatsFloat[] array holds fractional frame positions
+- Algorithm refines 96-99% of beats successfully
+- Theoretical accuracy: ±1-2ms on most tracks
+- Kill-switch available: USE_LEGACY_FRAME_SNAP = true at top of
+  refinement block
+
+### CURRENT ANALYZER STATE (POST SAMPLE-LEVEL REFINEMENT)
+- Home In The Sky: markers ~5-10ms off kick attack (improved but not
+  at target)
+- Sunbeam: ~5-10ms residual offset
+- You Will Never Know: accurate
+- Shadow Work: BEAT GRID PLACED MULTI-BEAT OFF (bar phase issue, not
+  precision)
+- Spektre: still slightly off when synced with Home In The Sky
+
+### NUDGE PRIMITIVE — ABANDONED
+- nudgeRate function for cross-correlation sync (commits 208efc1,
+  f80250d)
+- BLOCKED: function shows play:false despite audio audibly playing
+- Ref-based fix did not resolve
+- ABANDONED — pivoted to sample-level analyzer instead
+- Code remains in place but unused
+- Could be removed in cleanup
+
+### SYNC INFRASTRUCTURE FIXES SHIPPED (commit 2772cb9)
+
+Fix 1 — Sync drift elimination:
+- Root cause: setTargetAtTime(rate, time, 0.05) was asymptotic, never
+  reaching exact target
+- Was leaving ~10⁻⁵ rate error → 30ms drift per 5 minutes
+- Fix: replaced with cancelScheduledValues + setValueAtTime + 5ms
+  linearRampToValueAtTime
+- Reaches exact target value, click-free
+- Residual drift now ~6ms per hour (below perception)
+
+Fix 2 — Sync state reset on unsync:
+- Root cause: rate state not reset on unsync, contaminating
+  subsequent sync engages
+- Plus sticky masterDeckRef from auto-detection
+- Fix on unsync: setRateA(1) + setRateB(1) + broadcast rate=1 to
+  partner + clear masterDeckRef + clear lastSlaveDeckRef
+- Slave audibly returns to natural BPM on unsync (Rekordbox convention)
+- Added [SYNC-STATE] log at start of handleSyncToggle for diagnostic
+
+### NOT YET TESTED — NEXT SESSION FIRST
+- Sync drift fix in live testing (2+ minute play after sync engage)
+- Sync state bug fix in live testing
+  (sync→unsync→pause→play→re-sync sequence)
+- Verify [SYNC-STATE] log shows clean state on second engage
+
+### REMAINING ANALYZER PROBLEMS
+
+Shadow Work multi-beat error:
+- Bar phase detection (L252-276) placing beat 1 at wrong position
+- Sample-level refinement can't fix (only operates within ±50ms of
+  DP placement)
+- Need to investigate bar phase scoring on this specific track
+- Diagnostic data not yet captured
+
+Residual ±5-10ms on Home / Sunbeam / Spektre:
+- Sample-level refinement helped but not at ±1-2ms target
+- Unknown whether parameter tuning or algorithm floor
+- Need [REFINE-DEBUG] data from these tracks to diagnose
+
+### NEXT SESSION PRIORITY (ORDERED)
+
+1. Test sync infrastructure fixes — 15 min
+   - Play synced tracks 2-3 min, verify no drift
+   - Test sync→unsync→pause→play→re-sync sequence
+   - Verify [SYNC-STATE] log shows clean state
+
+2. Investigate Shadow Work bar phase — gather diagnostic data
+   - Load Shadow Work, capture [phase] line, [BPM-SNAP], [REFINE-STATS]
+   - If bestPh wrong or spread/peak below 0.25, propose fix
+
+3. Tune sample-level refinement for ±1-2ms target on Home / Sunbeam
+   - Capture [REFINE-DEBUG] for these tracks
+   - Diagnose: systematic bias (tunable) vs random variance
+     (algorithm floor)
+
+4. Waveform attack edge sharpening — visual polish
+   - Force vertical left edge on kick transients (triangle on its side
+     shape)
+   - Asymmetric edge detection or multi-column attack handling
+
+5. Validate on broader library — 10-15 tracks across genres after
+   fixes above
+
+6. Then dogfood with Jake
+
+### OTHER OPEN ISSUES (LOWER PRIORITY)
+- Driver propagation verification in two-browser test
+- SYNC engine bypasses driver gate
+- Stale local playhead on partner takeover
+- Smooth seek for general scrubbing (gain-ramp approach, optional)
+- Nudge primitive cleanup (remove unused code)
+
+### KEY ARCHITECTURAL DECISIONS LOCKED THIS SESSION
+1. Sample-level transient detection is THE proper analyzer fix
+   (not cross-correlation)
+2. Cross-correlation sync abandoned — temp fix not worth the time
+3. Manual nudge UI is NOT acceptable
+4. Waveform style locked (bass-weighted env, drops tower, sharp
+   transients, triangle-on-side kick shape pending)
+5. 5ms hop frame analysis cannot reach Beatport accuracy — sample-level
+   required
+6. Sync infrastructure has two distinct concerns: rate precision
+   (drift) and state management (re-engage)
+
+### DEPLOY STATE AT SESSION END
+- Latest shipped commit: 2772cb9 (sync infrastructure fixes)
+- Live bundle: main-BN-rPKwe.js
+- All work pushed to master
+- Vercel Pro auto-deploy on push
+- Railway server unchanged
+- Sentry instrumentation intact
+
+### SESSION SUMMARY
+~11 hours focused work today on top of yesterday's marathon. Major
+shipping:
+- Smooth professional waveform
+- BPM drift elimination
+- Sample-level transient detection
+- Sync drift fix
+- Sync state reset on unsync
+
+=================================================================
 INSTRUCTION FOR NEW CLAUDE
 =================================================================
 "Continuing work on Mix//Sync. Previous chat hit context limits.
