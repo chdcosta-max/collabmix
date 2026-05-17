@@ -4416,6 +4416,8 @@ export default function CollabMix({ initialPage = "landing", djName = null }) {
   // setTimeout callbacks can read them without stale-closure bugs.
   const partnerRef              = useRef(null); // mirrors sync.partner
   const rtcRef                  = useRef(null); // mirrors latest rtc
+  const sessionRef              = useRef(null); // mirrors session (DJ name + room)
+  const syncRef                 = useRef(null); // mirrors sync (send / status)
   const isInitiatorRef          = useRef(()=>false); // mirrors latest role-election helper
   const rtcReconnectAttemptsRef = useRef(0);    // increments per rtc_hangup retry
   const rtcReconnectTimerRef    = useRef(null); // pending reconnect timer
@@ -4548,6 +4550,14 @@ export default function CollabMix({ initialPage = "landing", djName = null }) {
   const [libLoadB, setLibLoadB] = useState(null);
   const [partnerLibrary, setPartnerLibrary] = useState([]);
 
+  // Driver model — loader-is-driver. Server-authoritative: room.deckDrivers
+  // arrives in the "joined" message and changes via "deck_driver_change"
+  // broadcasts. Mirrored into a ref so handleWS / setTimeout closures see
+  // the latest value without re-creating callbacks.
+  const [deckDrivers, setDeckDrivers] = useState({ A: null, B: null });
+  const deckDriversRef = useRef(deckDrivers);
+  useEffect(() => { deckDriversRef.current = deckDrivers; }, [deckDrivers]);
+
   const handleTrackInfo = useCallback((deckId, trackMeta) => {
     if (trackMeta) setPlayingTrack(trackMeta);
   }, []);
@@ -4575,6 +4585,14 @@ export default function CollabMix({ initialPage = "landing", djName = null }) {
     else              setLibLoadB({ track, file, ts: Date.now() });
     setPlayingTrack(track);
     logEvent("deck", "track_loaded", { deck, trackId: track.id, title: track.title, artist: track.artist });
+    // Loader-is-driver: this user is now the audio source of truth for this deck.
+    // Optimistic local set + broadcast; server echoes back to confirm (also
+    // notifies partner). When solo, sync.send is a no-op.
+    const driverName = sessionRef.current?.name || null;
+    if (driverName) {
+      setDeckDrivers(prev => prev[deck] === driverName ? prev : { ...prev, [deck]: driverName });
+      syncRef.current?.send?.({ type: "deck_driver_change", deckId: deck, driverName });
+    }
     // Defer library-side BPM/key analysis until track is loaded onto a deck.
     // Prevents bulk decoding 100s of tracks at import time which causes OOM.
     if (file && !track.analyzed && lib.queueAnalysis) {
@@ -4695,7 +4713,19 @@ export default function CollabMix({ initialPage = "landing", djName = null }) {
         console.log('[RTC] rtc_hangup received as answerer, waiting for initiator to reconnect');
       }
     }
-    if (m.type==="joined")        { if(m.partnerState?.deckA)setPA(m.partnerState.deckA); if(m.partnerState?.deckB)setPB(m.partnerState.deckB); }
+    if (m.type==="joined")        {
+      if(m.partnerState?.deckA)setPA(m.partnerState.deckA);
+      if(m.partnerState?.deckB)setPB(m.partnerState.deckB);
+      // Server sends current per-deck drivers so a fresh joiner sees who
+      // already owns each deck (if anything).
+      if (m.deckDrivers) setDeckDrivers({ A: m.deckDrivers.A ?? null, B: m.deckDrivers.B ?? null });
+    }
+    if (m.type==="deck_driver_change") {
+      const { deckId, driverName } = m;
+      if (deckId === "A" || deckId === "B") {
+        setDeckDrivers(prev => prev[deckId] === (driverName ?? null) ? prev : { ...prev, [deckId]: driverName ?? null });
+      }
+    }
     if (m.type==="deck_update")    {
       // 1) Mirror partner's deck state for visuals
       (m.deckId==="A"?setPA:setPB)(p=>({...(p||{}),[m.field]:m.value}));
@@ -4755,6 +4785,8 @@ export default function CollabMix({ initialPage = "landing", djName = null }) {
   // never read stale closures.
   useEffect(() => { partnerRef.current = sync.partner; }, [sync.partner]);
   useEffect(() => { rtcRef.current = rtc; });
+  useEffect(() => { sessionRef.current = session; }, [session]);
+  useEffect(() => { syncRef.current = sync; });
   useEffect(() => { masterDeckRef.current = masterDeck; }, [masterDeck]);
 
   // Mirror live session data (partner, ping) into Sentry context for crash reports.
@@ -5389,12 +5421,12 @@ export default function CollabMix({ initialPage = "landing", djName = null }) {
       {/* DECKS + MIXER ROW */}
       <div style={{ flexShrink:0, display:"grid", gridTemplateColumns:"1fr 260px 1fr", gap:8, padding:"8px 12px 0", height:"288px", overflow:"hidden" }}>
 
-        {/* ── DECK A (local) ── */}
-        <div style={{ display:"flex", flexDirection:"column", minWidth:0, minHeight:0, overflow:"hidden", background:"#0c0c12", border:"1px solid #1e1e28", borderRadius:10 }}>
+        {/* ── DECK A (shared) ── */}
+        <div style={{ display:"flex", flexDirection:"column", minWidth:0, minHeight:0, overflow:"hidden", background:"#0c0c12", border:`1px solid ${deckDrivers.A?"#7B61FF44":"#1e1e28"}`, borderRadius:10, transition:"border-color .3s" }}>
           <div style={{ display:"flex", gap:8, alignItems:"center", padding:"6px 12px", borderBottom:"1px solid #1e1e28", background:"#080810", flexShrink:0 }}>
-            <div style={{ width:6, height:6, borderRadius:"50%", background:"#7B61FF", boxShadow:"0 0 8px #7B61FF" }}/>
-            <span style={{ fontSize:11, fontFamily:"'DM Mono',monospace", fontWeight:700, color:"#7B61FF", letterSpacing:2 }}>DECK A</span>
-            <span style={{ fontSize:11, fontFamily:"'DM Sans',sans-serif", fontWeight:500, color:"#7B61FFaa", letterSpacing:.3 }}>{session.name}</span>
+            <div style={{ width:6, height:6, borderRadius:"50%", background:deckDrivers.A?"#7B61FF":"#282835", boxShadow:deckDrivers.A?"0 0 8px #7B61FF":"none", transition:"all .3s" }}/>
+            <span style={{ fontSize:11, fontFamily:"'DM Mono',monospace", fontWeight:700, color:deckDrivers.A?"#7B61FF":"#444454", letterSpacing:2 }}>DECK A</span>
+            {deckDrivers.A && <span style={{ fontSize:11, fontFamily:"'DM Sans',sans-serif", fontWeight:500, color:"#7B61FFaa", letterSpacing:.3 }}>{deckDrivers.A === session.name ? `${deckDrivers.A} (you)` : deckDrivers.A}</span>}
           </div>
           <div style={{ flex:1, overflow:"hidden", minHeight:0 }}>
             <Deck id="A" ch={eng.current?.A} ctx={eng.current?.ctx} color="#7B61FF" local remote={pA} onChange={dh("A")} midi={midiEvt} bpmResult={bpm.results["A"]} bpmAnalyze={bpm.analyze} eqHi={eqA.hi} eqMid={eqA.mid} eqLo={eqA.lo} chanVol={eqA.vol} loadFromLibrary={libLoadA} onTrackInfo={handleTrackInfo} onSync={()=>handleSyncToggle("A")} syncReady={!!(bpm.results["B"]?.bpm || pB?.bpm)} syncRole={syncLocked ? (lastSlaveDeck === "A" ? "slave" : "master") : null} isMaster={masterDeck === "A"} onMasterToggle={handleMasterToggle} onLibraryTrackDrop={(trackId)=>{const t=lib.library.find(x=>x.id===trackId);if(t)handleLibLoad(t,"A");}} onProgUpdate={handleProgA} onWaveform={setWfA} onSeekReady={onDeckASeekReady} onToggleReady={onDeckAToggleReady} onCueReady={onDeckACueReady} onTransportFire={handleTransportFire}/>
@@ -5488,12 +5520,12 @@ export default function CollabMix({ initialPage = "landing", djName = null }) {
           </div>
         </div>
 
-        {/* ── DECK B (partner) ── */}
-        <div style={{ display:"flex", flexDirection:"column", minWidth:0, minHeight:0, overflow:"hidden", background:"#0c0c12", border:"1px solid #1e1e28", borderRadius:10 }}>
+        {/* ── DECK B (shared) ── */}
+        <div style={{ display:"flex", flexDirection:"column", minWidth:0, minHeight:0, overflow:"hidden", background:"#0c0c12", border:`1px solid ${deckDrivers.B?"#00BFA544":"#1e1e28"}`, borderRadius:10, transition:"border-color .3s" }}>
           <div style={{ display:"flex", gap:8, alignItems:"center", padding:"6px 12px", borderBottom:"1px solid #1e1e28", background:"#080810", flexShrink:0 }}>
-            <div style={{ width:6, height:6, borderRadius:"50%", background:sync.partner?"#00BFA5":"#282835", boxShadow:sync.partner?"0 0 8px #00BFA5":"none", transition:"all .3s" }}/>
-            <span style={{ fontSize:11, fontFamily:"'DM Mono',monospace", fontWeight:700, color:sync.partner?"#00BFA5":"#444454", letterSpacing:2 }}>DECK B</span>
-            {sync.partner&&<span style={{ fontSize:11, fontFamily:"'DM Sans',sans-serif", fontWeight:500, color:"#00BFA5aa", letterSpacing:.3 }}>{sync.partner}</span>}
+            <div style={{ width:6, height:6, borderRadius:"50%", background:deckDrivers.B?"#00BFA5":"#282835", boxShadow:deckDrivers.B?"0 0 8px #00BFA5":"none", transition:"all .3s" }}/>
+            <span style={{ fontSize:11, fontFamily:"'DM Mono',monospace", fontWeight:700, color:deckDrivers.B?"#00BFA5":"#444454", letterSpacing:2 }}>DECK B</span>
+            {deckDrivers.B && <span style={{ fontSize:11, fontFamily:"'DM Sans',sans-serif", fontWeight:500, color:"#00BFA5aa", letterSpacing:.3 }}>{deckDrivers.B === session.name ? `${deckDrivers.B} (you)` : deckDrivers.B}</span>}
           </div>
           <div style={{ flex:1, overflow:"hidden", minHeight:0 }}>
             <Deck id="B" ch={eng.current?.B} ctx={eng.current?.ctx} color="#00BFA5" local remote={pB} onChange={dh("B")} midi={midiEvt} bpmResult={bpm.results["B"]} bpmAnalyze={bpm.analyze} eqHi={eqB.hi} eqMid={eqB.mid} eqLo={eqB.lo} chanVol={eqB.vol} loadFromLibrary={libLoadB} onTrackInfo={handleTrackInfo} onSync={()=>handleSyncToggle("B")} syncReady={!!(bpm.results["A"]?.bpm || pA?.bpm)} syncRole={syncLocked ? (lastSlaveDeck === "B" ? "slave" : "master") : null} isMaster={masterDeck === "B"} onMasterToggle={handleMasterToggle} onLibraryTrackDrop={(trackId)=>{const t=lib.library.find(x=>x.id===trackId);if(t)handleLibLoad(t,"B");}} onProgUpdate={handleProgB} onWaveform={setWfB} onSeekReady={onDeckBSeekReady} onToggleReady={onDeckBToggleReady} onCueReady={onDeckBCueReady} onTransportFire={handleTransportFire}/>
