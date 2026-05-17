@@ -426,6 +426,172 @@ ALL DESIGN EXPLORATION WORK (design-warm, design-booth, design-decks
 branches) STILL PAUSED until multi-user collab fundamentals are solid.
 
 =================================================================
+MAY 16 OVERNIGHT SESSION — SYNC HARDENING + OBSERVABILITY
+=================================================================
+
+WHAT SHIPPED TO PRODUCTION (collabmix.vercel.app):
+
+SYNC system completed:
+- M button per deck for explicit master selection (commit a6f38e0)
+- M button is metadata-only — never touches audio rates (commit 13a802e)
+- Auto-master detection: when SYNC clicked without explicit master,
+  picks the deck that started playing first (commit 13a802e)
+- Stale BPM display fix: track load now resets rate to 1.0 and
+  updates display (commit 347ed93)
+- Sync uses master's EFFECTIVE BPM (natural × rate), not natural
+  BPM (commit 347ed93)
+- 200ms re-entry guard on SYNC toggle (commit 347ed93)
+- Session tempo as locked target: once SYNC engages, the master's
+  effective BPM at that moment becomes the locked session tempo
+  (commit 2ae6657)
+- Both decks track session tempo across track changes (commit
+  2ae6657)
+- Slave auto-syncs when its track changes while locked (commit
+  2ae6657)
+- Master keeps session tempo when its track changes while locked —
+  new track rate-adjusts to session tempo, no audible tempo shift
+  (commit 2ae6657)
+
+Sentry instrumentation:
+- Full Sentry SDK integrated: error tracking, session replay,
+  breadcrumbs (commit 45085be)
+- Breadcrumbs at track load, play toggle, WS open/close, RTC state,
+  room join, SYNC toggle
+- Session context tags: dj_name, room_code, ping_bucket, is_host,
+  has_partner
+- Cmd+Shift+E test error shortcut for verification
+- Sentry project slug corrected from "mixsync" to "javascript-react"
+  (commit bd2b138)
+- Source maps now uploading correctly on every Vercel build
+- Verified: production errors show full symbolicated stack traces
+  with real source code visible
+
+Deploy workflow fix (huge win):
+- Identified that Vercel's Production Branch was set to "main"
+  while we push to "master"
+- Changed Vercel project setting: Production Branch is now "master"
+- Result: every git push to master now auto-creates Production
+  deployment
+- BUILD_AND_PUSH.command no longer needed (avoid using it — it
+  hangs on vercel login OAuth)
+- Standard deploy workflow going forward: Claude Code commits +
+  pushes, Vercel auto-deploys, ~2-3 min total
+- Saved roughly 20-30 min per deploy cycle going forward
+
+PRODUCTION STATE AT SESSION END:
+- URL: collabmix.vercel.app
+- Latest commit on origin/master: bd2b138 (Sentry slug fix)
+- All commits live in production
+- Backend (Railway) upgraded to Pro plan ($20/mo)
+- Sentry dashboard: https://mixsync.sentry.io/issues/
+
+KEY ARCHITECTURAL DECISIONS LOCKED:
+
+1. DECK CONTROL MODEL (from previous sessions): Shared decks with
+   implicit driver takeover. NO ownership, NO permissions, NO
+   confirmation prompts. Locked, do not revisit.
+
+2. SYNC MODEL: Single global lock. ONE click on either deck's SYNC
+   button engages sync on both. Beatport B2B pattern. Auto-master
+   detection from play-start time, M button override available.
+
+3. SESSION TEMPO MODEL (new this session): When sync is locked, the
+   session tempo is sticky. BOTH decks (master and slave) track
+   session tempo regardless of role. Loading a new track on either
+   deck auto-aligns to session tempo. This is more intuitive than
+   typical pro DJ tools where loading on master jumps the whole mix
+   tempo — better for remote B2B context.
+
+4. DEPLOY WORKFLOW (new this session): git push to master =
+   automatic production deploy. No CLI scripts needed.
+
+KNOWN ISSUES STILL OPEN:
+
+1. Audio skip on sync engage and on bar-level seeks.
+   AudioBufferSourceNode destroy-and-recreate seek causes audible
+   pop. Needs smooth seek (brief rate manipulation crossfade).
+   ~1-2 hours.
+
+2. Beat grid alignment not perfectly tight even when math is
+   correct. Causes:
+   - Beat grid inaccuracy on tracks where analyzer's
+     crossValidated=false
+   - Drift after sync engages (no continuous tempo lock)
+   - Downbeat assumption ("first detected beat = bar 1 beat 1")
+     wrong on tracks with intros
+   The real fix is beat grid editing UI — let user manually adjust
+   where beat 1 is on each track. ~3-5 hours.
+
+3. Beat grid DISPLAY doesn't exist yet. Currently only a red line
+   through waveform. Need premium edge-marker style
+   (Beatport-direction): small ticks above/below waveform at each
+   beat, brighter at downbeats, identity color at phrase markers.
+   NO through-waveform lines by default. Hover/scrub state could
+   show full lines temporarily for precision. Required prerequisite
+   for beat grid editing. ~1-2 hours.
+
+4. Bugs 1, 2, 3 (multi-user state desync, partner can't load Deck B)
+   still broken. Need DRIVER MODEL: per-deck driver tracking, audio
+   source swap on driver change, visual driver indicator, library
+   panel fix so partner can load either deck. ~3-5 hours.
+
+5. SYNC double-fire pattern observed in logs (toggle ON fires
+   twice). Re-entry guard added defensively but root cause not
+   identified — possibly WebSocket round-trip race or browser event
+   anomaly. Watch for it post-driver-model.
+
+6. Waveform visual polish needed for premium look. Tied to design
+   pass discussion below.
+
+NEXT SESSION PRIORITY ORDER:
+
+1. Beat grid display (premium edge-marker style) — the real next
+   step
+2. Beat grid editing UI — fixes alignment for real
+3. Driver model — fixes Bugs 1, 2, 3 (multi-user state desync)
+4. Next dogfood session with partner Jake (Sentry-instrumented, all
+   the above live)
+5. Smooth seek (audio quality polish)
+6. After dogfood validates platform works: real design pass
+
+DESIGN DIRECTION CAPTURED (for eventual design pass — NOT for
+tonight, NOT for next session):
+
+User aligned with Scandinavian-modern aesthetic direction for
+eventual design overhaul:
+- Deep warm-black surfaces (not pure #000 — has slight warmth,
+  "ink" rather than "OLED off"), around #0B0908 family
+- Warm dark grays in panel chrome (#1C1816 family) — matte stone,
+  not plastic
+- Pale "oak" accent (#C9B79C-ish) used sparingly: master indicators,
+  key labels, time displays — NOT big surfaces
+- Warm amber (#E8A87C-ish) for active states like play/sync-lock
+- Deck identity colors stay vibrant but slightly desaturated to fit
+  palette
+- Clean humanist sans typography (Inter or Söhne family). Not
+  condensed, not geometric.
+- Generous spacing, thin quiet edges, no glassmorphism, no neon, no
+  chrome gradients
+- NO wood textures, NO skeuomorphic materials — capture material
+  FEELING through palette and restraint only
+
+Direction: apply this Scandi-modern palette/material treatment ON
+TOP of design-decks branch's structural decisions (twin stacked
+waveforms, album-art decks). Combine the structural work and the
+aesthetic in one coherent pass.
+
+All design exploration work (design-warm, design-booth, design-decks
+branches) STILL PAUSED. Resume only after driver model + dogfood
+validates platform works.
+
+SESSION TIME ESTIMATE:
+- Tonight: ~12 hours active work
+- Across the two May 13-14 + May 16 sessions: probably equivalent
+  to 3-4 weeks of conventional senior engineering team output
+- Major deploy workflow fix discovered (vercel branch tracking)
+  will save 20-30 min/deploy going forward
+
+=================================================================
 ARCHITECTURE DECISIONS (May 4 + May 6-7 + May 7)
 =================================================================
 
