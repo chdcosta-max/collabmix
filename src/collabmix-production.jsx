@@ -2983,7 +2983,7 @@ function AnimatedZoomedWF({ bands, dur, progRef, onSeek, h=96, windowSec=8, beat
       //    amplitude region; that's intentional — ticks render AFTER the
       //    waveform fills so they read on top of any tall peaks.
       const tickRailPad=Math.round(18*dpr);
-      const ampPad=Math.round(12*dpr);
+      const ampPad=Math.round(18*dpr);
       const ampTop=ampPad;
       const ampBottom=physH-ampPad;
       const drawH=ampBottom-ampTop;
