@@ -3575,7 +3575,7 @@ function Knob({ v, set, min=-12, max=12, ctr=0, label, color="#C8A96E", size=38,
 // ── Deck ─────────────────────────────────────────────────────
 const HOT_CUE_COLORS=["#C8A96E","#ef4444","#22c55e","#f59e0b"];
 
-function Deck({ id, ch, ctx:ac, color, local, remote, onChange, midi:mt, bpmResult, bpmAnalyze, eqHi=0, eqMid=0, eqLo=0, chanVol=1, loadFromLibrary=null, onTrackInfo=null, onSync=null, syncReady=true, syncRole=null, isMaster=false, onMasterToggle=null, onLibraryTrackDrop=null, onProgUpdate=null, onWaveform=null, onSeekReady=null, remoteSeek=null, onToggleReady=null, onCueReady=null, remoteToggle=null, remoteCue=null, onTransportFire=null, isDriver=true, onNudgeReady=null }) {
+function Deck({ id, ch, ctx:ac, color, local, remote, onChange, midi:mt, bpmResult, bpmAnalyze, eqHi=0, eqMid=0, eqLo=0, chanVol=1, loadFromLibrary=null, onTrackInfo=null, onSync=null, syncReady=true, syncRole=null, isMaster=false, onMasterToggle=null, onLibraryTrackDrop=null, onProgUpdate=null, onWaveform=null, onSeekReady=null, remoteSeek=null, onToggleReady=null, onCueReady=null, remoteToggle=null, remoteCue=null, onTransportFire=null, isDriver=true, onNudgeReady=null, acNowRef=null }) {
   const [buf,setBuf]=useState(null),[name,setName]=useState(null),[play,setPlay]=useState(false);
   const [prog,setProg]=useState(0),[dur,setDur]=useState(0);
   const progRef=useRef(0); // mirror of prog for parent AnimatedZoomedWF without 60fps setState
@@ -3719,9 +3719,15 @@ function Deck({ id, ch, ctx:ac, color, local, remote, onChange, midi:mt, bpmResu
     if(lr.active&&lr.start!==null){s.loop=true;s.loopStart=lr.start*buf.duration;s.loopEnd=(lr.end??1)*buf.duration;}
     s.start(0,o);
     s.onended=()=>{if(!loopRef.current.active){setPlay(false);setProg(0);off.current=0;onChange?.("playing",false);}};
-    src.current=s; st.current=ac.currentTime; off.current=o;
+    src.current=s; st.current=(acNowRef?.current ?? ac.currentTime); off.current=o;
     const tick=()=>{
-      const elapsed=ac.currentTime-st.current;
+      // Shared frame-snapshot: read parent-RAF-published time so both decks
+      // measure elapsed from an identical instant per frame. Eliminates the
+      // sub-ms read offset between A and B that caused visual grid oscillation
+      // post-rate-aware fix. Fallback to ac.currentTime if snapshot is null
+      // (initial mount before parent RAF has populated it).
+      const nowAc=acNowRef?.current ?? ac.currentTime;
+      const elapsed=nowAc-st.current;
       // Rate-aware: Web Audio rate-adjusts sample consumption internally;
       // we must mirror that here or visual diverges from audio at rate≠1.
       // Rate changes mid-playback rebase off.current/st.current in the
@@ -3931,7 +3937,7 @@ function Deck({ id, ch, ctx:ac, color, local, remote, onChange, midi:mt, bpmResu
     // engine). Rebase st.current so any tick frame that fires between here
     // and the next play_() computes elapsed=0 (no spurious advancement).
     progRef.current=0;onProgUpdate?.(0);
-    if(ac)st.current=ac.currentTime;
+    if(ac)st.current=(acNowRef?.current ?? ac.currentTime);
     // Reset rate to 1 — old sync-imposed rate from a prior track would scale
     // the new track's BPM display incorrectly. Parent's rateA/B mirror via dh.
     setRate(1);onChange?.("rate",1);
@@ -4012,20 +4018,22 @@ function Deck({ id, ch, ctx:ac, color, local, remote, onChange, midi:mt, bpmResu
   // inaudible but eliminates the rate-change click.
   useEffect(()=>{
     // Rebase visual position bookkeeping on rate transitions. tick() reads
-    // rate via rateRef and multiplies into (ac.currentTime - st.current);
-    // without rebasing here, a rate change mid-playback would retroactively
-    // re-rate the pre-change wall-time segment, snapping the visual
-    // playhead forward or back at the moment of rate change.
+    // rate via rateRef and multiplies into (elapsed); without rebasing here,
+    // a rate change mid-playback would retroactively re-rate the pre-change
+    // wall-time segment, snapping the visual playhead forward or back at the
+    // moment of rate change.
     //
     // Snapshot the buffer-position advanced under the OLD rate into
     // off.current, then reset st.current so subsequent elapsed measures
-    // wall-time under the NEW rate only. Skip when no source is active
-    // (paused) — there is no wall-time to integrate — but still update
-    // prevRateRef so the next rebase (after resume + another rate change)
-    // uses the correct previous rate.
+    // wall-time under the NEW rate only. Both writes share a single acNow
+    // snapshot so the rebase is internally consistent (reading ac.currentTime
+    // twice in succession returns slightly different values). Skip when no
+    // source is active (paused) — but still update prevRateRef so the next
+    // rebase (after resume + another rate change) uses the correct prev rate.
     if(src.current&&ac){
-      off.current+=(ac.currentTime-st.current)*prevRateRef.current;
-      st.current=ac.currentTime;
+      const acNow=acNowRef?.current ?? ac.currentTime;
+      off.current+=(acNow-st.current)*prevRateRef.current;
+      st.current=acNow;
     }
     prevRateRef.current=rate;
     if(!src.current?.playbackRate) return;
@@ -4224,20 +4232,23 @@ function Deck({ id, ch, ctx:ac, color, local, remote, onChange, midi:mt, bpmResu
           const canSync = !!buf && !!bpmResult?.bpm && syncReady;
           const isSlave  = syncRole === "slave";
           const isMasterRole = syncRole === "master";
-          const isLocked = isSlave || isMasterRole;
-          const clickable = canSync || isLocked; // locked is clickable too — click to release
-          // States: slave (filled green + glow + dot, label "SYNC"), master
-          // (outlined green, label "MASTER"), canSync (green outline, "SYNC"),
-          // analyzing (amber pulse, "SYNC"), disabled (greyed, "SYNC").
+          // Master deck's SYNC button is disabled — master doesn't sync to
+          // anything. To unsync, user clicks SYNC on the slave deck (or M to
+          // release master role). The M button on this deck shows lit
+          // separately to indicate master state.
+          const clickable = isSlave || (canSync && !isMasterRole);
+          // States: slave (filled green + glow + dot), canSync (outline),
+          // analyzing (amber pulse), disabled (greyed). Master role uses the
+          // disabled tone — SYNC isn't an action available from the master.
           const tone =
             isSlave        ? { bg:"#22c55e44",   border:"#22c55e",   color:"#0a1a10",   cursor:"pointer",      opacity:1,   pulse:false, glow:true,  dot:true  }
-            : isMasterRole ? { bg:"transparent", border:"#22c55e",   color:"#22c55e",   cursor:"pointer",      opacity:1,   pulse:false, glow:false, dot:false }
+            : isMasterRole ? { bg:"transparent", border:"#22c55e22", color:"#22c55e44", cursor:"not-allowed",  opacity:0.4, pulse:false, glow:false, dot:false }
             : canSync      ? { bg:"#22c55e18",   border:"#22c55e66", color:"#22c55e",   cursor:"pointer",      opacity:1,   pulse:false, glow:false, dot:false }
             : isAnalyzing  ? { bg:"#f59e0b14",   border:"#f59e0b55", color:"#f59e0b",   cursor:"progress",     opacity:1,   pulse:true,  glow:false, dot:false }
             :                { bg:"transparent", border:"#22c55e22", color:"#22c55e44", cursor:"not-allowed",  opacity:0.4, pulse:false, glow:false, dot:false };
-          const label = isMasterRole ? "MASTER" : "SYNC";
+          const label = "SYNC";
           const tip = isSlave    ? "This deck is the slave (locked) — click to release"
-            : isMasterRole       ? "This deck is the master (reference) — click to release"
+            : isMasterRole       ? "This deck is the master — toggle sync from the slave deck, or click M to release master"
             : !buf             ? "Load a track"
             : isAnalyzing      ? "Analyzing BPM…"
             : !bpmResult?.bpm  ? "Waiting for BPM"
@@ -4869,6 +4880,27 @@ export default function CollabMix({ initialPage = "landing", djName = null }) {
   const progRefB = useRef(0);
   const handleProgA = useCallback((p) => { progRefA.current = p; }, []);
   const handleProgB = useCallback((p) => { progRefB.current = p; }, []);
+
+  // Shared per-frame snapshot of audio-context time. Both decks' tick() loops
+  // read this instead of calling ac.currentTime directly so they share an
+  // identical time-base each frame. Eliminates the sub-millisecond per-deck
+  // read offset that caused visual grid oscillation post-rate-aware fix
+  // (b28214b): independent ac.currentTime reads at slightly different sub-frame
+  // moments produced ~0.2ms × rate of relative buffer-position offset between
+  // A and B, which slid back and forth as frame-to-frame timing varied.
+  // Falls back to ac.currentTime if snapshot is null (initial mount / focus
+  // lost). Same fallback value for both decks → still relatively locked.
+  const acNowRef = useRef(null);
+  useEffect(() => {
+    let rafId;
+    const tick = () => {
+      rafId = requestAnimationFrame(tick);
+      const ctx = eng.current?.ctx;
+      if (ctx) acNowRef.current = ctx.currentTime;
+    };
+    tick();
+    return () => cancelAnimationFrame(rafId);
+  }, []);
   const seekFnsRef = useRef({ A:null, B:null });
   const toggleFnsRef = useRef({ A:null, B:null });
   const cueFnsRef = useRef({ A:null, B:null });
@@ -5491,24 +5523,18 @@ export default function CollabMix({ initialPage = "landing", djName = null }) {
       const k = `deck${broadcastDeck}`;
       lsRef.current[k] = { ...(lsRef.current[k]||{}), syncLocked: false };
       sync.send({ type:"deck_update", deckId: broadcastDeck, field: "syncLocked", value: false });
-      // Reset rate state on both decks back to natural so the next sync
-      // engage targets the master's true natural BPM (not its still-rated
-      // post-previous-sync effective BPM). Calling _setRate via the DOM
-      // hook propagates to Deck's internal rate state which then triggers
-      // the rate-update useEffect that ramps playbackRate to 1.0.
-      setRateA(1); setRateB(1);
-      const elA = document.querySelector("[data-set-rate='A']");
-      const elB = document.querySelector("[data-set-rate='B']");
-      if (elA?._setRate) elA._setRate(1);
-      if (elB?._setRate) elB._setRate(1);
-      // Broadcast rate=1 so partner mirrors the reset.
-      lsRef.current.deckA = { ...(lsRef.current.deckA||{}), rate: 1 };
-      lsRef.current.deckB = { ...(lsRef.current.deckB||{}), rate: 1 };
-      sync.send({ type:"deck_update", deckId: "A", field: "rate", value: 1 });
-      sync.send({ type:"deck_update", deckId: "B", field: "rate", value: 1 });
+      // DJ-correct behavior: on unsync, rates are PRESERVED. The slave audibly
+      // stays at its synced rate; the user manages pitch manually from there
+      // via the pitch fader. Snapping back to natural BPM on unsync is jarring
+      // and not how Rekordbox / CDJs behave. The earlier reset (commit 2772cb9)
+      // was overreach — the actual sync-state-contamination bug it targeted is
+      // about sticky master/slave refs, NOT about rate. Clearing those refs
+      // below still prevents the contamination cleanly.
+      //
       // Clear sticky auto-master + slave so next engage re-detects fresh.
       // (Explicit M-button master selections clear too — user can re-set
-      //  if desired. Keeps mental model simple: "unsync = clean slate".)
+      //  if desired. Keeps mental model simple: "unsync = metadata clean slate,
+      //  pitch stays where you left it".)
       masterDeckRef.current = null;
       setMasterDeck(null);
       lastSlaveDeckRef.current = null;
@@ -5996,7 +6022,7 @@ export default function CollabMix({ initialPage = "landing", djName = null }) {
             {deckDrivers.A && <span style={{ fontSize:11, fontFamily:"'DM Sans',sans-serif", fontWeight:500, color:"#7B61FFaa", letterSpacing:.3 }}>{deckDrivers.A === session.name ? `${deckDrivers.A} (you)` : deckDrivers.A}</span>}
           </div>
           <div style={{ flex:1, overflow:"hidden", minHeight:0 }}>
-            <Deck id="A" ch={eng.current?.A} ctx={eng.current?.ctx} color="#7B61FF" local remote={pA} onChange={dh("A")} midi={midiEvt} bpmResult={bpm.results["A"]} bpmAnalyze={bpm.analyze} eqHi={eqA.hi} eqMid={eqA.mid} eqLo={eqA.lo} chanVol={eqA.vol} loadFromLibrary={libLoadA} onTrackInfo={handleTrackInfo} onSync={()=>handleSyncToggle("A")} syncReady={!!(bpm.results["B"]?.bpm || pB?.bpm)} syncRole={syncLocked ? (lastSlaveDeck === "A" ? "slave" : "master") : null} isMaster={masterDeck === "A"} onMasterToggle={handleMasterToggle} onLibraryTrackDrop={(trackId)=>{const t=lib.library.find(x=>x.id===trackId);if(t)handleLibLoad(t,"A");}} onProgUpdate={handleProgA} onWaveform={setWfA} onSeekReady={onDeckASeekReady} onToggleReady={onDeckAToggleReady} onCueReady={onDeckACueReady} onNudgeReady={onDeckANudgeReady} onTransportFire={handleTransportFire} isDriver={!deckDrivers.A || deckDrivers.A === session.name}/>
+            <Deck id="A" ch={eng.current?.A} ctx={eng.current?.ctx} color="#7B61FF" local remote={pA} onChange={dh("A")} midi={midiEvt} bpmResult={bpm.results["A"]} bpmAnalyze={bpm.analyze} eqHi={eqA.hi} eqMid={eqA.mid} eqLo={eqA.lo} chanVol={eqA.vol} loadFromLibrary={libLoadA} onTrackInfo={handleTrackInfo} onSync={()=>handleSyncToggle("A")} syncReady={!!(bpm.results["B"]?.bpm || pB?.bpm)} syncRole={syncLocked ? (lastSlaveDeck === "A" ? "slave" : "master") : null} isMaster={masterDeck === "A"} onMasterToggle={handleMasterToggle} onLibraryTrackDrop={(trackId)=>{const t=lib.library.find(x=>x.id===trackId);if(t)handleLibLoad(t,"A");}} onProgUpdate={handleProgA} onWaveform={setWfA} onSeekReady={onDeckASeekReady} onToggleReady={onDeckAToggleReady} onCueReady={onDeckACueReady} onNudgeReady={onDeckANudgeReady} onTransportFire={handleTransportFire} isDriver={!deckDrivers.A || deckDrivers.A === session.name} acNowRef={acNowRef}/>
           </div>
         </div>
 
@@ -6095,7 +6121,7 @@ export default function CollabMix({ initialPage = "landing", djName = null }) {
             {deckDrivers.B && <span style={{ fontSize:11, fontFamily:"'DM Sans',sans-serif", fontWeight:500, color:"#00BFA5aa", letterSpacing:.3 }}>{deckDrivers.B === session.name ? `${deckDrivers.B} (you)` : deckDrivers.B}</span>}
           </div>
           <div style={{ flex:1, overflow:"hidden", minHeight:0 }}>
-            <Deck id="B" ch={eng.current?.B} ctx={eng.current?.ctx} color="#00BFA5" local remote={pB} onChange={dh("B")} midi={midiEvt} bpmResult={bpm.results["B"]} bpmAnalyze={bpm.analyze} eqHi={eqB.hi} eqMid={eqB.mid} eqLo={eqB.lo} chanVol={eqB.vol} loadFromLibrary={libLoadB} onTrackInfo={handleTrackInfo} onSync={()=>handleSyncToggle("B")} syncReady={!!(bpm.results["A"]?.bpm || pA?.bpm)} syncRole={syncLocked ? (lastSlaveDeck === "B" ? "slave" : "master") : null} isMaster={masterDeck === "B"} onMasterToggle={handleMasterToggle} onLibraryTrackDrop={(trackId)=>{const t=lib.library.find(x=>x.id===trackId);if(t)handleLibLoad(t,"B");}} onProgUpdate={handleProgB} onWaveform={setWfB} onSeekReady={onDeckBSeekReady} onToggleReady={onDeckBToggleReady} onCueReady={onDeckBCueReady} onNudgeReady={onDeckBNudgeReady} onTransportFire={handleTransportFire} isDriver={!deckDrivers.B || deckDrivers.B === session.name}/>
+            <Deck id="B" ch={eng.current?.B} ctx={eng.current?.ctx} color="#00BFA5" local remote={pB} onChange={dh("B")} midi={midiEvt} bpmResult={bpm.results["B"]} bpmAnalyze={bpm.analyze} eqHi={eqB.hi} eqMid={eqB.mid} eqLo={eqB.lo} chanVol={eqB.vol} loadFromLibrary={libLoadB} onTrackInfo={handleTrackInfo} onSync={()=>handleSyncToggle("B")} syncReady={!!(bpm.results["A"]?.bpm || pA?.bpm)} syncRole={syncLocked ? (lastSlaveDeck === "B" ? "slave" : "master") : null} isMaster={masterDeck === "B"} onMasterToggle={handleMasterToggle} onLibraryTrackDrop={(trackId)=>{const t=lib.library.find(x=>x.id===trackId);if(t)handleLibLoad(t,"B");}} onProgUpdate={handleProgB} onWaveform={setWfB} onSeekReady={onDeckBSeekReady} onToggleReady={onDeckBToggleReady} onCueReady={onDeckBCueReady} onNudgeReady={onDeckBNudgeReady} onTransportFire={handleTransportFire} isDriver={!deckDrivers.B || deckDrivers.B === session.name} acNowRef={acNowRef}/>
           </div>
         </div>
 
