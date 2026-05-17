@@ -3563,6 +3563,11 @@ function Deck({ id, ch, ctx:ac, color, local, remote, onChange, midi:mt, bpmResu
   // play=false even after user pressed play and audio was audible).
   const playRef=useRef(play);
   const rateRef=useRef(rate);
+  // Captures rate BEFORE a rate-state transition so the [rate] useEffect can
+  // rebase off.current/st.current using the rate that was active during the
+  // just-elapsed wall-time segment. Without rebasing, tick()'s rate-aware
+  // position computation would retroactively re-rate the pre-change segment.
+  const prevRateRef=useRef(1);
   const isDriverRef=useRef(isDriver);
   const bufRef=useRef(buf);
   useEffect(()=>{ bufRef.current=buf; },[buf]);
@@ -3678,14 +3683,20 @@ function Deck({ id, ch, ctx:ac, color, local, remote, onChange, midi:mt, bpmResu
     src.current=s; st.current=ac.currentTime; off.current=o;
     const tick=()=>{
       const elapsed=ac.currentTime-st.current;
+      // Rate-aware: Web Audio rate-adjusts sample consumption internally;
+      // we must mirror that here or visual diverges from audio at rate≠1.
+      // Rate changes mid-playback rebase off.current/st.current in the
+      // [rate] useEffect so this multiplication only applies to the
+      // current rate segment.
+      const elapsedBuf=elapsed*rateRef.current;
       const lr2=loopRef.current;
       let p;
       if(lr2.active&&lr2.start!==null&&lr2.end!==null){
         const lDur=(lr2.end-lr2.start)*buf.duration;
-        const pos=(o-lr2.start*buf.duration+elapsed);
+        const pos=(o-lr2.start*buf.duration+elapsedBuf);
         p=lr2.start+(pos%lDur)/buf.duration;
       } else {
-        p=Math.min(1,(o+elapsed)/buf.duration);
+        p=Math.min(1,(o+elapsedBuf)/buf.duration);
       }
       setProg(p); progRef.current=p; onProgUpdate?.(p);
       // Throttle progress broadcasts to 10Hz to reduce network jitter on partner side
@@ -3954,6 +3965,23 @@ function Deck({ id, ch, ctx:ac, color, local, remote, onChange, midi:mt, bpmResu
   // hits the exact target value at end of ramp; 5ms ramp duration is
   // inaudible but eliminates the rate-change click.
   useEffect(()=>{
+    // Rebase visual position bookkeeping on rate transitions. tick() reads
+    // rate via rateRef and multiplies into (ac.currentTime - st.current);
+    // without rebasing here, a rate change mid-playback would retroactively
+    // re-rate the pre-change wall-time segment, snapping the visual
+    // playhead forward or back at the moment of rate change.
+    //
+    // Snapshot the buffer-position advanced under the OLD rate into
+    // off.current, then reset st.current so subsequent elapsed measures
+    // wall-time under the NEW rate only. Skip when no source is active
+    // (paused) — there is no wall-time to integrate — but still update
+    // prevRateRef so the next rebase (after resume + another rate change)
+    // uses the correct previous rate.
+    if(src.current&&ac){
+      off.current+=(ac.currentTime-st.current)*prevRateRef.current;
+      st.current=ac.currentTime;
+    }
+    prevRateRef.current=rate;
     if(!src.current?.playbackRate) return;
     const pr=src.current.playbackRate;
     const now=ac?.currentTime||0;
