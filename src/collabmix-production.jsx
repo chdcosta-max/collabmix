@@ -3094,10 +3094,14 @@ function AnimatedZoomedWF({ bands, dur, progRef, onSeek, h=96, windowSec=8, beat
         ctx.fillRect(0,center,physW,1);
 
         // ── Pass 2a: smooth filled envelope path at very DIM baseline.
-        // This is the silhouette floor only — fills gaps between per-column
-        // brightness rects with antialiased diagonals so the overall shape
-        // reads continuous. Kept low so the brightness overlay does the
-        // visual work; quiet sections should look almost translucent.
+        // Silhouette path uses selective quadratic curves — when three
+        // consecutive columns trend monotonically (all rising or all
+        // falling) the middle point becomes a curve control point with
+        // the segment endpoint at the midpoint to the next column. When
+        // direction reverses (peak or trough = transient) we fall back
+        // to lineTo so kicks/snares keep their sharp vertical edges.
+        // After filling, a thin sub-pixel stroke in the same color
+        // anti-aliases the silhouette boundary for a softer outline.
         const baseGrad=ctx.createLinearGradient(0,center-maxH,0,center+maxH);
         baseGrad.addColorStop(0,`rgba(${dr},${dg},${db},0.10)`);
         baseGrad.addColorStop(0.5,`rgba(${dr},${dg},${db},0.18)`);
@@ -3105,11 +3109,44 @@ function AnimatedZoomedWF({ bands, dur, progRef, onSeek, h=96, windowSec=8, beat
         ctx.fillStyle=baseGrad;
         ctx.beginPath();
         ctx.moveTo(0,center);
-        for(let dx=0;dx<physW;dx++) ctx.lineTo(dx+0.5,center-heights[dx]);
+        // Top sweep — selective curve smoothing.
+        if(physW>0) ctx.lineTo(0.5,center-heights[0]);
+        for(let dx=1;dx<physW-1;dx++){
+          const yPrev=center-heights[dx-1];
+          const yCur=center-heights[dx];
+          const yNext=center-heights[dx+1];
+          const monotonic=(yPrev<yCur&&yCur<yNext)||(yPrev>yCur&&yCur>yNext);
+          if(monotonic){
+            const midX=dx+1, midY=(yCur+yNext)*0.5;
+            ctx.quadraticCurveTo(dx+0.5,yCur,midX,midY);
+          } else {
+            ctx.lineTo(dx+0.5,yCur);
+          }
+        }
+        if(physW>1) ctx.lineTo(physW-0.5,center-heights[physW-1]);
         ctx.lineTo(physW,center);
-        for(let dx=physW-1;dx>=0;dx--) ctx.lineTo(dx+0.5,center+heights[dx]);
+        // Bottom sweep (mirror) — same selective smoothing.
+        if(physW>0) ctx.lineTo(physW-0.5,center+heights[physW-1]);
+        for(let dx=physW-2;dx>0;dx--){
+          const yPrev=center+heights[dx+1];
+          const yCur=center+heights[dx];
+          const yNext=center+heights[dx-1];
+          const monotonic=(yPrev<yCur&&yCur<yNext)||(yPrev>yCur&&yCur>yNext);
+          if(monotonic){
+            const midX=dx, midY=(yCur+yNext)*0.5;
+            ctx.quadraticCurveTo(dx+0.5,yCur,midX,midY);
+          } else {
+            ctx.lineTo(dx+0.5,yCur);
+          }
+        }
+        if(physW>1) ctx.lineTo(0.5,center+heights[0]);
         ctx.closePath();
         ctx.fill();
+        // Thin AA stroke at higher alpha than the fill baseline — softens
+        // the silhouette edge without obscuring transient peaks.
+        ctx.strokeStyle=`rgba(${dr},${dg},${db},0.55)`;
+        ctx.lineWidth=Math.max(0.5,0.5*dpr);
+        ctx.stroke();
 
         // ── Pass 2b: per-column brightness overlay. Aggressive dynamic range —
         // gamma 0.55 stretches the curve so peaks dominate (env=0.5 → ~0.69
