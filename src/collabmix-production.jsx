@@ -2921,7 +2921,7 @@ function WF({ bands, peaks, freq, prog, onSeek, h=80, hotCues=[], loopStart=null
 //
 // 60fps RAF. ResizeObserver watches the canvas — the draw loop never reads
 // clientWidth.
-function AnimatedZoomedWF({ bands, dur, progRef, onSeek, h=96, windowSec=8, beatPhaseFrac=null, beatPeriodSec=null, gridOffsetMs=0, bpmNudge=0, deckColor="#FFFFFF" }) {
+function AnimatedZoomedWF({ bands, dur, progRef, onSeek, h=96, windowSec=8, beatPhaseFrac=null, beatPeriodSec=null, gridOffsetMs=0, bpmNudge=0, deckColor="#FFFFFF", rate=1 }) {
   const ref=useRef(null);
   const raf=useRef(null);
   const colBufRef=useRef(null); // {bv, mv, hv, heights: Float32Array, len} — per-column scratch
@@ -2953,6 +2953,17 @@ function AnimatedZoomedWF({ bands, dur, progRef, onSeek, h=96, windowSec=8, beat
   const gridOffsetMsRef=useRef(gridOffsetMs);
   const bpmNudgeRef=useRef(bpmNudge);
   const deckColorRef=useRef(deckColor);
+  // Mirror rate to a ref so the draw loop and drag handler always see the
+  // latest value without re-mounting either useEffect. The grid + waveform
+  // math treats windowSec as WALL-time; multiplying by rate gives the visible
+  // buffer-time span. Without this, two synced decks at different rates
+  // produce different pixel-spacing-per-beat — grids align at the playhead
+  // but progressively misalign looking ahead/behind, since each deck's
+  // beatPeriodSec is in BUFFER time and the per-deck rate scales buffer-time
+  // differently. Scaling windowSec by rate everywhere makes both decks show
+  // the same WALL-time window, so their per-beat pixel spacing matches.
+  const rateRef=useRef(rate);
+  useEffect(()=>{rateRef.current=rate;},[rate]);
   useEffect(()=>{durRef.current=dur;},[dur]);
   useEffect(()=>{seekRef.current=onSeek;},[onSeek]);
   useEffect(()=>{bandsRef.current=bands;},[bands]);
@@ -3024,10 +3035,18 @@ function AnimatedZoomedWF({ bands, dur, progRef, onSeek, h=96, windowSec=8, beat
       ctx.fillStyle='#030308';
       ctx.fillRect(0,0,physW,physH);
 
+      // Rate-aware visible-buffer-time span. windowSec is treated as WALL
+      // seconds (the user-selected zoom level). At the current playback
+      // rate, that wall-time window covers `windowSec * rate` buffer seconds
+      // of source audio. With this scaling, two synced decks at different
+      // rates both show the same wall-time amount of audio — and their grid
+      // tick spacings match in pixels.
+      const r=rateRef.current||1;
+      const viewBufSec=windowSec*r;
       if(bands&&bands.bass&&bands.bass.length&&dur2&&maxH>0){
         const bArr=bands.bass, mArr=bands.mid, hArr=bands.high;
         const len=bArr.length;
-        const viewPx=(windowSec/dur2)*len;
+        const viewPx=(viewBufSec/dur2)*len;
         const srcX=prog2*len-viewPx/2;
         const spp=viewPx/physW;
 
@@ -3231,8 +3250,13 @@ function AnimatedZoomedWF({ bands, dur, progRef, onSeek, h=96, windowSec=8, beat
           :beatPeriodSec;
         const firstDownbeatSec=beatPhaseFrac*beatPeriodSec+gridOffsetMsRef.current/1000;
         const currentTimeSec=prog2*dur2;
-        const pxPerSec=physW/windowSec;
-        const halfWinSec=windowSec/2;
+        // pxPerSec is pixels per BUFFER second. viewBufSec = windowSec*rate
+        // is the visible buffer-time span; physW/viewBufSec gives buffer
+        // pixels-per-second that, after dividing the wall-time gap by rate
+        // (equivalently, multiplying windowSec by rate up front here), maps
+        // beats to identical pixel spacing on synced decks.
+        const pxPerSec=physW/viewBufSec;
+        const halfWinSec=viewBufSec/2;
         const minTime=currentTimeSec-halfWinSec-effectivePeriod;
         const maxTime=currentTimeSec+halfWinSec+effectivePeriod;
         const startN=Math.ceil((minTime-firstDownbeatSec)/effectivePeriod);
@@ -3358,10 +3382,11 @@ function AnimatedZoomedWF({ bands, dur, progRef, onSeek, h=96, windowSec=8, beat
       if(!dragging||!seekRef.current||!durRef.current||!widthAtDown) return;
       const deltaPx=e.clientX-mouseXAtDown;
       // (deltaPx / canvasWidth) is the fraction of the visible window the
-      // cursor has traversed; × (windowSec / dur) converts that to a
-      // fraction of the whole track. Stored in dragProgRef for the draw loop
-      // to display; audio is NOT seeked here (deferred to mouseup).
-      const newProg=progAtDown+(deltaPx/widthAtDown)*(windowSec/durRef.current);
+      // cursor has traversed; × (windowSec * rate / dur) converts that to a
+      // fraction of the whole track. The * rate keeps drag distance
+      // consistent in buffer-time terms now that windowSec is wall-time.
+      const r=rateRef.current||1;
+      const newProg=progAtDown+(deltaPx/widthAtDown)*(windowSec*r/durRef.current);
       dragProgRef.current=Math.max(0,Math.min(1,newProg));
     };
     const onUp=()=>{
@@ -4985,38 +5010,6 @@ export default function CollabMix({ initialPage = "landing", djName = null }) {
     tick();
     return () => cancelAnimationFrame(rafId);
   }, []);
-
-  // ── TEMPORARY DIAGNOSTIC for visual grid phasing under sync ──
-  // When sync engages, capture per-frame samples (acNow, pA, pB, delta in ms)
-  // for ~1 second, then dump to console.table. Lets us determine whether the
-  // visible beat-grid phasing is sub-pixel rounding (constant delta ± noise),
-  // periodic math drift (sinusoidal delta), or frame-skip variance (spikes).
-  // REMOVE THIS BLOCK once Issue B is diagnosed and fixed.
-  useEffect(() => {
-    if (!syncLocked) return;
-    const startT = performance.now();
-    const samples = [];
-    let rafId;
-    const tick = () => {
-      const elapsed = performance.now() - startT;
-      if (elapsed > 1000) {
-        console.log("[GRID-DIAG] 1s sample window complete, N=" + samples.length);
-        console.table(samples);
-        return;
-      }
-      const durRefVal = wfA?.dur || 1;
-      samples.push({
-        tMs: +elapsed.toFixed(2),
-        acNow: +(acNowRef.current ?? 0).toFixed(5),
-        pA: +progRefA.current.toFixed(6),
-        pB: +progRefB.current.toFixed(6),
-        deltaMs: +((progRefA.current - progRefB.current) * durRefVal * 1000).toFixed(2),
-      });
-      rafId = requestAnimationFrame(tick);
-    };
-    rafId = requestAnimationFrame(tick);
-    return () => cancelAnimationFrame(rafId);
-  }, [syncLocked, wfA]);
   const seekFnsRef = useRef({ A:null, B:null });
   const toggleFnsRef = useRef({ A:null, B:null });
   const cueFnsRef = useRef({ A:null, B:null });
@@ -6126,7 +6119,7 @@ export default function CollabMix({ initialPage = "landing", djName = null }) {
                     <button key={i} onClick={()=>setWfZoom(i)} style={{ height:18, padding:"0 7px", fontSize:8, fontFamily:"'DM Mono',monospace", letterSpacing:.5, background:wfZoom===i?"#C8A96E22":"transparent", border:`1px solid ${wfZoom===i?"#C8A96E88":"#ffffff18"}`, color:wfZoom===i?"#C8A96E":"#ffffff44", borderRadius:4, cursor:"pointer", outline:"none" }}>{lbl}</button>
                   ))}
                 </div>
-                <AnimatedZoomedWF bands={wfA} dur={wfA?.dur||0} progRef={progRefA} onSeek={seekDeckA} h={wfH} windowSec={WF_WINDOWS[wfZoom]} beatPhaseFrac={bpm.results["A"]?.beatPhaseFrac??null} beatPeriodSec={bpm.results["A"]?.beatPeriodSec??null} gridOffsetMs={gridOffsetA} bpmNudge={bpmNudgeA*0.01} deckColor="#7B61FF"/>
+                <AnimatedZoomedWF bands={wfA} dur={wfA?.dur||0} progRef={progRefA} onSeek={seekDeckA} h={wfH} windowSec={WF_WINDOWS[wfZoom]} beatPhaseFrac={bpm.results["A"]?.beatPhaseFrac??null} beatPeriodSec={bpm.results["A"]?.beatPeriodSec??null} gridOffsetMs={gridOffsetA} bpmNudge={bpmNudgeA*0.01} deckColor="#7B61FF" rate={rateA}/>
               </div>
             )}
             {hasA && hasB && <div style={{ height:1, background:"#0d0d18" }}/>}
@@ -6148,7 +6141,7 @@ export default function CollabMix({ initialPage = "landing", djName = null }) {
                   <div style={{ width:5, height:5, borderRadius:"50%", background:"#00BFA5", boxShadow:"0 0 6px #00BFA5" }}/>
                   <span style={{ fontSize:9, fontFamily:"'DM Mono',monospace", fontWeight:700, color:"#00BFA588", letterSpacing:2 }}>B</span>
                 </div>
-                <AnimatedZoomedWF bands={wfB} dur={wfB?.dur||0} progRef={progRefB} onSeek={seekDeckB} h={wfH} windowSec={WF_WINDOWS[wfZoom]} beatPhaseFrac={bpm.results["B"]?.beatPhaseFrac??null} beatPeriodSec={bpm.results["B"]?.beatPeriodSec??null} gridOffsetMs={gridOffsetB} bpmNudge={bpmNudgeB*0.01} deckColor="#00BFA5"/>
+                <AnimatedZoomedWF bands={wfB} dur={wfB?.dur||0} progRef={progRefB} onSeek={seekDeckB} h={wfH} windowSec={WF_WINDOWS[wfZoom]} beatPhaseFrac={bpm.results["B"]?.beatPhaseFrac??null} beatPeriodSec={bpm.results["B"]?.beatPeriodSec??null} gridOffsetMs={gridOffsetB} bpmNudge={bpmNudgeB*0.01} deckColor="#00BFA5" rate={rateB}/>
               </div>
             )}
           </div>
