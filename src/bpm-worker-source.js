@@ -114,7 +114,7 @@ self.onmessage=function(e){
   for(let i=0;i<nf;i++)on[i]=(on[i]-mn)/sd;
   const ml=Math.floor(60/200*ar),xl=Math.ceil(60/60*ar),al=xl-ml+1;
   const ac=new Float32Array(al);for(let li=0;li<al;li++){const lag=li+ml;let s=0;for(let i=0;i<nf-lag;i++)s+=on[i]*on[i+lag];ac[li]=s/(nf-lag);}
-  const peaks=pk(ac);if(!peaks.length){self.postMessage({id,bpm:null,confidence:0,candidates:[],beatPhaseFrac:0,beatPeriodSec:null,beatPhaseSec:0});return;}
+  const peaks=pk(ac);if(!peaks.length){self.postMessage({id,bpm:null,confidence:0,candidates:[],beatPhaseFrac:0,beatPeriodSec:null,beatPhaseSec:0,firstBar1AnchorSec:0});return;}
   // Parabolic interpolation around the autocorrelation peak for sub-integer lag
   // precision. Fit y = a*(x-x₀)² + b through (idx-1, idx, idx+1) and take x₀.
   // Closed-form: x₀ = idx + (yL - yR) / (2 * (yL - 2·yC + yR)), bounded to ±0.5.
@@ -585,5 +585,10 @@ self.onmessage=function(e){
     'old (dphase first-transient)=',_dphaseDiag.beatPhaseSec.toFixed(4),
     'firstBar1AnchorSec=',firstBar1AnchorSec.toFixed(4),
     'beatPeriodSec=',finalPeriod==null?'-':finalPeriod.toFixed(4));
-  self.postMessage({id,bpm:finalBpm,confidence:conf,candidates:cands,beatPhaseFrac,beatPeriodSec:finalPeriod,beatPhaseSec,snapped});
+  // firstBar1AnchorSec posted explicitly so the client doesn't have to
+  // derive it as beatPhaseFrac × beatPeriodSec (which is correct but
+  // depends on beatPhaseFrac being the UNWRAPPED beats-from-start, and
+  // is fragile to anyone assuming it's a [0,1) fraction). Use this field
+  // directly for first-downbeat auto-position.
+  self.postMessage({id,bpm:finalBpm,confidence:conf,candidates:cands,beatPhaseFrac,beatPeriodSec:finalPeriod,beatPhaseSec,firstBar1AnchorSec,snapped});
 };`;

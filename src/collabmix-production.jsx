@@ -89,12 +89,12 @@ function useBPM() {
   useEffect(() => {
     worker.current = createBPMWorker();
     worker.current.onmessage = (e) => {
-      const { id, bpm, confidence, candidates, beatPhaseFrac, beatPeriodSec, beatPhaseSec, snapped, error, _debug } = e.data;
+      const { id, bpm, confidence, candidates, beatPhaseFrac, beatPeriodSec, beatPhaseSec, firstBar1AnchorSec, snapped, error, _debug } = e.data;
       if (id === '__err') { console.error('[BPM Worker global error]', e.data.error); return; }
       if (error) console.error('[BPM Worker caught error]', error);
-      console.log('[BPM result] id='+id+' bpm='+bpm+' bpf='+beatPhaseFrac+' bps='+beatPeriodSec+' bphs='+beatPhaseSec+' snapped='+(snapped??false)+' debug='+JSON.stringify(_debug));
+      console.log('[BPM result] id='+id+' bpm='+bpm+' bpf='+beatPhaseFrac+' bps='+beatPeriodSec+' bphs='+beatPhaseSec+' anchor='+firstBar1AnchorSec+' snapped='+(snapped??false)+' debug='+JSON.stringify(_debug));
       console.log('[BPM] analysis complete for deck', id, 'bpm=', bpm);
-      setResults(prev => ({ ...prev, [id]: { bpm, confidence, candidates, beatPhaseFrac: beatPhaseFrac||0, beatPeriodSec: beatPeriodSec||null, beatPhaseSec: beatPhaseSec??null, analyzing: false } }));
+      setResults(prev => ({ ...prev, [id]: { bpm, confidence, candidates, beatPhaseFrac: beatPhaseFrac||0, beatPeriodSec: beatPeriodSec||null, beatPhaseSec: beatPhaseSec??null, firstBar1AnchorSec: firstBar1AnchorSec??null, analyzing: false } }));
     };
     worker.current.onerror = (e) => { console.error('[BPM Worker onerror]', e.message, e.lineno); };
     return () => worker.current?.terminate();
@@ -102,7 +102,13 @@ function useBPM() {
   const analyze = useCallback((buf, id) => {
     if (!buf || !worker.current) return;
     console.log('[BPM] analysis started for deck', id, '(track loaded)');
-    setResults(prev => ({ ...prev, [id]: { ...(prev[id] || {}), analyzing: true } }));
+    // CLEAR stale fields from the previous track's analysis. Previously this
+    // spread-preserved prev[id], leaving beatPhaseFrac / beatPeriodSec /
+    // firstBar1AnchorSec at the OLD track's values until the worker message
+    // for the new track arrived. The Deck auto-position useEffect could fire
+    // in that window with stale data and lock itself out of re-firing when
+    // the real result came in.
+    setResults(prev => ({ ...prev, [id]: { ...(prev[id] || {}), bpm: null, beatPhaseFrac: null, beatPeriodSec: null, beatPhaseSec: null, firstBar1AnchorSec: null, analyzing: true } }));
     const cd = [];
     for (let c = 0; c < buf.numberOfChannels; c++) cd.push(buf.getChannelData(c).slice());
     // Transfer ArrayBuffers (O(1) vs O(n) structured clone) — avoids 10-30s stall on large tracks
@@ -3992,31 +3998,32 @@ function Deck({ id, ch, ctx:ac, color, local, remote, onChange, midi:mt, bpmResu
   // loaded track and the user hasn't touched the deck yet, snap the playhead
   // from the file's t=0 to the analyzed first bar-1 downbeat — so loaded
   // tracks land on a beat ready to play, matching Rekordbox/Serato/Traktor.
-  // firstBar1AnchorSec = beatPhaseFrac × beatPeriodSec (already in bpmResult
-  // — worker already does the downbeat-aware walk-back at line 555-560 of
-  // bpm-worker-source.js; we derive on the client).
+  //
+  // Uses firstBar1AnchorSec directly from the worker (unwrapped seconds
+  // since track start, range [0, 4 × beatPeriodSec)). The earlier
+  // bpf × bps derivation gave the same numeric result mathematically, but
+  // the new field is explicit + avoids confusion about whether
+  // beatPhaseFrac is unwrapped-beat-index or a [0,1) fraction.
   useEffect(() => {
-    if (!buf || !isDriver) return;                   // partner-driven: remote controls
-    if (positionedBufRef.current === buf) return;    // already positioned for this buf
-    const bpf = bpmResult?.beatPhaseFrac;
-    const bps = bpmResult?.beatPeriodSec;
-    if (bpf == null || !bps || bps <= 0) return;     // wait for BPM analysis
+    if (!buf || !isDriver) return;                       // partner-driven: remote controls
+    if (positionedBufRef.current === buf) return;        // already positioned for this buf
+    if (bpmResult?.analyzing === true) return;           // wait for fresh analysis
+    const anchor = bpmResult?.firstBar1AnchorSec;
+    if (anchor == null) return;                          // analysis hasn't produced anchor
     // Mark as handled upfront — covers retries (re-analysis updates) and
-    // the user-already-moved / playing bail paths below: we still want to
-    // skip in those cases, just remember we've considered this buf.
+    // the user-already-moved / playing bail paths below.
     positionedBufRef.current = buf;
-    if (userMovedRef.current) return;                // user played/seeked/cued already
-    if (play) return;                                // safety: never seek mid-playback
-    const firstBar1Sec = bpf * bps;
-    if (firstBar1Sec < 0 || firstBar1Sec >= buf.duration) return;
-    const newProg = firstBar1Sec / buf.duration;
-    off.current     = firstBar1Sec;
+    if (userMovedRef.current) return;                    // user played/seeked/cued already
+    if (play) return;                                    // safety: never seek mid-playback
+    if (anchor < 0 || anchor >= buf.duration) return;    // safety: out-of-range
+    const newProg = anchor / buf.duration;
+    off.current     = anchor;
     progRef.current = newProg;
     setProg(newProg);
     onProgUpdate?.(newProg);
     console.log('[DECK]', id, 'auto-positioned to first downbeat at',
-      firstBar1Sec.toFixed(3), 's (prog=', newProg.toFixed(4), ')');
-  }, [buf, bpmResult?.beatPhaseFrac, bpmResult?.beatPeriodSec, isDriver, play, id, onProgUpdate]);
+      anchor.toFixed(3), 's (prog=', newProg.toFixed(4), ')');
+  }, [buf, bpmResult?.firstBar1AnchorSec, bpmResult?.analyzing, isDriver, play, id, onProgUpdate]);
   useEffect(()=>{ if(bpmResult?.bpm!=null) onChange?.("bpm", bpmResult.bpm); },[bpmResult?.bpm,onChange]);
   // Broadcast phase data so partner can phase-align when SYNC fires against a
   // partner-driven deck. Only the deck owner has these from the analyzer; the
