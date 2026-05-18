@@ -3817,6 +3817,13 @@ function Deck({ id, ch, ctx:ac, color, local, remote, onChange, midi:mt, bpmResu
       return;
     }
     const o=pc*(buf?.duration||0);off.current=o;if(play)play_(o);else{setProg(pc);progRef.current=pc;onProgUpdate?.(pc);}onChange?.("progress",pc);
+    // Local-only hook for sync re-align (see handleTransportFire). seek_local
+    // never goes on the wire — handleTransportFire suppresses broadcast for
+    // this type and uses it solely to trigger the scrub-resync scheduler.
+    // Without this, driver-path seeks (drag-release, small-WF click, beat
+    // arrows) bypassed handleScrubResync entirely and the slave drifted out
+    // of sync after any user-initiated seek while syncLocked.
+    onTransportFire?.({ type:"seek_local", deckId:id, value:pc, fromRemote });
   },[buf,play,rate,id,onTransportFire,isDriver]);
   const cue   =useCallback((fromRemote=false)=>{
     // Driver model gate (same shape as toggle).
@@ -3827,6 +3834,8 @@ function Deck({ id, ch, ctx:ac, color, local, remote, onChange, midi:mt, bpmResu
     off.current=0;setProg(0);progRef.current=0;onProgUpdate?.(0);
     if(play){stop_();setPlay(false);onChange?.("playing",false);}
     onChange?.("progress",0);
+    // Same local-only hook as seek — CUE while synced should re-align too.
+    onTransportFire?.({ type:"seek_local", deckId:id, value:0, fromRemote });
   },[play,id,onTransportFire,isDriver]);
 
   // ── nudgeRate(offsetSec, rampDurMs=200) — smooth-seek primitive for small
@@ -5703,9 +5712,14 @@ export default function CollabMix({ initialPage = "landing", djName = null }) {
   // EITHER deck's scrub — slave moved → realign; master moved → reference
   // changed → realign.
   const handleTransportFire = useCallback((msg) => {
-    sync.send(msg);
+    // seek_local is a Deck → parent local-only hook (driver-path seeks fire
+    // it after the seek completes). Suppress broadcast — partner doesn't
+    // need to see it — but still use it to trigger the scrub-resync below.
+    // Drives the post-drag, post-arrow, post-cue, post-WF-click re-alignment
+    // that the seek_request path (non-driver only) didn't cover.
+    if (msg?.type !== "seek_local") sync.send(msg);
     if (!syncLocked) return;
-    if (msg?.type !== "seek_request") return;
+    if (msg?.type !== "seek_request" && msg?.type !== "seek_local") return;
     clearTimeout(scrubResyncTimerRef.current);
     scrubResyncTimerRef.current = setTimeout(() => {
       const now = Date.now();
