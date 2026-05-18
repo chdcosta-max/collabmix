@@ -447,6 +447,8 @@ self.onmessage=function(e){
   // Window is ±5 frames (~25ms) to capture the kick body without bleeding
   // into the next beat (~250+ frames apart at 124 BPM).
   const phSc=[0,0,0,0];
+  const phSc16=new Float32Array(16);   // phrase-level: positions within a 16-beat phrase
+  const phSc32=new Float32Array(32);   // phrase-level: positions within a 32-beat super-phrase
   const phScWin=5;
   for(let i=0;i<dpBeats.length;i++){
     // Use floor(dpBeatsFloat) so phase scoring centers on the refined kick
@@ -466,6 +468,8 @@ self.onmessage=function(e){
       acc+=okEx*envK[k];
     }
     phSc[i%4]+=acc;
+    phSc16[i%16]+=acc;
+    phSc32[i%32]+=acc;
   }
   let bestPh=0,bestPhSc=-1;
   for(let k=0;k<4;k++){if(phSc[k]>bestPhSc){bestPhSc=phSc[k];bestPh=k;}}
@@ -480,6 +484,36 @@ self.onmessage=function(e){
   const phMax=Math.max(phSc[0],phSc[1],phSc[2],phSc[3]);
   const phMin=Math.min(phSc[0],phSc[1],phSc[2],phSc[3]);
   if(phMax>0 && (phMax-phMin)/phMax < 0.25) bestPh=0;
+
+  // Phrase-level voting override. The 4-beat scoring is dominated by per-bar
+  // accents (clap on 3, hat on 4). When those accents repeat uniformly across
+  // all bars of a phrase, the 16-beat and 32-beat scoring should converge to
+  // the SAME bucket-mod-4 — and any disagreement is a signal that the 4-beat
+  // winner was a local anomaly (a single big fill, a one-off snare flam)
+  // rather than the true downbeat phase. Trust the longer-cycle vote in that
+  // case. Only run when we have enough data (≥32 beats = ~16 sec at 120 BPM).
+  let best16=-1, best16Mod4=-1;
+  if (dpBeats.length >= 32) {
+    let best16Sc=-1;
+    for(let k=0;k<16;k++){if(phSc16[k]>best16Sc){best16Sc=phSc16[k];best16=k;}}
+    best16Mod4=best16%4;
+    if (best16Mod4 !== bestPh) {
+      console.log('[phase] phrase override (phSc16): phSc4 picked '+bestPh+
+                  ' but best16='+best16+' %4='+best16Mod4+' → using '+best16Mod4);
+      bestPh = best16Mod4;
+    }
+  }
+  let best32=-1, best32Mod4=-1;
+  if (dpBeats.length >= 64) {
+    let best32Sc=-1;
+    for(let k=0;k<32;k++){if(phSc32[k]>best32Sc){best32Sc=phSc32[k];best32=k;}}
+    best32Mod4=best32%4;
+    if (best32Mod4 !== bestPh) {
+      console.log('[phase] phSc32 inconsistent: best32='+best32+' %4='+best32Mod4+
+                  ' != current bestPh='+bestPh+' → falling back to phase 0');
+      bestPh = 0;
+    }
+  }
   // Precise beat period from snap-corrected DP beats — plain MEAN
   // (lastBeat-firstBeat / n-1). Median/trimmed-mean alternatives tested
   // and rejected: median snaps to a single integer-frame interval and
@@ -529,7 +563,8 @@ self.onmessage=function(e){
   }
 
   // Diagnostic — remove once Issue 1 is closed.
-  console.log('[phase] phSc kick-exclusive:',phSc.map(x=>x.toFixed(4)),'bestPh:',bestPh,
+  console.log('[phase] phSc kick-exclusive:',phSc.map(x=>x.toFixed(2)),
+    'best16%4:',best16Mod4,'best32%4:',best32Mod4,'bestPh:',bestPh,
     'spread/peak:',(phSc.length?((Math.max(...phSc)-Math.min(...phSc))/(Math.max(...phSc)||1)).toFixed(3):'NA'),
     'firstBeatDpIdx:',firstBeatDpIdx,
     'dpBeats.length:',dpBeats.length,

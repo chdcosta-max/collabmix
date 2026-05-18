@@ -2927,7 +2927,7 @@ function WF({ bands, peaks, freq, prog, onSeek, h=80, hotCues=[], loopStart=null
 //
 // 60fps RAF. ResizeObserver watches the canvas — the draw loop never reads
 // clientWidth.
-function AnimatedZoomedWF({ bands, dur, progRef, onSeek, h=96, windowSec=8, beatPhaseFrac=null, beatPeriodSec=null, gridOffsetMs=0, bpmNudge=0, deckColor="#FFFFFF", rate=1 }) {
+function AnimatedZoomedWF({ bands, dur, progRef, onSeek, h=96, windowSec=8, beatPhaseFrac=null, beatPeriodSec=null, gridOffsetMs=0, barOneOffsetSec=0, bpmNudge=0, deckColor="#FFFFFF", rate=1 }) {
   const ref=useRef(null);
   const raf=useRef(null);
   const colBufRef=useRef(null); // {bv, mv, hv, heights: Float32Array, len} — per-column scratch
@@ -2957,6 +2957,7 @@ function AnimatedZoomedWF({ bands, dur, progRef, onSeek, h=96, windowSec=8, beat
   const beatPhaseFracRef=useRef(beatPhaseFrac);
   const beatPeriodSecRef=useRef(beatPeriodSec);
   const gridOffsetMsRef=useRef(gridOffsetMs);
+  const barOneOffsetSecRef=useRef(barOneOffsetSec);
   const bpmNudgeRef=useRef(bpmNudge);
   const deckColorRef=useRef(deckColor);
   // Mirror rate to a ref so the draw loop and drag handler always see the
@@ -2976,6 +2977,7 @@ function AnimatedZoomedWF({ bands, dur, progRef, onSeek, h=96, windowSec=8, beat
   useEffect(()=>{beatPhaseFracRef.current=beatPhaseFrac;},[beatPhaseFrac]);
   useEffect(()=>{beatPeriodSecRef.current=beatPeriodSec;},[beatPeriodSec]);
   useEffect(()=>{gridOffsetMsRef.current=gridOffsetMs;},[gridOffsetMs]);
+  useEffect(()=>{barOneOffsetSecRef.current=barOneOffsetSec;},[barOneOffsetSec]);
   useEffect(()=>{bpmNudgeRef.current=bpmNudge;},[bpmNudge]);
   useEffect(()=>{deckColorRef.current=deckColor;},[deckColor]);
 
@@ -3254,7 +3256,9 @@ function AnimatedZoomedWF({ bands, dur, progRef, onSeek, h=96, windowSec=8, beat
         const effectivePeriod=bpmNudge!==0
           ?60/(60/beatPeriodSec+bpmNudge)
           :beatPeriodSec;
-        const firstDownbeatSec=beatPhaseFrac*beatPeriodSec+gridOffsetMsRef.current/1000;
+        // firstDownbeatSec = analyzer anchor + ms grid offset (existing
+        // ±5ms tweaks) + manual bar-1 beat shift (whole-beat user override).
+        const firstDownbeatSec=beatPhaseFrac*beatPeriodSec+gridOffsetMsRef.current/1000+barOneOffsetSecRef.current;
         const currentTimeSec=prog2*dur2;
         // pxPerSec is pixels per BUFFER second. viewBufSec = windowSec*rate
         // is the visible buffer-time span; physW/viewBufSec gives buffer
@@ -3630,7 +3634,7 @@ function Knob({ v, set, min=-12, max=12, ctr=0, label, color="#C8A96E", size=38,
 // ── Deck ─────────────────────────────────────────────────────
 const HOT_CUE_COLORS=["#C8A96E","#ef4444","#22c55e","#f59e0b"];
 
-function Deck({ id, ch, ctx:ac, color, local, remote, onChange, midi:mt, bpmResult, bpmAnalyze, eqHi=0, eqMid=0, eqLo=0, chanVol=1, loadFromLibrary=null, onTrackInfo=null, onSync=null, syncReady=true, syncRole=null, isMaster=false, onMasterToggle=null, onLibraryTrackDrop=null, onProgUpdate=null, onWaveform=null, onSeekReady=null, remoteSeek=null, onToggleReady=null, onCueReady=null, remoteToggle=null, remoteCue=null, onTransportFire=null, isDriver=true, onNudgeReady=null, acNowRef=null, onBufferReady=null }) {
+function Deck({ id, ch, ctx:ac, color, local, remote, onChange, midi:mt, bpmResult, bpmAnalyze, eqHi=0, eqMid=0, eqLo=0, chanVol=1, loadFromLibrary=null, onTrackInfo=null, onSync=null, syncReady=true, syncRole=null, isMaster=false, onMasterToggle=null, onLibraryTrackDrop=null, onProgUpdate=null, onWaveform=null, onSeekReady=null, remoteSeek=null, onToggleReady=null, onCueReady=null, remoteToggle=null, remoteCue=null, onTransportFire=null, isDriver=true, onNudgeReady=null, acNowRef=null, onBufferReady=null, barOneOffsetSec=0 }) {
   const [buf,setBuf]=useState(null),[name,setName]=useState(null),[play,setPlay]=useState(false);
   const [prog,setProg]=useState(0),[dur,setDur]=useState(0);
   const progRef=useRef(0); // mirror of prog for parent AnimatedZoomedWF without 60fps setState
@@ -4015,15 +4019,19 @@ function Deck({ id, ch, ctx:ac, color, local, remote, onChange, midi:mt, bpmResu
     positionedBufRef.current = buf;
     if (userMovedRef.current) return;                    // user played/seeked/cued already
     if (play) return;                                    // safety: never seek mid-playback
-    if (anchor < 0 || anchor >= buf.duration) return;    // safety: out-of-range
-    const newProg = anchor / buf.duration;
-    off.current     = anchor;
+    // Apply manual bar-1 override (whole-beat shift saved per-track in LS).
+    // Restores corrected anchor on reload of previously-shifted tracks.
+    const adjustedAnchor = anchor + (barOneOffsetSec || 0);
+    if (adjustedAnchor < 0 || adjustedAnchor >= buf.duration) return;
+    const newProg = adjustedAnchor / buf.duration;
+    off.current     = adjustedAnchor;
     progRef.current = newProg;
     setProg(newProg);
     onProgUpdate?.(newProg);
     console.log('[DECK]', id, 'auto-positioned to first downbeat at',
-      anchor.toFixed(3), 's (prog=', newProg.toFixed(4), ')');
-  }, [buf, bpmResult?.firstBar1AnchorSec, bpmResult?.analyzing, isDriver, play, id, onProgUpdate]);
+      adjustedAnchor.toFixed(3), 's (anchor=', anchor.toFixed(3),
+      '+ barOffset=', (barOneOffsetSec||0).toFixed(3), ', prog=', newProg.toFixed(4), ')');
+  }, [buf, bpmResult?.firstBar1AnchorSec, bpmResult?.analyzing, isDriver, play, id, onProgUpdate, barOneOffsetSec]);
   useEffect(()=>{ if(bpmResult?.bpm!=null) onChange?.("bpm", bpmResult.bpm); },[bpmResult?.bpm,onChange]);
   // Broadcast phase data so partner can phase-align when SYNC fires against a
   // partner-driven deck. Only the deck owner has these from the analyzer; the
@@ -5276,6 +5284,58 @@ export default function CollabMix({ initialPage = "landing", djName = null }) {
   const nudgeBpmA = (deltaClicks) => setBpmNudgeA((v) => v + deltaClicks);
   const resetBpmA = () => setBpmNudgeA(0);
 
+  // Manual bar-1 anchor override (integer beats, clamped ±5). When the
+  // analyzer's bar-phase detection picks the wrong beat of the bar (e.g.,
+  // Shadow Work-style "snare-on-3 louder than kick-on-1" patterns where
+  // phSc4 and phSc16 both still pick the snare bucket), the user can shift
+  // the anchor by whole beats to land on the real downbeat. Beat-aligned
+  // shifts are a no-op modulo beatPeriodSec, so sync math is unaffected.
+  // Keyed by wfA.name for per-track persistence, same convention as
+  // gridOffset / bpmNudge above.
+  const [barOneA, setBarOneA] = useState(0);
+  useEffect(() => {
+    if (!wfA?.name) return;
+    let saved = null;
+    try { saved = localStorage.getItem(`barOneOffset:${wfA.name}`); } catch (e) { console.warn('localStorage.getItem failed', `barOneOffset:${wfA.name}`, e); }
+    const parsed = saved ? parseInt(saved, 10) : 0;
+    setBarOneA(isFinite(parsed) ? parsed : 0);
+  }, [wfA?.name]);
+  useEffect(() => {
+    if (!wfA?.name) return;
+    try { localStorage.setItem(`barOneOffset:${wfA.name}`, String(barOneA)); } catch (e) { console.warn('localStorage.setItem failed', `barOneOffset:${wfA.name}`, e); }
+  }, [barOneA, wfA?.name]);
+  // Shift the bar-1 anchor by `delta` beats AND seek the playhead by the same
+  // delta. The grid moves with the anchor (firstDownbeatSec += offset × bps in
+  // AnimatedZoomedWF) and the playhead lands on the corrected downbeat so the
+  // visual marker stays aligned with where audio is playing.
+  const shiftBarOneA = (delta) => {
+    const bps = bpm.results['A']?.beatPeriodSec;
+    const dur = wfA?.dur;
+    setBarOneA((v) => {
+      const next = Math.max(-5, Math.min(5, v + delta));
+      if (next === v) return v;
+      if (bps && dur && seekFnsRef.current.A) {
+        const currentProg = progRefA.current || 0;
+        const newProg = Math.max(0, Math.min(1, currentProg + delta * bps / dur));
+        seekFnsRef.current.A(newProg);
+      }
+      return next;
+    });
+  };
+  const resetBarOneA = () => {
+    const bps = bpm.results['A']?.beatPeriodSec;
+    const dur = wfA?.dur;
+    setBarOneA((v) => {
+      if (v === 0) return 0;
+      if (bps && dur && seekFnsRef.current.A) {
+        const currentProg = progRefA.current || 0;
+        const newProg = Math.max(0, Math.min(1, currentProg - v * bps / dur));
+        seekFnsRef.current.A(newProg);
+      }
+      return 0;
+    });
+  };
+
   const [gridOffsetB, setGridOffsetB] = useState(0); // milliseconds
   const [bpmNudgeB, setBpmNudgeB] = useState(0);     // in 0.01-BPM clicks
   useEffect(() => {
@@ -5294,6 +5354,47 @@ export default function CollabMix({ initialPage = "landing", djName = null }) {
     if (!wfB?.name) return;
     try { localStorage.setItem(`bpmNudge:${wfB.name}`, String(bpmNudgeB)); } catch (e) { console.warn('localStorage.setItem failed', `bpmNudge:${wfB.name}`, e); }
   }, [bpmNudgeB, wfB?.name]);
+
+  // Manual bar-1 anchor override for Deck B (mirror of barOneA above).
+  const [barOneB, setBarOneB] = useState(0);
+  useEffect(() => {
+    if (!wfB?.name) return;
+    let saved = null;
+    try { saved = localStorage.getItem(`barOneOffset:${wfB.name}`); } catch (e) { console.warn('localStorage.getItem failed', `barOneOffset:${wfB.name}`, e); }
+    const parsed = saved ? parseInt(saved, 10) : 0;
+    setBarOneB(isFinite(parsed) ? parsed : 0);
+  }, [wfB?.name]);
+  useEffect(() => {
+    if (!wfB?.name) return;
+    try { localStorage.setItem(`barOneOffset:${wfB.name}`, String(barOneB)); } catch (e) { console.warn('localStorage.setItem failed', `barOneOffset:${wfB.name}`, e); }
+  }, [barOneB, wfB?.name]);
+  const shiftBarOneB = (delta) => {
+    const bps = bpm.results['B']?.beatPeriodSec;
+    const dur = wfB?.dur;
+    setBarOneB((v) => {
+      const next = Math.max(-5, Math.min(5, v + delta));
+      if (next === v) return v;
+      if (bps && dur && seekFnsRef.current.B) {
+        const currentProg = progRefB.current || 0;
+        const newProg = Math.max(0, Math.min(1, currentProg + delta * bps / dur));
+        seekFnsRef.current.B(newProg);
+      }
+      return next;
+    });
+  };
+  const resetBarOneB = () => {
+    const bps = bpm.results['B']?.beatPeriodSec;
+    const dur = wfB?.dur;
+    setBarOneB((v) => {
+      if (v === 0) return 0;
+      if (bps && dur && seekFnsRef.current.B) {
+        const currentProg = progRefB.current || 0;
+        const newProg = Math.max(0, Math.min(1, currentProg - v * bps / dur));
+        seekFnsRef.current.B(newProg);
+      }
+      return 0;
+    });
+  };
 
   // Library: track which deck is playing + metadata for recommendations
   const [playingTrack, setPlayingTrack] = useState(null);
@@ -6415,6 +6516,14 @@ export default function CollabMix({ initialPage = "landing", djName = null }) {
                     <div onDoubleClick={resetGridA} title="Double-click to reset" style={{ minWidth:44, textAlign:"center", height:18, lineHeight:"18px", padding:"0 4px", fontSize:8, fontFamily:"'DM Mono',monospace", color: gridOffsetA===0 ? "#ffffff44" : "#ef4444", background: gridOffsetA===0 ? "transparent" : "#ef444411", border: `1px solid ${gridOffsetA===0 ? "#ffffff14" : "#ef444433"}`, borderRadius:3, userSelect:"none" }}>{gridOffsetA>0?"+":""}{gridOffsetA}ms</div>
                     <button onClick={()=>nudgeGridA(5)} disabled={!wfA?.name} title="Shift grid 5ms later" style={{ height:18, width:18, padding:0, fontSize:10, fontFamily:"'DM Mono',monospace", background:"transparent", border:"1px solid #ffffff18", color:"#ffffff88", borderRadius:3, cursor:wfA?.name?"pointer":"default", outline:"none" }}>→</button>
                   </div>
+                  {/* Manual bar-1 anchor shift (whole beats, amber accent to
+                      distinguish from white ±5ms grid offset above). Shifts
+                      playhead AND grid by N beats and persists per-track. */}
+                  <div style={{ display:"flex", gap:2, alignItems:"center", opacity:wfA?.name?1:0.35 }}>
+                    <button onClick={()=>shiftBarOneA(-1)} disabled={!wfA?.name} title="Shift bar-1 anchor 1 beat earlier (and seek)" style={{ height:18, width:18, padding:0, fontSize:11, fontFamily:"'DM Mono',monospace", background:"transparent", border:"1px solid #f59e0b44", color:"#f59e0bcc", borderRadius:3, cursor:wfA?.name?"pointer":"default", outline:"none" }}>⟨</button>
+                    <div onDoubleClick={resetBarOneA} title="Double-click to reset bar-1 offset" style={{ minWidth:50, textAlign:"center", height:18, lineHeight:"18px", padding:"0 4px", fontSize:8, fontFamily:"'DM Mono',monospace", color: barOneA===0 ? "#ffffff44" : "#f59e0b", background: barOneA===0 ? "transparent" : "#f59e0b14", border: `1px solid ${barOneA===0 ? "#ffffff14" : "#f59e0b55"}`, borderRadius:3, userSelect:"none" }}>{barOneA>0?"+":""}{barOneA} beat{Math.abs(barOneA)===1?"":"s"}</div>
+                    <button onClick={()=>shiftBarOneA(1)} disabled={!wfA?.name} title="Shift bar-1 anchor 1 beat later (and seek)" style={{ height:18, width:18, padding:0, fontSize:11, fontFamily:"'DM Mono',monospace", background:"transparent", border:"1px solid #f59e0b44", color:"#f59e0bcc", borderRadius:3, cursor:wfA?.name?"pointer":"default", outline:"none" }}>⟩</button>
+                  </div>
                   <div style={{ display:"flex", gap:2, alignItems:"center", opacity:wfA?.name?1:0.35 }}>
                     <button onClick={()=>nudgeBpmA(-1)} disabled={!wfA?.name} title="Decrease BPM by 0.01" style={{ height:18, padding:"0 4px", fontSize:8, fontFamily:"'DM Mono',monospace", background:"transparent", border:"1px solid #ffffff18", color:"#ffffff88", borderRadius:3, cursor:wfA?.name?"pointer":"default", outline:"none" }}>BPM−</button>
                     <div onDoubleClick={resetBpmA} title="Double-click to reset" style={{ minWidth:60, textAlign:"center", height:18, lineHeight:"18px", padding:"0 4px", fontSize:8, fontFamily:"'DM Mono',monospace", color: bpmNudgeA===0 ? "#ffffff44" : "#ef4444", background: bpmNudgeA===0 ? "transparent" : "#ef444411", border: `1px solid ${bpmNudgeA===0 ? "#ffffff14" : "#ef444433"}`, borderRadius:3, userSelect:"none" }}>{bpmNudgeA>0?"+":""}{(bpmNudgeA*0.01).toFixed(2)} BPM</div>
@@ -6425,7 +6534,7 @@ export default function CollabMix({ initialPage = "landing", djName = null }) {
                     <button key={i} onClick={()=>setWfZoom(i)} style={{ height:18, padding:"0 7px", fontSize:8, fontFamily:"'DM Mono',monospace", letterSpacing:.5, background:wfZoom===i?"#C8A96E22":"transparent", border:`1px solid ${wfZoom===i?"#C8A96E88":"#ffffff18"}`, color:wfZoom===i?"#C8A96E":"#ffffff44", borderRadius:4, cursor:"pointer", outline:"none" }}>{lbl}</button>
                   ))}
                 </div>
-                <AnimatedZoomedWF bands={wfA} dur={wfA?.dur||0} progRef={progRefA} onSeek={seekDeckA} h={wfH} windowSec={WF_WINDOWS[wfZoom]} beatPhaseFrac={bpm.results["A"]?.beatPhaseFrac??null} beatPeriodSec={bpm.results["A"]?.beatPeriodSec??null} gridOffsetMs={gridOffsetA} bpmNudge={bpmNudgeA*0.01} deckColor="#7B61FF" rate={rateA}/>
+                <AnimatedZoomedWF bands={wfA} dur={wfA?.dur||0} progRef={progRefA} onSeek={seekDeckA} h={wfH} windowSec={WF_WINDOWS[wfZoom]} beatPhaseFrac={bpm.results["A"]?.beatPhaseFrac??null} beatPeriodSec={bpm.results["A"]?.beatPeriodSec??null} gridOffsetMs={gridOffsetA} barOneOffsetSec={barOneA * (bpm.results["A"]?.beatPeriodSec || 0)} bpmNudge={bpmNudgeA*0.01} deckColor="#7B61FF" rate={rateA}/>
               </div>
             )}
             {hasA && hasB && <div style={{ height:1, background:"#0d0d18" }}/>}
@@ -6447,7 +6556,20 @@ export default function CollabMix({ initialPage = "landing", djName = null }) {
                   <div style={{ width:5, height:5, borderRadius:"50%", background:"#00BFA5", boxShadow:"0 0 6px #00BFA5" }}/>
                   <span style={{ fontSize:9, fontFamily:"'DM Mono',monospace", fontWeight:700, color:"#00BFA588", letterSpacing:2 }}>B</span>
                 </div>
-                <AnimatedZoomedWF bands={wfB} dur={wfB?.dur||0} progRef={progRefB} onSeek={seekDeckB} h={wfH} windowSec={WF_WINDOWS[wfZoom]} beatPhaseFrac={bpm.results["B"]?.beatPhaseFrac??null} beatPeriodSec={bpm.results["B"]?.beatPeriodSec??null} gridOffsetMs={gridOffsetB} bpmNudge={bpmNudgeB*0.01} deckColor="#00BFA5" rate={rateB}/>
+                {/* Bar-1 anchor shift for Deck B — same controls as Deck A's
+                    header. Only the bar-1 buttons are per-deck (manual
+                    downbeat correction). The other adjustment controls
+                    (5ms grid offset, ±0.01 BPM nudge, zoom) live on Deck A's
+                    header only since they're typically used during pre-mix
+                    setup of the "next" track. */}
+                <div style={{ position:"absolute", top:6, right:10, zIndex:2, display:"flex", gap:6, alignItems:"center" }}>
+                  <div style={{ display:"flex", gap:2, alignItems:"center", opacity:wfB?.name?1:0.35 }}>
+                    <button onClick={()=>shiftBarOneB(-1)} disabled={!wfB?.name} title="Shift bar-1 anchor 1 beat earlier (and seek)" style={{ height:18, width:18, padding:0, fontSize:11, fontFamily:"'DM Mono',monospace", background:"transparent", border:"1px solid #f59e0b44", color:"#f59e0bcc", borderRadius:3, cursor:wfB?.name?"pointer":"default", outline:"none" }}>⟨</button>
+                    <div onDoubleClick={resetBarOneB} title="Double-click to reset bar-1 offset" style={{ minWidth:50, textAlign:"center", height:18, lineHeight:"18px", padding:"0 4px", fontSize:8, fontFamily:"'DM Mono',monospace", color: barOneB===0 ? "#ffffff44" : "#f59e0b", background: barOneB===0 ? "transparent" : "#f59e0b14", border: `1px solid ${barOneB===0 ? "#ffffff14" : "#f59e0b55"}`, borderRadius:3, userSelect:"none" }}>{barOneB>0?"+":""}{barOneB} beat{Math.abs(barOneB)===1?"":"s"}</div>
+                    <button onClick={()=>shiftBarOneB(1)} disabled={!wfB?.name} title="Shift bar-1 anchor 1 beat later (and seek)" style={{ height:18, width:18, padding:0, fontSize:11, fontFamily:"'DM Mono',monospace", background:"transparent", border:"1px solid #f59e0b44", color:"#f59e0bcc", borderRadius:3, cursor:wfB?.name?"pointer":"default", outline:"none" }}>⟩</button>
+                  </div>
+                </div>
+                <AnimatedZoomedWF bands={wfB} dur={wfB?.dur||0} progRef={progRefB} onSeek={seekDeckB} h={wfH} windowSec={WF_WINDOWS[wfZoom]} beatPhaseFrac={bpm.results["B"]?.beatPhaseFrac??null} beatPeriodSec={bpm.results["B"]?.beatPeriodSec??null} gridOffsetMs={gridOffsetB} barOneOffsetSec={barOneB * (bpm.results["B"]?.beatPeriodSec || 0)} bpmNudge={bpmNudgeB*0.01} deckColor="#00BFA5" rate={rateB}/>
               </div>
             )}
           </div>
@@ -6465,7 +6587,7 @@ export default function CollabMix({ initialPage = "landing", djName = null }) {
             {deckDrivers.A && <span style={{ fontSize:11, fontFamily:"'DM Sans',sans-serif", fontWeight:500, color:"#7B61FFaa", letterSpacing:.3 }}>{deckDrivers.A === session.name ? `${deckDrivers.A} (you)` : deckDrivers.A}</span>}
           </div>
           <div style={{ flex:1, overflow:"hidden", minHeight:0 }}>
-            <Deck id="A" ch={eng.current?.A} ctx={eng.current?.ctx} color="#7B61FF" local remote={pA} onChange={dh("A")} midi={midiEvt} bpmResult={bpm.results["A"]} bpmAnalyze={bpm.analyze} eqHi={eqA.hi} eqMid={eqA.mid} eqLo={eqA.lo} chanVol={eqA.vol} loadFromLibrary={libLoadA} onTrackInfo={handleTrackInfo} onSync={()=>handleSyncToggle("A")} syncReady={!!(bpm.results["B"]?.bpm || pB?.bpm)} syncRole={syncLocked ? (lastSlaveDeck === "A" ? "slave" : "master") : null} isMaster={masterDeck === "A"} onMasterToggle={handleMasterToggle} onLibraryTrackDrop={(trackId)=>{const t=lib.library.find(x=>x.id===trackId);if(t)handleLibLoad(t,"A");}} onProgUpdate={handleProgA} onWaveform={setWfA} onSeekReady={onDeckASeekReady} onToggleReady={onDeckAToggleReady} onCueReady={onDeckACueReady} onNudgeReady={onDeckANudgeReady} onTransportFire={handleTransportFire} isDriver={!deckDrivers.A || deckDrivers.A === session.name} acNowRef={acNowRef} onBufferReady={onDeckABufferReady}/>
+            <Deck id="A" ch={eng.current?.A} ctx={eng.current?.ctx} color="#7B61FF" local remote={pA} onChange={dh("A")} midi={midiEvt} bpmResult={bpm.results["A"]} bpmAnalyze={bpm.analyze} eqHi={eqA.hi} eqMid={eqA.mid} eqLo={eqA.lo} chanVol={eqA.vol} loadFromLibrary={libLoadA} onTrackInfo={handleTrackInfo} onSync={()=>handleSyncToggle("A")} syncReady={!!(bpm.results["B"]?.bpm || pB?.bpm)} syncRole={syncLocked ? (lastSlaveDeck === "A" ? "slave" : "master") : null} isMaster={masterDeck === "A"} onMasterToggle={handleMasterToggle} onLibraryTrackDrop={(trackId)=>{const t=lib.library.find(x=>x.id===trackId);if(t)handleLibLoad(t,"A");}} onProgUpdate={handleProgA} onWaveform={setWfA} onSeekReady={onDeckASeekReady} onToggleReady={onDeckAToggleReady} onCueReady={onDeckACueReady} onNudgeReady={onDeckANudgeReady} onTransportFire={handleTransportFire} isDriver={!deckDrivers.A || deckDrivers.A === session.name} acNowRef={acNowRef} onBufferReady={onDeckABufferReady} barOneOffsetSec={barOneA * (bpm.results["A"]?.beatPeriodSec || 0)}/>
           </div>
         </div>
 
@@ -6564,7 +6686,7 @@ export default function CollabMix({ initialPage = "landing", djName = null }) {
             {deckDrivers.B && <span style={{ fontSize:11, fontFamily:"'DM Sans',sans-serif", fontWeight:500, color:"#00BFA5aa", letterSpacing:.3 }}>{deckDrivers.B === session.name ? `${deckDrivers.B} (you)` : deckDrivers.B}</span>}
           </div>
           <div style={{ flex:1, overflow:"hidden", minHeight:0 }}>
-            <Deck id="B" ch={eng.current?.B} ctx={eng.current?.ctx} color="#00BFA5" local remote={pB} onChange={dh("B")} midi={midiEvt} bpmResult={bpm.results["B"]} bpmAnalyze={bpm.analyze} eqHi={eqB.hi} eqMid={eqB.mid} eqLo={eqB.lo} chanVol={eqB.vol} loadFromLibrary={libLoadB} onTrackInfo={handleTrackInfo} onSync={()=>handleSyncToggle("B")} syncReady={!!(bpm.results["A"]?.bpm || pA?.bpm)} syncRole={syncLocked ? (lastSlaveDeck === "B" ? "slave" : "master") : null} isMaster={masterDeck === "B"} onMasterToggle={handleMasterToggle} onLibraryTrackDrop={(trackId)=>{const t=lib.library.find(x=>x.id===trackId);if(t)handleLibLoad(t,"B");}} onProgUpdate={handleProgB} onWaveform={setWfB} onSeekReady={onDeckBSeekReady} onToggleReady={onDeckBToggleReady} onCueReady={onDeckBCueReady} onNudgeReady={onDeckBNudgeReady} onTransportFire={handleTransportFire} isDriver={!deckDrivers.B || deckDrivers.B === session.name} acNowRef={acNowRef} onBufferReady={onDeckBBufferReady}/>
+            <Deck id="B" ch={eng.current?.B} ctx={eng.current?.ctx} color="#00BFA5" local remote={pB} onChange={dh("B")} midi={midiEvt} bpmResult={bpm.results["B"]} bpmAnalyze={bpm.analyze} eqHi={eqB.hi} eqMid={eqB.mid} eqLo={eqB.lo} chanVol={eqB.vol} loadFromLibrary={libLoadB} onTrackInfo={handleTrackInfo} onSync={()=>handleSyncToggle("B")} syncReady={!!(bpm.results["A"]?.bpm || pA?.bpm)} syncRole={syncLocked ? (lastSlaveDeck === "B" ? "slave" : "master") : null} isMaster={masterDeck === "B"} onMasterToggle={handleMasterToggle} onLibraryTrackDrop={(trackId)=>{const t=lib.library.find(x=>x.id===trackId);if(t)handleLibLoad(t,"B");}} onProgUpdate={handleProgB} onWaveform={setWfB} onSeekReady={onDeckBSeekReady} onToggleReady={onDeckBToggleReady} onCueReady={onDeckBCueReady} onNudgeReady={onDeckBNudgeReady} onTransportFire={handleTransportFire} isDriver={!deckDrivers.B || deckDrivers.B === session.name} acNowRef={acNowRef} onBufferReady={onDeckBBufferReady} barOneOffsetSec={barOneB * (bpm.results["B"]?.beatPeriodSec || 0)}/>
           </div>
         </div>
 
