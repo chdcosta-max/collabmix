@@ -5665,7 +5665,18 @@ export default function CollabMix({ initialPage = "landing", djName = null }) {
 
   // BPM match + beat-phase alignment.
   // Slave = the deck the user clicked SYNC on (modified). Master = the OTHER deck.
-  const syncDecks = useCallback((slave, targetBPM) => {
+  // syncDecks(slave, targetBPM, phaseAlign=true)
+  // - phaseAlign=true (default): full sync engage — rate match + beat-phase
+  //   seek + Path C cross-correlation refinement. Used by handleSyncToggle,
+  //   handleTransportFire (scrub-resync), dh's play-start re-align.
+  // - phaseAlign=false: rate-only adjustment, no seek. Used by the
+  //   track-change effect so a freshly-loaded track on the slave deck keeps
+  //   its playhead at 0 — phase alignment is deferred to the play-start
+  //   re-align hook when the user actually presses play. Without this gate,
+  //   BPM-detection-completes-after-load would yank the slave to a
+  //   phase-aligned offset (looks "random" to the user — depends on the new
+  //   track's beatPhaseSec) within a couple seconds of loading.
+  const syncDecks = useCallback((slave, targetBPM, phaseAlign = true) => {
     const srcBPM = bpm.results[slave]?.bpm;
     console.log("[SYNC] triggered for deck", slave, "sourceBPM=", srcBPM, "targetBPM=", targetBPM);
     if (!srcBPM || !targetBPM) {
@@ -5688,6 +5699,7 @@ export default function CollabMix({ initialPage = "landing", djName = null }) {
     }
     console.log("[SYNC] applied rate=", rate);
 
+   if (phaseAlign) {
     // Phase alignment — fall back to partner-broadcast phase data when the
     // master deck is partner-driven and we have no local analyzer result.
     const master = slave==="A" ? "B" : "A";
@@ -5747,11 +5759,29 @@ export default function CollabMix({ initialPage = "landing", djName = null }) {
       const masterBuf = master === "A" ? bufA : bufB;
       if (slaveBuf && masterBuf) {
         const sr = slaveBuf.sampleRate;
-        const xcWindowSec = slaveBps * 4;                 // ±2 beats around current pos
+        // Read POST-SEEK slave position. The beat-phase seek above clamped
+        // newSlaveTime to [0, 1] before applying — using the unclamped
+        // variable for the cross-correlation window caused negative
+        // slaveStart values and "window out of buffer bounds" skips near
+        // track start (the most common engage scenario).
+        const postSeekSlaveProg = slave === "A" ? progRefA.current : progRefB.current;
+        const slaveCenterTime  = (postSeekSlaveProg || 0) * slaveDur;
+        const masterCenterTime = masterCurTime;
+        // Symmetric clamp: shrink left/right padding to the smallest amount
+        // available on BOTH decks. This preserves the "relative to playhead"
+        // structure between the two windows, so peakLag=0 still means
+        // "playheads aligned" regardless of how much padding we have.
+        const desiredHalf = (slaveBps * 4) / 2;            // ±2 beats nominal
+        const leftSec  = Math.min(desiredHalf, slaveCenterTime,  masterCenterTime);
+        const rightSec = Math.min(desiredHalf, slaveDur - slaveCenterTime, masterDur - masterCenterTime);
+        const xcWindowSec = leftSec + rightSec;
         const xcWinLen    = Math.round(xcWindowSec * sr);
-        const slaveStart  = Math.round((newSlaveTime  - xcWindowSec / 2) * sr);
-        const masterStart = Math.round((masterCurTime - xcWindowSec / 2) * sr);
-        if (slaveStart >= 0 && masterStart >= 0 &&
+        const slaveStart  = Math.round((slaveCenterTime  - leftSec) * sr);
+        const masterStart = Math.round((masterCenterTime - leftSec) * sr);
+        // Need at least 1.5 beats of audio for a reliable correlation —
+        // below that, the peak is more likely a fluke than a real lag.
+        if (xcWindowSec >= slaveBps * 1.5 &&
+            slaveStart >= 0 && masterStart >= 0 &&
             slaveStart  + xcWinLen <= slaveBuf.length &&
             masterStart + xcWinLen <= masterBuf.length) {
           const slaveAudio  = slaveBuf.getChannelData(0).subarray(slaveStart,  slaveStart  + xcWinLen);
@@ -5786,7 +5816,11 @@ export default function CollabMix({ initialPage = "landing", djName = null }) {
               " peakLagHops=" + peakLag +
               " peakRatio=" + peakRatio.toFixed(2));
           } else {
-            const correctedSlaveTime = newSlaveTime + peakSec;
+            // Use slaveCenterTime (the actual post-seek slave position), not
+            // the unclamped newSlaveTime. newSlaveTime could be negative if
+            // the beat-phase math wanted to retreat before track start;
+            // slaveCenterTime reflects where slave really is after clamp.
+            const correctedSlaveTime = slaveCenterTime + peakSec;
             const correctedSlaveProg = Math.max(0, Math.min(1, correctedSlaveTime / slaveDur));
             seekFnsRef.current[slave]?.(correctedSlaveProg);
             console.log("[SYNC-XCORR] peak/RMS=" + peakRatio.toFixed(2) +
@@ -5794,15 +5828,20 @@ export default function CollabMix({ initialPage = "landing", djName = null }) {
               "ms (newProg=" + correctedSlaveProg.toFixed(4) + ")");
           }
         } else {
-          console.log("[SYNC-XCORR] window out of buffer bounds, skipped" +
-            " (slaveStart=" + slaveStart + ", masterStart=" + masterStart +
-            ", winLen=" + xcWinLen + ")");
+          console.log("[SYNC-XCORR] window unusable, skipped" +
+            " (winSec=" + xcWindowSec.toFixed(3) +
+            " leftSec=" + leftSec.toFixed(3) +
+            " rightSec=" + rightSec.toFixed(3) +
+            " minBeats=" + (slaveBps * 1.5).toFixed(3) +
+            " slaveStart=" + slaveStart + " masterStart=" + masterStart +
+            " winLen=" + xcWinLen + ")");
         }
       } else {
         console.log("[SYNC-XCORR] bufRefs not available, skipped" +
           " (haveSlaveBuf=" + !!slaveBuf + ", haveMasterBuf=" + !!masterBuf + ")");
       }
     }
+   } // end if (phaseAlign)
 
     // Broadcast rate so partner mirrors the speed change. Mirrors lsRef pattern
     // used elsewhere for deck_update so sync_response carries rate too.
@@ -6029,8 +6068,8 @@ export default function CollabMix({ initialPage = "landing", djName = null }) {
       }
       if (prevRef.current === naturalBpm) continue;
       prevRef.current = naturalBpm;
-      console.log(`[SYNC] track changed on deck ${deck} while locked — re-aligning to session tempo ${tempo.toFixed(2)}`);
-      syncDecks(deck, tempo);
+      console.log(`[SYNC] track changed on deck ${deck} while locked — rate-only re-rate to session tempo ${tempo.toFixed(2)} (phase deferred to play-start)`);
+      syncDecks(deck, tempo, false);  // rate-only — keep playhead at 0; play-start hook handles phase
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [syncLocked, bpmAValue, bpmBValue, pA?.bpm, pB?.bpm]);
