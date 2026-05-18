@@ -456,8 +456,14 @@ self.onmessage=function(e){
     const s=f-phScWin<0?0:f-phScWin, e=f+phScWin>=nf?nf-1:f+phScWin;
     let acc=0;
     for(let k=s;k<=e;k++){
-      const ok=onK[k]>0?onK[k]:0;
-      acc+=ok*envK[k];
+      // Kick-exclusive onset: onK − onP, clamped to ≥0. The block comment
+      // above describes this as the scoring rule; the prior implementation
+      // dropped the subtraction and used onK alone, so beats with kick+
+      // snare bleed (e.g., Shadow Work's beat 3) scored higher than
+      // kick-only beats (beat 1). Restoring the subtraction lets the
+      // punch-band signal cancel snare-bleed energy at scoring time.
+      const okEx=(onK[k]-onP[k])>0?(onK[k]-onP[k]):0;
+      acc+=okEx*envK[k];
     }
     phSc[i%4]+=acc;
   }
@@ -523,7 +529,7 @@ self.onmessage=function(e){
   }
 
   // Diagnostic — remove once Issue 1 is closed.
-  console.log('[phase] phSc:',phSc.map(x=>x.toFixed(4)),'bestPh:',bestPh,
+  console.log('[phase] phSc kick-exclusive:',phSc.map(x=>x.toFixed(4)),'bestPh:',bestPh,
     'spread/peak:',(phSc.length?((Math.max(...phSc)-Math.min(...phSc))/(Math.max(...phSc)||1)).toFixed(3):'NA'),
     'firstBeatDpIdx:',firstBeatDpIdx,
     'dpBeats.length:',dpBeats.length,
