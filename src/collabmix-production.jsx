@@ -3322,25 +3322,39 @@ function AnimatedZoomedWF({ bands, dur, progRef, onSeek, h=96, windowSec=8, beat
     return()=>{cancelAnimationFrame(raf.current); ro.disconnect();};
   },[h,windowSec,progRef]);
 
-  // Drag-only seek: mousedown arms dragging, mousemove (while held) scrubs,
-  // mouseup releases. A bare click without movement does nothing — prevents
-  // accidental seeks when the user just looks at the big waveform. The small
-  // per-deck WF retains click-to-seek for quick navigation.
+  // Drag-only seek with ANCHOR-based tracking (Rekordbox-style). Mousedown
+  // captures both the cursor X and the prog AT THAT MOMENT; mousemove computes
+  // a NEW prog from those anchors plus pixel delta. This breaks the feedback
+  // loop in the prior implementation, where each move recomputed "track
+  // position under cursor" against the just-scrolled waveform — the waveform
+  // shift between frames invalidated the cursor's mapping, amplifying motion
+  // and feeling too sensitive. With anchored math, 1px of mouse movement
+  // always equals (windowSec / canvasWidth) seconds of seek, predictable.
   useEffect(()=>{
     const canvas=ref.current; if(!canvas) return;
     let dragging=false;
-    const seekAt=(clientX)=>{
-      const b=bandsRef.current;
-      if(!seekRef.current||!durRef.current||!b?.bass?.length) return;
-      const r=canvas.getBoundingClientRect(), W=r.width, mouseX=clientX-r.left;
-      const len=b.bass.length;
-      const viewPx=(windowSec/durRef.current)*len;
-      const srcX=(progRef?.current??0)*len-viewPx/2;
-      seekRef.current(Math.max(0,Math.min(1,(srcX+mouseX/W*viewPx)/len)));
+    let mouseXAtDown=0;
+    let progAtDown=0;
+    let widthAtDown=0;
+    const onDown=(e)=>{
+      if(!seekRef.current||!durRef.current) return;
+      const r=canvas.getBoundingClientRect();
+      dragging=true;
+      mouseXAtDown=e.clientX;
+      progAtDown=progRef?.current ?? 0;
+      widthAtDown=r.width;
+      e.preventDefault();
     };
-    const onDown=(e)=>{ dragging=true; e.preventDefault(); };
-    const onMove=(e)=>{ if(dragging) seekAt(e.clientX); };
-    const onUp  =()=>{ dragging=false; };
+    const onMove=(e)=>{
+      if(!dragging||!seekRef.current||!durRef.current||!widthAtDown) return;
+      const deltaPx=e.clientX-mouseXAtDown;
+      // (deltaPx / canvasWidth) is the fraction of the visible window the
+      // cursor has traversed; × (windowSec / dur) converts that to a
+      // fraction of the whole track. Added to the captured progAtDown.
+      const newProg=progAtDown+(deltaPx/widthAtDown)*(windowSec/durRef.current);
+      seekRef.current(Math.max(0,Math.min(1,newProg)));
+    };
+    const onUp=()=>{ dragging=false; };
     canvas.addEventListener('mousedown',onDown);
     window.addEventListener('mousemove',onMove);
     window.addEventListener('mouseup',onUp);
@@ -4196,11 +4210,16 @@ function Deck({ id, ch, ctx:ac, color, local, remote, onChange, midi:mt, bpmResu
       {/* ── TRANSPORT ── */}
       <div style={{display:"flex", alignItems:"center", gap:6, padding:"8px 12px", borderBottom:BD}}>
         <button onClick={(e)=>{ if(local&&cue) cue(); else if(remoteCue) remoteCue(); }} disabled={!cueEnabled} style={{height:48,padding:"0 12px",background:"#111118",border:`1px solid ${cueEnabled?"#2a2a38":"#1e1e28"}`,color:cueEnabled?"#C8A96E":"#2a2a38",borderRadius:7,cursor:cueEnabled?"pointer":"default",fontFamily:"'DM Mono',monospace",fontSize:10,fontWeight:700,letterSpacing:1.5,outline:"none",flexShrink:0}}>CUE</button>
-        <button onClick={local?()=>seek(Math.max(0,prog-.005)):undefined} disabled={!local} style={{height:48,width:36,background:"#111118",border:"1px solid #1e1e28",color:local?"#888898":"#2a2a38",borderRadius:6,cursor:local?"pointer":"default",fontFamily:"'DM Mono',monospace",fontSize:13,outline:"none"}}>◂◂</button>
+        {/* Skip-by-one-beat arrows. beatPeriodSec/dur gives the fraction of
+            the track corresponding to a single beat; falls back to 0.005 (the
+            old fixed 0.5%-of-track step) when BPM hasn't been detected yet.
+            Old fixed step landed at 1.8s = ~3.6 beats on a 6-min track at
+            120 BPM, which the user described as "jumping multiple beats." */}
+        <button onClick={local?()=>{const step=(bpmResult?.beatPeriodSec&&dur)?(bpmResult.beatPeriodSec/dur):0.005;seek(Math.max(0,prog-step));}:undefined} disabled={!local} title="Skip back 1 beat" style={{height:48,width:36,background:"#111118",border:"1px solid #1e1e28",color:local?"#888898":"#2a2a38",borderRadius:6,cursor:local?"pointer":"default",fontFamily:"'DM Mono',monospace",fontSize:13,outline:"none"}}>◂◂</button>
         <button onClick={(e)=>{ if(local&&toggle) toggle(); else if(remoteToggle) remoteToggle(); }} disabled={!enabled} style={{flex:1,height:48,background:playVisual?color+"33":(enabled?"#1a1a26":"#141420"),border:`2px solid ${playVisual?color:(enabled?color+"66":color+"22")}`,color:playVisual?color:(enabled?color:color+"44"),borderRadius:8,cursor:enabled?"pointer":"default",fontSize:24,fontWeight:600,display:"flex",alignItems:"center",justifyContent:"center",boxShadow:playVisual?`0 0 24px ${color}55`:"none",outline:"none",transition:"all .15s"}}>
           {playVisual?"⏸":"▶"}
         </button>
-        <button onClick={local?()=>seek(Math.min(1,prog+.005)):undefined} disabled={!local} style={{height:48,width:36,background:"#111118",border:"1px solid #1e1e28",color:local?"#888898":"#2a2a38",borderRadius:6,cursor:local?"pointer":"default",fontFamily:"'DM Mono',monospace",fontSize:13,outline:"none"}}>▸▸</button>
+        <button onClick={local?()=>{const step=(bpmResult?.beatPeriodSec&&dur)?(bpmResult.beatPeriodSec/dur):0.005;seek(Math.min(1,prog+step));}:undefined} disabled={!local} title="Skip forward 1 beat" style={{height:48,width:36,background:"#111118",border:"1px solid #1e1e28",color:local?"#888898":"#2a2a38",borderRadius:6,cursor:local?"pointer":"default",fontFamily:"'DM Mono',monospace",fontSize:13,outline:"none"}}>▸▸</button>
         {onMasterToggle&&(
           <button
             onClick={()=>onMasterToggle(id)}
@@ -5763,6 +5782,23 @@ export default function CollabMix({ initialPage = "landing", djName = null }) {
   const dh = (id) => (field, value) => {
     if (field === "playing") {
       deckPlayStartRef.current[id] = value ? Date.now() : null;
+      // When the SLAVE deck transitions to play AND sync is engaged, re-run
+      // alignment. Engaging SYNC while paused at prog=0 leaves slaveCurTime=0,
+      // so the phase-alignment seek gets clamped to [0,1] and the slave can
+      // end up off-beat by up to ±0.5 beat (clamp eats negative offsets).
+      // Re-running ~50ms after play start gives positive playback positions
+      // to work with, so the seek can move freely in either direction and
+      // beat alignment lands cleanly. No-op if BPM data not ready or sync
+      // metadata absent.
+      if (value && syncLocked && lastSlaveDeckRef.current === id) {
+        const target = sessionTempoRef.current;
+        if (target) {
+          setTimeout(() => {
+            console.log("[SYNC] play-start re-align for slave", id, "target=", target.toFixed(2));
+            syncDecks(id, target);
+          }, 50);
+        }
+      }
     }
     if (field === "rate") {
       if (id === "A") setRateA(value);
