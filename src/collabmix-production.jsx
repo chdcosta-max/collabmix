@@ -4303,7 +4303,12 @@ function Deck({ id, ch, ctx:ac, color, local, remote, onChange, midi:mt, bpmResu
         )}
         {onSync&&(()=>{
           const isAnalyzing = !!buf && !bpmResult?.bpm && !!bpmResult?.analyzing;
-          const canSync = !!buf && !!bpmResult?.bpm && syncReady;
+          // syncReady (other-deck-has-BPM) is intentionally NOT in canSync.
+          // The button stays clickable as soon as THIS deck is ready; if the
+          // other deck has no BPM at click time, handleSyncToggle bails with
+          // a "no master BPM" log (graceful no-op). User can click again
+          // once the second track is analyzed.
+          const canSync = !!buf && !!bpmResult?.bpm;
           const isSlave  = syncRole === "slave";
           const isMasterRole = syncRole === "master";
           // SYNC is a global engaged-or-not toggle reachable from either deck.
@@ -4325,7 +4330,7 @@ function Deck({ id, ch, ctx:ac, color, local, remote, onChange, midi:mt, bpmResu
             : !buf             ? "Load a track"
             : isAnalyzing      ? "Analyzing BPM…"
             : !bpmResult?.bpm  ? "Waiting for BPM"
-            : !syncReady       ? "Other deck has no BPM yet"
+            : !syncReady       ? "Load a track on the other deck to enable sync"
             :                    "Engage SYNC (this deck syncs to master)";
           return (
             <button
@@ -4980,6 +4985,38 @@ export default function CollabMix({ initialPage = "landing", djName = null }) {
     tick();
     return () => cancelAnimationFrame(rafId);
   }, []);
+
+  // ── TEMPORARY DIAGNOSTIC for visual grid phasing under sync ──
+  // When sync engages, capture per-frame samples (acNow, pA, pB, delta in ms)
+  // for ~1 second, then dump to console.table. Lets us determine whether the
+  // visible beat-grid phasing is sub-pixel rounding (constant delta ± noise),
+  // periodic math drift (sinusoidal delta), or frame-skip variance (spikes).
+  // REMOVE THIS BLOCK once Issue B is diagnosed and fixed.
+  useEffect(() => {
+    if (!syncLocked) return;
+    const startT = performance.now();
+    const samples = [];
+    let rafId;
+    const tick = () => {
+      const elapsed = performance.now() - startT;
+      if (elapsed > 1000) {
+        console.log("[GRID-DIAG] 1s sample window complete, N=" + samples.length);
+        console.table(samples);
+        return;
+      }
+      const durRefVal = wfA?.dur || 1;
+      samples.push({
+        tMs: +elapsed.toFixed(2),
+        acNow: +(acNowRef.current ?? 0).toFixed(5),
+        pA: +progRefA.current.toFixed(6),
+        pB: +progRefB.current.toFixed(6),
+        deltaMs: +((progRefA.current - progRefB.current) * durRefVal * 1000).toFixed(2),
+      });
+      rafId = requestAnimationFrame(tick);
+    };
+    rafId = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(rafId);
+  }, [syncLocked, wfA]);
   const seekFnsRef = useRef({ A:null, B:null });
   const toggleFnsRef = useRef({ A:null, B:null });
   const cueFnsRef = useRef({ A:null, B:null });
