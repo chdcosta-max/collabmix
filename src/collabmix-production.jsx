@@ -3624,7 +3624,7 @@ function Knob({ v, set, min=-12, max=12, ctr=0, label, color="#C8A96E", size=38,
 // ── Deck ─────────────────────────────────────────────────────
 const HOT_CUE_COLORS=["#C8A96E","#ef4444","#22c55e","#f59e0b"];
 
-function Deck({ id, ch, ctx:ac, color, local, remote, onChange, midi:mt, bpmResult, bpmAnalyze, eqHi=0, eqMid=0, eqLo=0, chanVol=1, loadFromLibrary=null, onTrackInfo=null, onSync=null, syncReady=true, syncRole=null, isMaster=false, onMasterToggle=null, onLibraryTrackDrop=null, onProgUpdate=null, onWaveform=null, onSeekReady=null, remoteSeek=null, onToggleReady=null, onCueReady=null, remoteToggle=null, remoteCue=null, onTransportFire=null, isDriver=true, onNudgeReady=null, acNowRef=null }) {
+function Deck({ id, ch, ctx:ac, color, local, remote, onChange, midi:mt, bpmResult, bpmAnalyze, eqHi=0, eqMid=0, eqLo=0, chanVol=1, loadFromLibrary=null, onTrackInfo=null, onSync=null, syncReady=true, syncRole=null, isMaster=false, onMasterToggle=null, onLibraryTrackDrop=null, onProgUpdate=null, onWaveform=null, onSeekReady=null, remoteSeek=null, onToggleReady=null, onCueReady=null, remoteToggle=null, remoteCue=null, onTransportFire=null, isDriver=true, onNudgeReady=null, acNowRef=null, onBufferReady=null }) {
   const [buf,setBuf]=useState(null),[name,setName]=useState(null),[play,setPlay]=useState(false);
   const [prog,setProg]=useState(0),[dur,setDur]=useState(0);
   const progRef=useRef(0); // mirror of prog for parent AnimatedZoomedWF without 60fps setState
@@ -3968,6 +3968,11 @@ function Deck({ id, ch, ctx:ac, color, local, remote, onChange, midi:mt, bpmResu
   useEffect(()=>{onToggleReady?.(toggle);},[toggle,onToggleReady]);
   useEffect(()=>{onCueReady?.(cue);},[cue,onCueReady]);
   useEffect(()=>{onNudgeReady?.(nudgeRate);},[nudgeRate,onNudgeReady]);
+  // Path C: register THE REF (not the buffer) with the parent — so the
+  // cross-correlation block in syncDecks pulls the current buffer at call
+  // time regardless of subsequent loads. bufRef is the already-existing
+  // mirror updated via useEffect on [buf].
+  useEffect(()=>{onBufferReady?.(bufRef);},[onBufferReady]);
   useEffect(()=>{ if(bpmResult?.bpm!=null) onChange?.("bpm", bpmResult.bpm); },[bpmResult?.bpm,onChange]);
   // Broadcast phase data so partner can phase-align when SYNC fires against a
   // partner-driven deck. Only the deck owner has these from the analyzer; the
@@ -4872,6 +4877,130 @@ function Lobby({ onJoin, djName = null }) {
   );
 }
 
+// ── Sync cross-correlation helpers (Path C) ───────────────────
+// Kick-band envelope: 40-200 Hz bandpass via cascaded one-pole IIR
+// (highpass-via-subtraction at 40, lowpass at 200), then half-wave
+// rectify, then lowpass smooth at 30 to get a positive envelope
+// suitable for cross-correlation. Coefficient form matches the
+// existing dphase()/bpm-worker filters: a = exp(-2π fc / sr).
+function _xcorr_kickEnvelope(data, sr) {
+  const aHP  = Math.exp(-2 * Math.PI * 40  / sr);
+  const aLP  = Math.exp(-2 * Math.PI * 200 / sr);
+  const aEnv = Math.exp(-2 * Math.PI * 30  / sr);
+  const env = new Float32Array(data.length);
+  let lpHP = 0, lpBand = 0, lpEnv = 0;
+  for (let i = 0; i < data.length; i++) {
+    const x = data[i];
+    lpHP = aHP * lpHP + (1 - aHP) * x;
+    const hp = x - lpHP;
+    lpBand = aLP * lpBand + (1 - aLP) * hp;
+    const rect = lpBand > 0 ? lpBand : 0;
+    lpEnv = aEnv * lpEnv + (1 - aEnv) * rect;
+    env[i] = lpEnv;
+  }
+  return env;
+}
+
+function _xcorr_downsample(arr, hop) {
+  const n = Math.floor(arr.length / hop);
+  const out = new Float32Array(n);
+  for (let i = 0; i < n; i++) out[i] = arr[i * hop];
+  return out;
+}
+
+// In-place iterative Cooley-Tukey radix-2 FFT. Bit-reversal + butterflies.
+// Public-domain reference algorithm (Cooley & Tukey 1965). Re/im are
+// Float32Array, length must be a power of 2.
+function _xcorr_fft(re, im) {
+  const n = re.length;
+  for (let i = 1, j = 0; i < n; i++) {
+    let bit = n >> 1;
+    for (; j & bit; bit >>= 1) j ^= bit;
+    j ^= bit;
+    if (i < j) {
+      const tRe = re[i]; re[i] = re[j]; re[j] = tRe;
+      const tIm = im[i]; im[i] = im[j]; im[j] = tIm;
+    }
+  }
+  for (let len = 2; len <= n; len <<= 1) {
+    const half = len >> 1;
+    const ang = -2 * Math.PI / len;
+    const wRe = Math.cos(ang), wIm = Math.sin(ang);
+    for (let i = 0; i < n; i += len) {
+      let curRe = 1, curIm = 0;
+      for (let k = 0; k < half; k++) {
+        const a = i + k;
+        const b = a + half;
+        const xRe = re[b] * curRe - im[b] * curIm;
+        const xIm = re[b] * curIm + im[b] * curRe;
+        re[b] = re[a] - xRe;
+        im[b] = im[a] - xIm;
+        re[a] += xRe;
+        im[a] += xIm;
+        const newRe = curRe * wRe - curIm * wIm;
+        curIm = curRe * wIm + curIm * wRe;
+        curRe = newRe;
+      }
+    }
+  }
+}
+
+function _xcorr_ifft(re, im) {
+  const n = re.length;
+  for (let i = 0; i < n; i++) im[i] = -im[i];
+  _xcorr_fft(re, im);
+  for (let i = 0; i < n; i++) {
+    re[i] /= n;
+    im[i] = -im[i] / n;
+  }
+}
+
+function _xcorr_nextPow2(n) {
+  let p = 1;
+  while (p < n) p <<= 1;
+  return p;
+}
+
+// Cross-correlate two real-valued signals via FFT. Zero-padded to avoid
+// circular wrap-around. Returns the lag (signed, in samples of the input
+// arrays) where the two signals best align, along with the peak amplitude
+// and the RMS of the correlation output for confidence gating.
+//
+// Convention (verified with concrete examples below): if a's distinctive
+// feature is at index pA and b's is at index pB, the peak lag is pB - pA.
+//   - peakLag > 0 → b's pattern arrives LATER than a's (b is "behind" in
+//     time, needs to advance to catch up).
+//   - peakLag < 0 → b's pattern arrives EARLIER (b is "ahead", needs to
+//     retreat).
+function _xcorr_crossCorrelate(a, b) {
+  const n = _xcorr_nextPow2(a.length + b.length);
+  const aRe = new Float32Array(n), aIm = new Float32Array(n);
+  const bRe = new Float32Array(n), bIm = new Float32Array(n);
+  for (let i = 0; i < a.length; i++) aRe[i] = a[i];
+  for (let i = 0; i < b.length; i++) bRe[i] = b[i];
+  _xcorr_fft(aRe, aIm);
+  _xcorr_fft(bRe, bIm);
+  // C = A * conj(B): real cross-correlation in frequency domain
+  const cRe = new Float32Array(n), cIm = new Float32Array(n);
+  for (let i = 0; i < n; i++) {
+    cRe[i] = aRe[i] * bRe[i] + aIm[i] * bIm[i];
+    cIm[i] = aIm[i] * bRe[i] - aRe[i] * bIm[i];
+  }
+  _xcorr_ifft(cRe, cIm);
+  let peakIdx = 0, peakVal = -Infinity, sumSq = 0;
+  for (let i = 0; i < n; i++) {
+    const v = cRe[i];
+    const mag = v < 0 ? -v : v;
+    sumSq += v * v;
+    if (mag > peakVal) { peakVal = mag; peakIdx = i; }
+  }
+  const rmsVal = Math.sqrt(sumSq / n) || 1e-9;
+  // Negative lags wrap around to high indices after IFFT — fold back to
+  // signed range [-n/2, n/2).
+  const peakLag = peakIdx > n / 2 ? peakIdx - n : peakIdx;
+  return { peakLag, peakVal, rmsVal, n };
+}
+
 // ── MAIN APP ─────────────────────────────────────────────────
 export default function CollabMix({ initialPage = "landing", djName = null }) {
   const [page, setPage]         = useState(initialPage); // "landing"|"lobby"|"session"
@@ -5022,6 +5151,14 @@ export default function CollabMix({ initialPage = "landing", djName = null }) {
   const onDeckBCueReady = useCallback((fn) => { cueFnsRef.current.B = fn; }, []);
   const onDeckANudgeReady = useCallback((fn) => { nudgeFnsRef.current.A = fn; }, []);
   const onDeckBNudgeReady = useCallback((fn) => { nudgeFnsRef.current.B = fn; }, []);
+  // Path C: each Deck registers its internal `bufRef` (the AudioBuffer mirror)
+  // via onBufferReady so the cross-correlation block in syncDecks can pull
+  // raw samples for sub-beat alignment. We store the REF itself (not the
+  // buffer) so the cross-correlator sees the current track after any later
+  // load(), without re-registration.
+  const bufRefs = useRef({ A:null, B:null });
+  const onDeckABufferReady = useCallback((ref) => { bufRefs.current.A = ref; }, []);
+  const onDeckBBufferReady = useCallback((ref) => { bufRefs.current.B = ref; }, []);
   const seekDeckA = useCallback((p) => { seekFnsRef.current.A?.(p); }, []);
   const seekDeckB = useCallback((p) => { seekFnsRef.current.B?.(p); }, []);
   // Test helper — expose nudge on window so we can drive it from the
@@ -5596,6 +5733,75 @@ export default function CollabMix({ initialPage = "landing", djName = null }) {
       const newSlaveBeatPos = (newSlaveTime - slaveBphs) / slaveBps;
       const newSlaveBeatFrac = newSlaveBeatPos - Math.floor(newSlaveBeatPos);
       console.log("[SYNC] beat phase after: master=", masterBeatFrac.toFixed(3), "slave=", newSlaveBeatFrac.toFixed(3), "(in beats)");
+
+      // ── Path C: cross-correlation refinement ────────────────────────
+      // After beat-phase seek lands slave near master's beat, run a short
+      // kick-band cross-correlation on the actual audio to fine-tune
+      // alignment. Compensates for per-track beatPhaseSec misdetection
+      // (e.g., snare-mistaken-for-kick, wrong-beat-of-bar). Silent fallback
+      // on low confidence so breakdowns / ambient passages don't introduce
+      // spurious corrections.
+      const bufA = bufRefs.current?.A?.current;
+      const bufB = bufRefs.current?.B?.current;
+      const slaveBuf  = slave  === "A" ? bufA : bufB;
+      const masterBuf = master === "A" ? bufA : bufB;
+      if (slaveBuf && masterBuf) {
+        const sr = slaveBuf.sampleRate;
+        const xcWindowSec = slaveBps * 4;                 // ±2 beats around current pos
+        const xcWinLen    = Math.round(xcWindowSec * sr);
+        const slaveStart  = Math.round((newSlaveTime  - xcWindowSec / 2) * sr);
+        const masterStart = Math.round((masterCurTime - xcWindowSec / 2) * sr);
+        if (slaveStart >= 0 && masterStart >= 0 &&
+            slaveStart  + xcWinLen <= slaveBuf.length &&
+            masterStart + xcWinLen <= masterBuf.length) {
+          const slaveAudio  = slaveBuf.getChannelData(0).subarray(slaveStart,  slaveStart  + xcWinLen);
+          const masterAudio = masterBuf.getChannelData(0).subarray(masterStart, masterStart + xcWinLen);
+          const slaveEnv  = _xcorr_kickEnvelope(slaveAudio,  sr);
+          const masterEnv = _xcorr_kickEnvelope(masterAudio, sr);
+          const hopSamples = Math.max(1, Math.round(sr * 0.005));    // 5ms hop
+          const dsSlave  = _xcorr_downsample(slaveEnv,  hopSamples);
+          const dsMaster = _xcorr_downsample(masterEnv, hopSamples);
+          // crossCorrelate(a, b) with a=master, b=slave: peakLag is signed.
+          // peakLag > 0 → slave's pattern arrives LATER than master → slave
+          // is BEHIND → seek forward by +peakLag×hopSec. peakLag < 0 →
+          // slave is AHEAD → seek backward. correctedSlaveTime = newSlaveTime
+          // + peakSec works in either direction.
+          const { peakLag, peakVal, rmsVal, n: fftLen } = _xcorr_crossCorrelate(dsMaster, dsSlave);
+          const peakRatio = peakVal / rmsVal;
+          const hopSec    = hopSamples / sr;
+          const peakSec   = peakLag * hopSec;
+          const maxCorrection = slaveBps * 0.5;            // clamp ±0.5 beat
+          const CONFIDENCE_THRESHOLD = 2.0;
+          if (peakRatio < CONFIDENCE_THRESHOLD) {
+            console.log("[SYNC-XCORR] peak/RMS=" + peakRatio.toFixed(2) +
+              " < threshold " + CONFIDENCE_THRESHOLD +
+              " — skipped (fallback to beat-phase only)" +
+              " peakLagHops=" + peakLag +
+              " peakSec=" + (peakSec * 1000).toFixed(2) + "ms" +
+              " fftLen=" + fftLen);
+          } else if (Math.abs(peakSec) > maxCorrection) {
+            console.log("[SYNC-XCORR] |peakSec|=" + (Math.abs(peakSec) * 1000).toFixed(2) +
+              "ms > " + (maxCorrection * 1000).toFixed(0) + "ms cap" +
+              " — skipped (likely misdetection)" +
+              " peakLagHops=" + peakLag +
+              " peakRatio=" + peakRatio.toFixed(2));
+          } else {
+            const correctedSlaveTime = newSlaveTime + peakSec;
+            const correctedSlaveProg = Math.max(0, Math.min(1, correctedSlaveTime / slaveDur));
+            seekFnsRef.current[slave]?.(correctedSlaveProg);
+            console.log("[SYNC-XCORR] peak/RMS=" + peakRatio.toFixed(2) +
+              " applied: lag=" + peakLag + " hops, correction=" + (peakSec * 1000).toFixed(2) +
+              "ms (newProg=" + correctedSlaveProg.toFixed(4) + ")");
+          }
+        } else {
+          console.log("[SYNC-XCORR] window out of buffer bounds, skipped" +
+            " (slaveStart=" + slaveStart + ", masterStart=" + masterStart +
+            ", winLen=" + xcWinLen + ")");
+        }
+      } else {
+        console.log("[SYNC-XCORR] bufRefs not available, skipped" +
+          " (haveSlaveBuf=" + !!slaveBuf + ", haveMasterBuf=" + !!masterBuf + ")");
+      }
     }
 
     // Broadcast rate so partner mirrors the speed change. Mirrors lsRef pattern
@@ -6159,7 +6365,7 @@ export default function CollabMix({ initialPage = "landing", djName = null }) {
             {deckDrivers.A && <span style={{ fontSize:11, fontFamily:"'DM Sans',sans-serif", fontWeight:500, color:"#7B61FFaa", letterSpacing:.3 }}>{deckDrivers.A === session.name ? `${deckDrivers.A} (you)` : deckDrivers.A}</span>}
           </div>
           <div style={{ flex:1, overflow:"hidden", minHeight:0 }}>
-            <Deck id="A" ch={eng.current?.A} ctx={eng.current?.ctx} color="#7B61FF" local remote={pA} onChange={dh("A")} midi={midiEvt} bpmResult={bpm.results["A"]} bpmAnalyze={bpm.analyze} eqHi={eqA.hi} eqMid={eqA.mid} eqLo={eqA.lo} chanVol={eqA.vol} loadFromLibrary={libLoadA} onTrackInfo={handleTrackInfo} onSync={()=>handleSyncToggle("A")} syncReady={!!(bpm.results["B"]?.bpm || pB?.bpm)} syncRole={syncLocked ? (lastSlaveDeck === "A" ? "slave" : "master") : null} isMaster={masterDeck === "A"} onMasterToggle={handleMasterToggle} onLibraryTrackDrop={(trackId)=>{const t=lib.library.find(x=>x.id===trackId);if(t)handleLibLoad(t,"A");}} onProgUpdate={handleProgA} onWaveform={setWfA} onSeekReady={onDeckASeekReady} onToggleReady={onDeckAToggleReady} onCueReady={onDeckACueReady} onNudgeReady={onDeckANudgeReady} onTransportFire={handleTransportFire} isDriver={!deckDrivers.A || deckDrivers.A === session.name} acNowRef={acNowRef}/>
+            <Deck id="A" ch={eng.current?.A} ctx={eng.current?.ctx} color="#7B61FF" local remote={pA} onChange={dh("A")} midi={midiEvt} bpmResult={bpm.results["A"]} bpmAnalyze={bpm.analyze} eqHi={eqA.hi} eqMid={eqA.mid} eqLo={eqA.lo} chanVol={eqA.vol} loadFromLibrary={libLoadA} onTrackInfo={handleTrackInfo} onSync={()=>handleSyncToggle("A")} syncReady={!!(bpm.results["B"]?.bpm || pB?.bpm)} syncRole={syncLocked ? (lastSlaveDeck === "A" ? "slave" : "master") : null} isMaster={masterDeck === "A"} onMasterToggle={handleMasterToggle} onLibraryTrackDrop={(trackId)=>{const t=lib.library.find(x=>x.id===trackId);if(t)handleLibLoad(t,"A");}} onProgUpdate={handleProgA} onWaveform={setWfA} onSeekReady={onDeckASeekReady} onToggleReady={onDeckAToggleReady} onCueReady={onDeckACueReady} onNudgeReady={onDeckANudgeReady} onTransportFire={handleTransportFire} isDriver={!deckDrivers.A || deckDrivers.A === session.name} acNowRef={acNowRef} onBufferReady={onDeckABufferReady}/>
           </div>
         </div>
 
@@ -6258,7 +6464,7 @@ export default function CollabMix({ initialPage = "landing", djName = null }) {
             {deckDrivers.B && <span style={{ fontSize:11, fontFamily:"'DM Sans',sans-serif", fontWeight:500, color:"#00BFA5aa", letterSpacing:.3 }}>{deckDrivers.B === session.name ? `${deckDrivers.B} (you)` : deckDrivers.B}</span>}
           </div>
           <div style={{ flex:1, overflow:"hidden", minHeight:0 }}>
-            <Deck id="B" ch={eng.current?.B} ctx={eng.current?.ctx} color="#00BFA5" local remote={pB} onChange={dh("B")} midi={midiEvt} bpmResult={bpm.results["B"]} bpmAnalyze={bpm.analyze} eqHi={eqB.hi} eqMid={eqB.mid} eqLo={eqB.lo} chanVol={eqB.vol} loadFromLibrary={libLoadB} onTrackInfo={handleTrackInfo} onSync={()=>handleSyncToggle("B")} syncReady={!!(bpm.results["A"]?.bpm || pA?.bpm)} syncRole={syncLocked ? (lastSlaveDeck === "B" ? "slave" : "master") : null} isMaster={masterDeck === "B"} onMasterToggle={handleMasterToggle} onLibraryTrackDrop={(trackId)=>{const t=lib.library.find(x=>x.id===trackId);if(t)handleLibLoad(t,"B");}} onProgUpdate={handleProgB} onWaveform={setWfB} onSeekReady={onDeckBSeekReady} onToggleReady={onDeckBToggleReady} onCueReady={onDeckBCueReady} onNudgeReady={onDeckBNudgeReady} onTransportFire={handleTransportFire} isDriver={!deckDrivers.B || deckDrivers.B === session.name} acNowRef={acNowRef}/>
+            <Deck id="B" ch={eng.current?.B} ctx={eng.current?.ctx} color="#00BFA5" local remote={pB} onChange={dh("B")} midi={midiEvt} bpmResult={bpm.results["B"]} bpmAnalyze={bpm.analyze} eqHi={eqB.hi} eqMid={eqB.mid} eqLo={eqB.lo} chanVol={eqB.vol} loadFromLibrary={libLoadB} onTrackInfo={handleTrackInfo} onSync={()=>handleSyncToggle("B")} syncReady={!!(bpm.results["A"]?.bpm || pA?.bpm)} syncRole={syncLocked ? (lastSlaveDeck === "B" ? "slave" : "master") : null} isMaster={masterDeck === "B"} onMasterToggle={handleMasterToggle} onLibraryTrackDrop={(trackId)=>{const t=lib.library.find(x=>x.id===trackId);if(t)handleLibLoad(t,"B");}} onProgUpdate={handleProgB} onWaveform={setWfB} onSeekReady={onDeckBSeekReady} onToggleReady={onDeckBToggleReady} onCueReady={onDeckBCueReady} onNudgeReady={onDeckBNudgeReady} onTransportFire={handleTransportFire} isDriver={!deckDrivers.B || deckDrivers.B === session.name} acNowRef={acNowRef} onBufferReady={onDeckBBufferReady}/>
           </div>
         </div>
 
