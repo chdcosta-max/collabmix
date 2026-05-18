@@ -2932,6 +2932,13 @@ function AnimatedZoomedWF({ bands, dur, progRef, onSeek, h=96, windowSec=8, beat
   // so without this the draw loop closure would hold a stale (initial) bands value
   // and never pick up new arrays when a track finishes analyzing.
   const bandsRef=useRef(bands);
+  // While the user is drag-scrubbing the waveform, the draw loop reads
+  // dragProgRef.current INSTEAD of progRef.current. This decouples the
+  // displayed playhead from the audio position during a drag — the audio
+  // keeps playing at its real position (no source thrashing), while the
+  // canvas shows where the cursor is. On mouseup the drag handler calls
+  // seek() once and clears this ref, returning the display to live audio.
+  const dragProgRef=useRef(null);
   // Cached per-track max of bass-weighted env (0.7b+0.2m+0.1h) across the
   // full 24k source columns. Used to renormalize the per-column env in
   // Pass 2 so the loudest column on the track maps to 1.0 after the
@@ -2986,7 +2993,8 @@ function AnimatedZoomedWF({ bands, dur, progRef, onSeek, h=96, windowSec=8, beat
       if(!ctx) return;
 
       const dur2=durRef.current;
-      const prog2=progRef?.current??0;
+      // Drag overlay takes precedence — see dragProgRef declaration above.
+      const prog2=dragProgRef.current ?? (progRef?.current??0);
       // Two independent paddings:
       //  - tickRailPad governs where beat-grid ticks center vertically (visual
       //    positioning, anchored relative to the canvas edges).
@@ -3322,14 +3330,14 @@ function AnimatedZoomedWF({ bands, dur, progRef, onSeek, h=96, windowSec=8, beat
     return()=>{cancelAnimationFrame(raf.current); ro.disconnect();};
   },[h,windowSec,progRef]);
 
-  // Drag-only seek with ANCHOR-based tracking (Rekordbox-style). Mousedown
-  // captures both the cursor X and the prog AT THAT MOMENT; mousemove computes
-  // a NEW prog from those anchors plus pixel delta. This breaks the feedback
-  // loop in the prior implementation, where each move recomputed "track
-  // position under cursor" against the just-scrolled waveform — the waveform
-  // shift between frames invalidated the cursor's mapping, amplifying motion
-  // and feeling too sensitive. With anchored math, 1px of mouse movement
-  // always equals (windowSec / canvasWidth) seconds of seek, predictable.
+  // Drag-only seek with ANCHOR-based tracking (Rekordbox-style) and SEEK-ON-
+  // RELEASE. Mousedown captures cursor X + prog AT THAT MOMENT. Mousemove
+  // updates a local overlay ref (dragProgRef) — the draw loop prefers this
+  // over the parent's progRef during a drag, so the canvas shows the dragged
+  // playhead position smoothly without thrashing the audio source. Mouseup
+  // fires ONE seek call to commit the audio to the final position. Prior
+  // implementation seeked on every mousemove (~60 Hz), each call creating a
+  // fresh AudioBufferSourceNode → massive audio-source churn during drags.
   useEffect(()=>{
     const canvas=ref.current; if(!canvas) return;
     let dragging=false;
@@ -3343,6 +3351,7 @@ function AnimatedZoomedWF({ bands, dur, progRef, onSeek, h=96, windowSec=8, beat
       mouseXAtDown=e.clientX;
       progAtDown=progRef?.current ?? 0;
       widthAtDown=r.width;
+      dragProgRef.current=progAtDown;
       e.preventDefault();
     };
     const onMove=(e)=>{
@@ -3350,11 +3359,19 @@ function AnimatedZoomedWF({ bands, dur, progRef, onSeek, h=96, windowSec=8, beat
       const deltaPx=e.clientX-mouseXAtDown;
       // (deltaPx / canvasWidth) is the fraction of the visible window the
       // cursor has traversed; × (windowSec / dur) converts that to a
-      // fraction of the whole track. Added to the captured progAtDown.
+      // fraction of the whole track. Stored in dragProgRef for the draw loop
+      // to display; audio is NOT seeked here (deferred to mouseup).
       const newProg=progAtDown+(deltaPx/widthAtDown)*(windowSec/durRef.current);
-      seekRef.current(Math.max(0,Math.min(1,newProg)));
+      dragProgRef.current=Math.max(0,Math.min(1,newProg));
     };
-    const onUp=()=>{ dragging=false; };
+    const onUp=()=>{
+      if(dragging&&dragProgRef.current!=null&&seekRef.current){
+        // Commit the final dragged position to audio with a single seek call.
+        seekRef.current(dragProgRef.current);
+      }
+      dragging=false;
+      dragProgRef.current=null;
+    };
     canvas.addEventListener('mousedown',onDown);
     window.addEventListener('mousemove',onMove);
     window.addEventListener('mouseup',onUp);
@@ -4210,16 +4227,52 @@ function Deck({ id, ch, ctx:ac, color, local, remote, onChange, midi:mt, bpmResu
       {/* ── TRANSPORT ── */}
       <div style={{display:"flex", alignItems:"center", gap:6, padding:"8px 12px", borderBottom:BD}}>
         <button onClick={(e)=>{ if(local&&cue) cue(); else if(remoteCue) remoteCue(); }} disabled={!cueEnabled} style={{height:48,padding:"0 12px",background:"#111118",border:`1px solid ${cueEnabled?"#2a2a38":"#1e1e28"}`,color:cueEnabled?"#C8A96E":"#2a2a38",borderRadius:7,cursor:cueEnabled?"pointer":"default",fontFamily:"'DM Mono',monospace",fontSize:10,fontWeight:700,letterSpacing:1.5,outline:"none",flexShrink:0}}>CUE</button>
-        {/* Skip-by-one-beat arrows. beatPeriodSec/dur gives the fraction of
-            the track corresponding to a single beat; falls back to 0.005 (the
-            old fixed 0.5%-of-track step) when BPM hasn't been detected yet.
-            Old fixed step landed at 1.8s = ~3.6 beats on a 6-min track at
-            120 BPM, which the user described as "jumping multiple beats." */}
-        <button onClick={local?()=>{const step=(bpmResult?.beatPeriodSec&&dur)?(bpmResult.beatPeriodSec/dur):0.005;seek(Math.max(0,prog-step));}:undefined} disabled={!local} title="Skip back 1 beat" style={{height:48,width:36,background:"#111118",border:"1px solid #1e1e28",color:local?"#888898":"#2a2a38",borderRadius:6,cursor:local?"pointer":"default",fontFamily:"'DM Mono',monospace",fontSize:13,outline:"none"}}>◂◂</button>
+        {/* Skip-by-one-beat arrows. Two modes:
+            - Sync engaged (quantize): snap to NEXT/PREVIOUS beat grid line
+              (Rekordbox/Serato quantize behavior). Lands the playhead on a
+              beat regardless of where it currently is between beats.
+            - Sync off (relative): step prog by exactly one beatPeriod (or
+              0.005 fallback if BPM not detected). User-current-position +
+              one beat, may or may not land on the grid.
+            Click skip() helper is inline rather than a useCallback because
+            it captures prog/dur/syncRole which change every render anyway. */}
+        <button onClick={local?()=>{
+          const beatPeriod=bpmResult?.beatPeriodSec;
+          const beatPhase=bpmResult?.beatPhaseSec??0;
+          const isLocked=syncRole!==null;
+          if(isLocked&&beatPeriod&&dur){
+            const currentTime=prog*dur;
+            const currentBeatPos=(currentTime-beatPhase)/beatPeriod;
+            // -0.001 epsilon makes "exactly on beat" go to the previous beat
+            // rather than staying put (Math.floor(N) === N otherwise).
+            const targetBeatNum=Math.floor(currentBeatPos-0.001);
+            const newTime=beatPhase+targetBeatNum*beatPeriod;
+            seek(Math.max(0,Math.min(1,newTime/dur)));
+          } else {
+            const step=(beatPeriod&&dur)?(beatPeriod/dur):0.005;
+            seek(Math.max(0,prog-step));
+          }
+        }:undefined} disabled={!local} title={syncRole!==null?"Snap to previous beat":"Skip back 1 beat"} style={{height:48,width:36,background:"#111118",border:"1px solid #1e1e28",color:local?"#888898":"#2a2a38",borderRadius:6,cursor:local?"pointer":"default",fontFamily:"'DM Mono',monospace",fontSize:13,outline:"none"}}>◂◂</button>
         <button onClick={(e)=>{ if(local&&toggle) toggle(); else if(remoteToggle) remoteToggle(); }} disabled={!enabled} style={{flex:1,height:48,background:playVisual?color+"33":(enabled?"#1a1a26":"#141420"),border:`2px solid ${playVisual?color:(enabled?color+"66":color+"22")}`,color:playVisual?color:(enabled?color:color+"44"),borderRadius:8,cursor:enabled?"pointer":"default",fontSize:24,fontWeight:600,display:"flex",alignItems:"center",justifyContent:"center",boxShadow:playVisual?`0 0 24px ${color}55`:"none",outline:"none",transition:"all .15s"}}>
           {playVisual?"⏸":"▶"}
         </button>
-        <button onClick={local?()=>{const step=(bpmResult?.beatPeriodSec&&dur)?(bpmResult.beatPeriodSec/dur):0.005;seek(Math.min(1,prog+step));}:undefined} disabled={!local} title="Skip forward 1 beat" style={{height:48,width:36,background:"#111118",border:"1px solid #1e1e28",color:local?"#888898":"#2a2a38",borderRadius:6,cursor:local?"pointer":"default",fontFamily:"'DM Mono',monospace",fontSize:13,outline:"none"}}>▸▸</button>
+        <button onClick={local?()=>{
+          const beatPeriod=bpmResult?.beatPeriodSec;
+          const beatPhase=bpmResult?.beatPhaseSec??0;
+          const isLocked=syncRole!==null;
+          if(isLocked&&beatPeriod&&dur){
+            const currentTime=prog*dur;
+            const currentBeatPos=(currentTime-beatPhase)/beatPeriod;
+            // +0.001 epsilon makes "exactly on beat" advance to the next beat
+            // rather than staying put.
+            const targetBeatNum=Math.ceil(currentBeatPos+0.001);
+            const newTime=beatPhase+targetBeatNum*beatPeriod;
+            seek(Math.max(0,Math.min(1,newTime/dur)));
+          } else {
+            const step=(beatPeriod&&dur)?(beatPeriod/dur):0.005;
+            seek(Math.min(1,prog+step));
+          }
+        }:undefined} disabled={!local} title={syncRole!==null?"Snap to next beat":"Skip forward 1 beat"} style={{height:48,width:36,background:"#111118",border:"1px solid #1e1e28",color:local?"#888898":"#2a2a38",borderRadius:6,cursor:local?"pointer":"default",fontFamily:"'DM Mono',monospace",fontSize:13,outline:"none"}}>▸▸</button>
         {onMasterToggle&&(
           <button
             onClick={()=>onMasterToggle(id)}
@@ -4803,6 +4856,12 @@ export default function CollabMix({ initialPage = "landing", djName = null }) {
   // TODO: implement continuous tempo lock at the audio engine level.
   // Currently toggle is visual + master-BPM-change-driven only.
   const [syncLocked, setSyncLocked] = useState(false);
+  // Ref mirror so dh() and other handlers can read the latest syncLocked even
+  // when called from a stale memoized callback. Deck's toggle (useCallback at
+  // line ~3790) omits onChange from its deps, so the captured `dh` keeps an
+  // old closure of syncLocked; reading via this ref bypasses the stale path.
+  const syncLockedRef = useRef(false);
+  useEffect(() => { syncLockedRef.current = syncLocked; }, [syncLocked]);
   // Slave-deck identity needs both a ref (for stale-deps callbacks) and state
   // (so the SYNC button visual can branch master vs slave on render).
   const [lastSlaveDeck, setLastSlaveDeck] = useState(null);
@@ -5790,7 +5849,7 @@ export default function CollabMix({ initialPage = "landing", djName = null }) {
       // to work with, so the seek can move freely in either direction and
       // beat alignment lands cleanly. No-op if BPM data not ready or sync
       // metadata absent.
-      if (value && syncLocked && lastSlaveDeckRef.current === id) {
+      if (value && syncLockedRef.current && lastSlaveDeckRef.current === id) {
         const target = sessionTempoRef.current;
         if (target) {
           setTimeout(() => {
