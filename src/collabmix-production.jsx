@@ -3659,6 +3659,12 @@ function Deck({ id, ch, ctx:ac, color, local, remote, onChange, midi:mt, bpmResu
   const isDriverRef=useRef(isDriver);
   const bufRef=useRef(buf);
   useEffect(()=>{ bufRef.current=buf; },[buf]);
+  // First-downbeat auto-position: reset on each fresh load(), set to true on
+  // any user interaction (play/seek/cue) so the auto-position useEffect knows
+  // whether the user has already taken control. positionedBufRef tracks which
+  // AudioBuffer we've already positioned for so we fire exactly once per load.
+  const userMovedRef = useRef(false);
+  const positionedBufRef = useRef(null);
   useEffect(()=>{ playRef.current=play; console.log('[PLAY-STATE] deck',id,'play prop/state changed to '+play+', src.current='+!!src.current+', ac='+!!ac); },[play,id,ac]);
   useEffect(()=>{ rateRef.current=rate; },[rate]);
   useEffect(()=>{ isDriverRef.current=isDriver; console.log('[PLAY-STATE] deck',id,'isDriver changed to '+isDriver); },[isDriver,id]);
@@ -3826,6 +3832,9 @@ function Deck({ id, ch, ctx:ac, color, local, remote, onChange, midi:mt, bpmResu
       stop_();setPlay(false);onChange?.("playing",false);
       logEvent("deck", "play_toggled", { deck: id, isPlaying: false });
     } else {
+      // User has now interacted with this track — auto-position should
+      // not override their action even if BPM analysis is still pending.
+      userMovedRef.current=true;
       play_(off.current);setPlay(true);onChange?.("playing",true);
       logEvent("deck", "play_toggled", { deck: id, isPlaying: true });
     }
@@ -3842,6 +3851,8 @@ function Deck({ id, ch, ctx:ac, color, local, remote, onChange, midi:mt, bpmResu
       return;
     }
     const o=pc*(buf?.duration||0);off.current=o;if(play)play_(o);else{setProg(pc);progRef.current=pc;onProgUpdate?.(pc);}onChange?.("progress",pc);
+    // User interacted — block auto-position-to-first-downbeat on this track.
+    userMovedRef.current=true;
     // Local-only hook for sync re-align (see handleTransportFire). seek_local
     // never goes on the wire — handleTransportFire suppresses broadcast for
     // this type and uses it solely to trigger the scrub-resync scheduler.
@@ -3859,6 +3870,9 @@ function Deck({ id, ch, ctx:ac, color, local, remote, onChange, midi:mt, bpmResu
     off.current=0;setProg(0);progRef.current=0;onProgUpdate?.(0);
     if(play){stop_();setPlay(false);onChange?.("playing",false);}
     onChange?.("progress",0);
+    // CUE is an explicit user action (jump to track start) — block any
+    // pending auto-position-to-first-downbeat from overriding.
+    userMovedRef.current=true;
     // Same local-only hook as seek — CUE while synced should re-align too.
     onTransportFire?.({ type:"seek_local", deckId:id, value:0, fromRemote });
   },[play,id,onTransportFire,isDriver]);
@@ -3973,6 +3987,36 @@ function Deck({ id, ch, ctx:ac, color, local, remote, onChange, midi:mt, bpmResu
   // time regardless of subsequent loads. bufRef is the already-existing
   // mirror updated via useEffect on [buf].
   useEffect(()=>{onBufferReady?.(bufRef);},[onBufferReady]);
+
+  // First-downbeat auto-position. When BPM analysis completes for a freshly-
+  // loaded track and the user hasn't touched the deck yet, snap the playhead
+  // from the file's t=0 to the analyzed first bar-1 downbeat — so loaded
+  // tracks land on a beat ready to play, matching Rekordbox/Serato/Traktor.
+  // firstBar1AnchorSec = beatPhaseFrac × beatPeriodSec (already in bpmResult
+  // — worker already does the downbeat-aware walk-back at line 555-560 of
+  // bpm-worker-source.js; we derive on the client).
+  useEffect(() => {
+    if (!buf || !isDriver) return;                   // partner-driven: remote controls
+    if (positionedBufRef.current === buf) return;    // already positioned for this buf
+    const bpf = bpmResult?.beatPhaseFrac;
+    const bps = bpmResult?.beatPeriodSec;
+    if (bpf == null || !bps || bps <= 0) return;     // wait for BPM analysis
+    // Mark as handled upfront — covers retries (re-analysis updates) and
+    // the user-already-moved / playing bail paths below: we still want to
+    // skip in those cases, just remember we've considered this buf.
+    positionedBufRef.current = buf;
+    if (userMovedRef.current) return;                // user played/seeked/cued already
+    if (play) return;                                // safety: never seek mid-playback
+    const firstBar1Sec = bpf * bps;
+    if (firstBar1Sec < 0 || firstBar1Sec >= buf.duration) return;
+    const newProg = firstBar1Sec / buf.duration;
+    off.current     = firstBar1Sec;
+    progRef.current = newProg;
+    setProg(newProg);
+    onProgUpdate?.(newProg);
+    console.log('[DECK]', id, 'auto-positioned to first downbeat at',
+      firstBar1Sec.toFixed(3), 's (prog=', newProg.toFixed(4), ')');
+  }, [buf, bpmResult?.beatPhaseFrac, bpmResult?.beatPeriodSec, isDriver, play, id, onProgUpdate]);
   useEffect(()=>{ if(bpmResult?.bpm!=null) onChange?.("bpm", bpmResult.bpm); },[bpmResult?.bpm,onChange]);
   // Broadcast phase data so partner can phase-align when SYNC fires against a
   // partner-driven deck. Only the deck owner has these from the analyzer; the
@@ -4001,6 +4045,9 @@ function Deck({ id, ch, ctx:ac, color, local, remote, onChange, midi:mt, bpmResu
     // and the next play_() computes elapsed=0 (no spurious advancement).
     progRef.current=0;onProgUpdate?.(0);
     if(ac)st.current=(acNowRef?.current ?? ac.currentTime);
+    // Fresh track = clean slate for auto-position. positionedBufRef is left
+    // alone; it'll naturally fail its identity check against the new buf.
+    userMovedRef.current=false;
     // Reset rate to 1 — old sync-imposed rate from a prior track would scale
     // the new track's BPM display incorrectly. Parent's rateA/B mirror via dh.
     setRate(1);onChange?.("rate",1);
