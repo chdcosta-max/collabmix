@@ -5800,7 +5800,14 @@ export default function CollabMix({ initialPage = "landing", djName = null }) {
           const peakRatio = peakVal / rmsVal;
           const hopSec    = hopSamples / sr;
           const peakSec   = peakLag * hopSec;
-          const maxCorrection = slaveBps * 0.5;            // clamp ±0.5 beat
+          // Correction cap matches the cross-correlation search window
+          // (±2 beats). The earlier ±0.5 beat cap was over-conservative:
+          // production data showed Path C correctly identifying high-
+          // confidence corrections in the 250-400ms range on tracks where
+          // beatPhaseSec misanchored (the case Path C exists to fix), and
+          // the cap was rejecting them. Confidence (peak/RMS > 2.0) is the
+          // real safety gate; magnitude alone shouldn't reject a clear peak.
+          const maxCorrection = slaveBps * 2.0;            // clamp ±2 beats
           const CONFIDENCE_THRESHOLD = 2.0;
           if (peakRatio < CONFIDENCE_THRESHOLD) {
             console.log("[SYNC-XCORR] peak/RMS=" + peakRatio.toFixed(2) +
