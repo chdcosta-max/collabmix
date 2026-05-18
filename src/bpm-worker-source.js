@@ -563,7 +563,27 @@ self.onmessage=function(e){
   // keeps firstDownbeatSec = beatPhaseFrac × beatPeriodSec = barDownbeatFrame/ar
   // exactly, which is what the grid draw loop needs.
   const beatPhaseFrac=finalPeriod>0?(barDownbeatFrame/ar)/finalPeriod:0;
-  // Full-sample-rate phase detection via dphase (used by AnimatedZoomedWF)
-  const dphaseResult=finalBpm?dphase(mono,sr,finalBpm):{beatPhaseSec:0};
-  self.postMessage({id,bpm:finalBpm,confidence:conf,candidates:cands,beatPhaseFrac,beatPeriodSec:finalPeriod,beatPhaseSec:dphaseResult.beatPhaseSec,snapped});
+  // beatPhaseSec — used by sync alignment (handleSyncToggle) to align two
+  // tracks' beats. Derive from the downbeat-aware bar-1 anchor (which already
+  // accounts for kick-exclusivity via phSc and bar phase via bestPh), NOT from
+  // dphase(). dphase() picks the first transient ≥35% of max kick-band energy
+  // without the onK-onP kick-exclusive gate, so snares/crashes/sub-bleed could
+  // anchor two tracks on different musical events. Cross-track sync then fired
+  // ±0.5 beat nudges in arbitrary directions because each track's "bphs" was a
+  // different position-within-bar. Using barDownbeatFrame ensures both tracks
+  // anchor on their analyzer-detected downbeat kick, so beat-phase alignment
+  // lines up the same musical event.
+  //
+  // dphase() is kept defined above for potential future use / diagnostic
+  // comparison, but its output is no longer posted to the client.
+  const firstBar1AnchorSec=barDownbeatFrame/ar;
+  const beatPhaseSec=finalPeriod>0?(firstBar1AnchorSec%finalPeriod):0;
+  // One-shot diagnostic: log new (bar-1) vs old (dphase) bphs for comparison.
+  // Remove once the new anchor is validated in production.
+  const _dphaseDiag=finalBpm?dphase(mono,sr,finalBpm):{beatPhaseSec:0};
+  console.log('[phase] bphs new (bar-1 anchor)=',beatPhaseSec.toFixed(4),
+    'old (dphase first-transient)=',_dphaseDiag.beatPhaseSec.toFixed(4),
+    'firstBar1AnchorSec=',firstBar1AnchorSec.toFixed(4),
+    'beatPeriodSec=',finalPeriod==null?'-':finalPeriod.toFixed(4));
+  self.postMessage({id,bpm:finalBpm,confidence:conf,candidates:cands,beatPhaseFrac,beatPeriodSec:finalPeriod,beatPhaseSec,snapped});
 };`;

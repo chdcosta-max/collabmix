@@ -4225,28 +4225,27 @@ function Deck({ id, ch, ctx:ac, color, local, remote, onChange, midi:mt, bpmResu
           const canSync = !!buf && !!bpmResult?.bpm && syncReady;
           const isSlave  = syncRole === "slave";
           const isMasterRole = syncRole === "master";
-          // Master deck's SYNC button is disabled — master doesn't sync to
-          // anything. To unsync, user clicks SYNC on the slave deck (or M to
-          // release master role). The M button on this deck shows lit
-          // separately to indicate master state.
-          const clickable = isSlave || (canSync && !isMasterRole);
-          // States: slave (filled green + glow + dot), canSync (outline),
-          // analyzing (amber pulse), disabled (greyed). Master role uses the
-          // disabled tone — SYNC isn't an action available from the master.
+          // SYNC is a global engaged-or-not toggle reachable from either deck.
+          // M button (separate) is the per-deck master indicator. So when sync
+          // is engaged, BOTH decks' SYNC buttons show the lit "engaged" tone;
+          // the M button alone distinguishes master from slave.
+          const isLocked = isSlave || isMasterRole;
+          const clickable = isLocked || canSync;
+          // States: engaged (filled green + glow + dot — applies to both
+          // master and slave decks when sync is on), canSync (outline),
+          // analyzing (amber pulse), disabled (greyed).
           const tone =
-            isSlave        ? { bg:"#22c55e44",   border:"#22c55e",   color:"#0a1a10",   cursor:"pointer",      opacity:1,   pulse:false, glow:true,  dot:true  }
-            : isMasterRole ? { bg:"transparent", border:"#22c55e22", color:"#22c55e44", cursor:"not-allowed",  opacity:0.4, pulse:false, glow:false, dot:false }
+            isLocked       ? { bg:"#22c55e44",   border:"#22c55e",   color:"#0a1a10",   cursor:"pointer",      opacity:1,   pulse:false, glow:true,  dot:true  }
             : canSync      ? { bg:"#22c55e18",   border:"#22c55e66", color:"#22c55e",   cursor:"pointer",      opacity:1,   pulse:false, glow:false, dot:false }
             : isAnalyzing  ? { bg:"#f59e0b14",   border:"#f59e0b55", color:"#f59e0b",   cursor:"progress",     opacity:1,   pulse:true,  glow:false, dot:false }
             :                { bg:"transparent", border:"#22c55e22", color:"#22c55e44", cursor:"not-allowed",  opacity:0.4, pulse:false, glow:false, dot:false };
           const label = "SYNC";
-          const tip = isSlave    ? "This deck is the slave (locked) — click to release"
-            : isMasterRole       ? "This deck is the master — toggle sync from the slave deck, or click M to release master"
+          const tip = isLocked   ? "Sync engaged — click to release"
             : !buf             ? "Load a track"
             : isAnalyzing      ? "Analyzing BPM…"
             : !bpmResult?.bpm  ? "Waiting for BPM"
             : !syncReady       ? "Other deck has no BPM yet"
-            :                    "Match this deck's BPM to the other";
+            :                    "Engage SYNC (this deck syncs to master)";
           return (
             <button
               onClick={clickable ? onSync : undefined}
@@ -5539,13 +5538,18 @@ export default function CollabMix({ initialPage = "landing", djName = null }) {
     const explicitMaster = masterDeckRef.current; // "A" | "B" | null
     let effectiveMaster, slaveDeck = clickedDeck, masterMode;
     if (explicitMaster) {
-      if (clickedDeck === explicitMaster) {
-        console.log("[SYNC] toggle blocked: clicked deck is the explicit master (can't sync a deck to itself)");
-        return;
-      }
       effectiveMaster = explicitMaster;
       masterMode      = "explicit";
-      console.log("[SYNC] explicit master: deck", effectiveMaster);
+      // SYNC is a global toggle reachable from either deck. If the user clicks
+      // SYNC on the master deck itself, the OTHER deck becomes the slave —
+      // master designation lives entirely on the M button; the SYNC button
+      // just engages/disengages sync. (Previously this path was rejected with
+      // "can't sync a deck to itself"; reverted because the rejection forced
+      // the user to mentally model which button does what per deck.)
+      if (clickedDeck === explicitMaster) {
+        slaveDeck = clickedDeck === "A" ? "B" : "A";
+      }
+      console.log("[SYNC] explicit master: deck", effectiveMaster, ", slave=", slaveDeck);
     } else {
       // Auto-detect: deck that started playing FIRST is master.
       const tA = deckPlayStartRef.current.A;
@@ -5718,9 +5722,9 @@ export default function CollabMix({ initialPage = "landing", djName = null }) {
       const newSlave = masterDeck === "A" ? "B" : "A";
       lastSlaveDeckRef.current = newSlave;
       setLastSlaveDeck(newSlave);
-      console.log("[SYNC] role swap via M — new slave=", newSlave, "new master=", masterDeck, "(audio unchanged)");
+      console.log("[SYNC-DEBUG] role swap via M — new slave=", newSlave, "new master=", masterDeck, "(audio unchanged)");
     } else {
-      console.log("[SYNC] master changed mid-lock — slave=", currentSlave, "master=", masterDeck, "(audio unchanged)");
+      console.log("[SYNC-DEBUG] master changed mid-lock — slave=", currentSlave, "master=", masterDeck, "(audio unchanged)");
     }
     lastScrubResyncTimeRef.current = 0;
     // eslint-disable-next-line react-hooks/exhaustive-deps
