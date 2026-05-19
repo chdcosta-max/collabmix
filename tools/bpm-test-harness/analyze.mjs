@@ -192,6 +192,12 @@ for (let i = 0; i < tracks.length; i++) {
         `       chrm:  bestPhChrm=${phase.bestPhChroma}  phScChroma=[${sc}]  spread=${phase.phSpreadChroma.toFixed(2)}`,
       );
     }
+    if (phase.phScSSM) {
+      const ss = phase.phScSSM.map((x) => x.toFixed(1)).join(", ");
+      console.log(
+        `       ssm:   bestPhSSM=${phase.bestPhSSM}  phScSSM=[${ss}]  spread=${phase.phSpreadSSM.toFixed(2)}  scaleAgree=${phase.ssmMultiScaleAgree}/4  peaks=${phase.ssmPeakCount}`,
+      );
+    }
     if (phase.decision) {
       console.log(`       decision: ${phase.decision}`);
     }

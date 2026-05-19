@@ -606,6 +606,162 @@ self.onmessage=function(e){
   const phMinChroma=Math.min(phScChroma[0],phScChroma[1],phScChroma[2],phScChroma[3]);
   const chromaSpread=phMaxChroma>0?(phMaxChroma-phMinChroma)/phMaxChroma:0;
 
+  // ── PHASE 3: SSM novelty at phrase scales ─────────────────────────────
+  // Per-beat 14-dim feature vector combines kick energy, bass continuity,
+  // and chroma. Self-similarity matrix is computed on the fly (no NxN
+  // storage). Multi-scale checkerboard kernel (Foote 2000) detects
+  // structural boundaries at bar/motif/phrase/section scales. Phase
+  // scoring sums novelty per i%4 — phases where boundaries cluster
+  // identify bar-1 position. Standard EDM phrase structure (intro/build/
+  // drop on 16/32-bar boundaries) has boundaries land on bar-1.
+  const N=dpBeats.length;
+  const FEAT_DIM=14;
+  let phScSSM=[0,0,0,0];
+  const phSc16SSM=new Float32Array(16);
+  const phSc32SSM=new Float32Array(32);
+  let bestPhSSM=0;
+  let ssmSpread=0;
+  let ssmMultiScaleAgree=0;
+  let ssmPeakCount=0;
+  if (N >= 16) {
+    // Per-beat kick peak (max envK in ±5 frames) and bass mid (midEnvB).
+    const kickPeakPerBeat=new Float32Array(N);
+    const bassMidPerBeat=new Float32Array(N);
+    for(let i=0;i<N;i++){
+      const f=Math.floor(dpBeatsFloat[i]);
+      const ks=f-5<0?0:f-5, ke=f+5>=nf?nf-1:f+5;
+      let kMx=0; for(let k=ks;k<=ke;k++) if(envK[k]>kMx) kMx=envK[k];
+      kickPeakPerBeat[i]=kMx;
+      const midF2=f+midOffset;
+      const ms2=midF2-midHalfWin<0?0:midF2-midHalfWin;
+      const me2=midF2+midHalfWin>=nf?nf-1:midF2+midHalfWin;
+      let mAcc=0; for(let k=ms2;k<=me2;k++) mAcc+=envB[k];
+      bassMidPerBeat[i]=mAcc/Math.max(1,me2-ms2+1);
+    }
+    // Component-wise normalization so kick + bass scalars don't dominate
+    // chroma in the combined feature vector. Target: each component
+    // contributes roughly equal L2 mass across the track.
+    let kSq=0, bSq=0;
+    for(let i=0;i<N;i++){
+      kSq+=kickPeakPerBeat[i]*kickPeakPerBeat[i];
+      bSq+=bassMidPerBeat[i]*bassMidPerBeat[i];
+    }
+    const kScale=kSq>0?Math.sqrt(N/kSq):0;
+    const bScale=bSq>0?Math.sqrt(N/bSq):0;
+    // Build feature vectors [0]=kick, [1]=bass, [2..13]=chroma (already
+    // L2-normalized per beat from Phase 2). L2-normalize the full vector
+    // so cosine similarity is dot product.
+    const featPerBeat=new Float32Array(N*FEAT_DIM);
+    for(let i=0;i<N;i++){
+      featPerBeat[i*FEAT_DIM+0]=kickPeakPerBeat[i]*kScale;
+      featPerBeat[i*FEAT_DIM+1]=bassMidPerBeat[i]*bScale;
+      for(let pc=0;pc<12;pc++) featPerBeat[i*FEAT_DIM+2+pc]=chromaPerBeat[i*12+pc];
+      let nsq=0;
+      for(let d=0;d<FEAT_DIM;d++){
+        const v=featPerBeat[i*FEAT_DIM+d];
+        nsq+=v*v;
+      }
+      const nrm=Math.sqrt(nsq);
+      if(nrm>0) for(let d=0;d<FEAT_DIM;d++) featPerBeat[i*FEAT_DIM+d]/=nrm;
+    }
+    // Foote checkerboard novelty at multiple scales. Cells (di,dj) with
+    // sign +1 in past-past and future-future quadrants, -1 in cross
+    // quadrants. Gaussian taper sigma=L/2 suppresses kernel-edge noise.
+    // High novelty = past block is similar within, future is similar
+    // within, but past ≠ future (structural boundary).
+    const SCALES=[4,8,16,32].filter(L=>L*2<N);
+    const noveltyCurve=new Float32Array(N);
+    const phPerScale=[]; // per-scale per-phase scores for agreement check
+    for(let s=0;s<SCALES.length;s++) phPerScale.push([0,0,0,0]);
+    for(let i=0;i<N;i++){
+      let maxNov=0;
+      for(let s=0;s<SCALES.length;s++){
+        const L=SCALES[s];
+        if(i-L<0 || i+L>N-1) continue;
+        const sigma=L*0.5;
+        const sig2=2*sigma*sigma;
+        let acc=0;
+        for(let di=-L;di<L;di++){
+          for(let dj=-L;dj<L;dj++){
+            // Cosine similarity (vectors L2-normalized → dot product)
+            const a=i+di, b=i+dj;
+            let dot=0;
+            for(let d=0;d<FEAT_DIM;d++) dot+=featPerBeat[a*FEAT_DIM+d]*featPerBeat[b*FEAT_DIM+d];
+            const taper=Math.exp(-(di*di+dj*dj)/sig2);
+            const sgn=((di<0)===(dj<0))?1:-1;
+            acc+=sgn*taper*dot;
+          }
+        }
+        if(acc>0) phPerScale[s][i%4]+=acc;
+        if(acc>maxNov) maxNov=acc;
+      }
+      noveltyCurve[i]=maxNov;
+    }
+    // Per-phase scoring via PEAK DETECTION (not raw novelty sum).
+    // Structural boundaries appear as local maxima in the novelty curve
+    // — typically 5-8 per track for EDM (intro/build/drop/break
+    // transitions). Summing the full curve across all ~600 beats
+    // drowns those boundary peaks in non-boundary noise. Detect peaks
+    // above (mean + threshold × stddev), enforce minimum spacing to
+    // avoid double-counting neighboring beats of the same boundary,
+    // then score per-phase by weighted peak novelty.
+    let novMean=0;
+    for(let i=0;i<N;i++) novMean+=noveltyCurve[i];
+    novMean/=N;
+    let novVar=0;
+    for(let i=0;i<N;i++){
+      const d=noveltyCurve[i]-novMean;
+      novVar+=d*d;
+    }
+    const novStd=Math.sqrt(novVar/N);
+    const novThresh=novMean+1.5*novStd;
+    const peaks=[];
+    const minPeakSpacing=4; // beats — at least 1 bar between detected peaks
+    for(let i=1;i<N-1;i++){
+      if(noveltyCurve[i]>novThresh &&
+         noveltyCurve[i]>=noveltyCurve[i-1] &&
+         noveltyCurve[i]>=noveltyCurve[i+1]){
+        if(peaks.length===0 || i-peaks[peaks.length-1].i>=minPeakSpacing){
+          peaks.push({i:i,v:noveltyCurve[i]});
+        }
+      }
+    }
+    // Weight each peak by its novelty value so big section boundaries
+    // dominate over small motif transitions.
+    for(let i=0;i<4;i++) phScSSM[i]=0;
+    for(let p=0;p<peaks.length;p++){
+      phScSSM[peaks[p].i%4]+=peaks[p].v;
+      phSc16SSM[peaks[p].i%16]+=peaks[p].v;
+      phSc32SSM[peaks[p].i%32]+=peaks[p].v;
+    }
+    bestPhSSM=0;
+    for(let k=1;k<4;k++) if(phScSSM[k]>phScSSM[bestPhSSM]) bestPhSSM=k;
+    const phMaxSSM=Math.max(phScSSM[0],phScSSM[1],phScSSM[2],phScSSM[3]);
+    const phMinSSM=Math.min(phScSSM[0],phScSSM[1],phScSSM[2],phScSSM[3]);
+    ssmSpread=phMaxSSM>0?(phMaxSSM-phMinSSM)/phMaxSSM:0;
+    // ssmPeakCount: number of detected structural-boundary peaks. With
+    // peak-based scoring, ssmSpread can spike to 1.0 from just 1-2 peaks
+    // landing in one phase — artificially confident when sample size is
+    // too small to be meaningful. SSM "clear" gating downstream requires
+    // BOTH high spread AND adequate peak count (≥5: enough for at least
+    // 4 phrase-scale boundaries in a typical 6-8 min EDM track).
+    ssmPeakCount=peaks.length;
+    // Multi-scale agreement: did each individual scale pick the same
+    // phase as the combined? Higher = more structural confidence.
+    ssmMultiScaleAgree=0;
+    for(let s=0;s<SCALES.length;s++){
+      let bp=0;
+      for(let k=1;k<4;k++) if(phPerScale[s][k]>phPerScale[s][bp]) bp=k;
+      if(bp===bestPhSSM) ssmMultiScaleAgree++;
+    }
+    // Diagnostic: log top peaks and their phase distribution.
+    if(peaks.length>0){
+      const topPeaks=peaks.slice().sort((a,b)=>b.v-a.v).slice(0,8);
+      console.log('[phase] SSM peaks (top 8): '+
+        topPeaks.map(p=>'beat'+p.i+'(%4='+(p.i%4)+',v='+p.v.toFixed(1)+')').join(' '));
+    }
+  }
+
   // Raw argmax of phSc (kick-exclusive). Used both as the default bestPh
   // and as a reference for whether phrase voting brings new information.
   let rawBestPh=0;
@@ -687,29 +843,48 @@ self.onmessage=function(e){
       bestPh = rawBestPh;
       decision = 'raw (phrase internal disagree: 16='+best16Mod4+' 32='+best32Mod4+')';
     } else {
-      // Chroma threshold tuned to 0.25 (vs 0.30 for bass): chroma novelty
-      // on EDM tends to be lower-amplitude than kick-pattern signals
-      // because chord-change frequency is a weaker discriminator than
-      // bass articulation. 0.25 catches tracks where bass+chroma both
-      // pick the correct bucket but with moderate confidence (Rocket Jam:
-      // bass 0.23 + chroma 0.27, both pick bucket 1, both correct).
+      // Three independent signals: bass continuity (Phase 1), chroma
+      // novelty (Phase 2), and SSM phrase-scale novelty (Phase 3).
+      // Thresholds tuned per signal: kick spread is the most reliable
+      // when present (0.30), chroma is weaker on EDM (0.25), SSM
+      // novelty values can be small in absolute terms but the
+      // (max-min)/max spread is the meaningful metric — start at 0.20.
       const bassClear = bassSpread > 0.30;
       const chromaClear = chromaSpread > 0.25;
-      if (bassClear && chromaClear && bestPhBass === bestPhChroma) {
-        bestPh = bestPhBass;
-        decision = 'bass+chroma agree → '+bestPhBass;
-      } else if (bassClear && !chromaClear) {
-        bestPh = bestPhBass;
-        decision = 'bass alone → '+bestPhBass+' (chroma unclear)';
-      } else if (chromaClear && !bassClear) {
-        bestPh = bestPhChroma;
-        decision = 'chroma alone → '+bestPhChroma+' (bass unclear)';
-      } else if (bassClear && chromaClear && bestPhBass !== bestPhChroma) {
+      // SSM clear requires BOTH high spread AND enough detected
+      // structural-boundary peaks. Peak-based scoring can produce
+      // spurious high spread from 1-2 peaks landing in one phase;
+      // ≥5 peaks indicates real structural pattern.
+      const ssmClear = ssmSpread > 0.30 && ssmPeakCount >= 5;
+
+      // Tally votes across clear signals. Triple-agreement = highest
+      // confidence; pair agreement = medium; single signal = lower;
+      // disagreement among clear signals or all-unclear = defer to raw.
+      const sigPicks = [];
+      if (bassClear) sigPicks.push({n:'bass',p:bestPhBass});
+      if (chromaClear) sigPicks.push({n:'chroma',p:bestPhChroma});
+      if (ssmClear) sigPicks.push({n:'SSM',p:bestPhSSM});
+      const votes = [0,0,0,0];
+      for (const s of sigPicks) votes[s.p]++;
+      let maxVotes = 0, maxBucket = -1;
+      for (let k = 0; k < 4; k++) if (votes[k] > maxVotes) { maxVotes = votes[k]; maxBucket = k; }
+
+      if (maxVotes === 3) {
+        bestPh = maxBucket;
+        decision = 'bass+chroma+SSM triple-agree → '+maxBucket;
+      } else if (maxVotes === 2) {
+        bestPh = maxBucket;
+        const names = sigPicks.filter(s=>s.p===maxBucket).map(s=>s.n).join('+');
+        decision = names+' pair-agree → '+maxBucket;
+      } else if (sigPicks.length === 1) {
+        bestPh = sigPicks[0].p;
+        decision = sigPicks[0].n+' alone → '+bestPh+' (other signals unclear)';
+      } else if (sigPicks.length >= 2) {
         bestPh = rawBestPh;
-        decision = 'raw (bass='+bestPhBass+' chroma='+bestPhChroma+' disagree)';
+        decision = 'raw ('+sigPicks.length+' clear signals all disagree)';
       } else {
         bestPh = rawBestPh;
-        decision = 'raw (all unclear)';
+        decision = 'raw (all signals unclear)';
       }
     }
   }
@@ -847,6 +1022,11 @@ self.onmessage=function(e){
     phScChroma:[phScChroma[0],phScChroma[1],phScChroma[2],phScChroma[3]],
     phSpreadChroma:chromaSpread,
     bestPhChroma,
+    phScSSM:[phScSSM[0],phScSSM[1],phScSSM[2],phScSSM[3]],
+    phSpreadSSM:ssmSpread,
+    bestPhSSM,
+    ssmMultiScaleAgree,
+    ssmPeakCount,
     decision,
     best16Mod4,
     best32Mod4,
