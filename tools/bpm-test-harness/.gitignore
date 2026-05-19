@@ -1,3 +1,5 @@
 tracks/
 snapshots/
 node_modules/
+library-truth.json
+rekordbox-truth.json
