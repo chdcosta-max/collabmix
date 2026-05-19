@@ -24,11 +24,29 @@ npm test
 
 Or directly: `node analyze.mjs`
 
-Set `DEBUG=1` to surface the worker's `[phase]` log line per track:
+Set `DEBUG=1` to surface the worker's full `[phase]` log line per track:
 
 ```bash
 DEBUG=1 node analyze.mjs
 ```
+
+The harness always prints a concise phase line per track (`bestPh`, `phSc`
+buckets, `spread`, phrase-vote winners) so per-track decisions are visible
+without `DEBUG`.
+
+## A/B comparison
+
+```bash
+# Record current analyzer behaviour as a baseline
+node analyze.mjs --save baseline
+
+# After changing the analyzer, diff against the baseline
+node analyze.mjs --compare baseline
+```
+
+Snapshots are stored in `./snapshots/<name>.json` (gitignored). Diff output
+flags `fixed` (FAIL→PASS, ✓), `regressed` (PASS→FAIL, ✗), and notes when
+the picked bucket changed (★). Exits non-zero if any track regressed.
 
 ## Tolerances
 
@@ -36,4 +54,9 @@ DEBUG=1 node analyze.mjs
 - FAIL otherwise
 - SKIP if no ground truth entry exists
 
-Tracks are gitignored so audio files don't get pushed to GitHub.
+For FAIL tracks the harness also reports the *should-have-picked* bucket
+(computed from the ground truth offset and current `beatPeriodSec`) so
+it's clear which phase bucket the analyzer needs to land on.
+
+Tracks and snapshots are gitignored so audio files and per-machine runs
+don't get pushed to GitHub.

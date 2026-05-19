@@ -191,6 +191,23 @@ self.onmessage=function(e){
   const mnP=onP.reduce((s,v)=>s+v,0)/nf;const sdP=Math.sqrt(onP.reduce((s,v)=>s+(v-mnP)**2,0)/nf)||1;
   for(let i=0;i<nf;i++)onP[i]=(onP[i]-mnP)/sdP;
 
+  // ── PHASE 1: SUB-BASS band for bass-continuity downbeat disambiguation ──
+  // 20-80 Hz captures sub-bass content (bassline fundamentals + kick sub).
+  // Cascaded bandpass: bp() is 1-pole (12 dB/oct), running twice gives
+  // ~24 dB/oct rolloff so 100-200 Hz punch/clap energy is suppressed
+  // ~12 dB more than the kick band's 40-60 filter. envB is per-frame RMS
+  // (sustained energy / body); onB is the z-scored half-wave-rectified
+  // first difference (bass-note ARTICULATION). The product onB×envB lights
+  // up beats where a new bass note is articulated AND has sustained body —
+  // the bar-1 signature in per-bar-bassline EDM, structurally orthogonal
+  // to kick-band energy (which clap-on-3 inflates uniformly across bars).
+  let fB=bp(mono,sr,20,80); fB=bp(fB,sr,20,80);
+  for(let i=0;i<fB.length;i++)fB[i]=fB[i]>0?fB[i]:0;
+  const envB=new Float32Array(nf);for(let i=0;i<nf;i++){let s=0;const st=i*hop,en=Math.min(st+hop,len);for(let j=st;j<en;j++)s+=fB[j]*fB[j];envB[i]=Math.sqrt(s/(en-st));}
+  const onB=new Float32Array(nf);for(let i=1;i<nf;i++){const d=envB[i]-envB[i-1];onB[i]=d>0?d:0;}
+  const mnB=onB.reduce((s,v)=>s+v,0)/nf;const sdB=Math.sqrt(onB.reduce((s,v)=>s+(v-mnB)**2,0)/nf)||1;
+  for(let i=0;i<nf;i++)onB[i]=(onB[i]-mnB)/sdB;
+
   // Find the first KICK-audible beat. Using onK (40-60 Hz kick band) instead of
   // on (broadband) prevents latching onto pad/arpeggio onsets during ambient
   // intros. Onset peaks are narrow (1-2 frames wide) and DP beat positions are
@@ -449,7 +466,21 @@ self.onmessage=function(e){
   const phSc=[0,0,0,0];
   const phSc16=new Float32Array(16);   // phrase-level: positions within a 16-beat phrase
   const phSc32=new Float32Array(32);   // phrase-level: positions within a 32-beat super-phrase
+  // Bass-band counterparts. Scored from mid-beat sustained envB rather
+  // than onset, so the bass feature is structurally orthogonal to the
+  // kick feature (onset×env in both bands fires on the same kick attacks,
+  // since 20-80 Hz includes the kick fundamental — defeating the
+  // orthogonality the tie-breaker depends on).
+  const phScBass=[0,0,0,0];
+  const phSc16Bass=new Float32Array(16);
+  const phSc32Bass=new Float32Array(32);
   const phScWin=5;
+  // Mid-beat sampling window for bass continuity. Centered halfway to the
+  // next beat (~250ms at 120 BPM), half-width 15% of the beat. This window
+  // sits AFTER any kick has fully decayed (~100ms typical) and BEFORE the
+  // next beat's anticipation — so envB here reads pure sustained bass.
+  const midOffset=Math.round(floatBeatLag*0.5);
+  const midHalfWin=Math.max(2,Math.round(floatBeatLag*0.15));
   for(let i=0;i<dpBeats.length;i++){
     // Use floor(dpBeatsFloat) so phase scoring centers on the refined kick
     // position. onK/envK are 5ms-hop arrays, so frame-resolution is fine
@@ -470,47 +501,122 @@ self.onmessage=function(e){
     phSc[i%4]+=acc;
     phSc16[i%16]+=acc;
     phSc32[i%32]+=acc;
+    // Mid-beat bass continuity: sustained sub-bass energy in the window
+    // BETWEEN this beat and the next, after kick decay. Per-bar basslines
+    // produce a falling pattern across the bar (high after bar-1, lower
+    // after each subsequent beat); clap-on-3 doesn't elevate mid-beat
+    // bass because the clap's transient has decayed by midpoint.
+    const midF=f+midOffset;
+    const ms=midF-midHalfWin<0?0:midF-midHalfWin;
+    const me=midF+midHalfWin>=nf?nf-1:midF+midHalfWin;
+    let midAcc=0;
+    for(let k=ms;k<=me;k++) midAcc+=envB[k];
+    const midMean=midAcc/Math.max(1,me-ms+1);
+    phScBass[i%4]+=midMean;
+    phSc16Bass[i%16]+=midMean;
+    phSc32Bass[i%32]+=midMean;
   }
-  let bestPh=0,bestPhSc=-1;
-  for(let k=0;k<4;k++){if(phSc[k]>bestPhSc){bestPhSc=phSc[k];bestPh=k;}}
-  // Ambiguity guard: if phase scores are near-tied (spread < 25% of peak),
-  // the scoring isn't reliably picking bar-1 — typical of tracks with even
-  // 4-on-the-floor kicks where every beat carries roughly the same kick
-  // energy. Observed on Sunday Sunrise: scores [66.4, 65.3, 70.9, 61.0],
-  // bucket 2 wins by a 7% margin and anchors on kick #3 instead of kick #1.
-  // Fall back to phase 0 so the anchor lands on the earliest DP beat. Only
-  // keep the detected phase when one bucket dominates cleanly — that's where
-  // bar-phase info is actually trustworthy.
-  const phMax=Math.max(phSc[0],phSc[1],phSc[2],phSc[3]);
-  const phMin=Math.min(phSc[0],phSc[1],phSc[2],phSc[3]);
-  if(phMax>0 && (phMax-phMin)/phMax < 0.25) bestPh=0;
+  // Raw argmax of phSc (kick-exclusive). Used both as the default bestPh
+  // and as a reference for whether phrase voting brings new information.
+  let rawBestPh=0;
+  for(let k=1;k<4;k++) if(phSc[k]>phSc[rawBestPh]) rawBestPh=k;
+  let bestPh=rawBestPh;
 
-  // Phrase-level voting override. The 4-beat scoring is dominated by per-bar
-  // accents (clap on 3, hat on 4). When those accents repeat uniformly across
-  // all bars of a phrase, the 16-beat and 32-beat scoring should converge to
-  // the SAME bucket-mod-4 — and any disagreement is a signal that the 4-beat
-  // winner was a local anomaly (a single big fill, a one-off snare flam)
-  // rather than the true downbeat phase. Trust the longer-cycle vote in that
-  // case. Only run when we have enough data (≥32 beats = ~16 sec at 120 BPM).
+  // Compute phrase-vote winners up front so we can decide whether they
+  // bring new info BEFORE running the bass tie-breaker. Order matters:
+  // bass should not override a phrase-vote that already disagrees with
+  // the raw kick argmax — that disagreement IS the signal that phrase
+  // voting has information beyond per-beat scoring.
   let best16=-1, best16Mod4=-1;
   if (dpBeats.length >= 32) {
     let best16Sc=-1;
     for(let k=0;k<16;k++){if(phSc16[k]>best16Sc){best16Sc=phSc16[k];best16=k;}}
     best16Mod4=best16%4;
-    if (best16Mod4 !== bestPh) {
-      console.log('[phase] phrase override (phSc16): phSc4 picked '+bestPh+
-                  ' but best16='+best16+' %4='+best16Mod4+' → using '+best16Mod4);
-      bestPh = best16Mod4;
-    }
   }
   let best32=-1, best32Mod4=-1;
   if (dpBeats.length >= 64) {
     let best32Sc=-1;
     for(let k=0;k<32;k++){if(phSc32[k]>best32Sc){best32Sc=phSc32[k];best32=k;}}
     best32Mod4=best32%4;
-    if (best32Mod4 !== bestPh) {
-      console.log('[phase] phSc32 inconsistent: best32='+best32+' %4='+best32Mod4+
-                  ' != current bestPh='+bestPh+' → falling back to phase 0');
+  }
+  const phraseBringsNewInfo =
+    (best16Mod4 >= 0 && best16Mod4 !== rawBestPh) ||
+    (best32Mod4 >= 0 && best32Mod4 !== rawBestPh);
+
+  // Spreads for ambiguity / discrimination gating.
+  const phMax=Math.max(phSc[0],phSc[1],phSc[2],phSc[3]);
+  const phMin=Math.min(phSc[0],phSc[1],phSc[2],phSc[3]);
+  const kickSpread = phMax>0 ? (phMax-phMin)/phMax : 0;
+  const phMaxBass=Math.max(phScBass[0],phScBass[1],phScBass[2],phScBass[3]);
+  const phMinBass=Math.min(phScBass[0],phScBass[1],phScBass[2],phScBass[3]);
+  const bassSpread = phMaxBass>0 ? (phMaxBass-phMinBass)/phMaxBass : 0;
+
+  // Bass-derived bar-1 candidate: the bucket BEFORE the lowest midEnvB
+  // bucket. Rationale: per-bar basslines decay toward the bar boundary
+  // before re-articulating at the next bar-1, so the lowest sustained
+  // sub-bass sits just BEFORE bar-1. (Empirically validated on Sunbeam,
+  // Shadow Work, Tuesday Maybe; the argmax interpretation tested first
+  // failed because the wide 20-80 Hz band picks up kick-fundamental
+  // energy, making argmax conflate with kick-band scoring.)
+  let bassArgMin=0;
+  for(let k=1;k<4;k++) if(phScBass[k]<phScBass[bassArgMin]) bassArgMin=k;
+  const bestPhBass=(bassArgMin+1)%4;
+
+  // PHASE 1 bass tie-breaker. Fires when:
+  //   1) kickSpread < 0.35 — kick scoring is ambiguous or only weakly
+  //      confident (clap-on-3 inflated energy on a wrong bucket)
+  //   2) bassSpread > 0.30 — bass continuity shows a clear bar-boundary
+  //      dip pattern (vs uniform drone / per-beat re-articulation)
+  //   3) !phraseBringsNewInfo — phrase voting either agrees with raw
+  //      kick argmax or has no data. When phrase voting disagrees with
+  //      raw kick, that disagreement is itself evidence and should not
+  //      be stomped by bass.
+  let bassTieBreakerFired = false;
+  if (phMax > 0 && kickSpread < 0.35 && bassSpread > 0.30 && !phraseBringsNewInfo) {
+    console.log('[phase] bass tie-breaker: kickSpread='+kickSpread.toFixed(2)+
+                ' bassSpread='+bassSpread.toFixed(2)+
+                ' rawBestPh='+rawBestPh+' bassArgMin='+bassArgMin+
+                ' → bestPh='+bestPhBass);
+    bestPh = bestPhBass;
+    bassTieBreakerFired = true;
+  }
+
+  // Fall-through paths: phrase override + ambiguity fallback. Skipped
+  // entirely when bass tie-breaker fired — it has already produced the
+  // corrected bestPh and these would overwrite it.
+  if (!bassTieBreakerFired) {
+    // Phrase-level voting override (REVISED). Fires only when BOTH
+    // phrase16 and phrase32 disagree with rawBestPh AND agree with each
+    // other on what to pick instead.
+    //
+    // The internal-agreement gate prevents the YWNK failure mode where
+    // a single noisy phrase signal overrode a correct raw answer: YWNK
+    // had best16Mod4=1 disagreeing with raw=3, but best32Mod4=3 agreed
+    // with raw — the old cascade ran phrase16 override (→1) then
+    // phrase32 reset (→0), destroying the correct rawBestPh. With the
+    // agreement gate, internally-inconsistent phrase signals (16≠32)
+    // are ignored and rawBestPh survives.
+    const phraseSignalsAgree =
+      best16Mod4 >= 0 && best32Mod4 >= 0 && best16Mod4 === best32Mod4;
+    if (phraseSignalsAgree && best16Mod4 !== rawBestPh) {
+      console.log('[phase] phrase override: rawBestPh='+rawBestPh+
+                  ' but phrase16=phrase32='+best16Mod4+' → using '+best16Mod4);
+      bestPh = best16Mod4;
+    }
+
+    // Ambiguity fallback (REVISED). Falls back to phase 0 only when:
+    //   1) Nothing above changed bestPh (so we're still at rawBestPh)
+    //   2) kickSpread < 0.25 (raw phSc is genuinely ambiguous)
+    //   3) No phrase signal supports rawBestPh (i.e., both phrase16 and
+    //      phrase32 disagree with raw)
+    // Condition 3 protects YWNK-style tracks where raw is marginal but
+    // at least one phrase signal confirms it — the old unconditional
+    // (kickSpread<0.25 → bestPh=0) was erasing those correct answers.
+    const phraseSupportsRaw =
+      best16Mod4 === rawBestPh || best32Mod4 === rawBestPh;
+    if (bestPh === rawBestPh && phMax > 0 && kickSpread < 0.25 && !phraseSupportsRaw) {
+      console.log('[phase] ambiguity fallback: kickSpread='+kickSpread.toFixed(2)+
+                  ' no phrase signal supports rawBestPh='+rawBestPh+' → bestPh = 0');
       bestPh = 0;
     }
   }
@@ -631,5 +737,23 @@ self.onmessage=function(e){
   // depends on beatPhaseFrac being the UNWRAPPED beats-from-start, and
   // is fragile to anyone assuming it's a [0,1) fraction). Use this field
   // directly for first-downbeat auto-position.
-  self.postMessage({id,bpm:finalBpm,confidence:conf,candidates:cands,beatPhaseFrac,beatPeriodSec:finalPeriod,beatPhaseSec,firstBar1AnchorSec,snapped});
+  // phase diagnostics — non-breaking addition for the test harness. Client
+  // ignores. Carries per-bucket phSc scores, the selected bucket, the
+  // spread/peak ratio used by the ambiguity guard, and the phrase-voting
+  // winners (mod 4) so the harness can show WHY each track passed or failed.
+  // Phase 1 adds the bass-band counterparts and a flag indicating whether
+  // the bass tie-breaker fired.
+  const phase={
+    bestPh,
+    phSc:[phSc[0],phSc[1],phSc[2],phSc[3]],
+    phSpread:kickSpread,
+    phScBass:[phScBass[0],phScBass[1],phScBass[2],phScBass[3]],
+    phSpreadBass:bassSpread,
+    bestPhBass,
+    bassTieBreakerFired,
+    best16Mod4,
+    best32Mod4,
+    dpBeatsLen:dpBeats.length,
+  };
+  self.postMessage({id,bpm:finalBpm,confidence:conf,candidates:cands,beatPhaseFrac,beatPeriodSec:finalPeriod,beatPhaseSec,firstBar1AnchorSec,snapped,phase});
 };`;

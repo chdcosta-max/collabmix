@@ -1,10 +1,45 @@
 {
-  "_comment": "Ground truth for analyzer accuracy testing. Each track is keyed by filename in ./tracks/. Get bpm and firstDownbeatSec from rekordbox or Traktor. firstDownbeatSec is the time in seconds where bar 1 begins (where the first downbeat / structural anchor lands). Delete _comment and _example before adding real entries — keys starting with _ are ignored by the harness.",
-  "_example": {
-    "Starseed.mp3": {
-      "bpm": 121,
-      "firstDownbeatSec": 0.0651,
-      "notes": "rekordbox source"
-    }
+  "_comment": "Ground truth for analyzer downbeat-detection validation. Derived from user's correctOffsetBeats measurement on production (collabmix.vercel.app, commit edde4ee, 2026-05-18). firstDownbeatSec = analyzerOutput + offset × beatPeriodSec, wrapped forward by one bar (4 × beatPeriodSec) if the result is negative. Harness reads bpm + firstDownbeatSec only; correctOffsetBeats and shouldBucket are kept for traceability.",
+  "Kyotto - Home In The Sky (Original Mix).mp3": {
+    "bpm": 121,
+    "firstDownbeatSec": 1.0398,
+    "correctOffsetBeats": 0,
+    "shouldBucket": 2,
+    "notes": "analyzer was correct (via phrase-vote override); no-regression gate for Phase 1"
+  },
+  "Michael A - Sunbeam (HAFT Extended Remix).mp3": {
+    "bpm": 123,
+    "firstDownbeatSec": 0.3912,
+    "correctOffsetBeats": -2,
+    "shouldBucket": 0,
+    "notes": "hardest case: correct bucket 0 is LOWEST in raw phSc [321,364,366,336]"
+  },
+  "Roger Martinez, Simos Tagias - Shadow Work (Original Mix).mp3": {
+    "bpm": 120,
+    "firstDownbeatSec": 0.0244,
+    "correctOffsetBeats": -2,
+    "shouldBucket": 0,
+    "notes": "uniform kick + clap-on-3 archetype; bucket 2 wins raw phSc by 20%"
+  },
+  "Volen Sentir, Cinecile - You Will Never Know feat. Cinecile (Original Mix).mp3": {
+    "bpm": 122,
+    "firstDownbeatSec": 1.4908,
+    "correctOffsetBeats": -1,
+    "shouldBucket": 3,
+    "notes": "raw phSc winner is already correct (bucket 3, score 312); current code overrides to 0 via ambiguity guard + phrase reset"
+  },
+  "Warung, Elliot Vast - Racing Heart (Original Mix).mp3": {
+    "bpm": 123,
+    "firstDownbeatSec": 0.5208,
+    "correctOffsetBeats": -2,
+    "shouldBucket": 1,
+    "notes": "analyzer bpm unsnapped at 122.8; truth bpm=123 within ±0.5 tolerance"
+  },
+  "Way Out West - Tuesday Maybe (Guy J Remix).mp3": {
+    "bpm": 123,
+    "firstDownbeatSec": 0.6236,
+    "correctOffsetBeats": -1,
+    "shouldBucket": 1,
+    "notes": "correct bucket 1 ranks 2nd in phSc, 13% behind winner"
   }
 }
