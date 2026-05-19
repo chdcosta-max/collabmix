@@ -183,9 +183,17 @@ for (let i = 0; i < tracks.length; i++) {
     if (phase.phScBass) {
       const sb = phase.phScBass.map((x) => x.toFixed(1)).join(", ");
       console.log(
-        `       bass:  bestPhBass=${phase.bestPhBass}  phScBass=[${sb}]  spread=${phase.phSpreadBass.toFixed(2)}` +
-          (phase.bassTieBreakerFired ? "  ★ tie-breaker FIRED" : ""),
+        `       bass:  bestPhBass=${phase.bestPhBass}  phScBass=[${sb}]  spread=${phase.phSpreadBass.toFixed(2)}`,
       );
+    }
+    if (phase.phScChroma) {
+      const sc = phase.phScChroma.map((x) => x.toFixed(1)).join(", ");
+      console.log(
+        `       chrm:  bestPhChrm=${phase.bestPhChroma}  phScChroma=[${sc}]  spread=${phase.phSpreadChroma.toFixed(2)}`,
+      );
+    }
+    if (phase.decision) {
+      console.log(`       decision: ${phase.decision}`);
     }
   }
 

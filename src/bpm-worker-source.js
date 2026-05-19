@@ -516,6 +516,96 @@ self.onmessage=function(e){
     phSc16Bass[i%16]+=midMean;
     phSc32Bass[i%32]+=midMean;
   }
+
+  // ── PHASE 2: beat-synchronized chroma + novelty ───────────────────────
+  // Harmonic-change detection as a third independent signal for downbeat
+  // disambiguation. Bandpass the mid range (80-2000 Hz) to isolate chord
+  // and lead content, then project each beat's audio window onto 4 octaves
+  // × 12 pitch classes via direct DFT (Goertzel-equivalent without the
+  // recurrence). Cosine distance between adjacent beats' L2-normalized
+  // chroma vectors gives a novelty curve — high values mark harmonic
+  // boundaries. Phases where novelty clusters on bar boundaries score
+  // highest. Structurally orthogonal to both kick energy (irrelevant
+  // here) and bass continuity (catches harmonic-only changes that
+  // sustained-bass features miss).
+  const fH=bp(mono,sr,80,2000);
+  // 4 octaves × 12 PCs spanning ~131-1976 Hz (C3 to B6). Octave shift
+  // CHROMA_OCT0=-1 places A4 reference at oct=1 (so oct=0 is one octave
+  // below A4 ≈ A3=220 Hz; pc=0 is C of that octave).
+  const CHROMA_OCTS=4, CHROMA_OCT0=-1;
+  const chromaFreqs=new Float32Array(CHROMA_OCTS*12);
+  for(let o=0;o<CHROMA_OCTS;o++){
+    for(let pc=0;pc<12;pc++){
+      chromaFreqs[o*12+pc]=440*Math.pow(2,(pc-9)/12+(o+CHROMA_OCT0));
+    }
+  }
+  // Per-beat chroma vectors. Window ±100ms around the beat (~9k samples
+  // at sr=44.1k), stride 4 for ~2.2k effective samples. Per beat, 48
+  // freqs × 2.2k samples × 2 ops = ~210k ops. ~100M total for a 500-beat
+  // track, ~100ms in Node.
+  const chromaWinSamples=Math.round(sr*0.10);
+  const chromaStride=4;
+  const chromaPerBeat=new Float32Array(dpBeats.length*12);
+  const pcAccum=new Float32Array(12);
+  for(let i=0;i<dpBeats.length;i++){
+    for(let pc=0;pc<12;pc++) pcAccum[pc]=0;
+    const beatSample=Math.floor(dpBeatsFloat[i]*hop);
+    const ws=beatSample-chromaWinSamples<0?0:beatSample-chromaWinSamples;
+    const we=beatSample+chromaWinSamples>len?len:beatSample+chromaWinSamples;
+    for(let oct=0;oct<CHROMA_OCTS;oct++){
+      for(let pc=0;pc<12;pc++){
+        const freq=chromaFreqs[oct*12+pc];
+        if(freq>sr*0.45) continue;
+        const omega=2*Math.PI*freq/sr;
+        let re=0,im=0;
+        for(let k=ws;k<we;k+=chromaStride){
+          const s=fH[k];
+          const phase=omega*(k-ws);
+          re+=s*Math.cos(phase);
+          im+=s*Math.sin(phase);
+        }
+        pcAccum[pc]+=re*re+im*im;
+      }
+    }
+    // sqrt to magnitudes, L2-normalize across PCs.
+    let normSq=0;
+    for(let pc=0;pc<12;pc++){
+      pcAccum[pc]=Math.sqrt(pcAccum[pc]);
+      normSq+=pcAccum[pc]*pcAccum[pc];
+    }
+    const norm=Math.sqrt(normSq);
+    if(norm>0) for(let pc=0;pc<12;pc++) pcAccum[pc]/=norm;
+    for(let pc=0;pc<12;pc++) chromaPerBeat[i*12+pc]=pcAccum[pc];
+  }
+  // Novelty curve: cosine distance between adjacent beats. novelty[0]=0
+  // (no predecessor). Higher = bigger harmonic change between beats.
+  const chromaNovelty=new Float32Array(dpBeats.length);
+  for(let i=1;i<dpBeats.length;i++){
+    let dot=0;
+    for(let pc=0;pc<12;pc++){
+      dot+=chromaPerBeat[(i-1)*12+pc]*chromaPerBeat[i*12+pc];
+    }
+    const dist=1-dot;
+    chromaNovelty[i]=dist>0?dist:0;
+  }
+  // Per-phase chroma scoring. Phases where harmonic changes cluster
+  // score highest — bar boundaries are where chord/note changes
+  // statistically concentrate. argmax = bar-1 candidate.
+  const phScChroma=[0,0,0,0];
+  const phSc16Chroma=new Float32Array(16);
+  const phSc32Chroma=new Float32Array(32);
+  for(let i=1;i<dpBeats.length;i++){
+    const n=chromaNovelty[i];
+    phScChroma[i%4]+=n;
+    phSc16Chroma[i%16]+=n;
+    phSc32Chroma[i%32]+=n;
+  }
+  let bestPhChroma=0;
+  for(let k=1;k<4;k++) if(phScChroma[k]>phScChroma[bestPhChroma]) bestPhChroma=k;
+  const phMaxChroma=Math.max(phScChroma[0],phScChroma[1],phScChroma[2],phScChroma[3]);
+  const phMinChroma=Math.min(phScChroma[0],phScChroma[1],phScChroma[2],phScChroma[3]);
+  const chromaSpread=phMaxChroma>0?(phMaxChroma-phMinChroma)/phMaxChroma:0;
+
   // Raw argmax of phSc (kick-exclusive). Used both as the default bestPh
   // and as a reference for whether phrase voting brings new information.
   let rawBestPh=0;
@@ -562,64 +652,71 @@ self.onmessage=function(e){
   for(let k=1;k<4;k++) if(phScBass[k]<phScBass[bassArgMin]) bassArgMin=k;
   const bestPhBass=(bassArgMin+1)%4;
 
-  // PHASE 1 bass tie-breaker. Fires when:
-  //   1) kickSpread < 0.35 — kick scoring is ambiguous or only weakly
-  //      confident (clap-on-3 inflated energy on a wrong bucket)
-  //   2) bassSpread > 0.30 — bass continuity shows a clear bar-boundary
-  //      dip pattern (vs uniform drone / per-beat re-articulation)
-  //   3) !phraseBringsNewInfo — phrase voting either agrees with raw
-  //      kick argmax or has no data. When phrase voting disagrees with
-  //      raw kick, that disagreement is itself evidence and should not
-  //      be stomped by bass.
-  let bassTieBreakerFired = false;
-  if (phMax > 0 && kickSpread < 0.35 && bassSpread > 0.30 && !phraseBringsNewInfo) {
-    console.log('[phase] bass tie-breaker: kickSpread='+kickSpread.toFixed(2)+
-                ' bassSpread='+bassSpread.toFixed(2)+
-                ' rawBestPh='+rawBestPh+' bassArgMin='+bassArgMin+
-                ' → bestPh='+bestPhBass);
-    bestPh = bestPhBass;
-    bassTieBreakerFired = true;
-  }
-
-  // Fall-through paths: phrase override + ambiguity fallback. Skipped
-  // entirely when bass tie-breaker fired — it has already produced the
-  // corrected bestPh and these would overwrite it.
-  if (!bassTieBreakerFired) {
-    // Phrase-level voting override (REVISED). Fires only when BOTH
-    // phrase16 and phrase32 disagree with rawBestPh AND agree with each
-    // other on what to pick instead.
-    //
-    // The internal-agreement gate prevents the YWNK failure mode where
-    // a single noisy phrase signal overrode a correct raw answer: YWNK
-    // had best16Mod4=1 disagreeing with raw=3, but best32Mod4=3 agreed
-    // with raw — the old cascade ran phrase16 override (→1) then
-    // phrase32 reset (→0), destroying the correct rawBestPh. With the
-    // agreement gate, internally-inconsistent phrase signals (16≠32)
-    // are ignored and rawBestPh survives.
-    const phraseSignalsAgree =
+  // ── PHASE 2 DECISION TREE ─────────────────────────────────────────────
+  // Unified priority order replaces Phase 1's bass tie-breaker + phrase
+  // override + ambiguity fallback cascade. Inputs: rawBestPh (kick),
+  // best16Mod4/best32Mod4 (phrase voting), bestPhBass (bass continuity),
+  // bestPhChroma (harmonic novelty), with their respective spreads.
+  //
+  // Priority:
+  //   0. kickSpread > 0.35 — kick has clear winner, trust raw
+  //   1. phrase16 == phrase32 != raw — phrase consensus picks alternative
+  //      (Home In The Sky case: bass would pick wrong; phrase rescues)
+  //   2. phrase16 != phrase32 — phrase internally inconsistent, defer
+  //      to raw (YWNK safety: prevents bass/chroma overriding correct
+  //      raw when phrase voting itself is noisy)
+  //   3. bass clear AND chroma clear AND agree — high confidence
+  //   4. bass clear, chroma unclear — bass alone
+  //   5. chroma clear, bass unclear — chroma alone
+  //   6. bass and chroma clear but DISAGREE — defer to raw (avoids the
+  //      As Fate Has It regression where bass fires confidently on the
+  //      wrong answer; requires agreement before overriding)
+  //   7. all unclear — raw
+  let decision='raw';
+  if (kickSpread > 0.35) {
+    decision='raw (kickSpread > 0.35)';
+  } else {
+    const phraseAgree =
       best16Mod4 >= 0 && best32Mod4 >= 0 && best16Mod4 === best32Mod4;
-    if (phraseSignalsAgree && best16Mod4 !== rawBestPh) {
-      console.log('[phase] phrase override: rawBestPh='+rawBestPh+
-                  ' but phrase16=phrase32='+best16Mod4+' → using '+best16Mod4);
+    const phraseInternalDisagree =
+      best16Mod4 >= 0 && best32Mod4 >= 0 && best16Mod4 !== best32Mod4;
+    if (phraseAgree && best16Mod4 !== rawBestPh) {
       bestPh = best16Mod4;
-    }
-
-    // Ambiguity fallback (REVISED). Falls back to phase 0 only when:
-    //   1) Nothing above changed bestPh (so we're still at rawBestPh)
-    //   2) kickSpread < 0.25 (raw phSc is genuinely ambiguous)
-    //   3) No phrase signal supports rawBestPh (i.e., both phrase16 and
-    //      phrase32 disagree with raw)
-    // Condition 3 protects YWNK-style tracks where raw is marginal but
-    // at least one phrase signal confirms it — the old unconditional
-    // (kickSpread<0.25 → bestPh=0) was erasing those correct answers.
-    const phraseSupportsRaw =
-      best16Mod4 === rawBestPh || best32Mod4 === rawBestPh;
-    if (bestPh === rawBestPh && phMax > 0 && kickSpread < 0.25 && !phraseSupportsRaw) {
-      console.log('[phase] ambiguity fallback: kickSpread='+kickSpread.toFixed(2)+
-                  ' no phrase signal supports rawBestPh='+rawBestPh+' → bestPh = 0');
-      bestPh = 0;
+      decision = 'phrase agree → '+best16Mod4;
+    } else if (phraseInternalDisagree) {
+      bestPh = rawBestPh;
+      decision = 'raw (phrase internal disagree: 16='+best16Mod4+' 32='+best32Mod4+')';
+    } else {
+      // Chroma threshold tuned to 0.25 (vs 0.30 for bass): chroma novelty
+      // on EDM tends to be lower-amplitude than kick-pattern signals
+      // because chord-change frequency is a weaker discriminator than
+      // bass articulation. 0.25 catches tracks where bass+chroma both
+      // pick the correct bucket but with moderate confidence (Rocket Jam:
+      // bass 0.23 + chroma 0.27, both pick bucket 1, both correct).
+      const bassClear = bassSpread > 0.30;
+      const chromaClear = chromaSpread > 0.25;
+      if (bassClear && chromaClear && bestPhBass === bestPhChroma) {
+        bestPh = bestPhBass;
+        decision = 'bass+chroma agree → '+bestPhBass;
+      } else if (bassClear && !chromaClear) {
+        bestPh = bestPhBass;
+        decision = 'bass alone → '+bestPhBass+' (chroma unclear)';
+      } else if (chromaClear && !bassClear) {
+        bestPh = bestPhChroma;
+        decision = 'chroma alone → '+bestPhChroma+' (bass unclear)';
+      } else if (bassClear && chromaClear && bestPhBass !== bestPhChroma) {
+        bestPh = rawBestPh;
+        decision = 'raw (bass='+bestPhBass+' chroma='+bestPhChroma+' disagree)';
+      } else {
+        bestPh = rawBestPh;
+        decision = 'raw (all unclear)';
+      }
     }
   }
+  console.log('[phase] decision: '+decision+' → bestPh='+bestPh+
+              ' (kickSp='+kickSpread.toFixed(2)+
+              ' bassSp='+bassSpread.toFixed(2)+
+              ' chromaSp='+chromaSpread.toFixed(2)+')');
   // Precise beat period from snap-corrected DP beats — plain MEAN
   // (lastBeat-firstBeat / n-1). Median/trimmed-mean alternatives tested
   // and rejected: median snaps to a single integer-frame interval and
@@ -738,11 +835,8 @@ self.onmessage=function(e){
   // is fragile to anyone assuming it's a [0,1) fraction). Use this field
   // directly for first-downbeat auto-position.
   // phase diagnostics — non-breaking addition for the test harness. Client
-  // ignores. Carries per-bucket phSc scores, the selected bucket, the
-  // spread/peak ratio used by the ambiguity guard, and the phrase-voting
-  // winners (mod 4) so the harness can show WHY each track passed or failed.
-  // Phase 1 adds the bass-band counterparts and a flag indicating whether
-  // the bass tie-breaker fired.
+  // ignores. Phase 1 added bass scores; Phase 2 adds chroma scores and
+  // the decision-tree branch label.
   const phase={
     bestPh,
     phSc:[phSc[0],phSc[1],phSc[2],phSc[3]],
@@ -750,7 +844,10 @@ self.onmessage=function(e){
     phScBass:[phScBass[0],phScBass[1],phScBass[2],phScBass[3]],
     phSpreadBass:bassSpread,
     bestPhBass,
-    bassTieBreakerFired,
+    phScChroma:[phScChroma[0],phScChroma[1],phScChroma[2],phScChroma[3]],
+    phSpreadChroma:chromaSpread,
+    bestPhChroma,
+    decision,
     best16Mod4,
     best32Mod4,
     dpBeatsLen:dpBeats.length,

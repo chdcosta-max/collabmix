@@ -41,5 +41,40 @@
     "correctOffsetBeats": -1,
     "shouldBucket": 1,
     "notes": "correct bucket 1 ranks 2nd in phSc, 13% behind winner"
+  },
+  "Weird Sounding Dude - As Fate Has It (Extended Mix).mp3": {
+    "bpm": 123,
+    "firstDownbeatSec": 1.5602,
+    "correctOffsetBeats": -2,
+    "shouldBucket": 3,
+    "notes": "Phase 1 bass tie-breaker fires but picks bucket 1 (wrong); regression risk. Needs Phase 2."
+  },
+  "Will DeKeizer - Rocket Jam (Original Mix).mp3": {
+    "bpm": 122,
+    "firstDownbeatSec": 0.7702,
+    "correctOffsetBeats": -2,
+    "shouldBucket": 1,
+    "notes": "bestPhBass=1 (correct!) but bassSpread=0.23 below 0.30 threshold so tie-breaker doesn't fire"
+  },
+  "Yeadon - What Is Real (Extended Mix).mp3": {
+    "bpm": 123,
+    "firstDownbeatSec": 1.5845,
+    "correctOffsetBeats": -1,
+    "shouldBucket": 3,
+    "notes": "bass picks bucket 1 (wrong), bassSpread 0.22 below threshold anyway"
+  },
+  "Yotam Avni, Khen - Retro (Original Mix).mp3": {
+    "bpm": 124,
+    "firstDownbeatSec": 0.0785,
+    "correctOffsetBeats": -1,
+    "shouldBucket": 0,
+    "notes": "bass picks bucket 2 (wrong), bassSpread 0.18 below threshold"
+  },
+  "Yulia Niko, Mery Kilic - Disappear (Gorge & Nick Curly Remix).mp3": {
+    "bpm": 124,
+    "firstDownbeatSec": 1.6850,
+    "correctOffsetBeats": 0,
+    "shouldBucket": 3,
+    "notes": "ANOMALY: phase selection correct (offset 0) but user reports 20-50ms grid drift vs kick attacks. Different problem class — deferred separately."
   }
 }
