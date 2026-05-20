@@ -387,6 +387,28 @@ self.onmessage=function(e){
             for (let j = 2; j < winLen; j++) {
               if (diff[j] > diff[argmaxIdx]) argmaxIdx = j;
             }
+            // ── Sub-cause A fix (Class 1, Step 3): beat 0 ONLY ─────────────
+            // argmax(dE/dt) lands on the steepest-slope point of the kick
+            // attack (mid-attack). Rekordbox-style anchoring lands earlier —
+            // typically on a secondary peak at 60-80% of the global argmax
+            // amplitude, slightly before the steepest-slope point. If such
+            // a clear secondary peak exists earlier in the window, prefer
+            // it. This fix targets the ~15 Class 1 FAILs in the +20 to +35ms
+            // band (Phase Sync, In The Smoke pattern). Beat 0 only — beats
+            // 1+ already work well with argmax and changing them risks
+            // breaking the ~234 currently on-grid tracks.
+            if (i === 0 && argmaxIdx > edgeMargin) {
+              const EARLY_PEAK_THRESHOLD = 0.75;
+              const minDiff = diff[argmaxIdx] * EARLY_PEAK_THRESHOLD;
+              for (let j = edgeMargin; j < argmaxIdx; j++) {
+                if (diff[j] >= minDiff &&
+                    diff[j] > diff[j - 1] &&
+                    diff[j] >= diff[j + 1]) {
+                  argmaxIdx = j;
+                  break;
+                }
+              }
+            }
             if (argmaxIdx < edgeMargin || argmaxIdx > winLen - edgeMargin - 1) {
               reason = 'edge'; refineSkipEdge++;
             } else {
