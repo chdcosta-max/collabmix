@@ -11,14 +11,15 @@
 // per-track snapshot at snapshots/baseline-full.json for regression
 // comparison via analyze.mjs --compare baseline-full later.
 
-import { readFileSync, writeFileSync, mkdirSync, existsSync } from "node:fs";
+import { readFileSync, writeFileSync, mkdirSync } from "node:fs";
 import { resolve, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
-import decodeAudio from "audio-decode";
-import { WORKER_SRC } from "../../src/bpm-worker-source.js";
+import { Worker } from "node:worker_threads";
+import os from "node:os";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const SNAPSHOT_DIR = resolve(__dirname, "snapshots");
+const WORKER_PATH = resolve(__dirname, "analyze-worker.mjs");
 
 const TOLERANCE_BPM = 0.5;
 const TOLERANCE_DOWNBEAT_MS = 20;
@@ -31,24 +32,10 @@ function arg(flag, def = null) {
 const MANIFEST_PATH = arg("--manifest");
 const SNAPSHOT_NAME = arg("--save", "baseline-full");
 const LIMIT = parseInt(arg("--limit", "0"), 10) || 0;
+const N_WORKERS = parseInt(arg("--workers", "0"), 10) || Math.min(os.cpus().length, 8);
 if (!MANIFEST_PATH) {
-  console.error("Usage: node analyze-library.mjs --manifest <path> [--save <name>] [--limit N]");
+  console.error("Usage: node analyze-library.mjs --manifest <path> [--save <name>] [--limit N] [--workers N]");
   process.exit(2);
-}
-
-// ── Worker shim (same pattern as analyze.mjs) ────────────────────────────
-function runWorker(cd, sr, id) {
-  let captured = null;
-  const self = { onmessage: null, postMessage: (r) => { captured = r; } };
-  const origLog = console.log;
-  console.log = () => {}; // suppress worker [phase] chatter at scale
-  try {
-    new Function("self", WORKER_SRC)(self);
-    self.onmessage({ data: { cd, sr, id } });
-  } finally {
-    console.log = origLog;
-  }
-  return captured;
 }
 
 // ── Load manifest ────────────────────────────────────────────────────────
@@ -56,41 +43,10 @@ const manifest = JSON.parse(readFileSync(MANIFEST_PATH, "utf8"));
 let tracks = manifest.tracks || [];
 if (LIMIT > 0) tracks = tracks.slice(0, LIMIT);
 console.log(`Manifest: ${tracks.length} tracks (source: ${manifest.source || "unknown"})`);
+console.log(`Worker pool: ${N_WORKERS} threads`);
 
-// ── Per-track analysis ───────────────────────────────────────────────────
-const results = [];
-const startTime = Date.now();
-let lastReport = startTime;
-let decodeFailures = 0;
-let workerFailures = 0;
-
-for (let i = 0; i < tracks.length; i++) {
-  const t = tracks[i];
-  let buf;
-  try {
-    buf = await decodeAudio(readFileSync(t.path));
-  } catch (e) {
-    results.push({ ...t, status: "DECODE_FAIL", error: e.message });
-    decodeFailures++;
-    continue;
-  }
-  const sr = buf.sampleRate;
-  const cd = buf.channelData;
-  if (!Array.isArray(cd) || !(cd[0] instanceof Float32Array)) {
-    results.push({ ...t, status: "DECODE_FAIL", error: "no channelData" });
-    decodeFailures++;
-    continue;
-  }
-
-  let r;
-  try {
-    r = runWorker(cd, sr, t.basename);
-  } catch (e) {
-    results.push({ ...t, status: "WORKER_FAIL", error: e.message });
-    workerFailures++;
-    continue;
-  }
-
+// ── Per-track scoring (kept identical to sequential version) ─────────────
+function buildRow(t, r) {
   const aFirstDb = r.beatPhaseFrac != null && r.beatPeriodSec != null
     ? r.beatPhaseFrac * r.beatPeriodSec
     : null;
@@ -101,7 +57,7 @@ for (let i = 0; i < tracks.length; i++) {
     ? Math.round((aFirstDb - t.firstDownbeatSec) / r.beatPeriodSec)
     : null;
   const passed = deltaBpm <= TOLERANCE_BPM && deltaDbMs <= TOLERANCE_DOWNBEAT_MS;
-  results.push({
+  return {
     path: t.path,
     basename: t.basename,
     truthBpm: t.bpm,
@@ -117,19 +73,81 @@ for (let i = 0; i < tracks.length; i++) {
     bestPh: r.phase ? r.phase.bestPh : null,
     snapped: r.snapped,
     rekordboxNotes: t.notes || null,
-  });
-
-  // Progress every 1s
-  const now = Date.now();
-  if (now - lastReport > 1000 || i === tracks.length - 1) {
-    const done = i + 1;
-    const elapsed = (now - startTime) / 1000;
-    const rate = done / elapsed;
-    const eta = (tracks.length - done) / rate;
-    process.stderr.write(`\r  [${done}/${tracks.length}] ${rate.toFixed(1)}/s  elapsed=${elapsed.toFixed(0)}s  eta=${eta.toFixed(0)}s   `);
-    lastReport = now;
-  }
+  };
 }
+
+// ── Worker-pool dispatch ─────────────────────────────────────────────────
+const results = new Array(tracks.length);
+const startTime = Date.now();
+let lastReport = startTime;
+let decodeFailures = 0;
+let workerFailures = 0;
+let completed = 0;
+let nextIdx = 0;
+
+await new Promise((resolveAll) => {
+  const workers = [];
+  let readyCount = 0;
+
+  function dispatch(worker) {
+    if (nextIdx >= tracks.length) {
+      worker.postMessage({ type: "shutdown" });
+      return false;
+    }
+    const i = nextIdx++;
+    worker.postMessage({ idx: i, path: tracks[i].path, basename: tracks[i].basename });
+    return true;
+  }
+
+  function progressTick() {
+    const now = Date.now();
+    if (now - lastReport > 1000 || completed === tracks.length) {
+      const elapsed = (now - startTime) / 1000;
+      const rate = completed / Math.max(0.001, elapsed);
+      const eta = rate > 0 ? (tracks.length - completed) / rate : 0;
+      process.stderr.write(`\r  [${completed}/${tracks.length}] ${rate.toFixed(1)}/s  elapsed=${elapsed.toFixed(0)}s  eta=${eta.toFixed(0)}s   `);
+      lastReport = now;
+    }
+  }
+
+  for (let w = 0; w < N_WORKERS; w++) {
+    const worker = new Worker(WORKER_PATH);
+    workers.push(worker);
+
+    worker.on("message", (msg) => {
+      if (msg.type === "ready") {
+        readyCount++;
+        if (readyCount === N_WORKERS) {
+          // All workers ready — kick off initial dispatch
+          for (const w2 of workers) dispatch(w2);
+        }
+        return;
+      }
+      const t = tracks[msg.idx];
+      if (msg.decodeError) {
+        results[msg.idx] = { ...t, status: "DECODE_FAIL", error: msg.decodeError };
+        decodeFailures++;
+      } else if (msg.workerError) {
+        results[msg.idx] = { ...t, status: "WORKER_FAIL", error: msg.workerError };
+        workerFailures++;
+      } else {
+        results[msg.idx] = buildRow(t, msg.result);
+      }
+      completed++;
+      progressTick();
+      if (completed === tracks.length) {
+        for (const w2 of workers) w2.postMessage({ type: "shutdown" });
+        resolveAll();
+      } else {
+        dispatch(worker);
+      }
+    });
+
+    worker.on("error", (err) => {
+      console.error("\nWorker thread error:", err);
+    });
+  }
+});
 process.stderr.write("\n");
 
 // ── Aggregate ────────────────────────────────────────────────────────────
