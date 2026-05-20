@@ -1000,6 +1000,29 @@ self.onmessage=function(e){
   let barDownbeatFrame=dpBeatsFloat[0]||0;
   while(barDownbeatFrame-beatFrames>=0) barDownbeatFrame-=beatFrames;
 
+  // ── Sub-cause C fix (Class 1, Step 4): sampler / one-shot convention ──
+  // Rekordbox places bar-1 at sample 0 for sampler / one-shot WAV files
+  // (loop kits, drum hits, short demo clips). Our envelope-peak refinement
+  // naturally lands 20-40ms in — the natural attack-to-peak time of a kick
+  // through our 1.5ms smoothing window. For short / few-beat tracks where
+  // the first detected beat is close enough to file start that "snap to 0"
+  // is the right call, override the walk-back result.
+  //
+  // Detection: durSec < 30 OR dpBeats.length < 8 (i.e., short loop or
+  // few-beat one-shot). Action gate: only snap if the walk-back result is
+  // already within 40ms of file start (otherwise this isn't a "kick-at-0"
+  // sampler — leave it alone). Empirical: catches Techno1, House2, House4
+  // among known FAILs. Zero predicted regressions on currently-passing
+  // samplers (House1 already at 9ms — snap improves to 0).
+  const durSec = len / sr;
+  const isSampler = durSec < 30 || dpBeats.length < 8;
+  if (isSampler && barDownbeatFrame / ar < 0.040) {
+    console.log('[BPM-SAMPLER] track ' + id + ': snap to 0 (durSec=' +
+      durSec.toFixed(2) + ' beats=' + dpBeats.length + ' was=' +
+      (barDownbeatFrame / ar * 1000).toFixed(1) + 'ms)');
+    barDownbeatFrame = 0;
+  }
+
   // beatPhaseFrac is the anchor's beat-index from track start. Using beatPeriodSec
   // keeps firstDownbeatSec = beatPhaseFrac × beatPeriodSec = barDownbeatFrame/ar
   // exactly, which is what the grid draw loop needs.
