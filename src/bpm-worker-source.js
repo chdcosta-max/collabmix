@@ -1246,6 +1246,83 @@ self.onmessage=function(e){
     }
   }
 
+  // ── Sub-cause G fix: walk back to earliest substantial transient ──
+  // Targets the LATE failure cluster (analyzer's bar-1 landed 20-90 ms LATER
+  // than truth). The existing beat-0 refinement (Sub-cause A walks back to
+  // the earliest diff peak ≥ 75% of argmax) is tuned conservatively and
+  // misses cases where the truth-position transient is 30-70% of the
+  // analyzer-chosen peak. Re-runs the same DSP with a more permissive 30%
+  // threshold AFTER all other post-processing.
+  //
+  // Gate: walkback distance ≥ 20 ms. Below that we either land on argmax
+  // itself (no-op) or risk grabbing a sub-millisecond precursor that
+  // isn't a real beat boundary.
+  //
+  // Diagnostic in tools/sota-eval/LATE_CLUSTER_FIX.md: +19 / 0 / net +19
+  // on the 272-track harness vs fix-F2 baseline (73.9% → 80.9%).
+  {
+    const bar1SecCur = barDownbeatFrame / ar;
+    const winStartSec = Math.max(0, bar1SecCur - 0.050);
+    const winEndSec = Math.max(winStartSec + 0.020, bar1SecCur + 0.025);
+    const winStart = Math.round(winStartSec * sr);
+    const winEnd = Math.min(len, Math.round(winEndSec * sr));
+    if (winEnd - winStart >= 200) {
+      const padS = Math.round(sr * 0.010);
+      const padStart = Math.max(0, winStart - padS);
+      const padEnd = Math.min(len, winEnd + padS);
+      const padded = mono.subarray(padStart, padEnd);
+      const filtered = bp(padded, sr, 40, 200);
+      const innerOff = winStart - padStart;
+      const winLen = winEnd - winStart;
+      const powerG = new Float32Array(winLen);
+      for (let i = 0; i < winLen; i++) {
+        const v = filtered[innerOff + i];
+        powerG[i] = v * v;
+      }
+      const smoothWinG = Math.max(8, Math.round(sr * 0.0015));
+      const smoothedG = new Float32Array(winLen);
+      let runSumG = 0;
+      for (let i = 0; i < winLen; i++) {
+        runSumG += powerG[i];
+        if (i >= smoothWinG) runSumG -= powerG[i - smoothWinG];
+        smoothedG[i] = runSumG / Math.min(i + 1, smoothWinG);
+      }
+      const diffG = new Float32Array(winLen);
+      let maxDiffG = 0;
+      for (let i = 1; i < winLen; i++) {
+        const d = smoothedG[i] - smoothedG[i - 1];
+        const dr = d > 0 ? d : 0;
+        diffG[i] = dr;
+        if (dr > maxDiffG) maxDiffG = dr;
+      }
+      if (maxDiffG > 0) {
+        const exclRG = Math.max(2, Math.round(sr * 0.002));
+        const threshG = maxDiffG * 0.30;
+        let earliestI = -1;
+        for (let i = exclRG; i < winLen - exclRG; i++) {
+          if (diffG[i] < threshG) continue;
+          let isMax = true;
+          for (let k = 1; k <= exclRG; k++) {
+            if (diffG[i] < diffG[i - k] || diffG[i] < diffG[i + k]) { isMax = false; break; }
+          }
+          if (isMax) { earliestI = i; break; }
+        }
+        if (earliestI > 0) {
+          const newBar1Sample = winStart + earliestI;
+          const newBar1Sec = newBar1Sample / sr;
+          const walkbackMs = (bar1SecCur - newBar1Sec) * 1000;
+          if (walkbackMs >= 20) {
+            console.log('[BPM-WALKBACK] track ' + id +
+              ': walked back ' + walkbackMs.toFixed(1) + 'ms; bar1: ' +
+              (bar1SecCur * 1000).toFixed(1) + 'ms → ' +
+              (newBar1Sec * 1000).toFixed(1) + 'ms');
+            barDownbeatFrame = newBar1Sec * ar;
+          }
+        }
+      }
+    }
+  }
+
   // beatPhaseFrac is the anchor's beat-index from track start. Using beatPeriodSec
   // keeps firstDownbeatSec = beatPhaseFrac × beatPeriodSec = barDownbeatFrame/ar
   // exactly, which is what the grid draw loop needs.
