@@ -1065,6 +1065,126 @@ self.onmessage=function(e){
     barDownbeatFrame = 0;
   }
 
+  // ── Sub-cause D fix (Class 2, Phase 2): drop-detection grid validation ──
+  // For off-by-N-beats failures (analyzer locked to first transient at ~0ms,
+  // Rekordbox places bar-1 1-2 sec in at the actual phrase drop), use kick
+  // breakdown → return events as a vote on bar phase.
+  //
+  // Algorithm: bandpass 40-100Hz, frame energy at 100ms hops, smooth 2s,
+  // threshold at 40% of p70. Find inactive runs ≥4s (breakdowns); each is
+  // followed by a drop. Snap the drop to the earliest analyzer-grid beat
+  // within ±2 beats that has substantial kick energy AND ≥2× energy rise
+  // from the previous beat. For each snapped drop, compute beat-of-bar
+  // relative to current bar-1; vote on the dominant. If ALL valid drops
+  // agree on a non-zero bob (conf=1.0) AND ≥2 drops AND anaBar1 < 50ms,
+  // shift bar-1 forward by dominantBeat × period.
+  //
+  // The conf=1.0 + anaBar1<50ms + drops≥2 gate was tuned in
+  // tools/docs/DROP_DETECTION_INVESTIGATION.md against the 272-track library:
+  // +2 PASS (Shuttered, White Moon) / 0 regressions on PASS tracks.
+  if ((barDownbeatFrame / ar) < 0.050 && finalPeriod > 0) {
+    const HOP_SEC = 0.1;
+    const hopS = Math.max(1, Math.round(sr * HOP_SEC));
+    const n = Math.floor(len / hopS);
+    if (n > 50) { // need a few seconds of audio
+      const band = bp(mono, sr, 40, 100);
+      const fE = new Float32Array(n);
+      for (let i = 0; i < n; i++) {
+        const st = i * hopS;
+        let s = 0;
+        const end = Math.min(band.length, st + hopS);
+        for (let j = st; j < end; j++) { const v = band[j]; s += v * v; }
+        fE[i] = Math.sqrt(s / hopS);
+      }
+      const sw = Math.max(3, Math.round(2.0 / HOP_SEC));
+      const fS = new Float32Array(n);
+      const q = [];
+      let acc = 0;
+      for (let i = 0; i < n; i++) {
+        acc += fE[i];
+        q.push(fE[i]);
+        if (q.length > sw) acc -= q.shift();
+        fS[i] = acc / q.length;
+      }
+      const sortedFS = [];
+      for (let i = 0; i < n; i++) if (fS[i] > 0) sortedFS.push(fS[i]);
+      sortedFS.sort(function(a, b) { return a - b; });
+      if (sortedFS.length > 10) {
+        const p70 = sortedFS[Math.floor(sortedFS.length * 0.70)];
+        const thresh = p70 * 0.40;
+        const active = new Uint8Array(n);
+        for (let i = 0; i < n; i++) active[i] = fS[i] > thresh ? 1 : 0;
+        const minBreakFrames = Math.ceil(4.0 / HOP_SEC);
+        const anaBar1Sec = barDownbeatFrame / ar;
+        const drops = [];
+        let inactiveStart = active[0] ? -1 : 0;
+        for (let i = 1; i < n; i++) {
+          if (!active[i] && active[i - 1]) {
+            inactiveStart = i;
+          } else if (active[i] && !active[i - 1] && inactiveStart >= 0) {
+            const breakFrames = i - inactiveStart;
+            if (breakFrames >= minBreakFrames) {
+              const tDrop = i * HOP_SEC;
+              const N0 = Math.round((tDrop - anaBar1Sec) / finalPeriod);
+              // Local-future median for energy threshold
+              const winHi = Math.min(n - 1, i + Math.round(2.0 / HOP_SEC));
+              const winArr = [];
+              for (let k = i; k <= winHi; k++) winArr.push(fE[k]);
+              winArr.sort(function(a, b) { return a - b; });
+              const winMedian = winArr[Math.floor(winArr.length / 2)] || 0;
+              const minEnergy = winMedian * 0.4;
+              const rad = Math.max(1, Math.round(0.06 / HOP_SEC));
+              let snappedT = -1;
+              for (let dN = -2; dN <= 2; dN++) {
+                const N = N0 + dN;
+                const tBeat = anaBar1Sec + N * finalPeriod;
+                if (tBeat < 0 || tBeat >= len / sr) continue;
+                const fIdx = Math.round(tBeat / HOP_SEC);
+                if (fIdx < 1 || fIdx >= n - 1) continue;
+                let eHere = 0;
+                for (let k = Math.max(0, fIdx - rad); k <= Math.min(n - 1, fIdx + rad); k++) {
+                  if (fE[k] > eHere) eHere = fE[k];
+                }
+                if (eHere < minEnergy) continue;
+                const prevFIdx = Math.round((tBeat - finalPeriod) / HOP_SEC);
+                let ePrev = 0;
+                if (prevFIdx >= 0 && prevFIdx < n) {
+                  for (let k = Math.max(0, prevFIdx - rad); k <= Math.min(n - 1, prevFIdx + rad); k++) {
+                    if (fE[k] > ePrev) ePrev = fE[k];
+                  }
+                }
+                if (eHere < 2 * ePrev) continue;
+                snappedT = tBeat;
+                break;
+              }
+              if (snappedT > 0.5) drops.push(snappedT);
+            }
+            inactiveStart = -1;
+          }
+        }
+        if (drops.length >= 2) {
+          const hist = [0, 0, 0, 0];
+          for (let d = 0; d < drops.length; d++) {
+            const bob = ((Math.round((drops[d] - anaBar1Sec) / finalPeriod) % 4) + 4) % 4;
+            hist[bob]++;
+          }
+          let dom = 0;
+          for (let b = 1; b < 4; b++) if (hist[b] > hist[dom]) dom = b;
+          const total = hist[0] + hist[1] + hist[2] + hist[3];
+          const conf = total > 0 ? hist[dom] / total : 0;
+          if (conf >= 0.999 && dom !== 0) {
+            const newBar1Sec = anaBar1Sec + dom * finalPeriod;
+            console.log('[BPM-DROPSHIFT] track ' + id +
+              ': votedShift=' + dom + 'β drops=' + drops.length +
+              ' bar1: ' + (anaBar1Sec * 1000).toFixed(1) + 'ms → ' +
+              (newBar1Sec * 1000).toFixed(1) + 'ms');
+            barDownbeatFrame = newBar1Sec * ar;
+          }
+        }
+      }
+    }
+  }
+
   // beatPhaseFrac is the anchor's beat-index from track start. Using beatPeriodSec
   // keeps firstDownbeatSec = beatPhaseFrac × beatPeriodSec = barDownbeatFrame/ar
   // exactly, which is what the grid draw loop needs.
