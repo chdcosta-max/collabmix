@@ -397,6 +397,7 @@ self.onmessage=function(e){
             // band (Phase Sync, In The Smoke pattern). Beat 0 only — beats
             // 1+ already work well with argmax and changing them risks
             // breaking the ~234 currently on-grid tracks.
+            let subAFired = false;
             if (i === 0 && argmaxIdx > edgeMargin) {
               const EARLY_PEAK_THRESHOLD = 0.75;
               const minDiff = diff[argmaxIdx] * EARLY_PEAK_THRESHOLD;
@@ -405,20 +406,61 @@ self.onmessage=function(e){
                     diff[j] > diff[j - 1] &&
                     diff[j] >= diff[j + 1]) {
                   argmaxIdx = j;
+                  subAFired = true;
                   break;
                 }
+              }
+            }
+            // ── Sub-cause B fix (Class 1, Step 5, Phase 1): beat 0 ONLY ────
+            // argmax(dE/dt) lands on the steepest-slope point of the kick
+            // attack. For the Body Stars / Hymn Of The Fern class (~14 tracks
+            // failing -15 to -27ms EARLY of truth), Rekordbox anchors LATER —
+            // on the envelope peak (kick body), not the mid-attack slope.
+            // Walk forward through the smoothed power envelope from argmaxIdx
+            // until it stops rising, capped at WALK_FORWARD_MS.
+            //
+            // Gates:
+            // - beat 0 only (beats 1+ are already tightly aligned by argmax)
+            // - skipped if Sub-cause A fired (it walks BACKWARD to an earlier
+            //   peak; walking forward from there would land near or past the
+            //   original argmax and undo Sub-cause A)
+            // - walk capped so a flat-top envelope can't drag the anchor by
+            //   more than WALK_FORWARD_MS
+            let walkForwardFired = false;
+            if (i === 0 && !subAFired && argmaxIdx >= edgeMargin) {
+              const WALK_FORWARD_MS = 20;
+              const walkLimitSamples = Math.round(sr * WALK_FORWARD_MS / 1000);
+              const walkLimit = Math.min(winLen - edgeMargin - 1,
+                                          argmaxIdx + walkLimitSamples);
+              let peakIdx = argmaxIdx;
+              let peakVal = smoothed[argmaxIdx];
+              for (let j = argmaxIdx + 1; j <= walkLimit; j++) {
+                if (smoothed[j] >= peakVal) {
+                  peakVal = smoothed[j];
+                  peakIdx = j;
+                } else if (smoothed[j] < peakVal * 0.98) {
+                  break;
+                }
+              }
+              if (peakIdx !== argmaxIdx) {
+                argmaxIdx = peakIdx;
+                walkForwardFired = true;
               }
             }
             if (argmaxIdx < edgeMargin || argmaxIdx > winLen - edgeMargin - 1) {
               reason = 'edge'; refineSkipEdge++;
             } else {
-              // Parabolic interpolation for sub-sample precision
-              const yL = diff[argmaxIdx - 1], yC = diff[argmaxIdx], yR = diff[argmaxIdx + 1];
-              const denom = yL - 2 * yC + yR;
-              if (denom < 0) {
-                frac = (yL - yR) / (2 * denom);
-                if (frac > 0.5) frac = 0.5;
-                else if (frac < -0.5) frac = -0.5;
+              // Parabolic interpolation for sub-sample precision.
+              // Skip when walk-forward fired: argmaxIdx is the envelope peak,
+              // not the diff peak, so parabolic interp on diff[] is invalid.
+              if (!walkForwardFired) {
+                const yL = diff[argmaxIdx - 1], yC = diff[argmaxIdx], yR = diff[argmaxIdx + 1];
+                const denom = yL - 2 * yC + yR;
+                if (denom < 0) {
+                  frac = (yL - yR) / (2 * denom);
+                  if (frac > 0.5) frac = 0.5;
+                  else if (frac < -0.5) frac = -0.5;
+                }
               }
               const candidate = winStart + argmaxIdx + frac;
               // Monotonic guard
