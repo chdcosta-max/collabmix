@@ -1,0 +1,337 @@
+[
+  {
+    "pairIdx": 1,
+    "basenameA": "01 Bridge (Original Mix).mp3",
+    "basenameB": "02 Welcome to You (Original Mix).mp3",
+    "bpmA": 120,
+    "bpmB": 120,
+    "bar1A_ms": 274.0763795459378,
+    "bar1B_ms": 20.346199050078877,
+    "truthA_ms": 274,
+    "truthB_ms": 25,
+    "audibleA": 294.21768707482994,
+    "audibleB": 29.09297052154195,
+    "audibleA_offFromBar1": 20.14,
+    "audibleB_offFromBar1": 8.75,
+    "scenarios": [
+      {
+        "shiftMs": -10,
+        "offA": 30.14,
+        "offB": 18.75,
+        "xcorr": {
+          "peakLagMs": -7.052154195011338,
+          "peakValue": 77.20414963551949
+        },
+        "abKickOffset": 11.39
+      },
+      {
+        "shiftMs": 0,
+        "offA": 20.14,
+        "offB": 8.75,
+        "xcorr": {
+          "peakLagMs": -7.120181405895692,
+          "peakValue": 76.98222690691908
+        },
+        "abKickOffset": 11.39
+      },
+      {
+        "shiftMs": 10,
+        "offA": 10.14,
+        "offB": -1.25,
+        "xcorr": {
+          "peakLagMs": -7.120181405895692,
+          "peakValue": 76.8664415475102
+        },
+        "abKickOffset": 11.39
+      },
+      {
+        "shiftMs": 20,
+        "offA": 0.14,
+        "offB": -11.25,
+        "xcorr": {
+          "peakLagMs": -7.09750566893424,
+          "peakValue": 75.87787166749023
+        },
+        "abKickOffset": 11.39
+      },
+      {
+        "shiftMs": 30,
+        "offA": -9.86,
+        "offB": -21.25,
+        "xcorr": {
+          "peakLagMs": -7.09750566893424,
+          "peakValue": 76.28437412784848
+        },
+        "abKickOffset": 11.39
+      }
+    ]
+  },
+  {
+    "pairIdx": 2,
+    "basenameA": "01 Phase Sync (Original Mix).mp3",
+    "basenameB": "01 Walk With Me (Original Mix).mp3",
+    "bpmA": 120,
+    "bpmB": 120,
+    "bar1A_ms": 38.83877649183771,
+    "bar1B_ms": 83.80952380952381,
+    "truthA_ms": 24,
+    "truthB_ms": 91,
+    "audibleA": 53.35600907029479,
+    "audibleB": 134.39909297052154,
+    "audibleA_offFromBar1": 14.52,
+    "audibleB_offFromBar1": 50.59,
+    "scenarios": [
+      {
+        "shiftMs": -10,
+        "offA": 24.52,
+        "offB": 60.59,
+        "xcorr": {
+          "peakLagMs": -35.32879818594104,
+          "peakValue": 42.41997446479885
+        },
+        "abKickOffset": -36.07
+      },
+      {
+        "shiftMs": 0,
+        "offA": 14.52,
+        "offB": 50.59,
+        "xcorr": {
+          "peakLagMs": -35.238095238095234,
+          "peakValue": 41.00724762483769
+        },
+        "abKickOffset": -36.07
+      },
+      {
+        "shiftMs": 10,
+        "offA": 4.52,
+        "offB": 40.59,
+        "xcorr": {
+          "peakLagMs": -35.21541950113379,
+          "peakValue": 38.83712704461011
+        },
+        "abKickOffset": -36.07
+      },
+      {
+        "shiftMs": 20,
+        "offA": -5.48,
+        "offB": 30.59,
+        "xcorr": {
+          "peakLagMs": -35.192743764172334,
+          "peakValue": 37.051599322696326
+        },
+        "abKickOffset": -36.07
+      },
+      {
+        "shiftMs": 30,
+        "offA": -15.48,
+        "offB": 20.59,
+        "xcorr": {
+          "peakLagMs": -35.260770975056694,
+          "peakValue": 36.30197246622525
+        },
+        "abKickOffset": -36.07
+      }
+    ]
+  },
+  {
+    "pairIdx": 3,
+    "basenameA": "01 Paper Tiger (Extended Mix).mp3",
+    "basenameB": "01 Atlas (Original Mix).mp3",
+    "bpmA": 122,
+    "bpmB": 122,
+    "bar1A_ms": 288.0846670074581,
+    "bar1B_ms": 144.06729345163558,
+    "truthA_ms": 290,
+    "truthB_ms": 148,
+    "audibleA": 333.10657596371885,
+    "audibleB": 151.9047619047619,
+    "audibleA_offFromBar1": 45.02,
+    "audibleB_offFromBar1": 7.84,
+    "scenarios": [
+      {
+        "shiftMs": -10,
+        "offA": 55.02,
+        "offB": 17.84,
+        "xcorr": {
+          "peakLagMs": -6.73469387755102,
+          "peakValue": 21.498068623000226
+        },
+        "abKickOffset": 37.18
+      },
+      {
+        "shiftMs": 0,
+        "offA": 45.02,
+        "offB": 7.84,
+        "xcorr": {
+          "peakLagMs": -6.6439909297052155,
+          "peakValue": 21.086262122465023
+        },
+        "abKickOffset": 37.18
+      },
+      {
+        "shiftMs": 10,
+        "offA": 35.02,
+        "offB": -2.16,
+        "xcorr": {
+          "peakLagMs": -6.6439909297052155,
+          "peakValue": 21.12643251921025
+        },
+        "abKickOffset": 37.18
+      },
+      {
+        "shiftMs": 20,
+        "offA": 25.02,
+        "offB": -12.16,
+        "xcorr": {
+          "peakLagMs": -6.6439909297052155,
+          "peakValue": 21.460054423060306
+        },
+        "abKickOffset": 37.18
+      },
+      {
+        "shiftMs": 30,
+        "offA": 15.02,
+        "offB": -22.16,
+        "xcorr": {
+          "peakLagMs": -6.6439909297052155,
+          "peakValue": 21.403255772886833
+        },
+        "abKickOffset": 37.18
+      }
+    ]
+  },
+  {
+    "pairIdx": 4,
+    "basenameA": "04 Thunder (Original Mix).mp3",
+    "basenameB": "03 Strange Way (Original Mix).mp3",
+    "bpmA": 120,
+    "bpmB": 120,
+    "bar1A_ms": 19.954648526077097,
+    "bar1B_ms": 213.08601090079085,
+    "truthA_ms": 24,
+    "truthB_ms": 200,
+    "audibleA": 73.76417233560092,
+    "audibleB": 228.2766439909297,
+    "audibleA_offFromBar1": 53.81,
+    "audibleB_offFromBar1": 15.19,
+    "scenarios": [
+      {
+        "shiftMs": -10,
+        "offA": 63.81,
+        "offB": 25.19,
+        "xcorr": {
+          "peakLagMs": -0.5442176870748299,
+          "peakValue": 16.101279554513237
+        },
+        "abKickOffset": 38.62
+      },
+      {
+        "shiftMs": 0,
+        "offA": 53.81,
+        "offB": 15.19,
+        "xcorr": {
+          "peakLagMs": -0.4988662131519275,
+          "peakValue": 15.983272273320756
+        },
+        "abKickOffset": 38.62
+      },
+      {
+        "shiftMs": 10,
+        "offA": 43.81,
+        "offB": 5.19,
+        "xcorr": {
+          "peakLagMs": -0.47619047619047616,
+          "peakValue": 15.938951278807258
+        },
+        "abKickOffset": 38.62
+      },
+      {
+        "shiftMs": 20,
+        "offA": 33.81,
+        "offB": -4.81,
+        "xcorr": {
+          "peakLagMs": -0.5215419501133787,
+          "peakValue": 15.908578283660537
+        },
+        "abKickOffset": 38.62
+      },
+      {
+        "shiftMs": 30,
+        "offA": 23.81,
+        "offB": -14.81,
+        "xcorr": {
+          "peakLagMs": -0.5215419501133787,
+          "peakValue": 15.919407051352584
+        },
+        "abKickOffset": 38.62
+      }
+    ]
+  },
+  {
+    "pairIdx": 5,
+    "basenameA": "02 Vivid Imagination (Tantum Remix).mp3",
+    "basenameB": "02 Don't Stop (Guy J Remix).m4a",
+    "bpmA": 122,
+    "bpmB": 122,
+    "bar1A_ms": 150.25000353120004,
+    "bar1B_ms": 297.8457203777033,
+    "truthA_ms": 147,
+    "truthB_ms": 291,
+    "audibleA": 165.78231292517006,
+    "audibleB": 312.99319727891157,
+    "audibleA_offFromBar1": 15.53,
+    "audibleB_offFromBar1": 15.15,
+    "scenarios": [
+      {
+        "shiftMs": -10,
+        "offA": 25.53,
+        "offB": 25.15,
+        "xcorr": {
+          "peakLagMs": -30.975056689342402,
+          "peakValue": 73.71427263634547
+        },
+        "abKickOffset": 0.38
+      },
+      {
+        "shiftMs": 0,
+        "offA": 15.53,
+        "offB": 15.15,
+        "xcorr": {
+          "peakLagMs": -31.06575963718821,
+          "peakValue": 74.67181470029513
+        },
+        "abKickOffset": 0.38
+      },
+      {
+        "shiftMs": 10,
+        "offA": 5.53,
+        "offB": 5.15,
+        "xcorr": {
+          "peakLagMs": -31.06575963718821,
+          "peakValue": 71.91037301644137
+        },
+        "abKickOffset": 0.38
+      },
+      {
+        "shiftMs": 20,
+        "offA": -4.47,
+        "offB": -4.85,
+        "xcorr": {
+          "peakLagMs": -31.02040816326531,
+          "peakValue": 70.6066004342831
+        },
+        "abKickOffset": 0.38
+      },
+      {
+        "shiftMs": 30,
+        "offA": -14.47,
+        "offB": -14.85,
+        "xcorr": {
+          "peakLagMs": -30.90702947845805,
+          "peakValue": 67.88443902907503
+        },
+        "abKickOffset": 0.38
+      }
+    ]
+  }
+]

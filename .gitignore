@@ -6,3 +6,9 @@ dist/
 tools/bpm-test-harness/tracks/*
 !tools/bpm-test-harness/tracks/.gitkeep
 tools/bpm-test-harness/node_modules/
+.claude/
+tools/rekordbox-eval/venv/
+tools/rekordbox-eval/master-plain*.db
+tools/rekordbox-eval/master-plain*.db-shm
+tools/rekordbox-eval/master-plain*.db-wal
+tools/sota-eval/beat_this/

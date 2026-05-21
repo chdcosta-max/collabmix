@@ -1263,6 +1263,10 @@ Fix 2 — Sync state reset on unsync:
 - Added [SYNC-STATE] log at start of handleSyncToggle for diagnostic
 
 ### NOT YET TESTED — NEXT SESSION FIRST
+[SUPERSEDED in May 17-18 Session 4 — all three items tested and confirmed
+working. Sync drift verified clean over multi-minute synced playback;
+unsync state contamination resolved; many additional sync fixes shipped
+on top. See Session 4 section below.]
 - Sync drift fix in live testing (2+ minute play after sync engage)
 - Sync state bug fix in live testing
   (sync→unsync→pause→play→re-sync sequence)
@@ -1271,6 +1275,12 @@ Fix 2 — Sync state reset on unsync:
 ### REMAINING ANALYZER PROBLEMS
 
 Shadow Work multi-beat error:
+[SUPERSEDED in Session 4 — investigated extensively, broader pattern
+discovered: downbeat misdetection is NOT just a Shadow Work problem,
+it's a systemic issue across most tracks. 4 of 4 newly-tested tracks
+post-Sunbeam had wrong beat grids. Kick-exclusive scoring + phrase
+voting (phSc16/phSc32) shipped; both helped marginally but neither
+fixes the fundamental issue. See Session 4's CRITICAL BLOCKER section.]
 - Bar phase detection (L252-276) placing beat 1 at wrong position
 - Sample-level refinement can't fix (only operates within ±50ms of
   DP placement)
@@ -1319,6 +1329,13 @@ Residual ±5-10ms on Home / Sunbeam / Spektre:
 1. Sample-level transient detection is THE proper analyzer fix
    (not cross-correlation)
 2. Cross-correlation sync abandoned — temp fix not worth the time
+   [REVERSED in Session 4 — Path C kick-band cross-correlation shipped
+   (commit 9b67697). FFT-based, ±2 beat search window, peak/RMS confidence
+   gate at 2.0, ±2 beat correction cap. Validated in production with
+   peak/RMS=4+ on real tracks, applies sub-beat corrections after the
+   beat-phase alignment. The temp-fix concern was wrong — Path C is a
+   permanent refinement layer that catches what the analyzer's downbeat
+   anchor misses.]
 3. Manual nudge UI is NOT acceptable
 4. Waveform style locked (bass-weighted env, drops tower, sharp
    transients, triangle-on-side kick shape pending)
@@ -1345,20 +1362,427 @@ shipping:
 - Sync state reset on unsync
 
 =================================================================
+MAY 17-18 SESSION 4 — SYNC ENGINE COMPLETE + ANALYZER BLOCKER
+=================================================================
+
+Extended session. 18 commits shipped, range b28214b → edde4ee. Live
+bundle at session end: main-XTT71I0o.js.
+
+### SYNC ENGINE — NOW FUNCTIONAL
+
+The full sync engine is shipped, validated, and behaves like a pro
+DJ tool on tracks where the analyzer's downbeat detection is correct.
+
+Audio sync:
+- Beat-phase alignment matches beat-fraction across decks
+  (max ±0.5 beat nudge, replaced the broken bar-phase math from
+  commit 6a4e432).
+- Path C cross-correlation refinement after beat-phase seek
+  (commit 9b67697). FFT-based, kick-band envelope, ±2 beat search,
+  peak/RMS confidence gate at 2.0, ±2 beat correction cap. Validated
+  in production with peak/RMS=4+ — applies sub-beat corrections that
+  the analyzer's downbeat anchor misses.
+- Rate-aware visual position math (b28214b) — fixes 5+ beat grid
+  drift after a minute of synced play at rate≠1.
+- Shared-frame tick (0db7aa2) — both decks read ac.currentTime from
+  a single parent-RAF snapshot to eliminate the sub-millisecond
+  per-deck read offset that caused visual oscillation.
+- Sync engages cleanly while paused, persists through pause/play,
+  re-aligns automatically on the slave deck's first play-start
+  (commit 4402eb3 + the play-start hook).
+
+Visual sync:
+- Rate-aware grid + waveform rendering (672129f) — both decks show
+  the same wall-time window of audio; per-beat pixel spacing
+  matches between decks regardless of their playback rates.
+- Auto-position to first downbeat on load (5f4337b / f848480) —
+  playhead lands at firstBar1AnchorSec when BPM analysis completes,
+  matching Rekordbox/Serato/Traktor behavior.
+
+Re-align on every seek path:
+- Drag scrub on big waveform (anchor-based, seek-on-release)
+- Click on small per-deck waveform
+- Beat-step arrows (with quantize-to-grid when sync engaged)
+- CUE button
+- Master deck scrubs (slave re-aligns to new master position)
+- Sync engaged while paused → realigns on first play
+
+M and SYNC controls decoupled (01b8feb):
+- M = metadata label only (which deck is the tempo reference)
+- SYNC = global engage/disengage toggle, reachable from EITHER deck
+- Master deck's SYNC button no longer disabled
+- Rate preserved on unsync (DJ-correct behavior, not Rekordbox-reset)
+
+### UX SHIPPED
+
+- Library track rows: A/B load buttons always visible at left edge,
+  filled-when-loaded indicator state (6fd5580). Hover-revealed chips
+  approach replaced with always-visible for discoverability.
+- Drag scrub anchor-based with seek-on-release (f3e52d3). Prior
+  implementation seeked on every mousemove → 60 AudioBufferSourceNode
+  create/destroy cycles per second of drag. Now: one seek per drag.
+- Beat-step arrows: one beat per click in normal mode, quantize-to-
+  grid when sync engaged (Rekordbox quantize behavior).
+- Manual ±1 beat anchor override (edde4ee). Amber-accented buttons
+  in each deck's waveform header: ⟨ +N beat ⟩. Persisted per-track
+  via localStorage. Whole-beat shift is no-op modulo beatPeriod,
+  so sync math is unaffected.
+- Phrase voting (phSc16 + phSc32) in the analyzer (edde4ee).
+  Computes longer-cycle phase patterns alongside the existing 4-beat
+  phSc. Cheap (two extra array writes per beat). Overrides bestPh
+  when 16-beat winner disagrees with 4-beat winner. Tested same-vote
+  on all 4 failing tracks — phrase voting doesn't help when accents
+  are uniform across phrases.
+- Skip arrows now use beatPeriodSec/dur for step size (was fixed
+  0.005 of track which was 3-7 beats per click depending on length).
+- Rate-aware tick + shared parent-RAF time snapshot eliminate the
+  sub-pixel visual jitter on synced decks.
+
+### CRITICAL BLOCKER — DOWNBEAT DETECTION
+
+After Sunbeam + Home In The Sky (the original validation pair) both
+synced cleanly, broader library testing found 4 of 4 additional
+tracks have wrong beat grid placement:
+- Shadow Work
+- You Will Never Know
+- Racing Heart
+- Tuesday Maybe
+
+Pattern: each track has kick on every beat + clap on beat 3 of every
+bar. phSc scoring picks bucket 2 (the clap-on-3 position) because
+total kick-band energy is highest there. Kick-exclusive scoring
+(onK − onP) helped but not enough — claps with sub-bass bleed still
+elevate beat 3 enough to win. Phrase voting (phSc16/phSc32) is
+useless when accents repeat uniformly across phrases.
+
+This is the dogfood blocker. Users will not manually correct each
+track's bar-1 offset, and 100% manual-override rate is unacceptable
+for a DJ platform.
+
+Survey of solutions queued for next session (no code yet):
+- madmom RNN downbeat models via ONNX → TF.js / ONNX.js
+- Essentia.js (likely insufficient — only does beat tracking, not
+  true downbeat detection)
+- Aubio-js (same limitation as Essentia)
+- Custom hybrid: bass-continuity check + multi-pass phrase detection
+- Pre-trained model + heuristic fallback
+- Manual override remains as belt-and-braces for edge cases
+
+Estimated 10-25 hours of analyzer work to reach 95%+ accuracy. Won't
+ship code until survey identifies the right path.
+
+### UPDATED ROADMAP TO DOGFOOD
+
+Phase 1 — Analyzer fix (~10-25 hours)
+  Survey existing solutions (madmom ONNX, Essentia, custom). Pick
+  one, implement, validate on 15-20 track library. This is the
+  blocker.
+
+Phase 2 — Telemetry foundation (~2-3 hours)
+  PostHog or similar. Need to know which tracks the analyzer fails
+  on in production once dogfooding starts.
+
+Phase 3 — Design migration (~5-10 hours)
+  Migrate to the new design branch.
+
+Phase 4 — Dogfood prep + dogfood with Jake (~1-2 hours)
+  Final QA pass, send invite, watch session.
+
+### DEPLOY STATE AT SESSION END
+- Latest shipped commit: edde4ee (phrase voting + manual override)
+- Live bundle: main-XTT71I0o.js
+- All work pushed to master
+- Vercel Pro auto-deploy on push (verified via curl)
+- Railway server unchanged this session
+
+### KEY ARCHITECTURAL DECISIONS LOCKED THIS SESSION
+
+1. Path C cross-correlation IS the right refinement layer over
+   beat-phase alignment. Reverses the May 17 "abandoned" decision.
+   Confidence gate (peak/RMS > 2.0) is the real safety; magnitude
+   cap (±2 beats) is secondary.
+
+2. Auto-position to first downbeat on track load is essential DJ
+   tool UX. firstBar1AnchorSec gets posted explicitly from the
+   worker (not derived as beatPhaseFrac × beatPeriodSec, which had
+   a stale-data race bug).
+
+3. Stale-closure protection via refs (syncLockedRef, userMovedRef,
+   etc.) is the pattern for cross-cutting state read from inside
+   useCallback closures with incomplete dep arrays.
+
+4. Worker-side stale data must be cleared on analyze() start, not
+   spread-preserved. The "preserve prev[id]" pattern in useBPM was
+   leaking the previous track's beatPhaseFrac into auto-position
+   for the new track.
+
+5. Manual override UI is necessary regardless of how good auto-
+   detection gets. Pro tools have it too (Rekordbox grid editor).
+
+6. Cross-correlation window must be SYMMETRICALLY clamped around
+   both decks' play positions; using newSlaveTime (which the
+   beat-phase seek clamps to [0,1] but the local variable stays
+   negative) caused 90%+ skip rate near track start.
+
+### OPEN TECHNICAL DEBT (lower priority, cleanup)
+- Delete dphase() function in bpm-worker-source.js (replaced by
+  bar-1 anchor, kept only for diagnostic comparison log)
+- Delete diagnostic logs once analyzer is fixed:
+  [SYNC-XCORR], [GRID-DIAG] (already removed), [phase] override logs
+- Delete USE_LEGACY_FRAME_SNAP flag (sample-level refinement
+  validated)
+- Delete unused nudge primitive (replaced by Path C)
+- Fix toggle() pause-bookkeeping rate-unaware bug at line ~3735
+  (off.current = old + elapsed without × rate)
+- Add gridOffset / bpmNudge UI to Deck B's header (currently only
+  on Deck A; manual bar-1 override added to both decks this session)
+
+### SESSION SUMMARY
+Sync engine went from "drift fixes shipped but untested" at session
+start to "fully functional and validated end-to-end" — audio sync,
+visual sync, all seek-path re-align, pause/play persistence, M/SYNC
+decoupling, Path C cross-correlation refinement. 18 commits, all
+pushed, all live.
+
+Counter-balancing: discovered the analyzer's downbeat detection is
+the real dogfood blocker. The sync engine is correct; the input data
+(bar-1 anchors) is wrong on most tracks. Next session is a survey
+of how to fix the analyzer, not more sync engine work.
+
+=================================================================
 INSTRUCTION FOR NEW CLAUDE
 =================================================================
 "Continuing work on Mix//Sync. Previous chat hit context limits.
-Please confirm you understand where we left off. The May 7 evening
-session shipped two commits that cleared both critical dogfood
-blockers: library persistence (82fd5c6) added
-navigator.storage.persist() and made opfsStore writes properly
-awaited so libraries survive Chrome quit/restart cycles, and artwork
-compression (38f23ee) downscales ID3 artwork to 200×200 JPEG @0.7
-on import for ~35× per-track memory reduction (135 tracks now uses
-182 MB; pre-fix was on track for ~3 GB at that scale). The two
-critical blockers (data loss, OOM) are now fixed — app is dogfood-
-ready for one DJ partner on 50-150 tracks. NEXT priorities (in
-order): cover-fit math fix for non-square artwork, track list
-virtualization (react-window), delete-tracks UI, re-test at 500+
-tracks, then dogfood with a real DJ. Public beta still needs
-virtualization + delete + import safety + cover-fit polish first."
+Please confirm you understand where we left off.
+
+May 17-18 Session 4 (extended, 18 commits, range b28214b → edde4ee)
+completed the sync engine end-to-end and validated it in production:
+audio sync via beat-phase + Path C kick-band cross-correlation,
+visual sync via rate-aware grid rendering, re-align on every seek
+path, sync persists through pause/play, M and SYNC controls
+decoupled. Live bundle main-XTT71I0o.js.
+
+CRITICAL BLOCKER discovered late in the session: the analyzer's
+downbeat detection (bestPh / firstBar1AnchorSec) is wrong on most
+tracks. 4 of 4 tracks tested after the original Sunbeam + Home In
+The Sky validation pair had grids placed multiple beats off. Pattern:
+tracks with kick + clap on every bar score higher on the clap
+position than the kick position, and our kick-exclusive scoring
+(onK − onP) + phrase voting (phSc16/phSc32) help marginally but
+don't fix it. Manual ±1 beat override UI shipped as belt-and-braces
+but is not a viable primary workflow.
+
+NEXT SESSION: survey downbeat detection options (no code yet) —
+madmom RNN via ONNX, Essentia.js, custom multi-pass. Choose path
+based on bundle size, accuracy, integration complexity. After
+survey, implement Phase 1 of roadmap (~10-25 hours analyzer work).
+Then Phase 2 telemetry, Phase 3 design migration, Phase 4 dogfood
+with Jake.
+
+Sync engine work is DONE for now. Don't touch it unless something
+regresses."
+
+## MAY 18-19, 2026 SESSION 5 — REAL ACCURACY VALIDATION + ROOT CAUSE PIVOT
+
+### SESSION 5 PROGRESS
+
+### Major shipped (committed and pushed)
+- d306514 — BPM: Rekordbox-style bar-1 anchor (walk-back to time 0)
+  - 4-line fix replacing Phase 1-3 phase analysis as the source of bar-1 selection
+  - Walk back from dpBeatsFloat[0] by single beats to approach time 0
+  - Phase 1-3 code kept dormant (computed but not consumed)
+  - Result: 28% → 64% PASS, 39% → 86% on-grid
+
+### Rekordbox library extraction proven
+- pyrekordbox integration works
+- Read 272 analyzed tracks from user's Rekordbox database
+- Created test harness: tools/bpm-test-harness/analyze-library.mjs
+- Full ground truth in tools/bpm-test-harness/library-truth.json
+- Snapshot baselines saved for regression testing
+
+### Critical understanding shift
+- Initial Phase 1-3 work was wrong approach — it tried to find "musical bar-1" via signal analysis
+- User clarified: Rekordbox places bar-1 at mathematical time ≈ 0, not at first audible accent
+- Bar-1 is structural start of bar pattern, not first audible kick
+- Walk-back is the correct algorithm for Rekordbox compatibility
+
+### Fix #1 attempted, abandoned
+- Three variants tried: diff-threshold gate=5.0, gate=3.0, power-threshold back-walk
+- All failed to meaningfully improve the 60 drifting tracks (~28ms median offset)
+- Power-threshold version regressed 19 prior-PASS tracks
+- All reverted, worker back to d306514 state
+
+### Root cause re-diagnosed
+- The +28ms drift is NOT from refinement choosing mid-attack vs attack-start
+- Real cause: DP tracker has dpLo lower bound (~0.37s)
+- DP cannot place a beat before frame 0.37s
+- For tracks where first kick is at 0.024s (or 0.000s for WAV), DP locks onto SECOND kick
+- Walk-back recovers approximately the first kick position, but with 22-40ms quantization error
+- This single cause explains the +25ms cluster, +200ms cluster, AND -25ms cluster (60 tracks total)
+
+### Next session priority: Fix #2 (DP first-kick rescue)
+Algorithm:
+- After DP completes, scan [0, dpBeats[0] - dpLo/2] for above-threshold onset peaks
+- For each candidate peak position p: verify p + N × beatLag ≈ dpBeats[0] for small N (1 or 2)
+- Confidence gates: onset strength > 40% of median DP-beat onset, period match within ±5%
+- If passes gates, prepend to dpBeats[]
+
+Estimated effort: 4-5 hours
+Predicted accuracy gain: 64% → 83-88%
+
+### Strategic documents created
+- tools/docs/DESIGN_PHILOSOPHY.md — Quiet Pro Tool direction, references, anti-patterns
+- tools/docs/STRATEGIC_ROADMAP.md — Phased plan to launch
+- tools/docs/FEATURES_PIPELINE.md — Feature ideas from Rekordbox data + signal processing
+- tools/docs/LIBRARY_IMPORT_STRATEGY.md — Rekordbox/iTunes/folder import options
+
+These capture today's strategic discussions for permanent reference.
+
+### Deferred for later
+- Phase 1-3 code cleanup (currently dormant, ~150 LOC)
+- Disappear timing-within-beat drift (subset of the 60 affected, may auto-resolve via Fix #2)
+- Beatport streaming integration (1045 tracks in Rekordbox library are Beatport refs, not local files)
+
+### Status for next session start
+- All code committed and pushed
+- VISION_5.md updated with this section
+- Strategic docs saved in tools/docs/
+- Ready to start Fix #2 implementation immediately
+
+## MAY 19-20, 2026 SESSION 6 — CLASS 1 FIX PASS + SUB-CAUSE B ABANDONED
+
+### Shipped (in commit order)
+- 5f9ce8d — BPM: Sub-cause A — earliest-peak rule on beat-0 refinement (64% → 71% PASS)
+  - Beat 0 refinement: scan diff curve for earliest local maximum ≥ 75% of argmax. Targets the
+    +20-35ms drift class where Rekordbox anchors to an earlier secondary peak.
+  - Threshold sweep: 70% → 6 regressions (over gate); 75% → 4 regressions (PASS); 80% → only +15 net.
+  - 75% selected: 23 fixed / 4 regressed, net +19.
+- d024f2a — BPM: Sub-cause C — sampler/one-shot snap-to-0 (71% → 72.1% PASS)
+  - Detection: durSec < 30 OR dpBeats.length < 8.
+  - Action: if walk-back result is within 40ms of file start, snap to 0 (Rekordbox sampler convention).
+  - First-attack gate at 40ms vs spec's 30ms — empirical sweep showed 40ms catches the natural
+    attack-to-peak band for kick-at-0 samplers without false-triggering. +3 fixed / 0 regressed.
+- 485f470 — test: parallelize analyze-library via worker_threads pool (5.4× speedup)
+  - 8-thread pool replaces the sequential decode+analyze inner loop.
+  - 272-track run: 1046s → 193s. Output byte-identical to sequential (0/3264 field diffs).
+  - New flag `--workers N` (default min(cpus, 8)).
+  - analyze-worker.mjs (new) + refactored analyze-library.mjs. Snapshot format unchanged.
+
+### Step 5 (Sub-cause B back-extrapolation) — ABANDONED
+Spent ~3 hours investigating; no commits.
+- Hypothesis: dpBeatsFloat[0] is a phantom/pre-roll; back-extrap from dpBeatsFloat[N] gives true bar-1.
+- Probe revealed: Body Stars / Hymn Fern have INTERNALLY-CONSISTENT DP grids (intervals ≈ period),
+  uniformly shifted ~22ms earlier than Rekordbox's grid. Back-extrap from beat[N] gives the same
+  wrong answer as beat[0].
+- Empirical sweep N∈{4,8} × threshold∈{10,15,20,25,30}ms: best case (N=8, 30ms) was +6/-5, fails the
+  user's 5-regression gate. No combination crosses the gate with meaningful fixes.
+- Full investigation preserved in tools/docs/STEP5_INVESTIGATION.md. Probe tool kept at
+  tools/bpm-test-harness/predict-backextrap.mjs.
+
+### Strategic decoder investigation (rejected hypothesis)
+Spent ~2 hours verifying production decoder vs test-harness decoder.
+- Audio-decode npm (libmpg123 with MPG123_GAPLESS) vs ffmpeg-static (libavcodec, what Chrome uses):
+  zero-sample-offset alignment on all 5 Class 1 candidates. Amplitude scales by ~1.41× but onset
+  detection is amplitude-invariant.
+- "26ms problem" hypothesis (Rekordbox skips an MPEG frame on Case-2 MP3s): REJECTED. Empirical
+  shift simulation showed uniform +26ms shift CRATERS accuracy (70.9% → 26.8%). The 27ms median
+  drift on Case 2 FAILs is coincidental, not systematic.
+- Library is 97% Lavc-encoded (Case 2 — Xing header, no LAME subtag). All decoded buffers start at
+  "real audio sample 0".
+- Browser HTML test page available at tools/bpm-test-harness/browser-decoder-test.html for any
+  future verification. Conclusion: production ≈ test harness within onset-detection tolerance.
+
+### Accuracy trajectory
+- Pre-session: 174/272 PASS = 64.0%
+- After Step 3: 193/272 = 71.0%
+- After Step 4: 196/272 = 72.1% (current)
+- Step 5: no change (abandoned)
+
+### Hypotheses for what Rekordbox does on Sub-cause B tracks
+None confirmed; ordered by gut likelihood:
+1. Envelope-peak detection (walk forward from argmax-of-dE/dt to envelope max)
+2. Sub-bass phase alignment (40-80 Hz fundamental phase, not broadband onset)
+3. Pre-roll/anacrusis skipping (detect outlier beat[0] vs the beat[1..32] pattern)
+4. Different filter band (60-80 Hz body, not 40-200 Hz like ours)
+
+### Next session priority
+Try Approach A from STEP5_INVESTIGATION.md: beat-0-only forward walk to envelope peak.
+- Same shape as Step 3 (beat 0 only, single tunable knob), which landed cleanly under the gate.
+- Predicted to address Body Stars / Hymn Fern (analyzer ~20ms EARLY) without touching the 196 PASS.
+- Estimated effort: 5-7 hours.
+
+### Deliverable files added this session
+- tools/docs/STEP5_INVESTIGATION.md — full Step 5 investigation report
+- tools/bpm-test-harness/predict-backextrap.mjs — back-extrap impact simulator (re-runnable)
+- tools/bpm-test-harness/analyze-worker.mjs — worker-thread per-track runner (committed in 485f470)
+- tools/bpm-test-harness/compare-decoders.mjs — ffmpeg vs mpg123 alignment test
+- tools/bpm-test-harness/browser-decoder-test.html — browser decodeAudioData verification page
+- tools/bpm-test-harness/decoder-output-probe.mjs — leading-sample inspector
+- tools/bpm-test-harness/lame-tag-probe.mjs + lame-survey.mjs — LAME-tag parser + library survey
+- tools/bpm-test-harness/simulate-decoder-shift.mjs — uniform-shift impact simulator
+- tools/bpm-test-harness/probe-beat0.mjs — beat-0 refinement deep probe
+- tools/bpm-test-harness/sampler-survey.mjs — sampler-candidate enumerator
+- tools/bpm-test-harness/debug-fix2.mjs — single-track verbose worker runner
+
+### Status for next session start
+- Worker is at d024f2a / 485f470 clean state (no uncommitted code changes)
+- Harness is parallel — full runs take ~3 minutes
+- 72.1% accuracy on 272-track library; production ≈ test harness
+- VISION_5.md updated through this section
+- All diagnostic tools preserved (uncommitted; will commit selectively next session)
+
+## Session log — May 20-21, 2026
+
+### ANALYZER (final this session)
+
+Three fixes shipped:
+
+- `9ba92fe`: drop-detection grid validation (72.4% → 73.2%)
+- `4f57d9b`: Sub-cause F first-kick rescue (73.2% → 73.9%) — Rocket Jam fixed
+- `38af43b`: Sub-cause G walkback to earliest transient (73.9% → 80.9%) —
+  +19 tracks, 0 regressions, largest single fix of the project
+
+Ending state: **80.9% harness / 84.3% standalone** (excluding 11 long DJ mixes).
+
+Full project trajectory: 28% → 64% → 71% → 72.1% → 72.4% → 73.2% → 73.9% → 80.9%.
+
+**Decision: pause analyzer work until real user telemetry.** Across heuristics,
+madmom, beat_this, anchor hypothesis, cluster offset, and sync correctness
+diagnostics, remaining failures confirmed unfixable from audio. Per-track
+perceptual offset varies 7-54 ms — no global shift solves it.
+
+### WAVEFORM WORK (Phase 1 complete)
+
+Strategic pivot from "improve analyzer to 95%" to "use Rekordbox's own
+analyzed data for tracks user has in Rekordbox library, plus manual UI for
+the rest." Stronger product position than chasing Pioneer parity.
+
+Phase 1 shipped:
+
+- `src/rekordbox-anlz.js` (ANLZ parser, zero byte-diffs vs pyrekordbox)
+- `src/rekordbox-sqlcipher.js` (SQLCipher decryption, Web Crypto, 154 ms for
+  12 MB, HMAC verified on all 2,958 pages)
+- `src/rekordbox-library.js` (library connector)
+- `public/sql-wasm.js` + `public/sql-wasm.wasm`
+- REKORDBOX pill UI in LibraryPanelV2
+- `wfA` / `wfB` waveform-override hooks
+- `sql.js@^1.14.1` added as dependency
+
+Library accessible: **1,343 tracks, 389 cues, 1,327 with AnalysisDataPath (98.8%)**.
+Build green, dev server boots in 5 s.
+
+Full report at `tools/rekordbox-eval/PHASE_1_REPORT.md`.
+
+### NEXT IN QUEUE
+
+- Phase 2 waveform: spectral color band rendering (PWV5 → 3-band renderer)
+- Phase 3 waveform: cue point overlay
+- Phase 4 waveform: non-Rekordbox track fallback
+- Manual UI adjust (anchor + BPM nudge, like Rekordbox/Traktor) — separate
+  workstream, must ship before dogfood
+
+### NON-NEGOTIABLES (Chad's bar)
+
+- Waveform must look as good or better than Rekordbox
+- Sync must phase-lock in audio (beat-slap = broken product)
+- Manual UI nudge must exist before dogfood, but analyzer cannot rely on it

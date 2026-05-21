@@ -1,0 +1,3740 @@
+{
+  "sweeps": [
+    {
+      "tf": 0.3,
+      "minW": 20,
+      "rescue": 19,
+      "regress": 0,
+      "net": 19,
+      "rList": [
+        {
+          "basename": "House3.wav",
+          "anaMs": 53.79762299809586,
+          "truthMs": 0,
+          "newMs": 11.383219954648531,
+          "walkbackMs": 42.41440304344733
+        },
+        {
+          "basename": "04 Thunder (Original Mix).mp3",
+          "anaMs": 50.31254981206391,
+          "truthMs": 24,
+          "newMs": 19.954648526077097,
+          "walkbackMs": 30.35790128598681
+        },
+        {
+          "basename": "MI December 2024.wav",
+          "anaMs": 985.5870803605994,
+          "truthMs": 965,
+          "newMs": 961.5419501133788,
+          "walkbackMs": 24.04513024722064
+        },
+        {
+          "basename": "02 Evo (Original Mix).mp3",
+          "anaMs": 487.8048780487805,
+          "truthMs": 428,
+          "newMs": 440.1814058956916,
+          "walkbackMs": 47.62347215308887
+        },
+        {
+          "basename": "01 Silver Lake (Original Mix).mp3",
+          "anaMs": 496.7919408200439,
+          "truthMs": 460,
+          "newMs": 449.4104308390023,
+          "walkbackMs": 47.38150998104163
+        },
+        {
+          "basename": "02 Evo.m4a",
+          "anaMs": 487.8048780487805,
+          "truthMs": 450,
+          "newMs": 440.36281179138325,
+          "walkbackMs": 47.442066257397244
+        },
+        {
+          "basename": "Juno 3.m4a",
+          "anaMs": 103.29763310282792,
+          "truthMs": 48,
+          "newMs": 57.77777777777778,
+          "walkbackMs": 45.51985532505014
+        },
+        {
+          "basename": "02 Hips and Dips (Zankee Gulati Remix).mp3",
+          "anaMs": 545.7543899102341,
+          "truthMs": 521,
+          "newMs": 505.2834467120182,
+          "walkbackMs": 40.47094319821588
+        },
+        {
+          "basename": "01 Symbiotic Symphony (Weird Sounding Dude Remix).mp3",
+          "anaMs": 487.8048780487805,
+          "truthMs": 453,
+          "newMs": 439.9092970521542,
+          "walkbackMs": 47.89558099662628
+        },
+        {
+          "basename": "Juno's Mix.wav",
+          "anaMs": 1030.485039544273,
+          "truthMs": 980,
+          "newMs": 982.7891156462586,
+          "walkbackMs": 47.69592389801437
+        },
+        {
+          "basename": "01 Chad May 14.wav",
+          "anaMs": 975.609756097561,
+          "truthMs": 921,
+          "newMs": 928.390022675737,
+          "walkbackMs": 47.219733421824
+        },
+        {
+          "basename": "01 The Great Escape (Cornucopia Remix).m4a",
+          "anaMs": 74.82993197278911,
+          "truthMs": 47,
+          "newMs": 27.50566893424036,
+          "walkbackMs": 47.32426303854875
+        },
+        {
+          "basename": "01 June San Juan 2025.wav",
+          "anaMs": 1013.5385301661648,
+          "truthMs": 960,
+          "newMs": 967.4603174603175,
+          "walkbackMs": 46.07821270584736
+        },
+        {
+          "basename": "01 Back In The Days (Original Mix).mp3",
+          "anaMs": 69.0551776266062,
+          "truthMs": 25,
+          "newMs": 26.507936507936513,
+          "walkbackMs": 42.54724111866968
+        },
+        {
+          "basename": "02 When Midnight Comes (Alex O'Rion Remix).mp3",
+          "anaMs": 1054.875283446712,
+          "truthMs": 1033,
+          "newMs": 1017.1655328798186,
+          "walkbackMs": 37.70975056689349
+        },
+        {
+          "basename": "07 Holding On (Original Mix).mp3",
+          "anaMs": 483.8709677419355,
+          "truthMs": 425,
+          "newMs": 438.8662131519274,
+          "walkbackMs": 45.004754590008076
+        },
+        {
+          "basename": "02 Need U (Original Mix).mp3",
+          "anaMs": 527.4708683816286,
+          "truthMs": 506,
+          "newMs": 497.4829931972789,
+          "walkbackMs": 29.98787518434972
+        },
+        {
+          "basename": "03 From Sunrise to Sunset (Extended Mix).mp3",
+          "anaMs": 508.47457627118644,
+          "truthMs": 460,
+          "newMs": 462.33560090702946,
+          "walkbackMs": 46.13897536415698
+        },
+        {
+          "basename": "01 May San Juan Mix 2026.wav",
+          "anaMs": 983.6065573770492,
+          "truthMs": 958,
+          "newMs": 957.4829931972789,
+          "walkbackMs": 26.123564179770256
+        }
+      ],
+      "regList": []
+    },
+    {
+      "tf": 0.3,
+      "minW": 25,
+      "rescue": 18,
+      "regress": 0,
+      "net": 18,
+      "rList": [
+        {
+          "basename": "House3.wav",
+          "anaMs": 53.79762299809586,
+          "truthMs": 0,
+          "newMs": 11.383219954648531,
+          "walkbackMs": 42.41440304344733
+        },
+        {
+          "basename": "04 Thunder (Original Mix).mp3",
+          "anaMs": 50.31254981206391,
+          "truthMs": 24,
+          "newMs": 19.954648526077097,
+          "walkbackMs": 30.35790128598681
+        },
+        {
+          "basename": "02 Evo (Original Mix).mp3",
+          "anaMs": 487.8048780487805,
+          "truthMs": 428,
+          "newMs": 440.1814058956916,
+          "walkbackMs": 47.62347215308887
+        },
+        {
+          "basename": "01 Silver Lake (Original Mix).mp3",
+          "anaMs": 496.7919408200439,
+          "truthMs": 460,
+          "newMs": 449.4104308390023,
+          "walkbackMs": 47.38150998104163
+        },
+        {
+          "basename": "02 Evo.m4a",
+          "anaMs": 487.8048780487805,
+          "truthMs": 450,
+          "newMs": 440.36281179138325,
+          "walkbackMs": 47.442066257397244
+        },
+        {
+          "basename": "Juno 3.m4a",
+          "anaMs": 103.29763310282792,
+          "truthMs": 48,
+          "newMs": 57.77777777777778,
+          "walkbackMs": 45.51985532505014
+        },
+        {
+          "basename": "02 Hips and Dips (Zankee Gulati Remix).mp3",
+          "anaMs": 545.7543899102341,
+          "truthMs": 521,
+          "newMs": 505.2834467120182,
+          "walkbackMs": 40.47094319821588
+        },
+        {
+          "basename": "01 Symbiotic Symphony (Weird Sounding Dude Remix).mp3",
+          "anaMs": 487.8048780487805,
+          "truthMs": 453,
+          "newMs": 439.9092970521542,
+          "walkbackMs": 47.89558099662628
+        },
+        {
+          "basename": "Juno's Mix.wav",
+          "anaMs": 1030.485039544273,
+          "truthMs": 980,
+          "newMs": 982.7891156462586,
+          "walkbackMs": 47.69592389801437
+        },
+        {
+          "basename": "01 Chad May 14.wav",
+          "anaMs": 975.609756097561,
+          "truthMs": 921,
+          "newMs": 928.390022675737,
+          "walkbackMs": 47.219733421824
+        },
+        {
+          "basename": "01 The Great Escape (Cornucopia Remix).m4a",
+          "anaMs": 74.82993197278911,
+          "truthMs": 47,
+          "newMs": 27.50566893424036,
+          "walkbackMs": 47.32426303854875
+        },
+        {
+          "basename": "01 June San Juan 2025.wav",
+          "anaMs": 1013.5385301661648,
+          "truthMs": 960,
+          "newMs": 967.4603174603175,
+          "walkbackMs": 46.07821270584736
+        },
+        {
+          "basename": "01 Back In The Days (Original Mix).mp3",
+          "anaMs": 69.0551776266062,
+          "truthMs": 25,
+          "newMs": 26.507936507936513,
+          "walkbackMs": 42.54724111866968
+        },
+        {
+          "basename": "02 When Midnight Comes (Alex O'Rion Remix).mp3",
+          "anaMs": 1054.875283446712,
+          "truthMs": 1033,
+          "newMs": 1017.1655328798186,
+          "walkbackMs": 37.70975056689349
+        },
+        {
+          "basename": "07 Holding On (Original Mix).mp3",
+          "anaMs": 483.8709677419355,
+          "truthMs": 425,
+          "newMs": 438.8662131519274,
+          "walkbackMs": 45.004754590008076
+        },
+        {
+          "basename": "02 Need U (Original Mix).mp3",
+          "anaMs": 527.4708683816286,
+          "truthMs": 506,
+          "newMs": 497.4829931972789,
+          "walkbackMs": 29.98787518434972
+        },
+        {
+          "basename": "03 From Sunrise to Sunset (Extended Mix).mp3",
+          "anaMs": 508.47457627118644,
+          "truthMs": 460,
+          "newMs": 462.33560090702946,
+          "walkbackMs": 46.13897536415698
+        },
+        {
+          "basename": "01 May San Juan Mix 2026.wav",
+          "anaMs": 983.6065573770492,
+          "truthMs": 958,
+          "newMs": 957.4829931972789,
+          "walkbackMs": 26.123564179770256
+        }
+      ],
+      "regList": []
+    },
+    {
+      "tf": 0.5,
+      "minW": 15,
+      "rescue": 19,
+      "regress": 1,
+      "net": 18,
+      "rList": [
+        {
+          "basename": "House3.wav",
+          "anaMs": 53.79762299809586,
+          "truthMs": 0,
+          "newMs": 11.383219954648531,
+          "walkbackMs": 42.41440304344733
+        },
+        {
+          "basename": "04 Thunder (Original Mix).mp3",
+          "anaMs": 50.31254981206391,
+          "truthMs": 24,
+          "newMs": 28.57142857142857,
+          "walkbackMs": 21.741121240635337
+        },
+        {
+          "basename": "MI December 2024.wav",
+          "anaMs": 985.5870803605994,
+          "truthMs": 965,
+          "newMs": 961.5419501133788,
+          "walkbackMs": 24.04513024722064
+        },
+        {
+          "basename": "02 Evo (Original Mix).mp3",
+          "anaMs": 487.8048780487805,
+          "truthMs": 428,
+          "newMs": 440.1814058956916,
+          "walkbackMs": 47.62347215308887
+        },
+        {
+          "basename": "01 Silver Lake (Original Mix).mp3",
+          "anaMs": 496.7919408200439,
+          "truthMs": 460,
+          "newMs": 449.4104308390023,
+          "walkbackMs": 47.38150998104163
+        },
+        {
+          "basename": "02 Evo.m4a",
+          "anaMs": 487.8048780487805,
+          "truthMs": 450,
+          "newMs": 443.6054421768708,
+          "walkbackMs": 44.199435871909714
+        },
+        {
+          "basename": "Juno 3.m4a",
+          "anaMs": 103.29763310282792,
+          "truthMs": 48,
+          "newMs": 57.77777777777778,
+          "walkbackMs": 45.51985532505014
+        },
+        {
+          "basename": "02 Hips and Dips (Zankee Gulati Remix).mp3",
+          "anaMs": 545.7543899102341,
+          "truthMs": 521,
+          "newMs": 508.4353741496599,
+          "walkbackMs": 37.31901576057419
+        },
+        {
+          "basename": "01 Symbiotic Symphony (Weird Sounding Dude Remix).mp3",
+          "anaMs": 487.8048780487805,
+          "truthMs": 453,
+          "newMs": 439.9092970521542,
+          "walkbackMs": 47.89558099662628
+        },
+        {
+          "basename": "Juno's Mix.wav",
+          "anaMs": 1030.485039544273,
+          "truthMs": 980,
+          "newMs": 982.7891156462586,
+          "walkbackMs": 47.69592389801437
+        },
+        {
+          "basename": "01 Chad May 14.wav",
+          "anaMs": 975.609756097561,
+          "truthMs": 921,
+          "newMs": 934.5578231292518,
+          "walkbackMs": 41.05193296830919
+        },
+        {
+          "basename": "01 The Great Escape (Cornucopia Remix).m4a",
+          "anaMs": 74.82993197278911,
+          "truthMs": 47,
+          "newMs": 30.816326530612237,
+          "walkbackMs": 44.013605442176875
+        },
+        {
+          "basename": "01 June San Juan 2025.wav",
+          "anaMs": 1013.5385301661648,
+          "truthMs": 960,
+          "newMs": 967.4603174603175,
+          "walkbackMs": 46.07821270584736
+        },
+        {
+          "basename": "01 Back In The Days (Original Mix).mp3",
+          "anaMs": 69.0551776266062,
+          "truthMs": 25,
+          "newMs": 26.507936507936513,
+          "walkbackMs": 42.54724111866968
+        },
+        {
+          "basename": "02 When Midnight Comes (Alex O'Rion Remix).mp3",
+          "anaMs": 1054.875283446712,
+          "truthMs": 1033,
+          "newMs": 1017.1655328798186,
+          "walkbackMs": 37.70975056689349
+        },
+        {
+          "basename": "07 Holding On (Original Mix).mp3",
+          "anaMs": 483.8709677419355,
+          "truthMs": 425,
+          "newMs": 438.8662131519274,
+          "walkbackMs": 45.004754590008076
+        },
+        {
+          "basename": "02 Need U (Original Mix).mp3",
+          "anaMs": 527.4708683816286,
+          "truthMs": 506,
+          "newMs": 500.1587301587302,
+          "walkbackMs": 27.312138222898454
+        },
+        {
+          "basename": "03 From Sunrise to Sunset (Extended Mix).mp3",
+          "anaMs": 508.47457627118644,
+          "truthMs": 460,
+          "newMs": 462.33560090702946,
+          "walkbackMs": 46.13897536415698
+        },
+        {
+          "basename": "01 May San Juan Mix 2026.wav",
+          "anaMs": 983.6065573770492,
+          "truthMs": 958,
+          "newMs": 968.390022675737,
+          "walkbackMs": 15.216534701312185
+        }
+      ],
+      "regList": [
+        {
+          "basename": "01 Cowbells of Nuneaton (Original Mix).mp3",
+          "anaMs": 42.78911564625851,
+          "truthMs": 53,
+          "newMs": 23.44671201814059,
+          "walkbackMs": 19.342403628117918
+        }
+      ]
+    },
+    {
+      "tf": 0.5,
+      "minW": 20,
+      "rescue": 18,
+      "regress": 0,
+      "net": 18,
+      "rList": [
+        {
+          "basename": "House3.wav",
+          "anaMs": 53.79762299809586,
+          "truthMs": 0,
+          "newMs": 11.383219954648531,
+          "walkbackMs": 42.41440304344733
+        },
+        {
+          "basename": "04 Thunder (Original Mix).mp3",
+          "anaMs": 50.31254981206391,
+          "truthMs": 24,
+          "newMs": 28.57142857142857,
+          "walkbackMs": 21.741121240635337
+        },
+        {
+          "basename": "MI December 2024.wav",
+          "anaMs": 985.5870803605994,
+          "truthMs": 965,
+          "newMs": 961.5419501133788,
+          "walkbackMs": 24.04513024722064
+        },
+        {
+          "basename": "02 Evo (Original Mix).mp3",
+          "anaMs": 487.8048780487805,
+          "truthMs": 428,
+          "newMs": 440.1814058956916,
+          "walkbackMs": 47.62347215308887
+        },
+        {
+          "basename": "01 Silver Lake (Original Mix).mp3",
+          "anaMs": 496.7919408200439,
+          "truthMs": 460,
+          "newMs": 449.4104308390023,
+          "walkbackMs": 47.38150998104163
+        },
+        {
+          "basename": "02 Evo.m4a",
+          "anaMs": 487.8048780487805,
+          "truthMs": 450,
+          "newMs": 443.6054421768708,
+          "walkbackMs": 44.199435871909714
+        },
+        {
+          "basename": "Juno 3.m4a",
+          "anaMs": 103.29763310282792,
+          "truthMs": 48,
+          "newMs": 57.77777777777778,
+          "walkbackMs": 45.51985532505014
+        },
+        {
+          "basename": "02 Hips and Dips (Zankee Gulati Remix).mp3",
+          "anaMs": 545.7543899102341,
+          "truthMs": 521,
+          "newMs": 508.4353741496599,
+          "walkbackMs": 37.31901576057419
+        },
+        {
+          "basename": "01 Symbiotic Symphony (Weird Sounding Dude Remix).mp3",
+          "anaMs": 487.8048780487805,
+          "truthMs": 453,
+          "newMs": 439.9092970521542,
+          "walkbackMs": 47.89558099662628
+        },
+        {
+          "basename": "Juno's Mix.wav",
+          "anaMs": 1030.485039544273,
+          "truthMs": 980,
+          "newMs": 982.7891156462586,
+          "walkbackMs": 47.69592389801437
+        },
+        {
+          "basename": "01 Chad May 14.wav",
+          "anaMs": 975.609756097561,
+          "truthMs": 921,
+          "newMs": 934.5578231292518,
+          "walkbackMs": 41.05193296830919
+        },
+        {
+          "basename": "01 The Great Escape (Cornucopia Remix).m4a",
+          "anaMs": 74.82993197278911,
+          "truthMs": 47,
+          "newMs": 30.816326530612237,
+          "walkbackMs": 44.013605442176875
+        },
+        {
+          "basename": "01 June San Juan 2025.wav",
+          "anaMs": 1013.5385301661648,
+          "truthMs": 960,
+          "newMs": 967.4603174603175,
+          "walkbackMs": 46.07821270584736
+        },
+        {
+          "basename": "01 Back In The Days (Original Mix).mp3",
+          "anaMs": 69.0551776266062,
+          "truthMs": 25,
+          "newMs": 26.507936507936513,
+          "walkbackMs": 42.54724111866968
+        },
+        {
+          "basename": "02 When Midnight Comes (Alex O'Rion Remix).mp3",
+          "anaMs": 1054.875283446712,
+          "truthMs": 1033,
+          "newMs": 1017.1655328798186,
+          "walkbackMs": 37.70975056689349
+        },
+        {
+          "basename": "07 Holding On (Original Mix).mp3",
+          "anaMs": 483.8709677419355,
+          "truthMs": 425,
+          "newMs": 438.8662131519274,
+          "walkbackMs": 45.004754590008076
+        },
+        {
+          "basename": "02 Need U (Original Mix).mp3",
+          "anaMs": 527.4708683816286,
+          "truthMs": 506,
+          "newMs": 500.1587301587302,
+          "walkbackMs": 27.312138222898454
+        },
+        {
+          "basename": "03 From Sunrise to Sunset (Extended Mix).mp3",
+          "anaMs": 508.47457627118644,
+          "truthMs": 460,
+          "newMs": 462.33560090702946,
+          "walkbackMs": 46.13897536415698
+        }
+      ],
+      "regList": []
+    },
+    {
+      "tf": 0.5,
+      "minW": 10,
+      "rescue": 20,
+      "regress": 3,
+      "net": 17,
+      "rList": [
+        {
+          "basename": "House3.wav",
+          "anaMs": 53.79762299809586,
+          "truthMs": 0,
+          "newMs": 11.383219954648531,
+          "walkbackMs": 42.41440304344733
+        },
+        {
+          "basename": "04 Thunder (Original Mix).mp3",
+          "anaMs": 50.31254981206391,
+          "truthMs": 24,
+          "newMs": 28.57142857142857,
+          "walkbackMs": 21.741121240635337
+        },
+        {
+          "basename": "MI December 2024.wav",
+          "anaMs": 985.5870803605994,
+          "truthMs": 965,
+          "newMs": 961.5419501133788,
+          "walkbackMs": 24.04513024722064
+        },
+        {
+          "basename": "02 Evo (Original Mix).mp3",
+          "anaMs": 487.8048780487805,
+          "truthMs": 428,
+          "newMs": 440.1814058956916,
+          "walkbackMs": 47.62347215308887
+        },
+        {
+          "basename": "01 Silver Lake (Original Mix).mp3",
+          "anaMs": 496.7919408200439,
+          "truthMs": 460,
+          "newMs": 449.4104308390023,
+          "walkbackMs": 47.38150998104163
+        },
+        {
+          "basename": "02 Evo.m4a",
+          "anaMs": 487.8048780487805,
+          "truthMs": 450,
+          "newMs": 443.6054421768708,
+          "walkbackMs": 44.199435871909714
+        },
+        {
+          "basename": "Juno 3.m4a",
+          "anaMs": 103.29763310282792,
+          "truthMs": 48,
+          "newMs": 57.77777777777778,
+          "walkbackMs": 45.51985532505014
+        },
+        {
+          "basename": "02 Hips and Dips (Zankee Gulati Remix).mp3",
+          "anaMs": 545.7543899102341,
+          "truthMs": 521,
+          "newMs": 508.4353741496599,
+          "walkbackMs": 37.31901576057419
+        },
+        {
+          "basename": "01 Symbiotic Symphony (Weird Sounding Dude Remix).mp3",
+          "anaMs": 487.8048780487805,
+          "truthMs": 453,
+          "newMs": 439.9092970521542,
+          "walkbackMs": 47.89558099662628
+        },
+        {
+          "basename": "Juno's Mix.wav",
+          "anaMs": 1030.485039544273,
+          "truthMs": 980,
+          "newMs": 982.7891156462586,
+          "walkbackMs": 47.69592389801437
+        },
+        {
+          "basename": "01 Chad May 14.wav",
+          "anaMs": 975.609756097561,
+          "truthMs": 921,
+          "newMs": 934.5578231292518,
+          "walkbackMs": 41.05193296830919
+        },
+        {
+          "basename": "01 The Great Escape (Cornucopia Remix).m4a",
+          "anaMs": 74.82993197278911,
+          "truthMs": 47,
+          "newMs": 30.816326530612237,
+          "walkbackMs": 44.013605442176875
+        },
+        {
+          "basename": "01 June San Juan 2025.wav",
+          "anaMs": 1013.5385301661648,
+          "truthMs": 960,
+          "newMs": 967.4603174603175,
+          "walkbackMs": 46.07821270584736
+        },
+        {
+          "basename": "Chad September Learning 2.4.mp3",
+          "anaMs": 74.78821912660194,
+          "truthMs": 50,
+          "newMs": 63.17460317460318,
+          "walkbackMs": 11.613615951998767
+        },
+        {
+          "basename": "01 Back In The Days (Original Mix).mp3",
+          "anaMs": 69.0551776266062,
+          "truthMs": 25,
+          "newMs": 26.507936507936513,
+          "walkbackMs": 42.54724111866968
+        },
+        {
+          "basename": "02 When Midnight Comes (Alex O'Rion Remix).mp3",
+          "anaMs": 1054.875283446712,
+          "truthMs": 1033,
+          "newMs": 1017.1655328798186,
+          "walkbackMs": 37.70975056689349
+        },
+        {
+          "basename": "07 Holding On (Original Mix).mp3",
+          "anaMs": 483.8709677419355,
+          "truthMs": 425,
+          "newMs": 438.8662131519274,
+          "walkbackMs": 45.004754590008076
+        },
+        {
+          "basename": "02 Need U (Original Mix).mp3",
+          "anaMs": 527.4708683816286,
+          "truthMs": 506,
+          "newMs": 500.1587301587302,
+          "walkbackMs": 27.312138222898454
+        },
+        {
+          "basename": "03 From Sunrise to Sunset (Extended Mix).mp3",
+          "anaMs": 508.47457627118644,
+          "truthMs": 460,
+          "newMs": 462.33560090702946,
+          "walkbackMs": 46.13897536415698
+        },
+        {
+          "basename": "01 May San Juan Mix 2026.wav",
+          "anaMs": 983.6065573770492,
+          "truthMs": 958,
+          "newMs": 968.390022675737,
+          "walkbackMs": 15.216534701312185
+        }
+      ],
+      "regList": [
+        {
+          "basename": "01 In This World (Original Mix).mp3",
+          "anaMs": 14.965986394557822,
+          "truthMs": 24,
+          "newMs": 3.99092970521542,
+          "walkbackMs": 10.975056689342402
+        },
+        {
+          "basename": "01 Cowbells of Nuneaton (Original Mix).mp3",
+          "anaMs": 42.78911564625851,
+          "truthMs": 53,
+          "newMs": 23.44671201814059,
+          "walkbackMs": 19.342403628117918
+        },
+        {
+          "basename": "01 What Is Real (Extended Mix).mp3",
+          "anaMs": 113.0760604302217,
+          "truthMs": 123,
+          "newMs": 100.77097505668935,
+          "walkbackMs": 12.30508537353235
+        }
+      ]
+    },
+    {
+      "tf": 0.3,
+      "minW": 10,
+      "rescue": 21,
+      "regress": 5,
+      "net": 16,
+      "rList": [
+        {
+          "basename": "House3.wav",
+          "anaMs": 53.79762299809586,
+          "truthMs": 0,
+          "newMs": 11.383219954648531,
+          "walkbackMs": 42.41440304344733
+        },
+        {
+          "basename": "04 Thunder (Original Mix).mp3",
+          "anaMs": 50.31254981206391,
+          "truthMs": 24,
+          "newMs": 19.954648526077097,
+          "walkbackMs": 30.35790128598681
+        },
+        {
+          "basename": "MI December 2024.wav",
+          "anaMs": 985.5870803605994,
+          "truthMs": 965,
+          "newMs": 961.5419501133788,
+          "walkbackMs": 24.04513024722064
+        },
+        {
+          "basename": "02 Evo (Original Mix).mp3",
+          "anaMs": 487.8048780487805,
+          "truthMs": 428,
+          "newMs": 440.1814058956916,
+          "walkbackMs": 47.62347215308887
+        },
+        {
+          "basename": "01 Silver Lake (Original Mix).mp3",
+          "anaMs": 496.7919408200439,
+          "truthMs": 460,
+          "newMs": 449.4104308390023,
+          "walkbackMs": 47.38150998104163
+        },
+        {
+          "basename": "02 Evo.m4a",
+          "anaMs": 487.8048780487805,
+          "truthMs": 450,
+          "newMs": 440.36281179138325,
+          "walkbackMs": 47.442066257397244
+        },
+        {
+          "basename": "Juno 3.m4a",
+          "anaMs": 103.29763310282792,
+          "truthMs": 48,
+          "newMs": 57.77777777777778,
+          "walkbackMs": 45.51985532505014
+        },
+        {
+          "basename": "02 Hips and Dips (Zankee Gulati Remix).mp3",
+          "anaMs": 545.7543899102341,
+          "truthMs": 521,
+          "newMs": 505.2834467120182,
+          "walkbackMs": 40.47094319821588
+        },
+        {
+          "basename": "01 Symbiotic Symphony (Weird Sounding Dude Remix).mp3",
+          "anaMs": 487.8048780487805,
+          "truthMs": 453,
+          "newMs": 439.9092970521542,
+          "walkbackMs": 47.89558099662628
+        },
+        {
+          "basename": "Juno's Mix.wav",
+          "anaMs": 1030.485039544273,
+          "truthMs": 980,
+          "newMs": 982.7891156462586,
+          "walkbackMs": 47.69592389801437
+        },
+        {
+          "basename": "01 Chad May 14.wav",
+          "anaMs": 975.609756097561,
+          "truthMs": 921,
+          "newMs": 928.390022675737,
+          "walkbackMs": 47.219733421824
+        },
+        {
+          "basename": "01 The Great Escape (Cornucopia Remix).m4a",
+          "anaMs": 74.82993197278911,
+          "truthMs": 47,
+          "newMs": 27.50566893424036,
+          "walkbackMs": 47.32426303854875
+        },
+        {
+          "basename": "01 June San Juan 2025.wav",
+          "anaMs": 1013.5385301661648,
+          "truthMs": 960,
+          "newMs": 967.4603174603175,
+          "walkbackMs": 46.07821270584736
+        },
+        {
+          "basename": "Chad September Learning 2.4.mp3",
+          "anaMs": 74.78821912660194,
+          "truthMs": 50,
+          "newMs": 63.17460317460318,
+          "walkbackMs": 11.613615951998767
+        },
+        {
+          "basename": "01 Back In The Days (Original Mix).mp3",
+          "anaMs": 69.0551776266062,
+          "truthMs": 25,
+          "newMs": 26.507936507936513,
+          "walkbackMs": 42.54724111866968
+        },
+        {
+          "basename": "02 When Midnight Comes (Alex O'Rion Remix).mp3",
+          "anaMs": 1054.875283446712,
+          "truthMs": 1033,
+          "newMs": 1017.1655328798186,
+          "walkbackMs": 37.70975056689349
+        },
+        {
+          "basename": "Chad - Juno's World.mp3",
+          "anaMs": 74.78798578643068,
+          "truthMs": 50,
+          "newMs": 63.31065759637188,
+          "walkbackMs": 11.477328190058799
+        },
+        {
+          "basename": "07 Holding On (Original Mix).mp3",
+          "anaMs": 483.8709677419355,
+          "truthMs": 425,
+          "newMs": 438.8662131519274,
+          "walkbackMs": 45.004754590008076
+        },
+        {
+          "basename": "02 Need U (Original Mix).mp3",
+          "anaMs": 527.4708683816286,
+          "truthMs": 506,
+          "newMs": 497.4829931972789,
+          "walkbackMs": 29.98787518434972
+        },
+        {
+          "basename": "03 From Sunrise to Sunset (Extended Mix).mp3",
+          "anaMs": 508.47457627118644,
+          "truthMs": 460,
+          "newMs": 462.33560090702946,
+          "walkbackMs": 46.13897536415698
+        },
+        {
+          "basename": "01 May San Juan Mix 2026.wav",
+          "anaMs": 983.6065573770492,
+          "truthMs": 958,
+          "newMs": 957.4829931972789,
+          "walkbackMs": 26.123564179770256
+        }
+      ],
+      "regList": [
+        {
+          "basename": "04 Alien Flu (Forty Cats Remix).mp3",
+          "anaMs": 265.41189187045086,
+          "truthMs": 272,
+          "newMs": 245.4875283446712,
+          "walkbackMs": 19.924363525779654
+        },
+        {
+          "basename": "01 In This World (Original Mix).mp3",
+          "anaMs": 14.965986394557822,
+          "truthMs": 24,
+          "newMs": 3.99092970521542,
+          "walkbackMs": 10.975056689342402
+        },
+        {
+          "basename": "01 Cowbells of Nuneaton (Original Mix).mp3",
+          "anaMs": 42.78911564625851,
+          "truthMs": 53,
+          "newMs": 23.44671201814059,
+          "walkbackMs": 19.342403628117918
+        },
+        {
+          "basename": "01 What Is Real (Extended Mix).mp3",
+          "anaMs": 113.0760604302217,
+          "truthMs": 123,
+          "newMs": 100.77097505668935,
+          "walkbackMs": 12.30508537353235
+        },
+        {
+          "basename": "01 Nana (Original Mix).mp3",
+          "anaMs": 159.297052154195,
+          "truthMs": 164,
+          "newMs": 143.78684807256235,
+          "walkbackMs": 15.51020408163265
+        }
+      ]
+    },
+    {
+      "tf": 0.3,
+      "minW": 15,
+      "rescue": 19,
+      "regress": 3,
+      "net": 16,
+      "rList": [
+        {
+          "basename": "House3.wav",
+          "anaMs": 53.79762299809586,
+          "truthMs": 0,
+          "newMs": 11.383219954648531,
+          "walkbackMs": 42.41440304344733
+        },
+        {
+          "basename": "04 Thunder (Original Mix).mp3",
+          "anaMs": 50.31254981206391,
+          "truthMs": 24,
+          "newMs": 19.954648526077097,
+          "walkbackMs": 30.35790128598681
+        },
+        {
+          "basename": "MI December 2024.wav",
+          "anaMs": 985.5870803605994,
+          "truthMs": 965,
+          "newMs": 961.5419501133788,
+          "walkbackMs": 24.04513024722064
+        },
+        {
+          "basename": "02 Evo (Original Mix).mp3",
+          "anaMs": 487.8048780487805,
+          "truthMs": 428,
+          "newMs": 440.1814058956916,
+          "walkbackMs": 47.62347215308887
+        },
+        {
+          "basename": "01 Silver Lake (Original Mix).mp3",
+          "anaMs": 496.7919408200439,
+          "truthMs": 460,
+          "newMs": 449.4104308390023,
+          "walkbackMs": 47.38150998104163
+        },
+        {
+          "basename": "02 Evo.m4a",
+          "anaMs": 487.8048780487805,
+          "truthMs": 450,
+          "newMs": 440.36281179138325,
+          "walkbackMs": 47.442066257397244
+        },
+        {
+          "basename": "Juno 3.m4a",
+          "anaMs": 103.29763310282792,
+          "truthMs": 48,
+          "newMs": 57.77777777777778,
+          "walkbackMs": 45.51985532505014
+        },
+        {
+          "basename": "02 Hips and Dips (Zankee Gulati Remix).mp3",
+          "anaMs": 545.7543899102341,
+          "truthMs": 521,
+          "newMs": 505.2834467120182,
+          "walkbackMs": 40.47094319821588
+        },
+        {
+          "basename": "01 Symbiotic Symphony (Weird Sounding Dude Remix).mp3",
+          "anaMs": 487.8048780487805,
+          "truthMs": 453,
+          "newMs": 439.9092970521542,
+          "walkbackMs": 47.89558099662628
+        },
+        {
+          "basename": "Juno's Mix.wav",
+          "anaMs": 1030.485039544273,
+          "truthMs": 980,
+          "newMs": 982.7891156462586,
+          "walkbackMs": 47.69592389801437
+        },
+        {
+          "basename": "01 Chad May 14.wav",
+          "anaMs": 975.609756097561,
+          "truthMs": 921,
+          "newMs": 928.390022675737,
+          "walkbackMs": 47.219733421824
+        },
+        {
+          "basename": "01 The Great Escape (Cornucopia Remix).m4a",
+          "anaMs": 74.82993197278911,
+          "truthMs": 47,
+          "newMs": 27.50566893424036,
+          "walkbackMs": 47.32426303854875
+        },
+        {
+          "basename": "01 June San Juan 2025.wav",
+          "anaMs": 1013.5385301661648,
+          "truthMs": 960,
+          "newMs": 967.4603174603175,
+          "walkbackMs": 46.07821270584736
+        },
+        {
+          "basename": "01 Back In The Days (Original Mix).mp3",
+          "anaMs": 69.0551776266062,
+          "truthMs": 25,
+          "newMs": 26.507936507936513,
+          "walkbackMs": 42.54724111866968
+        },
+        {
+          "basename": "02 When Midnight Comes (Alex O'Rion Remix).mp3",
+          "anaMs": 1054.875283446712,
+          "truthMs": 1033,
+          "newMs": 1017.1655328798186,
+          "walkbackMs": 37.70975056689349
+        },
+        {
+          "basename": "07 Holding On (Original Mix).mp3",
+          "anaMs": 483.8709677419355,
+          "truthMs": 425,
+          "newMs": 438.8662131519274,
+          "walkbackMs": 45.004754590008076
+        },
+        {
+          "basename": "02 Need U (Original Mix).mp3",
+          "anaMs": 527.4708683816286,
+          "truthMs": 506,
+          "newMs": 497.4829931972789,
+          "walkbackMs": 29.98787518434972
+        },
+        {
+          "basename": "03 From Sunrise to Sunset (Extended Mix).mp3",
+          "anaMs": 508.47457627118644,
+          "truthMs": 460,
+          "newMs": 462.33560090702946,
+          "walkbackMs": 46.13897536415698
+        },
+        {
+          "basename": "01 May San Juan Mix 2026.wav",
+          "anaMs": 983.6065573770492,
+          "truthMs": 958,
+          "newMs": 957.4829931972789,
+          "walkbackMs": 26.123564179770256
+        }
+      ],
+      "regList": [
+        {
+          "basename": "04 Alien Flu (Forty Cats Remix).mp3",
+          "anaMs": 265.41189187045086,
+          "truthMs": 272,
+          "newMs": 245.4875283446712,
+          "walkbackMs": 19.924363525779654
+        },
+        {
+          "basename": "01 Cowbells of Nuneaton (Original Mix).mp3",
+          "anaMs": 42.78911564625851,
+          "truthMs": 53,
+          "newMs": 23.44671201814059,
+          "walkbackMs": 19.342403628117918
+        },
+        {
+          "basename": "01 Nana (Original Mix).mp3",
+          "anaMs": 159.297052154195,
+          "truthMs": 164,
+          "newMs": 143.78684807256235,
+          "walkbackMs": 15.51020408163265
+        }
+      ]
+    },
+    {
+      "tf": 0.3,
+      "minW": 30,
+      "rescue": 16,
+      "regress": 0,
+      "net": 16,
+      "rList": [
+        {
+          "basename": "House3.wav",
+          "anaMs": 53.79762299809586,
+          "truthMs": 0,
+          "newMs": 11.383219954648531,
+          "walkbackMs": 42.41440304344733
+        },
+        {
+          "basename": "04 Thunder (Original Mix).mp3",
+          "anaMs": 50.31254981206391,
+          "truthMs": 24,
+          "newMs": 19.954648526077097,
+          "walkbackMs": 30.35790128598681
+        },
+        {
+          "basename": "02 Evo (Original Mix).mp3",
+          "anaMs": 487.8048780487805,
+          "truthMs": 428,
+          "newMs": 440.1814058956916,
+          "walkbackMs": 47.62347215308887
+        },
+        {
+          "basename": "01 Silver Lake (Original Mix).mp3",
+          "anaMs": 496.7919408200439,
+          "truthMs": 460,
+          "newMs": 449.4104308390023,
+          "walkbackMs": 47.38150998104163
+        },
+        {
+          "basename": "02 Evo.m4a",
+          "anaMs": 487.8048780487805,
+          "truthMs": 450,
+          "newMs": 440.36281179138325,
+          "walkbackMs": 47.442066257397244
+        },
+        {
+          "basename": "Juno 3.m4a",
+          "anaMs": 103.29763310282792,
+          "truthMs": 48,
+          "newMs": 57.77777777777778,
+          "walkbackMs": 45.51985532505014
+        },
+        {
+          "basename": "02 Hips and Dips (Zankee Gulati Remix).mp3",
+          "anaMs": 545.7543899102341,
+          "truthMs": 521,
+          "newMs": 505.2834467120182,
+          "walkbackMs": 40.47094319821588
+        },
+        {
+          "basename": "01 Symbiotic Symphony (Weird Sounding Dude Remix).mp3",
+          "anaMs": 487.8048780487805,
+          "truthMs": 453,
+          "newMs": 439.9092970521542,
+          "walkbackMs": 47.89558099662628
+        },
+        {
+          "basename": "Juno's Mix.wav",
+          "anaMs": 1030.485039544273,
+          "truthMs": 980,
+          "newMs": 982.7891156462586,
+          "walkbackMs": 47.69592389801437
+        },
+        {
+          "basename": "01 Chad May 14.wav",
+          "anaMs": 975.609756097561,
+          "truthMs": 921,
+          "newMs": 928.390022675737,
+          "walkbackMs": 47.219733421824
+        },
+        {
+          "basename": "01 The Great Escape (Cornucopia Remix).m4a",
+          "anaMs": 74.82993197278911,
+          "truthMs": 47,
+          "newMs": 27.50566893424036,
+          "walkbackMs": 47.32426303854875
+        },
+        {
+          "basename": "01 June San Juan 2025.wav",
+          "anaMs": 1013.5385301661648,
+          "truthMs": 960,
+          "newMs": 967.4603174603175,
+          "walkbackMs": 46.07821270584736
+        },
+        {
+          "basename": "01 Back In The Days (Original Mix).mp3",
+          "anaMs": 69.0551776266062,
+          "truthMs": 25,
+          "newMs": 26.507936507936513,
+          "walkbackMs": 42.54724111866968
+        },
+        {
+          "basename": "02 When Midnight Comes (Alex O'Rion Remix).mp3",
+          "anaMs": 1054.875283446712,
+          "truthMs": 1033,
+          "newMs": 1017.1655328798186,
+          "walkbackMs": 37.70975056689349
+        },
+        {
+          "basename": "07 Holding On (Original Mix).mp3",
+          "anaMs": 483.8709677419355,
+          "truthMs": 425,
+          "newMs": 438.8662131519274,
+          "walkbackMs": 45.004754590008076
+        },
+        {
+          "basename": "03 From Sunrise to Sunset (Extended Mix).mp3",
+          "anaMs": 508.47457627118644,
+          "truthMs": 460,
+          "newMs": 462.33560090702946,
+          "walkbackMs": 46.13897536415698
+        }
+      ],
+      "regList": []
+    },
+    {
+      "tf": 0.5,
+      "minW": 25,
+      "rescue": 16,
+      "regress": 0,
+      "net": 16,
+      "rList": [
+        {
+          "basename": "House3.wav",
+          "anaMs": 53.79762299809586,
+          "truthMs": 0,
+          "newMs": 11.383219954648531,
+          "walkbackMs": 42.41440304344733
+        },
+        {
+          "basename": "02 Evo (Original Mix).mp3",
+          "anaMs": 487.8048780487805,
+          "truthMs": 428,
+          "newMs": 440.1814058956916,
+          "walkbackMs": 47.62347215308887
+        },
+        {
+          "basename": "01 Silver Lake (Original Mix).mp3",
+          "anaMs": 496.7919408200439,
+          "truthMs": 460,
+          "newMs": 449.4104308390023,
+          "walkbackMs": 47.38150998104163
+        },
+        {
+          "basename": "02 Evo.m4a",
+          "anaMs": 487.8048780487805,
+          "truthMs": 450,
+          "newMs": 443.6054421768708,
+          "walkbackMs": 44.199435871909714
+        },
+        {
+          "basename": "Juno 3.m4a",
+          "anaMs": 103.29763310282792,
+          "truthMs": 48,
+          "newMs": 57.77777777777778,
+          "walkbackMs": 45.51985532505014
+        },
+        {
+          "basename": "02 Hips and Dips (Zankee Gulati Remix).mp3",
+          "anaMs": 545.7543899102341,
+          "truthMs": 521,
+          "newMs": 508.4353741496599,
+          "walkbackMs": 37.31901576057419
+        },
+        {
+          "basename": "01 Symbiotic Symphony (Weird Sounding Dude Remix).mp3",
+          "anaMs": 487.8048780487805,
+          "truthMs": 453,
+          "newMs": 439.9092970521542,
+          "walkbackMs": 47.89558099662628
+        },
+        {
+          "basename": "Juno's Mix.wav",
+          "anaMs": 1030.485039544273,
+          "truthMs": 980,
+          "newMs": 982.7891156462586,
+          "walkbackMs": 47.69592389801437
+        },
+        {
+          "basename": "01 Chad May 14.wav",
+          "anaMs": 975.609756097561,
+          "truthMs": 921,
+          "newMs": 934.5578231292518,
+          "walkbackMs": 41.05193296830919
+        },
+        {
+          "basename": "01 The Great Escape (Cornucopia Remix).m4a",
+          "anaMs": 74.82993197278911,
+          "truthMs": 47,
+          "newMs": 30.816326530612237,
+          "walkbackMs": 44.013605442176875
+        },
+        {
+          "basename": "01 June San Juan 2025.wav",
+          "anaMs": 1013.5385301661648,
+          "truthMs": 960,
+          "newMs": 967.4603174603175,
+          "walkbackMs": 46.07821270584736
+        },
+        {
+          "basename": "01 Back In The Days (Original Mix).mp3",
+          "anaMs": 69.0551776266062,
+          "truthMs": 25,
+          "newMs": 26.507936507936513,
+          "walkbackMs": 42.54724111866968
+        },
+        {
+          "basename": "02 When Midnight Comes (Alex O'Rion Remix).mp3",
+          "anaMs": 1054.875283446712,
+          "truthMs": 1033,
+          "newMs": 1017.1655328798186,
+          "walkbackMs": 37.70975056689349
+        },
+        {
+          "basename": "07 Holding On (Original Mix).mp3",
+          "anaMs": 483.8709677419355,
+          "truthMs": 425,
+          "newMs": 438.8662131519274,
+          "walkbackMs": 45.004754590008076
+        },
+        {
+          "basename": "02 Need U (Original Mix).mp3",
+          "anaMs": 527.4708683816286,
+          "truthMs": 506,
+          "newMs": 500.1587301587302,
+          "walkbackMs": 27.312138222898454
+        },
+        {
+          "basename": "03 From Sunrise to Sunset (Extended Mix).mp3",
+          "anaMs": 508.47457627118644,
+          "truthMs": 460,
+          "newMs": 462.33560090702946,
+          "walkbackMs": 46.13897536415698
+        }
+      ],
+      "regList": []
+    },
+    {
+      "tf": 0.5,
+      "minW": 5,
+      "rescue": 21,
+      "regress": 6,
+      "net": 15,
+      "rList": [
+        {
+          "basename": "House3.wav",
+          "anaMs": 53.79762299809586,
+          "truthMs": 0,
+          "newMs": 11.383219954648531,
+          "walkbackMs": 42.41440304344733
+        },
+        {
+          "basename": "04 Thunder (Original Mix).mp3",
+          "anaMs": 50.31254981206391,
+          "truthMs": 24,
+          "newMs": 28.57142857142857,
+          "walkbackMs": 21.741121240635337
+        },
+        {
+          "basename": "MI December 2024.wav",
+          "anaMs": 985.5870803605994,
+          "truthMs": 965,
+          "newMs": 961.5419501133788,
+          "walkbackMs": 24.04513024722064
+        },
+        {
+          "basename": "02 Evo (Original Mix).mp3",
+          "anaMs": 487.8048780487805,
+          "truthMs": 428,
+          "newMs": 440.1814058956916,
+          "walkbackMs": 47.62347215308887
+        },
+        {
+          "basename": "01 Silver Lake (Original Mix).mp3",
+          "anaMs": 496.7919408200439,
+          "truthMs": 460,
+          "newMs": 449.4104308390023,
+          "walkbackMs": 47.38150998104163
+        },
+        {
+          "basename": "02 Evo.m4a",
+          "anaMs": 487.8048780487805,
+          "truthMs": 450,
+          "newMs": 443.6054421768708,
+          "walkbackMs": 44.199435871909714
+        },
+        {
+          "basename": "Juno 3.m4a",
+          "anaMs": 103.29763310282792,
+          "truthMs": 48,
+          "newMs": 57.77777777777778,
+          "walkbackMs": 45.51985532505014
+        },
+        {
+          "basename": "02 Hips and Dips (Zankee Gulati Remix).mp3",
+          "anaMs": 545.7543899102341,
+          "truthMs": 521,
+          "newMs": 508.4353741496599,
+          "walkbackMs": 37.31901576057419
+        },
+        {
+          "basename": "01 Symbiotic Symphony (Weird Sounding Dude Remix).mp3",
+          "anaMs": 487.8048780487805,
+          "truthMs": 453,
+          "newMs": 439.9092970521542,
+          "walkbackMs": 47.89558099662628
+        },
+        {
+          "basename": "Juno's Mix.wav",
+          "anaMs": 1030.485039544273,
+          "truthMs": 980,
+          "newMs": 982.7891156462586,
+          "walkbackMs": 47.69592389801437
+        },
+        {
+          "basename": "01 Chad May 14.wav",
+          "anaMs": 975.609756097561,
+          "truthMs": 921,
+          "newMs": 934.5578231292518,
+          "walkbackMs": 41.05193296830919
+        },
+        {
+          "basename": "01 The Great Escape (Cornucopia Remix).m4a",
+          "anaMs": 74.82993197278911,
+          "truthMs": 47,
+          "newMs": 30.816326530612237,
+          "walkbackMs": 44.013605442176875
+        },
+        {
+          "basename": "01 June San Juan 2025.wav",
+          "anaMs": 1013.5385301661648,
+          "truthMs": 960,
+          "newMs": 967.4603174603175,
+          "walkbackMs": 46.07821270584736
+        },
+        {
+          "basename": "Chad September Learning 2.4.mp3",
+          "anaMs": 74.78821912660194,
+          "truthMs": 50,
+          "newMs": 63.17460317460318,
+          "walkbackMs": 11.613615951998767
+        },
+        {
+          "basename": "01 Back In The Days (Original Mix).mp3",
+          "anaMs": 69.0551776266062,
+          "truthMs": 25,
+          "newMs": 26.507936507936513,
+          "walkbackMs": 42.54724111866968
+        },
+        {
+          "basename": "02 When Midnight Comes (Alex O'Rion Remix).mp3",
+          "anaMs": 1054.875283446712,
+          "truthMs": 1033,
+          "newMs": 1017.1655328798186,
+          "walkbackMs": 37.70975056689349
+        },
+        {
+          "basename": "Chad - Juno's World.mp3",
+          "anaMs": 74.78798578643068,
+          "truthMs": 50,
+          "newMs": 68.57142857142857,
+          "walkbackMs": 6.216557215002112
+        },
+        {
+          "basename": "07 Holding On (Original Mix).mp3",
+          "anaMs": 483.8709677419355,
+          "truthMs": 425,
+          "newMs": 438.8662131519274,
+          "walkbackMs": 45.004754590008076
+        },
+        {
+          "basename": "02 Need U (Original Mix).mp3",
+          "anaMs": 527.4708683816286,
+          "truthMs": 506,
+          "newMs": 500.1587301587302,
+          "walkbackMs": 27.312138222898454
+        },
+        {
+          "basename": "03 From Sunrise to Sunset (Extended Mix).mp3",
+          "anaMs": 508.47457627118644,
+          "truthMs": 460,
+          "newMs": 462.33560090702946,
+          "walkbackMs": 46.13897536415698
+        },
+        {
+          "basename": "01 May San Juan Mix 2026.wav",
+          "anaMs": 983.6065573770492,
+          "truthMs": 958,
+          "newMs": 968.390022675737,
+          "walkbackMs": 15.216534701312185
+        }
+      ],
+      "regList": [
+        {
+          "basename": "01 Melange (Original Mix).mp3",
+          "anaMs": 11.764530373552928,
+          "truthMs": 27,
+          "newMs": 4.829931972789115,
+          "walkbackMs": 6.934598400763813
+        },
+        {
+          "basename": "06 World On Fire (PROFF Extended Edit).mp3",
+          "anaMs": 11.111111111111109,
+          "truthMs": 26,
+          "newMs": 3.46938775510204,
+          "walkbackMs": 7.641723356009069
+        },
+        {
+          "basename": "01 In This World (Original Mix).mp3",
+          "anaMs": 14.965986394557822,
+          "truthMs": 24,
+          "newMs": 3.99092970521542,
+          "walkbackMs": 10.975056689342402
+        },
+        {
+          "basename": "01 Cowbells of Nuneaton (Original Mix).mp3",
+          "anaMs": 42.78911564625851,
+          "truthMs": 53,
+          "newMs": 23.44671201814059,
+          "walkbackMs": 19.342403628117918
+        },
+        {
+          "basename": "01 What Is Real (Extended Mix).mp3",
+          "anaMs": 113.0760604302217,
+          "truthMs": 123,
+          "newMs": 100.77097505668935,
+          "walkbackMs": 12.30508537353235
+        },
+        {
+          "basename": "01 A Moment Of Clarity (Original Mix).mp3",
+          "anaMs": 135.30612244897958,
+          "truthMs": 148,
+          "newMs": 127.93650793650794,
+          "walkbackMs": 7.369614512471642
+        }
+      ]
+    },
+    {
+      "tf": 0.5,
+      "minW": 30,
+      "rescue": 15,
+      "regress": 0,
+      "net": 15,
+      "rList": [
+        {
+          "basename": "House3.wav",
+          "anaMs": 53.79762299809586,
+          "truthMs": 0,
+          "newMs": 11.383219954648531,
+          "walkbackMs": 42.41440304344733
+        },
+        {
+          "basename": "02 Evo (Original Mix).mp3",
+          "anaMs": 487.8048780487805,
+          "truthMs": 428,
+          "newMs": 440.1814058956916,
+          "walkbackMs": 47.62347215308887
+        },
+        {
+          "basename": "01 Silver Lake (Original Mix).mp3",
+          "anaMs": 496.7919408200439,
+          "truthMs": 460,
+          "newMs": 449.4104308390023,
+          "walkbackMs": 47.38150998104163
+        },
+        {
+          "basename": "02 Evo.m4a",
+          "anaMs": 487.8048780487805,
+          "truthMs": 450,
+          "newMs": 443.6054421768708,
+          "walkbackMs": 44.199435871909714
+        },
+        {
+          "basename": "Juno 3.m4a",
+          "anaMs": 103.29763310282792,
+          "truthMs": 48,
+          "newMs": 57.77777777777778,
+          "walkbackMs": 45.51985532505014
+        },
+        {
+          "basename": "02 Hips and Dips (Zankee Gulati Remix).mp3",
+          "anaMs": 545.7543899102341,
+          "truthMs": 521,
+          "newMs": 508.4353741496599,
+          "walkbackMs": 37.31901576057419
+        },
+        {
+          "basename": "01 Symbiotic Symphony (Weird Sounding Dude Remix).mp3",
+          "anaMs": 487.8048780487805,
+          "truthMs": 453,
+          "newMs": 439.9092970521542,
+          "walkbackMs": 47.89558099662628
+        },
+        {
+          "basename": "Juno's Mix.wav",
+          "anaMs": 1030.485039544273,
+          "truthMs": 980,
+          "newMs": 982.7891156462586,
+          "walkbackMs": 47.69592389801437
+        },
+        {
+          "basename": "01 Chad May 14.wav",
+          "anaMs": 975.609756097561,
+          "truthMs": 921,
+          "newMs": 934.5578231292518,
+          "walkbackMs": 41.05193296830919
+        },
+        {
+          "basename": "01 The Great Escape (Cornucopia Remix).m4a",
+          "anaMs": 74.82993197278911,
+          "truthMs": 47,
+          "newMs": 30.816326530612237,
+          "walkbackMs": 44.013605442176875
+        },
+        {
+          "basename": "01 June San Juan 2025.wav",
+          "anaMs": 1013.5385301661648,
+          "truthMs": 960,
+          "newMs": 967.4603174603175,
+          "walkbackMs": 46.07821270584736
+        },
+        {
+          "basename": "01 Back In The Days (Original Mix).mp3",
+          "anaMs": 69.0551776266062,
+          "truthMs": 25,
+          "newMs": 26.507936507936513,
+          "walkbackMs": 42.54724111866968
+        },
+        {
+          "basename": "02 When Midnight Comes (Alex O'Rion Remix).mp3",
+          "anaMs": 1054.875283446712,
+          "truthMs": 1033,
+          "newMs": 1017.1655328798186,
+          "walkbackMs": 37.70975056689349
+        },
+        {
+          "basename": "07 Holding On (Original Mix).mp3",
+          "anaMs": 483.8709677419355,
+          "truthMs": 425,
+          "newMs": 438.8662131519274,
+          "walkbackMs": 45.004754590008076
+        },
+        {
+          "basename": "03 From Sunrise to Sunset (Extended Mix).mp3",
+          "anaMs": 508.47457627118644,
+          "truthMs": 460,
+          "newMs": 462.33560090702946,
+          "walkbackMs": 46.13897536415698
+        }
+      ],
+      "regList": []
+    },
+    {
+      "tf": 0.7,
+      "minW": 10,
+      "rescue": 17,
+      "regress": 2,
+      "net": 15,
+      "rList": [
+        {
+          "basename": "04 Thunder (Original Mix).mp3",
+          "anaMs": 50.31254981206391,
+          "truthMs": 24,
+          "newMs": 38.45804988662131,
+          "walkbackMs": 11.854499925442596
+        },
+        {
+          "basename": "MI December 2024.wav",
+          "anaMs": 985.5870803605994,
+          "truthMs": 965,
+          "newMs": 964.3083900226758,
+          "walkbackMs": 21.27869033792365
+        },
+        {
+          "basename": "02 Evo (Original Mix).mp3",
+          "anaMs": 487.8048780487805,
+          "truthMs": 428,
+          "newMs": 440.1814058956916,
+          "walkbackMs": 47.62347215308887
+        },
+        {
+          "basename": "01 Silver Lake (Original Mix).mp3",
+          "anaMs": 496.7919408200439,
+          "truthMs": 460,
+          "newMs": 449.4104308390023,
+          "walkbackMs": 47.38150998104163
+        },
+        {
+          "basename": "02 Evo.m4a",
+          "anaMs": 487.8048780487805,
+          "truthMs": 450,
+          "newMs": 443.6054421768708,
+          "walkbackMs": 44.199435871909714
+        },
+        {
+          "basename": "02 Hips and Dips (Zankee Gulati Remix).mp3",
+          "anaMs": 545.7543899102341,
+          "truthMs": 521,
+          "newMs": 511.9501133786848,
+          "walkbackMs": 33.80427653154925
+        },
+        {
+          "basename": "01 Symbiotic Symphony (Weird Sounding Dude Remix).mp3",
+          "anaMs": 487.8048780487805,
+          "truthMs": 453,
+          "newMs": 439.9092970521542,
+          "walkbackMs": 47.89558099662628
+        },
+        {
+          "basename": "Juno's Mix.wav",
+          "anaMs": 1030.485039544273,
+          "truthMs": 980,
+          "newMs": 982.7891156462586,
+          "walkbackMs": 47.69592389801437
+        },
+        {
+          "basename": "01 Chad May 14.wav",
+          "anaMs": 975.609756097561,
+          "truthMs": 921,
+          "newMs": 934.5578231292518,
+          "walkbackMs": 41.05193296830919
+        },
+        {
+          "basename": "01 The Great Escape (Cornucopia Remix).m4a",
+          "anaMs": 74.82993197278911,
+          "truthMs": 47,
+          "newMs": 30.816326530612237,
+          "walkbackMs": 44.013605442176875
+        },
+        {
+          "basename": "01 June San Juan 2025.wav",
+          "anaMs": 1013.5385301661648,
+          "truthMs": 960,
+          "newMs": 970.4308390022676,
+          "walkbackMs": 43.10769116389724
+        },
+        {
+          "basename": "01 Back In The Days (Original Mix).mp3",
+          "anaMs": 69.0551776266062,
+          "truthMs": 25,
+          "newMs": 26.507936507936513,
+          "walkbackMs": 42.54724111866968
+        },
+        {
+          "basename": "02 When Midnight Comes (Alex O'Rion Remix).mp3",
+          "anaMs": 1054.875283446712,
+          "truthMs": 1033,
+          "newMs": 1019.8412698412696,
+          "walkbackMs": 35.0340136054424
+        },
+        {
+          "basename": "07 Holding On (Original Mix).mp3",
+          "anaMs": 483.8709677419355,
+          "truthMs": 425,
+          "newMs": 438.8662131519274,
+          "walkbackMs": 45.004754590008076
+        },
+        {
+          "basename": "02 Need U (Original Mix).mp3",
+          "anaMs": 527.4708683816286,
+          "truthMs": 506,
+          "newMs": 503.061224489796,
+          "walkbackMs": 24.409643891832616
+        },
+        {
+          "basename": "03 From Sunrise to Sunset (Extended Mix).mp3",
+          "anaMs": 508.47457627118644,
+          "truthMs": 460,
+          "newMs": 462.33560090702946,
+          "walkbackMs": 46.13897536415698
+        },
+        {
+          "basename": "01 May San Juan Mix 2026.wav",
+          "anaMs": 983.6065573770492,
+          "truthMs": 958,
+          "newMs": 968.390022675737,
+          "walkbackMs": 15.216534701312185
+        }
+      ],
+      "regList": [
+        {
+          "basename": "01 In This World (Original Mix).mp3",
+          "anaMs": 14.965986394557822,
+          "truthMs": 24,
+          "newMs": 3.99092970521542,
+          "walkbackMs": 10.975056689342402
+        },
+        {
+          "basename": "01 Cowbells of Nuneaton (Original Mix).mp3",
+          "anaMs": 42.78911564625851,
+          "truthMs": 53,
+          "newMs": 23.44671201814059,
+          "walkbackMs": 19.342403628117918
+        }
+      ]
+    },
+    {
+      "tf": 0.7,
+      "minW": 15,
+      "rescue": 16,
+      "regress": 1,
+      "net": 15,
+      "rList": [
+        {
+          "basename": "MI December 2024.wav",
+          "anaMs": 985.5870803605994,
+          "truthMs": 965,
+          "newMs": 964.3083900226758,
+          "walkbackMs": 21.27869033792365
+        },
+        {
+          "basename": "02 Evo (Original Mix).mp3",
+          "anaMs": 487.8048780487805,
+          "truthMs": 428,
+          "newMs": 440.1814058956916,
+          "walkbackMs": 47.62347215308887
+        },
+        {
+          "basename": "01 Silver Lake (Original Mix).mp3",
+          "anaMs": 496.7919408200439,
+          "truthMs": 460,
+          "newMs": 449.4104308390023,
+          "walkbackMs": 47.38150998104163
+        },
+        {
+          "basename": "02 Evo.m4a",
+          "anaMs": 487.8048780487805,
+          "truthMs": 450,
+          "newMs": 443.6054421768708,
+          "walkbackMs": 44.199435871909714
+        },
+        {
+          "basename": "02 Hips and Dips (Zankee Gulati Remix).mp3",
+          "anaMs": 545.7543899102341,
+          "truthMs": 521,
+          "newMs": 511.9501133786848,
+          "walkbackMs": 33.80427653154925
+        },
+        {
+          "basename": "01 Symbiotic Symphony (Weird Sounding Dude Remix).mp3",
+          "anaMs": 487.8048780487805,
+          "truthMs": 453,
+          "newMs": 439.9092970521542,
+          "walkbackMs": 47.89558099662628
+        },
+        {
+          "basename": "Juno's Mix.wav",
+          "anaMs": 1030.485039544273,
+          "truthMs": 980,
+          "newMs": 982.7891156462586,
+          "walkbackMs": 47.69592389801437
+        },
+        {
+          "basename": "01 Chad May 14.wav",
+          "anaMs": 975.609756097561,
+          "truthMs": 921,
+          "newMs": 934.5578231292518,
+          "walkbackMs": 41.05193296830919
+        },
+        {
+          "basename": "01 The Great Escape (Cornucopia Remix).m4a",
+          "anaMs": 74.82993197278911,
+          "truthMs": 47,
+          "newMs": 30.816326530612237,
+          "walkbackMs": 44.013605442176875
+        },
+        {
+          "basename": "01 June San Juan 2025.wav",
+          "anaMs": 1013.5385301661648,
+          "truthMs": 960,
+          "newMs": 970.4308390022676,
+          "walkbackMs": 43.10769116389724
+        },
+        {
+          "basename": "01 Back In The Days (Original Mix).mp3",
+          "anaMs": 69.0551776266062,
+          "truthMs": 25,
+          "newMs": 26.507936507936513,
+          "walkbackMs": 42.54724111866968
+        },
+        {
+          "basename": "02 When Midnight Comes (Alex O'Rion Remix).mp3",
+          "anaMs": 1054.875283446712,
+          "truthMs": 1033,
+          "newMs": 1019.8412698412696,
+          "walkbackMs": 35.0340136054424
+        },
+        {
+          "basename": "07 Holding On (Original Mix).mp3",
+          "anaMs": 483.8709677419355,
+          "truthMs": 425,
+          "newMs": 438.8662131519274,
+          "walkbackMs": 45.004754590008076
+        },
+        {
+          "basename": "02 Need U (Original Mix).mp3",
+          "anaMs": 527.4708683816286,
+          "truthMs": 506,
+          "newMs": 503.061224489796,
+          "walkbackMs": 24.409643891832616
+        },
+        {
+          "basename": "03 From Sunrise to Sunset (Extended Mix).mp3",
+          "anaMs": 508.47457627118644,
+          "truthMs": 460,
+          "newMs": 462.33560090702946,
+          "walkbackMs": 46.13897536415698
+        },
+        {
+          "basename": "01 May San Juan Mix 2026.wav",
+          "anaMs": 983.6065573770492,
+          "truthMs": 958,
+          "newMs": 968.390022675737,
+          "walkbackMs": 15.216534701312185
+        }
+      ],
+      "regList": [
+        {
+          "basename": "01 Cowbells of Nuneaton (Original Mix).mp3",
+          "anaMs": 42.78911564625851,
+          "truthMs": 53,
+          "newMs": 23.44671201814059,
+          "walkbackMs": 19.342403628117918
+        }
+      ]
+    },
+    {
+      "tf": 0.7,
+      "minW": 20,
+      "rescue": 15,
+      "regress": 0,
+      "net": 15,
+      "rList": [
+        {
+          "basename": "MI December 2024.wav",
+          "anaMs": 985.5870803605994,
+          "truthMs": 965,
+          "newMs": 964.3083900226758,
+          "walkbackMs": 21.27869033792365
+        },
+        {
+          "basename": "02 Evo (Original Mix).mp3",
+          "anaMs": 487.8048780487805,
+          "truthMs": 428,
+          "newMs": 440.1814058956916,
+          "walkbackMs": 47.62347215308887
+        },
+        {
+          "basename": "01 Silver Lake (Original Mix).mp3",
+          "anaMs": 496.7919408200439,
+          "truthMs": 460,
+          "newMs": 449.4104308390023,
+          "walkbackMs": 47.38150998104163
+        },
+        {
+          "basename": "02 Evo.m4a",
+          "anaMs": 487.8048780487805,
+          "truthMs": 450,
+          "newMs": 443.6054421768708,
+          "walkbackMs": 44.199435871909714
+        },
+        {
+          "basename": "02 Hips and Dips (Zankee Gulati Remix).mp3",
+          "anaMs": 545.7543899102341,
+          "truthMs": 521,
+          "newMs": 511.9501133786848,
+          "walkbackMs": 33.80427653154925
+        },
+        {
+          "basename": "01 Symbiotic Symphony (Weird Sounding Dude Remix).mp3",
+          "anaMs": 487.8048780487805,
+          "truthMs": 453,
+          "newMs": 439.9092970521542,
+          "walkbackMs": 47.89558099662628
+        },
+        {
+          "basename": "Juno's Mix.wav",
+          "anaMs": 1030.485039544273,
+          "truthMs": 980,
+          "newMs": 982.7891156462586,
+          "walkbackMs": 47.69592389801437
+        },
+        {
+          "basename": "01 Chad May 14.wav",
+          "anaMs": 975.609756097561,
+          "truthMs": 921,
+          "newMs": 934.5578231292518,
+          "walkbackMs": 41.05193296830919
+        },
+        {
+          "basename": "01 The Great Escape (Cornucopia Remix).m4a",
+          "anaMs": 74.82993197278911,
+          "truthMs": 47,
+          "newMs": 30.816326530612237,
+          "walkbackMs": 44.013605442176875
+        },
+        {
+          "basename": "01 June San Juan 2025.wav",
+          "anaMs": 1013.5385301661648,
+          "truthMs": 960,
+          "newMs": 970.4308390022676,
+          "walkbackMs": 43.10769116389724
+        },
+        {
+          "basename": "01 Back In The Days (Original Mix).mp3",
+          "anaMs": 69.0551776266062,
+          "truthMs": 25,
+          "newMs": 26.507936507936513,
+          "walkbackMs": 42.54724111866968
+        },
+        {
+          "basename": "02 When Midnight Comes (Alex O'Rion Remix).mp3",
+          "anaMs": 1054.875283446712,
+          "truthMs": 1033,
+          "newMs": 1019.8412698412696,
+          "walkbackMs": 35.0340136054424
+        },
+        {
+          "basename": "07 Holding On (Original Mix).mp3",
+          "anaMs": 483.8709677419355,
+          "truthMs": 425,
+          "newMs": 438.8662131519274,
+          "walkbackMs": 45.004754590008076
+        },
+        {
+          "basename": "02 Need U (Original Mix).mp3",
+          "anaMs": 527.4708683816286,
+          "truthMs": 506,
+          "newMs": 503.061224489796,
+          "walkbackMs": 24.409643891832616
+        },
+        {
+          "basename": "03 From Sunrise to Sunset (Extended Mix).mp3",
+          "anaMs": 508.47457627118644,
+          "truthMs": 460,
+          "newMs": 462.33560090702946,
+          "walkbackMs": 46.13897536415698
+        }
+      ],
+      "regList": []
+    },
+    {
+      "tf": 0.9,
+      "minW": 5,
+      "rescue": 15,
+      "regress": 0,
+      "net": 15,
+      "rList": [
+        {
+          "basename": "MI December 2024.wav",
+          "anaMs": 985.5870803605994,
+          "truthMs": 965,
+          "newMs": 967.7551020408163,
+          "walkbackMs": 17.83197831978316
+        },
+        {
+          "basename": "02 Evo (Original Mix).mp3",
+          "anaMs": 487.8048780487805,
+          "truthMs": 428,
+          "newMs": 446.37188208616783,
+          "walkbackMs": 41.432995962612665
+        },
+        {
+          "basename": "01 Silver Lake (Original Mix).mp3",
+          "anaMs": 496.7919408200439,
+          "truthMs": 460,
+          "newMs": 453.69614512471657,
+          "walkbackMs": 43.095795695327354
+        },
+        {
+          "basename": "02 Evo.m4a",
+          "anaMs": 487.8048780487805,
+          "truthMs": 450,
+          "newMs": 458.70748299319735,
+          "walkbackMs": 29.09739505558315
+        },
+        {
+          "basename": "02 Hips and Dips (Zankee Gulati Remix).mp3",
+          "anaMs": 545.7543899102341,
+          "truthMs": 521,
+          "newMs": 511.9501133786848,
+          "walkbackMs": 33.80427653154925
+        },
+        {
+          "basename": "01 Symbiotic Symphony (Weird Sounding Dude Remix).mp3",
+          "anaMs": 487.8048780487805,
+          "truthMs": 453,
+          "newMs": 443.6734693877551,
+          "walkbackMs": 44.131408661025375
+        },
+        {
+          "basename": "Juno's Mix.wav",
+          "anaMs": 1030.485039544273,
+          "truthMs": 980,
+          "newMs": 989.5011337868482,
+          "walkbackMs": 40.983905757424736
+        },
+        {
+          "basename": "01 Chad May 14.wav",
+          "anaMs": 975.609756097561,
+          "truthMs": 921,
+          "newMs": 934.5578231292518,
+          "walkbackMs": 41.05193296830919
+        },
+        {
+          "basename": "01 The Great Escape (Cornucopia Remix).m4a",
+          "anaMs": 74.82993197278911,
+          "truthMs": 47,
+          "newMs": 57.05215419501134,
+          "walkbackMs": 17.77777777777777
+        },
+        {
+          "basename": "01 June San Juan 2025.wav",
+          "anaMs": 1013.5385301661648,
+          "truthMs": 960,
+          "newMs": 970.4308390022676,
+          "walkbackMs": 43.10769116389724
+        },
+        {
+          "basename": "01 Back In The Days (Original Mix).mp3",
+          "anaMs": 69.0551776266062,
+          "truthMs": 25,
+          "newMs": 26.507936507936513,
+          "walkbackMs": 42.54724111866968
+        },
+        {
+          "basename": "02 When Midnight Comes (Alex O'Rion Remix).mp3",
+          "anaMs": 1054.875283446712,
+          "truthMs": 1033,
+          "newMs": 1042.6303854875282,
+          "walkbackMs": 12.244897959183845
+        },
+        {
+          "basename": "07 Holding On (Original Mix).mp3",
+          "anaMs": 483.8709677419355,
+          "truthMs": 425,
+          "newMs": 438.8662131519274,
+          "walkbackMs": 45.004754590008076
+        },
+        {
+          "basename": "03 From Sunrise to Sunset (Extended Mix).mp3",
+          "anaMs": 508.47457627118644,
+          "truthMs": 460,
+          "newMs": 462.33560090702946,
+          "walkbackMs": 46.13897536415698
+        },
+        {
+          "basename": "01 May San Juan Mix 2026.wav",
+          "anaMs": 983.6065573770492,
+          "truthMs": 958,
+          "newMs": 971.6326530612245,
+          "walkbackMs": 11.973904315824711
+        }
+      ],
+      "regList": []
+    },
+    {
+      "tf": 0.9,
+      "minW": 10,
+      "rescue": 15,
+      "regress": 0,
+      "net": 15,
+      "rList": [
+        {
+          "basename": "MI December 2024.wav",
+          "anaMs": 985.5870803605994,
+          "truthMs": 965,
+          "newMs": 967.7551020408163,
+          "walkbackMs": 17.83197831978316
+        },
+        {
+          "basename": "02 Evo (Original Mix).mp3",
+          "anaMs": 487.8048780487805,
+          "truthMs": 428,
+          "newMs": 446.37188208616783,
+          "walkbackMs": 41.432995962612665
+        },
+        {
+          "basename": "01 Silver Lake (Original Mix).mp3",
+          "anaMs": 496.7919408200439,
+          "truthMs": 460,
+          "newMs": 453.69614512471657,
+          "walkbackMs": 43.095795695327354
+        },
+        {
+          "basename": "02 Evo.m4a",
+          "anaMs": 487.8048780487805,
+          "truthMs": 450,
+          "newMs": 458.70748299319735,
+          "walkbackMs": 29.09739505558315
+        },
+        {
+          "basename": "02 Hips and Dips (Zankee Gulati Remix).mp3",
+          "anaMs": 545.7543899102341,
+          "truthMs": 521,
+          "newMs": 511.9501133786848,
+          "walkbackMs": 33.80427653154925
+        },
+        {
+          "basename": "01 Symbiotic Symphony (Weird Sounding Dude Remix).mp3",
+          "anaMs": 487.8048780487805,
+          "truthMs": 453,
+          "newMs": 443.6734693877551,
+          "walkbackMs": 44.131408661025375
+        },
+        {
+          "basename": "Juno's Mix.wav",
+          "anaMs": 1030.485039544273,
+          "truthMs": 980,
+          "newMs": 989.5011337868482,
+          "walkbackMs": 40.983905757424736
+        },
+        {
+          "basename": "01 Chad May 14.wav",
+          "anaMs": 975.609756097561,
+          "truthMs": 921,
+          "newMs": 934.5578231292518,
+          "walkbackMs": 41.05193296830919
+        },
+        {
+          "basename": "01 The Great Escape (Cornucopia Remix).m4a",
+          "anaMs": 74.82993197278911,
+          "truthMs": 47,
+          "newMs": 57.05215419501134,
+          "walkbackMs": 17.77777777777777
+        },
+        {
+          "basename": "01 June San Juan 2025.wav",
+          "anaMs": 1013.5385301661648,
+          "truthMs": 960,
+          "newMs": 970.4308390022676,
+          "walkbackMs": 43.10769116389724
+        },
+        {
+          "basename": "01 Back In The Days (Original Mix).mp3",
+          "anaMs": 69.0551776266062,
+          "truthMs": 25,
+          "newMs": 26.507936507936513,
+          "walkbackMs": 42.54724111866968
+        },
+        {
+          "basename": "02 When Midnight Comes (Alex O'Rion Remix).mp3",
+          "anaMs": 1054.875283446712,
+          "truthMs": 1033,
+          "newMs": 1042.6303854875282,
+          "walkbackMs": 12.244897959183845
+        },
+        {
+          "basename": "07 Holding On (Original Mix).mp3",
+          "anaMs": 483.8709677419355,
+          "truthMs": 425,
+          "newMs": 438.8662131519274,
+          "walkbackMs": 45.004754590008076
+        },
+        {
+          "basename": "03 From Sunrise to Sunset (Extended Mix).mp3",
+          "anaMs": 508.47457627118644,
+          "truthMs": 460,
+          "newMs": 462.33560090702946,
+          "walkbackMs": 46.13897536415698
+        },
+        {
+          "basename": "01 May San Juan Mix 2026.wav",
+          "anaMs": 983.6065573770492,
+          "truthMs": 958,
+          "newMs": 971.6326530612245,
+          "walkbackMs": 11.973904315824711
+        }
+      ],
+      "regList": []
+    },
+    {
+      "tf": 0.3,
+      "minW": 40,
+      "rescue": 14,
+      "regress": 0,
+      "net": 14,
+      "rList": [
+        {
+          "basename": "House3.wav",
+          "anaMs": 53.79762299809586,
+          "truthMs": 0,
+          "newMs": 11.383219954648531,
+          "walkbackMs": 42.41440304344733
+        },
+        {
+          "basename": "02 Evo (Original Mix).mp3",
+          "anaMs": 487.8048780487805,
+          "truthMs": 428,
+          "newMs": 440.1814058956916,
+          "walkbackMs": 47.62347215308887
+        },
+        {
+          "basename": "01 Silver Lake (Original Mix).mp3",
+          "anaMs": 496.7919408200439,
+          "truthMs": 460,
+          "newMs": 449.4104308390023,
+          "walkbackMs": 47.38150998104163
+        },
+        {
+          "basename": "02 Evo.m4a",
+          "anaMs": 487.8048780487805,
+          "truthMs": 450,
+          "newMs": 440.36281179138325,
+          "walkbackMs": 47.442066257397244
+        },
+        {
+          "basename": "Juno 3.m4a",
+          "anaMs": 103.29763310282792,
+          "truthMs": 48,
+          "newMs": 57.77777777777778,
+          "walkbackMs": 45.51985532505014
+        },
+        {
+          "basename": "02 Hips and Dips (Zankee Gulati Remix).mp3",
+          "anaMs": 545.7543899102341,
+          "truthMs": 521,
+          "newMs": 505.2834467120182,
+          "walkbackMs": 40.47094319821588
+        },
+        {
+          "basename": "01 Symbiotic Symphony (Weird Sounding Dude Remix).mp3",
+          "anaMs": 487.8048780487805,
+          "truthMs": 453,
+          "newMs": 439.9092970521542,
+          "walkbackMs": 47.89558099662628
+        },
+        {
+          "basename": "Juno's Mix.wav",
+          "anaMs": 1030.485039544273,
+          "truthMs": 980,
+          "newMs": 982.7891156462586,
+          "walkbackMs": 47.69592389801437
+        },
+        {
+          "basename": "01 Chad May 14.wav",
+          "anaMs": 975.609756097561,
+          "truthMs": 921,
+          "newMs": 928.390022675737,
+          "walkbackMs": 47.219733421824
+        },
+        {
+          "basename": "01 The Great Escape (Cornucopia Remix).m4a",
+          "anaMs": 74.82993197278911,
+          "truthMs": 47,
+          "newMs": 27.50566893424036,
+          "walkbackMs": 47.32426303854875
+        },
+        {
+          "basename": "01 June San Juan 2025.wav",
+          "anaMs": 1013.5385301661648,
+          "truthMs": 960,
+          "newMs": 967.4603174603175,
+          "walkbackMs": 46.07821270584736
+        },
+        {
+          "basename": "01 Back In The Days (Original Mix).mp3",
+          "anaMs": 69.0551776266062,
+          "truthMs": 25,
+          "newMs": 26.507936507936513,
+          "walkbackMs": 42.54724111866968
+        },
+        {
+          "basename": "07 Holding On (Original Mix).mp3",
+          "anaMs": 483.8709677419355,
+          "truthMs": 425,
+          "newMs": 438.8662131519274,
+          "walkbackMs": 45.004754590008076
+        },
+        {
+          "basename": "03 From Sunrise to Sunset (Extended Mix).mp3",
+          "anaMs": 508.47457627118644,
+          "truthMs": 460,
+          "newMs": 462.33560090702946,
+          "walkbackMs": 46.13897536415698
+        }
+      ],
+      "regList": []
+    },
+    {
+      "tf": 0.7,
+      "minW": 5,
+      "rescue": 17,
+      "regress": 3,
+      "net": 14,
+      "rList": [
+        {
+          "basename": "04 Thunder (Original Mix).mp3",
+          "anaMs": 50.31254981206391,
+          "truthMs": 24,
+          "newMs": 38.45804988662131,
+          "walkbackMs": 11.854499925442596
+        },
+        {
+          "basename": "MI December 2024.wav",
+          "anaMs": 985.5870803605994,
+          "truthMs": 965,
+          "newMs": 964.3083900226758,
+          "walkbackMs": 21.27869033792365
+        },
+        {
+          "basename": "02 Evo (Original Mix).mp3",
+          "anaMs": 487.8048780487805,
+          "truthMs": 428,
+          "newMs": 440.1814058956916,
+          "walkbackMs": 47.62347215308887
+        },
+        {
+          "basename": "01 Silver Lake (Original Mix).mp3",
+          "anaMs": 496.7919408200439,
+          "truthMs": 460,
+          "newMs": 449.4104308390023,
+          "walkbackMs": 47.38150998104163
+        },
+        {
+          "basename": "02 Evo.m4a",
+          "anaMs": 487.8048780487805,
+          "truthMs": 450,
+          "newMs": 443.6054421768708,
+          "walkbackMs": 44.199435871909714
+        },
+        {
+          "basename": "02 Hips and Dips (Zankee Gulati Remix).mp3",
+          "anaMs": 545.7543899102341,
+          "truthMs": 521,
+          "newMs": 511.9501133786848,
+          "walkbackMs": 33.80427653154925
+        },
+        {
+          "basename": "01 Symbiotic Symphony (Weird Sounding Dude Remix).mp3",
+          "anaMs": 487.8048780487805,
+          "truthMs": 453,
+          "newMs": 439.9092970521542,
+          "walkbackMs": 47.89558099662628
+        },
+        {
+          "basename": "Juno's Mix.wav",
+          "anaMs": 1030.485039544273,
+          "truthMs": 980,
+          "newMs": 982.7891156462586,
+          "walkbackMs": 47.69592389801437
+        },
+        {
+          "basename": "01 Chad May 14.wav",
+          "anaMs": 975.609756097561,
+          "truthMs": 921,
+          "newMs": 934.5578231292518,
+          "walkbackMs": 41.05193296830919
+        },
+        {
+          "basename": "01 The Great Escape (Cornucopia Remix).m4a",
+          "anaMs": 74.82993197278911,
+          "truthMs": 47,
+          "newMs": 30.816326530612237,
+          "walkbackMs": 44.013605442176875
+        },
+        {
+          "basename": "01 June San Juan 2025.wav",
+          "anaMs": 1013.5385301661648,
+          "truthMs": 960,
+          "newMs": 970.4308390022676,
+          "walkbackMs": 43.10769116389724
+        },
+        {
+          "basename": "01 Back In The Days (Original Mix).mp3",
+          "anaMs": 69.0551776266062,
+          "truthMs": 25,
+          "newMs": 26.507936507936513,
+          "walkbackMs": 42.54724111866968
+        },
+        {
+          "basename": "02 When Midnight Comes (Alex O'Rion Remix).mp3",
+          "anaMs": 1054.875283446712,
+          "truthMs": 1033,
+          "newMs": 1019.8412698412696,
+          "walkbackMs": 35.0340136054424
+        },
+        {
+          "basename": "07 Holding On (Original Mix).mp3",
+          "anaMs": 483.8709677419355,
+          "truthMs": 425,
+          "newMs": 438.8662131519274,
+          "walkbackMs": 45.004754590008076
+        },
+        {
+          "basename": "02 Need U (Original Mix).mp3",
+          "anaMs": 527.4708683816286,
+          "truthMs": 506,
+          "newMs": 503.061224489796,
+          "walkbackMs": 24.409643891832616
+        },
+        {
+          "basename": "03 From Sunrise to Sunset (Extended Mix).mp3",
+          "anaMs": 508.47457627118644,
+          "truthMs": 460,
+          "newMs": 462.33560090702946,
+          "walkbackMs": 46.13897536415698
+        },
+        {
+          "basename": "01 May San Juan Mix 2026.wav",
+          "anaMs": 983.6065573770492,
+          "truthMs": 958,
+          "newMs": 968.390022675737,
+          "walkbackMs": 15.216534701312185
+        }
+      ],
+      "regList": [
+        {
+          "basename": "01 Melange (Original Mix).mp3",
+          "anaMs": 11.764530373552928,
+          "truthMs": 27,
+          "newMs": 4.829931972789115,
+          "walkbackMs": 6.934598400763813
+        },
+        {
+          "basename": "01 In This World (Original Mix).mp3",
+          "anaMs": 14.965986394557822,
+          "truthMs": 24,
+          "newMs": 3.99092970521542,
+          "walkbackMs": 10.975056689342402
+        },
+        {
+          "basename": "01 Cowbells of Nuneaton (Original Mix).mp3",
+          "anaMs": 42.78911564625851,
+          "truthMs": 53,
+          "newMs": 23.44671201814059,
+          "walkbackMs": 19.342403628117918
+        }
+      ]
+    },
+    {
+      "tf": 0.5,
+      "minW": 40,
+      "rescue": 13,
+      "regress": 0,
+      "net": 13,
+      "rList": [
+        {
+          "basename": "House3.wav",
+          "anaMs": 53.79762299809586,
+          "truthMs": 0,
+          "newMs": 11.383219954648531,
+          "walkbackMs": 42.41440304344733
+        },
+        {
+          "basename": "02 Evo (Original Mix).mp3",
+          "anaMs": 487.8048780487805,
+          "truthMs": 428,
+          "newMs": 440.1814058956916,
+          "walkbackMs": 47.62347215308887
+        },
+        {
+          "basename": "01 Silver Lake (Original Mix).mp3",
+          "anaMs": 496.7919408200439,
+          "truthMs": 460,
+          "newMs": 449.4104308390023,
+          "walkbackMs": 47.38150998104163
+        },
+        {
+          "basename": "02 Evo.m4a",
+          "anaMs": 487.8048780487805,
+          "truthMs": 450,
+          "newMs": 443.6054421768708,
+          "walkbackMs": 44.199435871909714
+        },
+        {
+          "basename": "Juno 3.m4a",
+          "anaMs": 103.29763310282792,
+          "truthMs": 48,
+          "newMs": 57.77777777777778,
+          "walkbackMs": 45.51985532505014
+        },
+        {
+          "basename": "01 Symbiotic Symphony (Weird Sounding Dude Remix).mp3",
+          "anaMs": 487.8048780487805,
+          "truthMs": 453,
+          "newMs": 439.9092970521542,
+          "walkbackMs": 47.89558099662628
+        },
+        {
+          "basename": "Juno's Mix.wav",
+          "anaMs": 1030.485039544273,
+          "truthMs": 980,
+          "newMs": 982.7891156462586,
+          "walkbackMs": 47.69592389801437
+        },
+        {
+          "basename": "01 Chad May 14.wav",
+          "anaMs": 975.609756097561,
+          "truthMs": 921,
+          "newMs": 934.5578231292518,
+          "walkbackMs": 41.05193296830919
+        },
+        {
+          "basename": "01 The Great Escape (Cornucopia Remix).m4a",
+          "anaMs": 74.82993197278911,
+          "truthMs": 47,
+          "newMs": 30.816326530612237,
+          "walkbackMs": 44.013605442176875
+        },
+        {
+          "basename": "01 June San Juan 2025.wav",
+          "anaMs": 1013.5385301661648,
+          "truthMs": 960,
+          "newMs": 967.4603174603175,
+          "walkbackMs": 46.07821270584736
+        },
+        {
+          "basename": "01 Back In The Days (Original Mix).mp3",
+          "anaMs": 69.0551776266062,
+          "truthMs": 25,
+          "newMs": 26.507936507936513,
+          "walkbackMs": 42.54724111866968
+        },
+        {
+          "basename": "07 Holding On (Original Mix).mp3",
+          "anaMs": 483.8709677419355,
+          "truthMs": 425,
+          "newMs": 438.8662131519274,
+          "walkbackMs": 45.004754590008076
+        },
+        {
+          "basename": "03 From Sunrise to Sunset (Extended Mix).mp3",
+          "anaMs": 508.47457627118644,
+          "truthMs": 460,
+          "newMs": 462.33560090702946,
+          "walkbackMs": 46.13897536415698
+        }
+      ],
+      "regList": []
+    },
+    {
+      "tf": 0.7,
+      "minW": 25,
+      "rescue": 13,
+      "regress": 0,
+      "net": 13,
+      "rList": [
+        {
+          "basename": "02 Evo (Original Mix).mp3",
+          "anaMs": 487.8048780487805,
+          "truthMs": 428,
+          "newMs": 440.1814058956916,
+          "walkbackMs": 47.62347215308887
+        },
+        {
+          "basename": "01 Silver Lake (Original Mix).mp3",
+          "anaMs": 496.7919408200439,
+          "truthMs": 460,
+          "newMs": 449.4104308390023,
+          "walkbackMs": 47.38150998104163
+        },
+        {
+          "basename": "02 Evo.m4a",
+          "anaMs": 487.8048780487805,
+          "truthMs": 450,
+          "newMs": 443.6054421768708,
+          "walkbackMs": 44.199435871909714
+        },
+        {
+          "basename": "02 Hips and Dips (Zankee Gulati Remix).mp3",
+          "anaMs": 545.7543899102341,
+          "truthMs": 521,
+          "newMs": 511.9501133786848,
+          "walkbackMs": 33.80427653154925
+        },
+        {
+          "basename": "01 Symbiotic Symphony (Weird Sounding Dude Remix).mp3",
+          "anaMs": 487.8048780487805,
+          "truthMs": 453,
+          "newMs": 439.9092970521542,
+          "walkbackMs": 47.89558099662628
+        },
+        {
+          "basename": "Juno's Mix.wav",
+          "anaMs": 1030.485039544273,
+          "truthMs": 980,
+          "newMs": 982.7891156462586,
+          "walkbackMs": 47.69592389801437
+        },
+        {
+          "basename": "01 Chad May 14.wav",
+          "anaMs": 975.609756097561,
+          "truthMs": 921,
+          "newMs": 934.5578231292518,
+          "walkbackMs": 41.05193296830919
+        },
+        {
+          "basename": "01 The Great Escape (Cornucopia Remix).m4a",
+          "anaMs": 74.82993197278911,
+          "truthMs": 47,
+          "newMs": 30.816326530612237,
+          "walkbackMs": 44.013605442176875
+        },
+        {
+          "basename": "01 June San Juan 2025.wav",
+          "anaMs": 1013.5385301661648,
+          "truthMs": 960,
+          "newMs": 970.4308390022676,
+          "walkbackMs": 43.10769116389724
+        },
+        {
+          "basename": "01 Back In The Days (Original Mix).mp3",
+          "anaMs": 69.0551776266062,
+          "truthMs": 25,
+          "newMs": 26.507936507936513,
+          "walkbackMs": 42.54724111866968
+        },
+        {
+          "basename": "02 When Midnight Comes (Alex O'Rion Remix).mp3",
+          "anaMs": 1054.875283446712,
+          "truthMs": 1033,
+          "newMs": 1019.8412698412696,
+          "walkbackMs": 35.0340136054424
+        },
+        {
+          "basename": "07 Holding On (Original Mix).mp3",
+          "anaMs": 483.8709677419355,
+          "truthMs": 425,
+          "newMs": 438.8662131519274,
+          "walkbackMs": 45.004754590008076
+        },
+        {
+          "basename": "03 From Sunrise to Sunset (Extended Mix).mp3",
+          "anaMs": 508.47457627118644,
+          "truthMs": 460,
+          "newMs": 462.33560090702946,
+          "walkbackMs": 46.13897536415698
+        }
+      ],
+      "regList": []
+    },
+    {
+      "tf": 0.7,
+      "minW": 30,
+      "rescue": 13,
+      "regress": 0,
+      "net": 13,
+      "rList": [
+        {
+          "basename": "02 Evo (Original Mix).mp3",
+          "anaMs": 487.8048780487805,
+          "truthMs": 428,
+          "newMs": 440.1814058956916,
+          "walkbackMs": 47.62347215308887
+        },
+        {
+          "basename": "01 Silver Lake (Original Mix).mp3",
+          "anaMs": 496.7919408200439,
+          "truthMs": 460,
+          "newMs": 449.4104308390023,
+          "walkbackMs": 47.38150998104163
+        },
+        {
+          "basename": "02 Evo.m4a",
+          "anaMs": 487.8048780487805,
+          "truthMs": 450,
+          "newMs": 443.6054421768708,
+          "walkbackMs": 44.199435871909714
+        },
+        {
+          "basename": "02 Hips and Dips (Zankee Gulati Remix).mp3",
+          "anaMs": 545.7543899102341,
+          "truthMs": 521,
+          "newMs": 511.9501133786848,
+          "walkbackMs": 33.80427653154925
+        },
+        {
+          "basename": "01 Symbiotic Symphony (Weird Sounding Dude Remix).mp3",
+          "anaMs": 487.8048780487805,
+          "truthMs": 453,
+          "newMs": 439.9092970521542,
+          "walkbackMs": 47.89558099662628
+        },
+        {
+          "basename": "Juno's Mix.wav",
+          "anaMs": 1030.485039544273,
+          "truthMs": 980,
+          "newMs": 982.7891156462586,
+          "walkbackMs": 47.69592389801437
+        },
+        {
+          "basename": "01 Chad May 14.wav",
+          "anaMs": 975.609756097561,
+          "truthMs": 921,
+          "newMs": 934.5578231292518,
+          "walkbackMs": 41.05193296830919
+        },
+        {
+          "basename": "01 The Great Escape (Cornucopia Remix).m4a",
+          "anaMs": 74.82993197278911,
+          "truthMs": 47,
+          "newMs": 30.816326530612237,
+          "walkbackMs": 44.013605442176875
+        },
+        {
+          "basename": "01 June San Juan 2025.wav",
+          "anaMs": 1013.5385301661648,
+          "truthMs": 960,
+          "newMs": 970.4308390022676,
+          "walkbackMs": 43.10769116389724
+        },
+        {
+          "basename": "01 Back In The Days (Original Mix).mp3",
+          "anaMs": 69.0551776266062,
+          "truthMs": 25,
+          "newMs": 26.507936507936513,
+          "walkbackMs": 42.54724111866968
+        },
+        {
+          "basename": "02 When Midnight Comes (Alex O'Rion Remix).mp3",
+          "anaMs": 1054.875283446712,
+          "truthMs": 1033,
+          "newMs": 1019.8412698412696,
+          "walkbackMs": 35.0340136054424
+        },
+        {
+          "basename": "07 Holding On (Original Mix).mp3",
+          "anaMs": 483.8709677419355,
+          "truthMs": 425,
+          "newMs": 438.8662131519274,
+          "walkbackMs": 45.004754590008076
+        },
+        {
+          "basename": "03 From Sunrise to Sunset (Extended Mix).mp3",
+          "anaMs": 508.47457627118644,
+          "truthMs": 460,
+          "newMs": 462.33560090702946,
+          "walkbackMs": 46.13897536415698
+        }
+      ],
+      "regList": []
+    },
+    {
+      "tf": 0.9,
+      "minW": 15,
+      "rescue": 13,
+      "regress": 0,
+      "net": 13,
+      "rList": [
+        {
+          "basename": "MI December 2024.wav",
+          "anaMs": 985.5870803605994,
+          "truthMs": 965,
+          "newMs": 967.7551020408163,
+          "walkbackMs": 17.83197831978316
+        },
+        {
+          "basename": "02 Evo (Original Mix).mp3",
+          "anaMs": 487.8048780487805,
+          "truthMs": 428,
+          "newMs": 446.37188208616783,
+          "walkbackMs": 41.432995962612665
+        },
+        {
+          "basename": "01 Silver Lake (Original Mix).mp3",
+          "anaMs": 496.7919408200439,
+          "truthMs": 460,
+          "newMs": 453.69614512471657,
+          "walkbackMs": 43.095795695327354
+        },
+        {
+          "basename": "02 Evo.m4a",
+          "anaMs": 487.8048780487805,
+          "truthMs": 450,
+          "newMs": 458.70748299319735,
+          "walkbackMs": 29.09739505558315
+        },
+        {
+          "basename": "02 Hips and Dips (Zankee Gulati Remix).mp3",
+          "anaMs": 545.7543899102341,
+          "truthMs": 521,
+          "newMs": 511.9501133786848,
+          "walkbackMs": 33.80427653154925
+        },
+        {
+          "basename": "01 Symbiotic Symphony (Weird Sounding Dude Remix).mp3",
+          "anaMs": 487.8048780487805,
+          "truthMs": 453,
+          "newMs": 443.6734693877551,
+          "walkbackMs": 44.131408661025375
+        },
+        {
+          "basename": "Juno's Mix.wav",
+          "anaMs": 1030.485039544273,
+          "truthMs": 980,
+          "newMs": 989.5011337868482,
+          "walkbackMs": 40.983905757424736
+        },
+        {
+          "basename": "01 Chad May 14.wav",
+          "anaMs": 975.609756097561,
+          "truthMs": 921,
+          "newMs": 934.5578231292518,
+          "walkbackMs": 41.05193296830919
+        },
+        {
+          "basename": "01 The Great Escape (Cornucopia Remix).m4a",
+          "anaMs": 74.82993197278911,
+          "truthMs": 47,
+          "newMs": 57.05215419501134,
+          "walkbackMs": 17.77777777777777
+        },
+        {
+          "basename": "01 June San Juan 2025.wav",
+          "anaMs": 1013.5385301661648,
+          "truthMs": 960,
+          "newMs": 970.4308390022676,
+          "walkbackMs": 43.10769116389724
+        },
+        {
+          "basename": "01 Back In The Days (Original Mix).mp3",
+          "anaMs": 69.0551776266062,
+          "truthMs": 25,
+          "newMs": 26.507936507936513,
+          "walkbackMs": 42.54724111866968
+        },
+        {
+          "basename": "07 Holding On (Original Mix).mp3",
+          "anaMs": 483.8709677419355,
+          "truthMs": 425,
+          "newMs": 438.8662131519274,
+          "walkbackMs": 45.004754590008076
+        },
+        {
+          "basename": "03 From Sunrise to Sunset (Extended Mix).mp3",
+          "anaMs": 508.47457627118644,
+          "truthMs": 460,
+          "newMs": 462.33560090702946,
+          "walkbackMs": 46.13897536415698
+        }
+      ],
+      "regList": []
+    },
+    {
+      "tf": 0.7,
+      "minW": 40,
+      "rescue": 11,
+      "regress": 0,
+      "net": 11,
+      "rList": [
+        {
+          "basename": "02 Evo (Original Mix).mp3",
+          "anaMs": 487.8048780487805,
+          "truthMs": 428,
+          "newMs": 440.1814058956916,
+          "walkbackMs": 47.62347215308887
+        },
+        {
+          "basename": "01 Silver Lake (Original Mix).mp3",
+          "anaMs": 496.7919408200439,
+          "truthMs": 460,
+          "newMs": 449.4104308390023,
+          "walkbackMs": 47.38150998104163
+        },
+        {
+          "basename": "02 Evo.m4a",
+          "anaMs": 487.8048780487805,
+          "truthMs": 450,
+          "newMs": 443.6054421768708,
+          "walkbackMs": 44.199435871909714
+        },
+        {
+          "basename": "01 Symbiotic Symphony (Weird Sounding Dude Remix).mp3",
+          "anaMs": 487.8048780487805,
+          "truthMs": 453,
+          "newMs": 439.9092970521542,
+          "walkbackMs": 47.89558099662628
+        },
+        {
+          "basename": "Juno's Mix.wav",
+          "anaMs": 1030.485039544273,
+          "truthMs": 980,
+          "newMs": 982.7891156462586,
+          "walkbackMs": 47.69592389801437
+        },
+        {
+          "basename": "01 Chad May 14.wav",
+          "anaMs": 975.609756097561,
+          "truthMs": 921,
+          "newMs": 934.5578231292518,
+          "walkbackMs": 41.05193296830919
+        },
+        {
+          "basename": "01 The Great Escape (Cornucopia Remix).m4a",
+          "anaMs": 74.82993197278911,
+          "truthMs": 47,
+          "newMs": 30.816326530612237,
+          "walkbackMs": 44.013605442176875
+        },
+        {
+          "basename": "01 June San Juan 2025.wav",
+          "anaMs": 1013.5385301661648,
+          "truthMs": 960,
+          "newMs": 970.4308390022676,
+          "walkbackMs": 43.10769116389724
+        },
+        {
+          "basename": "01 Back In The Days (Original Mix).mp3",
+          "anaMs": 69.0551776266062,
+          "truthMs": 25,
+          "newMs": 26.507936507936513,
+          "walkbackMs": 42.54724111866968
+        },
+        {
+          "basename": "07 Holding On (Original Mix).mp3",
+          "anaMs": 483.8709677419355,
+          "truthMs": 425,
+          "newMs": 438.8662131519274,
+          "walkbackMs": 45.004754590008076
+        },
+        {
+          "basename": "03 From Sunrise to Sunset (Extended Mix).mp3",
+          "anaMs": 508.47457627118644,
+          "truthMs": 460,
+          "newMs": 462.33560090702946,
+          "walkbackMs": 46.13897536415698
+        }
+      ],
+      "regList": []
+    },
+    {
+      "tf": 0.9,
+      "minW": 20,
+      "rescue": 11,
+      "regress": 0,
+      "net": 11,
+      "rList": [
+        {
+          "basename": "02 Evo (Original Mix).mp3",
+          "anaMs": 487.8048780487805,
+          "truthMs": 428,
+          "newMs": 446.37188208616783,
+          "walkbackMs": 41.432995962612665
+        },
+        {
+          "basename": "01 Silver Lake (Original Mix).mp3",
+          "anaMs": 496.7919408200439,
+          "truthMs": 460,
+          "newMs": 453.69614512471657,
+          "walkbackMs": 43.095795695327354
+        },
+        {
+          "basename": "02 Evo.m4a",
+          "anaMs": 487.8048780487805,
+          "truthMs": 450,
+          "newMs": 458.70748299319735,
+          "walkbackMs": 29.09739505558315
+        },
+        {
+          "basename": "02 Hips and Dips (Zankee Gulati Remix).mp3",
+          "anaMs": 545.7543899102341,
+          "truthMs": 521,
+          "newMs": 511.9501133786848,
+          "walkbackMs": 33.80427653154925
+        },
+        {
+          "basename": "01 Symbiotic Symphony (Weird Sounding Dude Remix).mp3",
+          "anaMs": 487.8048780487805,
+          "truthMs": 453,
+          "newMs": 443.6734693877551,
+          "walkbackMs": 44.131408661025375
+        },
+        {
+          "basename": "Juno's Mix.wav",
+          "anaMs": 1030.485039544273,
+          "truthMs": 980,
+          "newMs": 989.5011337868482,
+          "walkbackMs": 40.983905757424736
+        },
+        {
+          "basename": "01 Chad May 14.wav",
+          "anaMs": 975.609756097561,
+          "truthMs": 921,
+          "newMs": 934.5578231292518,
+          "walkbackMs": 41.05193296830919
+        },
+        {
+          "basename": "01 June San Juan 2025.wav",
+          "anaMs": 1013.5385301661648,
+          "truthMs": 960,
+          "newMs": 970.4308390022676,
+          "walkbackMs": 43.10769116389724
+        },
+        {
+          "basename": "01 Back In The Days (Original Mix).mp3",
+          "anaMs": 69.0551776266062,
+          "truthMs": 25,
+          "newMs": 26.507936507936513,
+          "walkbackMs": 42.54724111866968
+        },
+        {
+          "basename": "07 Holding On (Original Mix).mp3",
+          "anaMs": 483.8709677419355,
+          "truthMs": 425,
+          "newMs": 438.8662131519274,
+          "walkbackMs": 45.004754590008076
+        },
+        {
+          "basename": "03 From Sunrise to Sunset (Extended Mix).mp3",
+          "anaMs": 508.47457627118644,
+          "truthMs": 460,
+          "newMs": 462.33560090702946,
+          "walkbackMs": 46.13897536415698
+        }
+      ],
+      "regList": []
+    },
+    {
+      "tf": 0.9,
+      "minW": 25,
+      "rescue": 11,
+      "regress": 0,
+      "net": 11,
+      "rList": [
+        {
+          "basename": "02 Evo (Original Mix).mp3",
+          "anaMs": 487.8048780487805,
+          "truthMs": 428,
+          "newMs": 446.37188208616783,
+          "walkbackMs": 41.432995962612665
+        },
+        {
+          "basename": "01 Silver Lake (Original Mix).mp3",
+          "anaMs": 496.7919408200439,
+          "truthMs": 460,
+          "newMs": 453.69614512471657,
+          "walkbackMs": 43.095795695327354
+        },
+        {
+          "basename": "02 Evo.m4a",
+          "anaMs": 487.8048780487805,
+          "truthMs": 450,
+          "newMs": 458.70748299319735,
+          "walkbackMs": 29.09739505558315
+        },
+        {
+          "basename": "02 Hips and Dips (Zankee Gulati Remix).mp3",
+          "anaMs": 545.7543899102341,
+          "truthMs": 521,
+          "newMs": 511.9501133786848,
+          "walkbackMs": 33.80427653154925
+        },
+        {
+          "basename": "01 Symbiotic Symphony (Weird Sounding Dude Remix).mp3",
+          "anaMs": 487.8048780487805,
+          "truthMs": 453,
+          "newMs": 443.6734693877551,
+          "walkbackMs": 44.131408661025375
+        },
+        {
+          "basename": "Juno's Mix.wav",
+          "anaMs": 1030.485039544273,
+          "truthMs": 980,
+          "newMs": 989.5011337868482,
+          "walkbackMs": 40.983905757424736
+        },
+        {
+          "basename": "01 Chad May 14.wav",
+          "anaMs": 975.609756097561,
+          "truthMs": 921,
+          "newMs": 934.5578231292518,
+          "walkbackMs": 41.05193296830919
+        },
+        {
+          "basename": "01 June San Juan 2025.wav",
+          "anaMs": 1013.5385301661648,
+          "truthMs": 960,
+          "newMs": 970.4308390022676,
+          "walkbackMs": 43.10769116389724
+        },
+        {
+          "basename": "01 Back In The Days (Original Mix).mp3",
+          "anaMs": 69.0551776266062,
+          "truthMs": 25,
+          "newMs": 26.507936507936513,
+          "walkbackMs": 42.54724111866968
+        },
+        {
+          "basename": "07 Holding On (Original Mix).mp3",
+          "anaMs": 483.8709677419355,
+          "truthMs": 425,
+          "newMs": 438.8662131519274,
+          "walkbackMs": 45.004754590008076
+        },
+        {
+          "basename": "03 From Sunrise to Sunset (Extended Mix).mp3",
+          "anaMs": 508.47457627118644,
+          "truthMs": 460,
+          "newMs": 462.33560090702946,
+          "walkbackMs": 46.13897536415698
+        }
+      ],
+      "regList": []
+    },
+    {
+      "tf": 0.9,
+      "minW": 30,
+      "rescue": 10,
+      "regress": 0,
+      "net": 10,
+      "rList": [
+        {
+          "basename": "02 Evo (Original Mix).mp3",
+          "anaMs": 487.8048780487805,
+          "truthMs": 428,
+          "newMs": 446.37188208616783,
+          "walkbackMs": 41.432995962612665
+        },
+        {
+          "basename": "01 Silver Lake (Original Mix).mp3",
+          "anaMs": 496.7919408200439,
+          "truthMs": 460,
+          "newMs": 453.69614512471657,
+          "walkbackMs": 43.095795695327354
+        },
+        {
+          "basename": "02 Hips and Dips (Zankee Gulati Remix).mp3",
+          "anaMs": 545.7543899102341,
+          "truthMs": 521,
+          "newMs": 511.9501133786848,
+          "walkbackMs": 33.80427653154925
+        },
+        {
+          "basename": "01 Symbiotic Symphony (Weird Sounding Dude Remix).mp3",
+          "anaMs": 487.8048780487805,
+          "truthMs": 453,
+          "newMs": 443.6734693877551,
+          "walkbackMs": 44.131408661025375
+        },
+        {
+          "basename": "Juno's Mix.wav",
+          "anaMs": 1030.485039544273,
+          "truthMs": 980,
+          "newMs": 989.5011337868482,
+          "walkbackMs": 40.983905757424736
+        },
+        {
+          "basename": "01 Chad May 14.wav",
+          "anaMs": 975.609756097561,
+          "truthMs": 921,
+          "newMs": 934.5578231292518,
+          "walkbackMs": 41.05193296830919
+        },
+        {
+          "basename": "01 June San Juan 2025.wav",
+          "anaMs": 1013.5385301661648,
+          "truthMs": 960,
+          "newMs": 970.4308390022676,
+          "walkbackMs": 43.10769116389724
+        },
+        {
+          "basename": "01 Back In The Days (Original Mix).mp3",
+          "anaMs": 69.0551776266062,
+          "truthMs": 25,
+          "newMs": 26.507936507936513,
+          "walkbackMs": 42.54724111866968
+        },
+        {
+          "basename": "07 Holding On (Original Mix).mp3",
+          "anaMs": 483.8709677419355,
+          "truthMs": 425,
+          "newMs": 438.8662131519274,
+          "walkbackMs": 45.004754590008076
+        },
+        {
+          "basename": "03 From Sunrise to Sunset (Extended Mix).mp3",
+          "anaMs": 508.47457627118644,
+          "truthMs": 460,
+          "newMs": 462.33560090702946,
+          "walkbackMs": 46.13897536415698
+        }
+      ],
+      "regList": []
+    },
+    {
+      "tf": 0.3,
+      "minW": 5,
+      "rescue": 21,
+      "regress": 12,
+      "net": 9,
+      "rList": [
+        {
+          "basename": "House3.wav",
+          "anaMs": 53.79762299809586,
+          "truthMs": 0,
+          "newMs": 11.383219954648531,
+          "walkbackMs": 42.41440304344733
+        },
+        {
+          "basename": "04 Thunder (Original Mix).mp3",
+          "anaMs": 50.31254981206391,
+          "truthMs": 24,
+          "newMs": 19.954648526077097,
+          "walkbackMs": 30.35790128598681
+        },
+        {
+          "basename": "MI December 2024.wav",
+          "anaMs": 985.5870803605994,
+          "truthMs": 965,
+          "newMs": 961.5419501133788,
+          "walkbackMs": 24.04513024722064
+        },
+        {
+          "basename": "02 Evo (Original Mix).mp3",
+          "anaMs": 487.8048780487805,
+          "truthMs": 428,
+          "newMs": 440.1814058956916,
+          "walkbackMs": 47.62347215308887
+        },
+        {
+          "basename": "01 Silver Lake (Original Mix).mp3",
+          "anaMs": 496.7919408200439,
+          "truthMs": 460,
+          "newMs": 449.4104308390023,
+          "walkbackMs": 47.38150998104163
+        },
+        {
+          "basename": "02 Evo.m4a",
+          "anaMs": 487.8048780487805,
+          "truthMs": 450,
+          "newMs": 440.36281179138325,
+          "walkbackMs": 47.442066257397244
+        },
+        {
+          "basename": "Juno 3.m4a",
+          "anaMs": 103.29763310282792,
+          "truthMs": 48,
+          "newMs": 57.77777777777778,
+          "walkbackMs": 45.51985532505014
+        },
+        {
+          "basename": "02 Hips and Dips (Zankee Gulati Remix).mp3",
+          "anaMs": 545.7543899102341,
+          "truthMs": 521,
+          "newMs": 505.2834467120182,
+          "walkbackMs": 40.47094319821588
+        },
+        {
+          "basename": "01 Symbiotic Symphony (Weird Sounding Dude Remix).mp3",
+          "anaMs": 487.8048780487805,
+          "truthMs": 453,
+          "newMs": 439.9092970521542,
+          "walkbackMs": 47.89558099662628
+        },
+        {
+          "basename": "Juno's Mix.wav",
+          "anaMs": 1030.485039544273,
+          "truthMs": 980,
+          "newMs": 982.7891156462586,
+          "walkbackMs": 47.69592389801437
+        },
+        {
+          "basename": "01 Chad May 14.wav",
+          "anaMs": 975.609756097561,
+          "truthMs": 921,
+          "newMs": 928.390022675737,
+          "walkbackMs": 47.219733421824
+        },
+        {
+          "basename": "01 The Great Escape (Cornucopia Remix).m4a",
+          "anaMs": 74.82993197278911,
+          "truthMs": 47,
+          "newMs": 27.50566893424036,
+          "walkbackMs": 47.32426303854875
+        },
+        {
+          "basename": "01 June San Juan 2025.wav",
+          "anaMs": 1013.5385301661648,
+          "truthMs": 960,
+          "newMs": 967.4603174603175,
+          "walkbackMs": 46.07821270584736
+        },
+        {
+          "basename": "Chad September Learning 2.4.mp3",
+          "anaMs": 74.78821912660194,
+          "truthMs": 50,
+          "newMs": 63.17460317460318,
+          "walkbackMs": 11.613615951998767
+        },
+        {
+          "basename": "01 Back In The Days (Original Mix).mp3",
+          "anaMs": 69.0551776266062,
+          "truthMs": 25,
+          "newMs": 26.507936507936513,
+          "walkbackMs": 42.54724111866968
+        },
+        {
+          "basename": "02 When Midnight Comes (Alex O'Rion Remix).mp3",
+          "anaMs": 1054.875283446712,
+          "truthMs": 1033,
+          "newMs": 1017.1655328798186,
+          "walkbackMs": 37.70975056689349
+        },
+        {
+          "basename": "Chad - Juno's World.mp3",
+          "anaMs": 74.78798578643068,
+          "truthMs": 50,
+          "newMs": 63.31065759637188,
+          "walkbackMs": 11.477328190058799
+        },
+        {
+          "basename": "07 Holding On (Original Mix).mp3",
+          "anaMs": 483.8709677419355,
+          "truthMs": 425,
+          "newMs": 438.8662131519274,
+          "walkbackMs": 45.004754590008076
+        },
+        {
+          "basename": "02 Need U (Original Mix).mp3",
+          "anaMs": 527.4708683816286,
+          "truthMs": 506,
+          "newMs": 497.4829931972789,
+          "walkbackMs": 29.98787518434972
+        },
+        {
+          "basename": "03 From Sunrise to Sunset (Extended Mix).mp3",
+          "anaMs": 508.47457627118644,
+          "truthMs": 460,
+          "newMs": 462.33560090702946,
+          "walkbackMs": 46.13897536415698
+        },
+        {
+          "basename": "01 May San Juan Mix 2026.wav",
+          "anaMs": 983.6065573770492,
+          "truthMs": 958,
+          "newMs": 957.4829931972789,
+          "walkbackMs": 26.123564179770256
+        }
+      ],
+      "regList": [
+        {
+          "basename": "04 Alien Flu (Forty Cats Remix).mp3",
+          "anaMs": 265.41189187045086,
+          "truthMs": 272,
+          "newMs": 245.4875283446712,
+          "walkbackMs": 19.924363525779654
+        },
+        {
+          "basename": "01 Melange (Original Mix).mp3",
+          "anaMs": 11.764530373552928,
+          "truthMs": 27,
+          "newMs": 4.829931972789115,
+          "walkbackMs": 6.934598400763813
+        },
+        {
+          "basename": "06 World On Fire (PROFF Extended Edit).mp3",
+          "anaMs": 11.111111111111109,
+          "truthMs": 26,
+          "newMs": 3.46938775510204,
+          "walkbackMs": 7.641723356009069
+        },
+        {
+          "basename": "01 In This World (Original Mix).mp3",
+          "anaMs": 14.965986394557822,
+          "truthMs": 24,
+          "newMs": 3.99092970521542,
+          "walkbackMs": 10.975056689342402
+        },
+        {
+          "basename": "01 Cowbells of Nuneaton (Original Mix).mp3",
+          "anaMs": 42.78911564625851,
+          "truthMs": 53,
+          "newMs": 23.44671201814059,
+          "walkbackMs": 19.342403628117918
+        },
+        {
+          "basename": "01 What Is Real (Extended Mix).mp3",
+          "anaMs": 113.0760604302217,
+          "truthMs": 123,
+          "newMs": 100.77097505668935,
+          "walkbackMs": 12.30508537353235
+        },
+        {
+          "basename": "02 No Drama (Original Mix).mp3",
+          "anaMs": 75.61711912179202,
+          "truthMs": 87,
+          "newMs": 66.80272108843538,
+          "walkbackMs": 8.814398033356639
+        },
+        {
+          "basename": "01 A Moment Of Clarity (Original Mix).mp3",
+          "anaMs": 135.30612244897958,
+          "truthMs": 148,
+          "newMs": 127.93650793650794,
+          "walkbackMs": 7.369614512471642
+        },
+        {
+          "basename": "01 Nana (Original Mix).mp3",
+          "anaMs": 159.297052154195,
+          "truthMs": 164,
+          "newMs": 143.78684807256235,
+          "walkbackMs": 15.51020408163265
+        },
+        {
+          "basename": "03 Cascade (Extended Mix).mp3",
+          "anaMs": 161.07668261259388,
+          "truthMs": 178,
+          "newMs": 155.87301587301587,
+          "walkbackMs": 5.203666739578011
+        },
+        {
+          "basename": "02 Loveland (Gorkiz Remix).mp3",
+          "anaMs": 9.90787871699973,
+          "truthMs": 24,
+          "newMs": 3.7188208616780045,
+          "walkbackMs": 6.189057855321726
+        },
+        {
+          "basename": "01 Perfect Dream (Extended Mix).mp3",
+          "anaMs": 81.64355979021178,
+          "truthMs": 97,
+          "newMs": 73.71882086167801,
+          "walkbackMs": 7.92473892853377
+        }
+      ]
+    },
+    {
+      "tf": 0.9,
+      "minW": 40,
+      "rescue": 9,
+      "regress": 0,
+      "net": 9,
+      "rList": [
+        {
+          "basename": "02 Evo (Original Mix).mp3",
+          "anaMs": 487.8048780487805,
+          "truthMs": 428,
+          "newMs": 446.37188208616783,
+          "walkbackMs": 41.432995962612665
+        },
+        {
+          "basename": "01 Silver Lake (Original Mix).mp3",
+          "anaMs": 496.7919408200439,
+          "truthMs": 460,
+          "newMs": 453.69614512471657,
+          "walkbackMs": 43.095795695327354
+        },
+        {
+          "basename": "01 Symbiotic Symphony (Weird Sounding Dude Remix).mp3",
+          "anaMs": 487.8048780487805,
+          "truthMs": 453,
+          "newMs": 443.6734693877551,
+          "walkbackMs": 44.131408661025375
+        },
+        {
+          "basename": "Juno's Mix.wav",
+          "anaMs": 1030.485039544273,
+          "truthMs": 980,
+          "newMs": 989.5011337868482,
+          "walkbackMs": 40.983905757424736
+        },
+        {
+          "basename": "01 Chad May 14.wav",
+          "anaMs": 975.609756097561,
+          "truthMs": 921,
+          "newMs": 934.5578231292518,
+          "walkbackMs": 41.05193296830919
+        },
+        {
+          "basename": "01 June San Juan 2025.wav",
+          "anaMs": 1013.5385301661648,
+          "truthMs": 960,
+          "newMs": 970.4308390022676,
+          "walkbackMs": 43.10769116389724
+        },
+        {
+          "basename": "01 Back In The Days (Original Mix).mp3",
+          "anaMs": 69.0551776266062,
+          "truthMs": 25,
+          "newMs": 26.507936507936513,
+          "walkbackMs": 42.54724111866968
+        },
+        {
+          "basename": "07 Holding On (Original Mix).mp3",
+          "anaMs": 483.8709677419355,
+          "truthMs": 425,
+          "newMs": 438.8662131519274,
+          "walkbackMs": 45.004754590008076
+        },
+        {
+          "basename": "03 From Sunrise to Sunset (Extended Mix).mp3",
+          "anaMs": 508.47457627118644,
+          "truthMs": 460,
+          "newMs": 462.33560090702946,
+          "walkbackMs": 46.13897536415698
+        }
+      ],
+      "regList": []
+    }
+  ],
+  "best": {
+    "tf": 0.3,
+    "minW": 20,
+    "rescue": 19,
+    "regress": 0,
+    "net": 19,
+    "rList": [
+      {
+        "basename": "House3.wav",
+        "anaMs": 53.79762299809586,
+        "truthMs": 0,
+        "newMs": 11.383219954648531,
+        "walkbackMs": 42.41440304344733
+      },
+      {
+        "basename": "04 Thunder (Original Mix).mp3",
+        "anaMs": 50.31254981206391,
+        "truthMs": 24,
+        "newMs": 19.954648526077097,
+        "walkbackMs": 30.35790128598681
+      },
+      {
+        "basename": "MI December 2024.wav",
+        "anaMs": 985.5870803605994,
+        "truthMs": 965,
+        "newMs": 961.5419501133788,
+        "walkbackMs": 24.04513024722064
+      },
+      {
+        "basename": "02 Evo (Original Mix).mp3",
+        "anaMs": 487.8048780487805,
+        "truthMs": 428,
+        "newMs": 440.1814058956916,
+        "walkbackMs": 47.62347215308887
+      },
+      {
+        "basename": "01 Silver Lake (Original Mix).mp3",
+        "anaMs": 496.7919408200439,
+        "truthMs": 460,
+        "newMs": 449.4104308390023,
+        "walkbackMs": 47.38150998104163
+      },
+      {
+        "basename": "02 Evo.m4a",
+        "anaMs": 487.8048780487805,
+        "truthMs": 450,
+        "newMs": 440.36281179138325,
+        "walkbackMs": 47.442066257397244
+      },
+      {
+        "basename": "Juno 3.m4a",
+        "anaMs": 103.29763310282792,
+        "truthMs": 48,
+        "newMs": 57.77777777777778,
+        "walkbackMs": 45.51985532505014
+      },
+      {
+        "basename": "02 Hips and Dips (Zankee Gulati Remix).mp3",
+        "anaMs": 545.7543899102341,
+        "truthMs": 521,
+        "newMs": 505.2834467120182,
+        "walkbackMs": 40.47094319821588
+      },
+      {
+        "basename": "01 Symbiotic Symphony (Weird Sounding Dude Remix).mp3",
+        "anaMs": 487.8048780487805,
+        "truthMs": 453,
+        "newMs": 439.9092970521542,
+        "walkbackMs": 47.89558099662628
+      },
+      {
+        "basename": "Juno's Mix.wav",
+        "anaMs": 1030.485039544273,
+        "truthMs": 980,
+        "newMs": 982.7891156462586,
+        "walkbackMs": 47.69592389801437
+      },
+      {
+        "basename": "01 Chad May 14.wav",
+        "anaMs": 975.609756097561,
+        "truthMs": 921,
+        "newMs": 928.390022675737,
+        "walkbackMs": 47.219733421824
+      },
+      {
+        "basename": "01 The Great Escape (Cornucopia Remix).m4a",
+        "anaMs": 74.82993197278911,
+        "truthMs": 47,
+        "newMs": 27.50566893424036,
+        "walkbackMs": 47.32426303854875
+      },
+      {
+        "basename": "01 June San Juan 2025.wav",
+        "anaMs": 1013.5385301661648,
+        "truthMs": 960,
+        "newMs": 967.4603174603175,
+        "walkbackMs": 46.07821270584736
+      },
+      {
+        "basename": "01 Back In The Days (Original Mix).mp3",
+        "anaMs": 69.0551776266062,
+        "truthMs": 25,
+        "newMs": 26.507936507936513,
+        "walkbackMs": 42.54724111866968
+      },
+      {
+        "basename": "02 When Midnight Comes (Alex O'Rion Remix).mp3",
+        "anaMs": 1054.875283446712,
+        "truthMs": 1033,
+        "newMs": 1017.1655328798186,
+        "walkbackMs": 37.70975056689349
+      },
+      {
+        "basename": "07 Holding On (Original Mix).mp3",
+        "anaMs": 483.8709677419355,
+        "truthMs": 425,
+        "newMs": 438.8662131519274,
+        "walkbackMs": 45.004754590008076
+      },
+      {
+        "basename": "02 Need U (Original Mix).mp3",
+        "anaMs": 527.4708683816286,
+        "truthMs": 506,
+        "newMs": 497.4829931972789,
+        "walkbackMs": 29.98787518434972
+      },
+      {
+        "basename": "03 From Sunrise to Sunset (Extended Mix).mp3",
+        "anaMs": 508.47457627118644,
+        "truthMs": 460,
+        "newMs": 462.33560090702946,
+        "walkbackMs": 46.13897536415698
+      },
+      {
+        "basename": "01 May San Juan Mix 2026.wav",
+        "anaMs": 983.6065573770492,
+        "truthMs": 958,
+        "newMs": 957.4829931972789,
+        "walkbackMs": 26.123564179770256
+      }
+    ],
+    "regList": []
+  }
+}

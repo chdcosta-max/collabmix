@@ -1,0 +1,209 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Browser MP3 Decoder Test — Mix//Sync</title>
+<style>
+  body { font: 14px/1.5 ui-monospace, "JetBrains Mono", monospace; background: #0F1014; color: #ddd; padding: 24px; max-width: 1100px; margin: 0 auto; }
+  h1 { color: #fff; font-size: 18px; margin: 0 0 8px; }
+  h2 { color: #fff; font-size: 14px; margin: 24px 0 8px; }
+  .note { color: #888; margin: 0 0 20px; font-size: 13px; }
+  .drop {
+    border: 1px dashed #444; padding: 32px; text-align: center; border-radius: 8px;
+    color: #888; cursor: pointer; margin-bottom: 20px;
+  }
+  .drop.hover { border-color: #d29b3b; color: #d29b3b; }
+  .track { background: #181a20; padding: 16px; border-radius: 6px; margin-bottom: 12px; border: 1px solid #232830; }
+  .track .name { color: #d29b3b; font-weight: 600; margin-bottom: 6px; }
+  .track .meta { color: #aaa; font-size: 12px; margin-bottom: 8px; }
+  .profile { font-family: ui-monospace, monospace; white-space: pre; font-size: 13px; color: #cfd2d8; background: #0a0b0e; padding: 8px 12px; border-radius: 4px; overflow-x: auto; }
+  .row { display: grid; grid-template-columns: 140px 1fr; gap: 8px; font-size: 12px; padding: 2px 0; }
+  .label { color: #888; }
+  .value { color: #cfd2d8; }
+  .ok { color: #6ea96e; }
+  .warn { color: #d29b3b; }
+  .fail { color: #c66; }
+  .reference {
+    background: #14181e; border-left: 3px solid #6ea96e; padding: 12px 16px; margin-bottom: 20px;
+    font-size: 13px;
+  }
+  .reference .name { color: #6ea96e; font-weight: 600; margin-bottom: 4px; }
+  pre.legend { color: #888; font-size: 12px; margin: 4px 0; }
+  button { background: #2a2e36; color: #ddd; border: 1px solid #3a3f47; padding: 6px 12px; border-radius: 4px; cursor: pointer; }
+  button:hover { background: #3a3f47; }
+  .results { margin-top: 16px; }
+  .copy { background: transparent; color: #888; font-size: 11px; padding: 2px 8px; }
+</style>
+</head>
+<body>
+<h1>Browser MP3 Decoder Test — Mix//Sync</h1>
+<p class="note">
+  This page decodes each dropped audio file via the browser's <code>AudioContext.decodeAudioData()</code>
+  and compares the result to reference values from the Node test harness (mpg123 via audio-decode).
+  If the metrics MATCH the reference, the test harness's accuracy applies to production.
+  If they DIFFER, production has a decoder-specific offset that needs fixing.
+</p>
+
+<div class="reference">
+  <div class="name">Reference: drop these 5 files in this order</div>
+  <div>1. 01 Phase Sync (Original Mix).mp3 &nbsp;(Class 1 FAIL — analyzer LATE)</div>
+  <div>2. 01 Body Stars (Original Mix).mp3 &nbsp;(Class 1 FAIL — analyzer EARLY)</div>
+  <div>3. 02 Hymn Of The Fern (Original Mix).mp3 &nbsp;(Class 1 FAIL — analyzer EARLY)</div>
+  <div>4. Demo Track 2.mp3 &nbsp;(PASS control — Pioneer demo)</div>
+  <div>5. 02 Hello (Extended).mp3 &nbsp;(PASS control — silent intro)</div>
+</div>
+
+<div class="drop" id="drop">
+  Drop audio files here, or click to select →
+  <input type="file" id="file" accept="audio/*" multiple style="display:none">
+</div>
+
+<button id="copyAll" class="copy">Copy all results as text</button>
+
+<pre class="legend">Profile legend (60ms × per-ms |max| of mono mix):  · &lt; 1e-4   . &lt; 1e-2   o &lt; 0.1   O &lt; 0.5   █ ≥ 0.5</pre>
+
+<div class="results" id="results"></div>
+
+<h2>Expected reference values (from Node mpg123 / ffmpeg test):</h2>
+<table style="font-size:12px;color:#ccc;border-collapse:collapse;width:100%">
+  <thead style="border-bottom:1px solid #444;color:#888">
+    <tr><th style="text-align:left;padding:4px 8px">Track</th><th>SR</th><th>Channels</th><th>Length</th><th>FirstNonZero</th><th>First@1%peak</th></tr>
+  </thead>
+  <tbody>
+    <tr><td style="padding:4px 8px">Phase Sync</td><td>44100</td><td>2</td><td>20771100</td><td>0 (0.00ms)</td><td>0 (0.00ms)</td></tr>
+    <tr><td style="padding:4px 8px">Body Stars</td><td>44100</td><td>2</td><td>24954147</td><td>0 (0.00ms)</td><td>0 (0.00ms)</td></tr>
+    <tr><td style="padding:4px 8px">Hymn Of The Fern</td><td>44100</td><td>2</td><td>18741216</td><td>560 (12.70ms)</td><td>1052 (23.85ms)</td></tr>
+    <tr><td style="padding:4px 8px">Demo Track 2</td><td>44100</td><td>2</td><td>5647104</td><td>138 (3.13ms)</td><td>1103 (25.01ms)</td></tr>
+    <tr><td style="padding:4px 8px">Hello (Extended)</td><td>44100</td><td>2</td><td>22670928</td><td>1 (0.02ms)</td><td>9914 (224.81ms)</td></tr>
+  </tbody>
+</table>
+<p class="note">If browser values match within ±50 samples (1ms), production sees the same buffer as the test harness.</p>
+
+<script>
+const drop = document.getElementById("drop");
+const file = document.getElementById("file");
+const results = document.getElementById("results");
+const copyBtn = document.getElementById("copyAll");
+let resultsText = [];
+
+function profileSymbol(v) {
+  if (v < 1e-4) return "·";
+  if (v < 1e-2) return ".";
+  if (v < 0.1) return "o";
+  if (v < 0.5) return "O";
+  return "█";
+}
+
+async function decode(f) {
+  const ctx = new (window.AudioContext || window.webkitAudioContext)();
+  const ab = await f.arrayBuffer();
+  const buf = await ctx.decodeAudioData(ab);
+  const sr = buf.sampleRate;
+  const len = buf.length;
+  const nc = buf.numberOfChannels;
+  // Mono mix
+  const mono = new Float32Array(len);
+  for (let c = 0; c < nc; c++) {
+    const d = buf.getChannelData(c);
+    for (let i = 0; i < len; i++) mono[i] += d[i] / nc;
+  }
+  return { mono, sr, len, nc };
+}
+
+function analyze(d) {
+  const { mono, sr, len, nc } = d;
+  // First non-zero sample
+  let nz = -1;
+  for (let i = 0; i < len; i++) {
+    if (Math.abs(mono[i]) > 1e-6) { nz = i; break; }
+  }
+  // Peak in first 1 second
+  let peak = 0;
+  for (let i = 0; i < Math.min(len, sr); i++) {
+    const a = Math.abs(mono[i]);
+    if (a > peak) peak = a;
+  }
+  // First sample reaching 1% of that peak
+  let firstP = -1;
+  for (let i = 0; i < Math.min(len, sr); i++) {
+    if (Math.abs(mono[i]) > peak * 0.01) { firstP = i; break; }
+  }
+  // Per-ms |max| profile for first 60ms
+  const prof = [];
+  for (let ms = 0; ms < 60; ms++) {
+    const s = Math.floor(ms * sr / 1000);
+    const e = Math.floor((ms + 1) * sr / 1000);
+    let mx = 0;
+    for (let i = s; i < e; i++) { const a = Math.abs(mono[i]); if (a > mx) mx = a; }
+    prof.push(mx);
+  }
+  // First 10 samples
+  const first10 = Array.from(mono.subarray(0, 10));
+  return { sr, len, nc, nz, peak, firstP, prof, first10 };
+}
+
+function render(file, info) {
+  const div = document.createElement("div");
+  div.className = "track";
+  div.innerHTML = `
+    <div class="name">${file.name}</div>
+    <div class="meta">${file.size.toLocaleString()} bytes, type: ${file.type || "(unknown)"}</div>
+    <div class="row"><span class="label">sample rate:</span><span class="value">${info.sr}</span></div>
+    <div class="row"><span class="label">channels:</span><span class="value">${info.nc}</span></div>
+    <div class="row"><span class="label">length:</span><span class="value">${info.len.toLocaleString()} samples (${(info.len / info.sr).toFixed(2)}s)</span></div>
+    <div class="row"><span class="label">first non-zero:</span><span class="value">${info.nz} (${(info.nz / info.sr * 1000).toFixed(2)}ms)</span></div>
+    <div class="row"><span class="label">peak (first 1s):</span><span class="value">${info.peak.toExponential(3)}</span></div>
+    <div class="row"><span class="label">first @ 1% peak:</span><span class="value">${info.firstP} (${(info.firstP / info.sr * 1000).toFixed(2)}ms)</span></div>
+    <div class="row"><span class="label">first 10 samples:</span><span class="value">${info.first10.map(v => v.toFixed(4)).join("  ")}</span></div>
+    <div class="row"><span class="label">60ms profile:</span><div class="profile">${info.prof.map(profileSymbol).join("")}<br>0123456789|123456789|123456789|123456789|123456789|123456789|<br>0         10        20        30        40        50        ms</div></div>
+  `;
+  results.appendChild(div);
+
+  const text = [
+    `── ${file.name} ──`,
+    `  sr=${info.sr} channels=${info.nc} length=${info.len}`,
+    `  first non-zero: ${info.nz} (${(info.nz / info.sr * 1000).toFixed(2)}ms)`,
+    `  peak first 1s: ${info.peak.toExponential(3)}`,
+    `  first @ 1% peak: ${info.firstP} (${(info.firstP / info.sr * 1000).toFixed(2)}ms)`,
+    `  first 10 samples: ${info.first10.map(v => v.toFixed(4)).join(" ")}`,
+    `  60ms profile: ${info.prof.map(profileSymbol).join("")}`,
+  ].join("\n");
+  resultsText.push(text);
+}
+
+async function handleFiles(files) {
+  for (const f of files) {
+    try {
+      const d = await decode(f);
+      const info = analyze(d);
+      render(f, info);
+    } catch (e) {
+      const div = document.createElement("div");
+      div.className = "track";
+      div.innerHTML = `<div class="name fail">${f.name}</div><div class="meta">ERROR: ${e.message}</div>`;
+      results.appendChild(div);
+      resultsText.push(`── ${f.name} ──\n  ERROR: ${e.message}`);
+    }
+  }
+}
+
+drop.addEventListener("click", () => file.click());
+file.addEventListener("change", (e) => handleFiles(e.target.files));
+drop.addEventListener("dragover", (e) => { e.preventDefault(); drop.classList.add("hover"); });
+drop.addEventListener("dragleave", () => drop.classList.remove("hover"));
+drop.addEventListener("drop", (e) => {
+  e.preventDefault();
+  drop.classList.remove("hover");
+  handleFiles(e.dataTransfer.files);
+});
+
+copyBtn.addEventListener("click", () => {
+  const txt = resultsText.join("\n\n");
+  navigator.clipboard.writeText(txt).then(() => {
+    copyBtn.textContent = "Copied!";
+    setTimeout(() => copyBtn.textContent = "Copy all results as text", 1500);
+  });
+});
+</script>
+</body>
+</html>

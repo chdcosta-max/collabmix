@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef, useCallback, useMemo } from "react";
 import { WORKER_SRC } from "./bpm-worker-source.js";
 import { logEvent, setSessionContext, captureHandledError } from "./utils/telemetry.js";
+import { connectRekordboxLibrary } from "./rekordbox-library.js";
 
 // ═══════════════════════════════════════════════════════════════
 //  MIX//SYNC  — PRODUCTION READY
@@ -1054,7 +1055,7 @@ function TrackRow({track, onLoadA, onLoadB, isRec, reasons, canLoad, previewTrac
 // LibraryPanel function is kept immediately below as a reference while we
 // iterate on this new layout — nothing else in the app references it directly
 // once the swap is made.
-function LibraryPanelV2({ lib, onLoad, playingTrack, deckATrackId:deckATrackIdProp=null, deckBTrackId:deckBTrackIdProp=null, previewTrackId, onPreview, onDelete, chat, onSendChat, me }) {
+function LibraryPanelV2({ lib, onLoad, playingTrack, deckATrackId:deckATrackIdProp=null, deckBTrackId:deckBTrackIdProp=null, previewTrackId, onPreview, onDelete, chat, onSendChat, me, rkLib=null, rkStatus={phase:"idle"}, onConnectRekordbox=null }) {
   const G = "#C8A96E";
   const BG = "#080810";
   const BG2 = "#0D0C1A";
@@ -1511,6 +1512,35 @@ function LibraryPanelV2({ lib, onLoad, playingTrack, deckATrackId:deckATrackIdPr
               }}>
               <span style={{ fontSize: 12 }}>✦</span> SUGGESTIONS
             </button>
+            {/* Rekordbox library connect pill — shown beside SUGGESTIONS. */}
+            {onConnectRekordbox && (
+              <button
+                onClick={() => { if (rkStatus.phase === "idle" || rkStatus.phase === "error") onConnectRekordbox(); }}
+                disabled={rkStatus.phase === "connecting"}
+                title={
+                  rkStatus.phase === "ready"
+                    ? `Rekordbox connected · ${rkStatus.trackCount} tracks · waveforms will load from .EXT files`
+                    : rkStatus.phase === "connecting"
+                      ? `Connecting… (${rkStatus.step || "starting"})`
+                      : rkStatus.phase === "error"
+                        ? `Connect failed: ${rkStatus.error}`
+                        : "Connect to Rekordbox library for native waveforms + cue points"
+                }
+                style={{
+                  padding: "4px 10px", height: 22,
+                  background: rkStatus.phase === "ready" ? "#00BFA522" : "transparent",
+                  border: `1px solid ${rkStatus.phase === "ready" ? "#00BFA5" : (rkStatus.phase === "error" ? "#ff445566" : BORDER)}`,
+                  color: rkStatus.phase === "ready" ? "#00BFA5" : (rkStatus.phase === "error" ? "#ff4455" : SUBTLE),
+                  borderRadius: 4, cursor: rkStatus.phase === "connecting" ? "wait" : "pointer",
+                  fontFamily: "'DM Mono',monospace", fontSize: 10, letterSpacing: 1, outline: "none",
+                  display: "flex", alignItems: "center", gap: 5,
+                }}>
+                <span style={{ fontSize: 11 }}>🎛</span>
+                {rkStatus.phase === "ready" ? `REKORDBOX · ${rkStatus.trackCount}` :
+                 rkStatus.phase === "connecting" ? "CONNECTING…" :
+                 rkStatus.phase === "error" ? "RETRY" : "REKORDBOX"}
+              </button>
+            )}
           </div>
         </div>
 
@@ -5140,6 +5170,24 @@ export default function CollabMix({ initialPage = "landing", djName = null }) {
   const rec = useRecorder({ engineRef: eng });
   const lib = useLibrary();
 
+  // ── Rekordbox library (optional): decrypts master.db + reads .EXT files
+  //    to render Rekordbox-quality colored waveforms on the decks ──
+  const [rkLib, setRkLib] = useState(null);
+  const [rkStatus, setRkStatus] = useState({ phase: "idle" }); // idle | connecting | ready | error
+  const connectRekordbox = useCallback(async () => {
+    setRkStatus({ phase: "connecting" });
+    try {
+      const lib = await connectRekordboxLibrary({
+        onProgress: (p) => setRkStatus({ phase: "connecting", step: p.phase, ...p }),
+      });
+      setRkLib(lib);
+      setRkStatus({ phase: "ready", trackCount: lib.trackCount() });
+    } catch (e) {
+      console.warn("[REKORDBOX] connect failed:", e.message);
+      setRkStatus({ phase: "error", error: e.message });
+    }
+  }, []);
+
   // Initialize audio engine when session is ready but engine hasn't been created yet
   // (covers preview/bypass mode where join() is skipped)
   useEffect(() => {
@@ -5251,6 +5299,37 @@ export default function CollabMix({ initialPage = "landing", djName = null }) {
       setWfB({ bass: pB.waveformBass, mid: pB.waveformMid, high: pB.waveformHigh, dur: pB.duration||0, name: pB.trackName });
     }
   }, [pB?.waveformBass, pB?.waveformMid, pB?.waveformHigh]);
+
+  // Rekordbox waveform override — when a track loads onto a deck AND the
+  // user has a Rekordbox library connected AND the track matches a Rekordbox
+  // entry, fetch the .EXT-derived bands and replace the audio-decoded ones.
+  // The Deck still runs its own decode (used as fallback while Rekordbox
+  // lookup is in flight), but the Rekordbox bands win the last-write race
+  // when they arrive.
+  useEffect(() => {
+    if (!rkLib || !libLoadA?.file) return;
+    let cancelled = false;
+    (async () => {
+      const match = rkLib.matchTrack(libLoadA.file);
+      if (!match) return;
+      const bands = await rkLib.getWaveformBands(match.id);
+      if (cancelled || !bands) return;
+      setWfA({ ...bands, name: libLoadA.track?.title || libLoadA.file.name });
+    })().catch(e => console.warn("[REKORDBOX-A] band fetch failed:", e.message));
+    return () => { cancelled = true; };
+  }, [rkLib, libLoadA]);
+  useEffect(() => {
+    if (!rkLib || !libLoadB?.file) return;
+    let cancelled = false;
+    (async () => {
+      const match = rkLib.matchTrack(libLoadB.file);
+      if (!match) return;
+      const bands = await rkLib.getWaveformBands(match.id);
+      if (cancelled || !bands) return;
+      setWfB({ ...bands, name: libLoadB.track?.title || libLoadB.file.name });
+    })().catch(e => console.warn("[REKORDBOX-B] band fetch failed:", e.message));
+    return () => { cancelled = true; };
+  }, [rkLib, libLoadB]);
 
   // ── Per-track beat-grid manual adjustments ──
   // Auto-detection isn't reliable on every track (reverb-heavy kicks, sub-bass
@@ -6742,6 +6821,9 @@ export default function CollabMix({ initialPage = "landing", djName = null }) {
           chat={chat}
           onSendChat={msg=>sync.send({type:"chat",msg})}
           me={session.name}
+          rkLib={rkLib}
+          rkStatus={rkStatus}
+          onConnectRekordbox={connectRekordbox}
         />
       </div>
 

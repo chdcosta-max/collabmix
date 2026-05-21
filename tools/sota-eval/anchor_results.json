@@ -1,0 +1,678 @@
+{
+  "groupA": [
+    {
+      "basename": "01 Body Stars (Original Mix).mp3",
+      "path": "/Users/chad/Music/Music/Media.localized/Music/Tim Green/Body Stars/01 Body Stars (Original Mix).mp3",
+      "truthMs": 24,
+      "periodMs": 487.8048780487805,
+      "bpm": 123,
+      "analyzerBar1Ms": 2.494331065759637,
+      "analyzerStatus": "FAIL",
+      "A": {
+        "fk": 489.8639455782313,
+        "N": 1,
+        "anchorMs": 2.059067529450842
+      },
+      "B30": {
+        "fk": 493,
+        "N": 1,
+        "anchorMs": 5.195121951219517
+      },
+      "B50": {
+        "fk": 1727,
+        "N": 3,
+        "anchorMs": 263.5853658536587
+      }
+    },
+    {
+      "basename": "01 Scarlet Sails (Extended).mp3",
+      "path": "/Users/chad/Music/Music/Media.localized/Music/PROFF, M.O.S_/Tolika/01 Scarlet Sails (Extended).mp3",
+      "truthMs": 25,
+      "periodMs": 487.8048780487805,
+      "bpm": 123,
+      "analyzerBar1Ms": 0,
+      "analyzerStatus": "FAIL",
+      "A": {
+        "fk": 978.8662131519275,
+        "N": 2,
+        "anchorMs": 3.2564570543665017
+      },
+      "B30": {
+        "fk": 7587,
+        "N": 15,
+        "anchorMs": 269.92682926828945
+      },
+      "B50": {
+        "fk": 7587,
+        "N": 15,
+        "anchorMs": 269.92682926828945
+      }
+    },
+    {
+      "basename": "10 Aurora (Original Mix).mp3",
+      "path": "/Users/chad/Music/Music/Media.localized/Music/TEELCO/Augmented 015 _ Maze 28/10 Aurora (Original Mix).mp3",
+      "truthMs": 24,
+      "periodMs": 491.8032786885246,
+      "bpm": 122,
+      "analyzerBar1Ms": 0,
+      "analyzerStatus": "FAIL",
+      "A": {
+        "fk": 492.562358276644,
+        "N": 1,
+        "anchorMs": 0.7590795881193824
+      },
+      "B30": {
+        "fk": 389,
+        "N": 0,
+        "anchorMs": 389
+      },
+      "B50": {
+        "fk": 389,
+        "N": 0,
+        "anchorMs": 389
+      }
+    },
+    {
+      "basename": "04 Coaster  (Durante Remix).mp3",
+      "path": "/Users/chad/Music/Music/Media.localized/Music/Ilias Katelanos, Plecta, Anonimat/Coaster EP/04 Coaster  (Durante Remix).mp3",
+      "truthMs": 25,
+      "periodMs": 483.8709677419355,
+      "bpm": 124,
+      "analyzerBar1Ms": 4.69054174957965,
+      "analyzerStatus": "FAIL",
+      "A": {
+        "fk": 974.5351473922904,
+        "N": 2,
+        "anchorMs": 6.7932119084193054
+      },
+      "B30": {
+        "fk": 491,
+        "N": 1,
+        "anchorMs": 7.129032258064494
+      },
+      "B50": {
+        "fk": 491,
+        "N": 1,
+        "anchorMs": 7.129032258064494
+      }
+    },
+    {
+      "basename": "07 Leave the World Behind (Original Mix).mp3",
+      "path": "/Users/chad/Music/Music/Media.localized/Music/Maze 28/Leave the World Behind/07 Leave the World Behind (Original Mix).mp3",
+      "truthMs": 24,
+      "periodMs": 491.8032786885246,
+      "bpm": 122,
+      "analyzerBar1Ms": 1.232521399190943,
+      "analyzerStatus": "FAIL",
+      "A": {
+        "fk": 495.98639455782313,
+        "N": 1,
+        "anchorMs": 4.183115869298537
+      },
+      "B30": {
+        "fk": 511,
+        "N": 1,
+        "anchorMs": 19.19672131147543
+      },
+      "B50": {
+        "fk": 511,
+        "N": 1,
+        "anchorMs": 19.19672131147543
+      }
+    },
+    {
+      "basename": "02 Serenità (Original Mix).mp3",
+      "path": "/Users/chad/Music/Music/Media.localized/Music/Deividas Bagdanov/Serenità/02 Serenità (Original Mix).mp3",
+      "truthMs": 82,
+      "periodMs": 500,
+      "bpm": 120,
+      "analyzerBar1Ms": 54.87528344671201,
+      "analyzerStatus": "FAIL",
+      "A": {
+        "fk": 557.5510204081633,
+        "N": 1,
+        "anchorMs": 57.55102040816329
+      },
+      "B30": {
+        "fk": 558,
+        "N": 1,
+        "anchorMs": 58.00000000000005
+      },
+      "B50": {
+        "fk": 558,
+        "N": 1,
+        "anchorMs": 58.00000000000005
+      }
+    },
+    {
+      "basename": "08 Fly Fox (Original Mix).mp3",
+      "path": "/Users/chad/Music/Music/Media.localized/Music/Kyotto, STEREO MUNK/Hoom Side of the Sun, Vol. 07/08 Fly Fox (Original Mix).mp3",
+      "truthMs": 33,
+      "periodMs": 500,
+      "bpm": 120,
+      "analyzerBar1Ms": 9.800507418370916,
+      "analyzerStatus": "FAIL",
+      "A": {
+        "fk": 14.512471655328799,
+        "N": 0,
+        "anchorMs": 14.512471655328799
+      },
+      "B30": {
+        "fk": 4026,
+        "N": 8,
+        "anchorMs": 25.9999999999998
+      },
+      "B50": {
+        "fk": 4026,
+        "N": 8,
+        "anchorMs": 25.9999999999998
+      }
+    },
+    {
+      "basename": "04 Great Attractor (Ruben Karapetyan Remix).mp3",
+      "path": "/Users/chad/Music/Music/Media.localized/Music/Maze 28/Great Attractor _ Quantum Touch/04 Great Attractor (Ruben Karapetyan Remix).mp3",
+      "truthMs": 32,
+      "periodMs": 482.7667675217101,
+      "bpm": 124,
+      "analyzerBar1Ms": 8.974353927288748,
+      "analyzerStatus": "FAIL",
+      "A": {
+        "fk": 977.1428571428571,
+        "N": 2,
+        "anchorMs": 11.60932209943688
+      },
+      "B30": {
+        "fk": 266,
+        "N": 0,
+        "anchorMs": 266
+      },
+      "B50": {
+        "fk": 1847,
+        "N": 3,
+        "anchorMs": 398.6996974348698
+      }
+    },
+    {
+      "basename": "01 Astronauts Nightmares (DJ Ruby Extended Remix).mp3",
+      "path": "/Users/chad/Music/Music/Media.localized/Music/Kamilo Sanclemente/Astronauts Nightmares _ Destination (Remixes)/01 Astronauts Nightmares (DJ Ruby Extended Remix).mp3",
+      "truthMs": 207,
+      "periodMs": 487.8048780487805,
+      "bpm": 123,
+      "analyzerBar1Ms": 184.023398403211,
+      "analyzerStatus": "FAIL",
+      "A": {
+        "fk": 672.4716553287982,
+        "N": 1,
+        "anchorMs": 184.66677728001767
+      },
+      "B30": {
+        "fk": 201,
+        "N": 0,
+        "anchorMs": 201
+      },
+      "B50": {
+        "fk": 201,
+        "N": 0,
+        "anchorMs": 201
+      }
+    },
+    {
+      "basename": "06 Finding Estrella (Analog Jungs Remix).mp3",
+      "path": "/Users/chad/Music/Music/Media.localized/Music/Kyotto/Harmonic Creations Vol. 12/06 Finding Estrella (Analog Jungs Remix).mp3",
+      "truthMs": 225,
+      "periodMs": 491.8032786885246,
+      "bpm": 122,
+      "analyzerBar1Ms": 203.2426303854875,
+      "analyzerStatus": "FAIL",
+      "A": {
+        "fk": 707.7324263038549,
+        "N": 1,
+        "anchorMs": 215.92914761533032
+      },
+      "B30": {
+        "fk": 212,
+        "N": 0,
+        "anchorMs": 212
+      },
+      "B50": {
+        "fk": 212,
+        "N": 0,
+        "anchorMs": 212
+      }
+    },
+    {
+      "basename": "04 Swans (Dave DK Extended Remix).mp3",
+      "path": "/Users/chad/Music/Music/Media.localized/Music/SØNIN/Lost In Paradise Vol. 2/04 Swans (Dave DK Extended Remix).mp3",
+      "truthMs": 116,
+      "periodMs": 495.86776859504135,
+      "bpm": 121,
+      "analyzerBar1Ms": 94.47001858387465,
+      "analyzerStatus": "FAIL",
+      "A": {
+        "fk": 110.15873015873017,
+        "N": 0,
+        "anchorMs": 110.15873015873017
+      },
+      "B30": {
+        "fk": 156,
+        "N": 0,
+        "anchorMs": 156
+      },
+      "B50": {
+        "fk": 156,
+        "N": 0,
+        "anchorMs": 156
+      }
+    },
+    {
+      "basename": "03 Sparky (Original Mix).mp3",
+      "path": "/Users/chad/Music/Music/Media.localized/Music/Tamir Regev/Every Single Night _ Space Hunter _ Sparky/03 Sparky (Original Mix).mp3",
+      "truthMs": 192,
+      "periodMs": 487.8048780487805,
+      "bpm": 123,
+      "analyzerBar1Ms": 171.29734205415966,
+      "analyzerStatus": "FAIL",
+      "A": {
+        "fk": 662.7210884353741,
+        "N": 1,
+        "anchorMs": 174.91621038659366
+      },
+      "B30": {
+        "fk": 193,
+        "N": 0,
+        "anchorMs": 193
+      },
+      "B50": {
+        "fk": 193,
+        "N": 0,
+        "anchorMs": 193
+      }
+    },
+    {
+      "basename": "02 Track II (Original Mix).mp3",
+      "path": "/Users/chad/Music/Music/Media.localized/Music/Braxton/No Horizons _ Track II/02 Track II (Original Mix).mp3",
+      "truthMs": 267,
+      "periodMs": 406.14249764946624,
+      "bpm": 140.7,
+      "analyzerBar1Ms": 254.42176870748295,
+      "analyzerStatus": "FAIL",
+      "A": {
+        "fk": 722.7210884353742,
+        "N": 1,
+        "anchorMs": 316.5785907859079
+      },
+      "B30": {
+        "fk": 234,
+        "N": 0,
+        "anchorMs": 234
+      },
+      "B50": {
+        "fk": 724,
+        "N": 1,
+        "anchorMs": 317.8575023505337
+      }
+    }
+  ],
+  "groupB": [
+    {
+      "basename": "02 Gothamania (Jamie Stevens Remix).mp3",
+      "path": "/Users/chad/Music/Music/Media.localized/Music/Cass (UK)/Gothamania_ Remixes/02 Gothamania (Jamie Stevens Remix).mp3",
+      "truthMs": 208,
+      "periodMs": 483.8709677419355,
+      "bpm": 124,
+      "analyzerBar1Ms": 217.18820861678003,
+      "analyzerStatus": "PASS",
+      "A": {
+        "fk": 216.05442176870747,
+        "N": 0,
+        "anchorMs": 216.05442176870747
+      },
+      "B30": {
+        "fk": 269,
+        "N": 0,
+        "anchorMs": 269
+      },
+      "B50": {
+        "fk": 269,
+        "N": 0,
+        "anchorMs": 269
+      }
+    },
+    {
+      "basename": "01 Biome (Mike Rish Remix).mp3",
+      "path": "/Users/chad/Music/Music/Media.localized/Music/Kasper Koman/Kasper Koman - Biome _ Mike Rish - GT (Remixes)/01 Biome (Mike Rish Remix).mp3",
+      "truthMs": 26,
+      "periodMs": 483.8709677419355,
+      "bpm": 124,
+      "analyzerBar1Ms": 44.64852607709749,
+      "analyzerStatus": "PASS",
+      "A": {
+        "fk": 538.6621315192743,
+        "N": 1,
+        "anchorMs": 54.79116377733884
+      },
+      "B30": {
+        "fk": 150,
+        "N": 0,
+        "anchorMs": 150
+      },
+      "B50": {
+        "fk": 150,
+        "N": 0,
+        "anchorMs": 150
+      }
+    },
+    {
+      "basename": "07 Serene (Extended Mix).mp3",
+      "path": "/Users/chad/Music/Music/Media.localized/Music/Kamilo Sanclemente/The Best Of 2024/07 Serene (Extended Mix).mp3",
+      "truthMs": 25,
+      "periodMs": 504.2016806722689,
+      "bpm": 119,
+      "analyzerBar1Ms": 19.37500417710944,
+      "analyzerStatus": "PASS",
+      "A": {
+        "fk": 523.2426303854876,
+        "N": 1,
+        "anchorMs": 19.04094971321868
+      },
+      "B30": {
+        "fk": 331,
+        "N": 0,
+        "anchorMs": 331
+      },
+      "B50": {
+        "fk": 331,
+        "N": 0,
+        "anchorMs": 331
+      }
+    },
+    {
+      "basename": "01 Cosmos (Original Mix).m4a",
+      "path": "/Users/chad/Music/Music/Media.localized/Music/Guy J/Dreams & Drama #1/01 Cosmos (Original Mix).m4a",
+      "truthMs": 170,
+      "periodMs": 491.8032786885246,
+      "bpm": 122,
+      "analyzerBar1Ms": 159.51095134252444,
+      "analyzerStatus": "PASS",
+      "A": {
+        "fk": 163.28798185941042,
+        "N": 0,
+        "anchorMs": 163.28798185941042
+      },
+      "B30": {
+        "fk": 205.00000000000003,
+        "N": 0,
+        "anchorMs": 205.00000000000003
+      },
+      "B50": {
+        "fk": 205.00000000000003,
+        "N": 0,
+        "anchorMs": 205.00000000000003
+      }
+    },
+    {
+      "basename": "02 Upsala (Forty Cats Remix).m4a",
+      "path": "/Users/chad/Music/Music/Media.localized/Music/Alan Cerra/Visceral 133/02 Upsala (Forty Cats Remix).m4a",
+      "truthMs": 54,
+      "periodMs": 483.8709677419355,
+      "bpm": 124,
+      "analyzerBar1Ms": 38.82086167800453,
+      "analyzerStatus": "PASS",
+      "A": {
+        "fk": 531.9047619047619,
+        "N": 1,
+        "anchorMs": 48.03379416282638
+      },
+      "B30": {
+        "fk": 53,
+        "N": 0,
+        "anchorMs": 53
+      },
+      "B50": {
+        "fk": 53,
+        "N": 0,
+        "anchorMs": 53
+      }
+    },
+    {
+      "basename": "01 In This World (Original Mix).mp3",
+      "path": "/Users/chad/Music/Music/Media.localized/Music/Gai Barone/In This World/01 In This World (Original Mix).mp3",
+      "truthMs": 24,
+      "periodMs": 491.8032786885246,
+      "bpm": 122,
+      "analyzerBar1Ms": 14.965986394557822,
+      "analyzerStatus": "PASS",
+      "A": {
+        "fk": 756.8027210884354,
+        "N": 1,
+        "anchorMs": 264.9994423999108
+      },
+      "B30": {
+        "fk": 2028,
+        "N": 4,
+        "anchorMs": 60.78688524590148
+      },
+      "B50": {
+        "fk": 2028,
+        "N": 4,
+        "anchorMs": 60.78688524590148
+      }
+    },
+    {
+      "basename": "01 Transcender (Original Mix).mp3",
+      "path": "/Users/chad/Music/Music/Media.localized/Music/Eichenbaum/Transcender/01 Transcender (Original Mix).mp3",
+      "truthMs": 24,
+      "periodMs": 491.8032786885246,
+      "bpm": 122,
+      "analyzerBar1Ms": 18.012333953634425,
+      "analyzerStatus": "PASS",
+      "A": {
+        "fk": 531.2244897959184,
+        "N": 1,
+        "anchorMs": 39.42121110739383
+      },
+      "B30": {
+        "fk": 55,
+        "N": 0,
+        "anchorMs": 55
+      },
+      "B50": {
+        "fk": 55,
+        "N": 0,
+        "anchorMs": 55
+      }
+    },
+    {
+      "basename": "House1.wav",
+      "path": "/Users/chad/Music/rekordbox/Sampler/GROOVE CIRCUIT/PRESET/4-Floor Breaks Kit/House1.wav",
+      "truthMs": 0,
+      "periodMs": 487.8048780487805,
+      "bpm": 123,
+      "analyzerBar1Ms": 0,
+      "analyzerStatus": "PASS",
+      "A": {
+        "fk": 510.56689342403627,
+        "N": 1,
+        "anchorMs": 22.762015375255796
+      },
+      "B30": {
+        "fk": 512,
+        "N": 1,
+        "anchorMs": 24.195121951219534
+      },
+      "B50": {
+        "fk": 512,
+        "N": 1,
+        "anchorMs": 24.195121951219534
+      }
+    },
+    {
+      "basename": "02 Mr Pong (Original Mix).m4a",
+      "path": "/Users/chad/Music/Music/Media.localized/Music/Chicola/Samerano _ Mr Pong/02 Mr Pong (Original Mix).m4a",
+      "truthMs": 159,
+      "periodMs": 491.8032786885246,
+      "bpm": 122,
+      "analyzerBar1Ms": 142.589407191448,
+      "analyzerStatus": "PASS",
+      "A": {
+        "fk": 149.43310657596373,
+        "N": 0,
+        "anchorMs": 149.43310657596373
+      },
+      "B30": {
+        "fk": 156,
+        "N": 0,
+        "anchorMs": 156
+      },
+      "B50": {
+        "fk": 156,
+        "N": 0,
+        "anchorMs": 156
+      }
+    },
+    {
+      "basename": "02 Shambhala (Extended).mp3",
+      "path": "/Users/chad/Music/Music/Media.localized/Music/Jiminy Hop/Cavalier EP/02 Shambhala (Extended).mp3",
+      "truthMs": 26,
+      "periodMs": 491.8032786885246,
+      "bpm": 122,
+      "analyzerBar1Ms": 11.089888587013752,
+      "analyzerStatus": "PASS",
+      "A": {
+        "fk": 512.3809523809524,
+        "N": 1,
+        "anchorMs": 20.5776736924278
+      },
+      "B30": {
+        "fk": 522,
+        "N": 1,
+        "anchorMs": 30.19672131147544
+      },
+      "B50": {
+        "fk": 522,
+        "N": 1,
+        "anchorMs": 30.19672131147544
+      }
+    },
+    {
+      "basename": "10 Sea & Stars (Original Mix).mp3",
+      "path": "/Users/chad/Music/Music/Media.localized/Music/GMJ, Maze 28/Leave the World Behind/10 Sea & Stars (Original Mix).mp3",
+      "truthMs": 24,
+      "periodMs": 495.86776859504135,
+      "bpm": 121,
+      "analyzerBar1Ms": 39.47188127920207,
+      "analyzerStatus": "PASS",
+      "A": {
+        "fk": 541.5646258503401,
+        "N": 1,
+        "anchorMs": 45.696857255298816
+      },
+      "B30": {
+        "fk": 126,
+        "N": 0,
+        "anchorMs": 126
+      },
+      "B50": {
+        "fk": 126,
+        "N": 0,
+        "anchorMs": 126
+      }
+    },
+    {
+      "basename": "03 Against the Wall (Original Mix).mp3",
+      "path": "/Users/chad/Music/Music/Media.localized/Music/Guy J/Piece of Cake/03 Against the Wall (Original Mix).mp3",
+      "truthMs": 145,
+      "periodMs": 491.8032786885246,
+      "bpm": 122,
+      "analyzerBar1Ms": 140.814639905549,
+      "analyzerStatus": "PASS",
+      "A": {
+        "fk": 144.85260770975057,
+        "N": 0,
+        "anchorMs": 144.85260770975057
+      },
+      "B30": {
+        "fk": 157,
+        "N": 0,
+        "anchorMs": 157
+      },
+      "B50": {
+        "fk": 157,
+        "N": 0,
+        "anchorMs": 157
+      }
+    },
+    {
+      "basename": "01 Dejavu (Original Mix).mp3",
+      "path": "/Users/chad/Music/Music/Media.localized/Music/Tantum/Dejavu _ It Has To Be Like This _ Palindrome/01 Dejavu (Original Mix).mp3",
+      "truthMs": 275,
+      "periodMs": 500,
+      "bpm": 120,
+      "analyzerBar1Ms": 260.8139125142152,
+      "analyzerStatus": "PASS",
+      "A": {
+        "fk": 272.7210884353741,
+        "N": 0,
+        "anchorMs": 272.7210884353741
+      },
+      "B30": {
+        "fk": 317,
+        "N": 0,
+        "anchorMs": 317
+      },
+      "B50": {
+        "fk": 317,
+        "N": 0,
+        "anchorMs": 317
+      }
+    },
+    {
+      "basename": "03 Aliens (Original Mix).mp3",
+      "path": "/Users/chad/Music/Music/Media.localized/Music/Max Wexem/Synchronization/03 Aliens (Original Mix).mp3",
+      "truthMs": 24,
+      "periodMs": 500,
+      "bpm": 120,
+      "analyzerBar1Ms": 11.836734693877549,
+      "analyzerStatus": "PASS",
+      "A": {
+        "fk": 11.201814058956916,
+        "N": 0,
+        "anchorMs": 11.201814058956916
+      },
+      "B30": {
+        "fk": 524,
+        "N": 1,
+        "anchorMs": 24.00000000000002
+      },
+      "B50": {
+        "fk": 524,
+        "N": 1,
+        "anchorMs": 24.00000000000002
+      }
+    },
+    {
+      "basename": "02 Loveland (Gorkiz Remix).mp3",
+      "path": "/Users/chad/Music/Music/Media.localized/Music/Nick Warren/Turbulence _The Remixes_/02 Loveland (Gorkiz Remix).mp3",
+      "truthMs": 24,
+      "periodMs": 490.58494118325376,
+      "bpm": 122.1,
+      "analyzerBar1Ms": 9.90787871699973,
+      "analyzerStatus": "PASS",
+      "A": {
+        "fk": 504.46712018140596,
+        "N": 1,
+        "anchorMs": 13.882178998152195
+      },
+      "B30": {
+        "fk": 254,
+        "N": 0,
+        "anchorMs": 254
+      },
+      "B50": {
+        "fk": 505,
+        "N": 1,
+        "anchorMs": 14.415058816746262
+      }
+    }
+  ]
+}

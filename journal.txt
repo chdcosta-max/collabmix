@@ -1,0 +1,73 @@
+## MIX//SYNC — MAY 17-18, 2026 SESSION 4 (extended)
+
+### COMMITS SHIPPED TODAY (in order, 18 commits)
+
+ 1. b28214b — SYNC: rate-aware visual position — fix grid drift at rate≠1
+ 2. c0e1536 — UX: library hover chips, drag-only big waveform, track-load reset
+ 3. 0db7aa2 — SYNC: shared-frame tick, preserve rate on unsync, disable master SYNC btn
+ 4. 6fd5580 — UX: library A/B load buttons always visible on left of each row
+ 5. 6a4e432 — SYNC: beat-phase alignment (was bar-phase) — max nudge ±0.5 beat
+ 6. 01b8feb — SYNC: bphs from bar-1 anchor + decouple M from SYNC controls
+ 7. 6e0f458 — UX: beat-step skip arrows, anchor-based drag scrub, sync re-align on play
+ 8. f3e52d3 — SYNC/UX: stale-closure fix on play-realign, drag seek-on-release, quantize arrows
+ 9. 4402eb3 — SYNC: re-align on driver-path seek/cue via seek_local hook
+10. 06dd31c — SYNC: drop syncReady gate; add temporary grid-phasing diagnostic
+11. 672129f — WF: rate-aware grid + waveform — visual beats locked across synced decks
+12. 9b67697 — SYNC: Path C — kick-band cross-correlation refinement on sync engage
+13. a4c8616 — SYNC: phaseAlign flag + xcorr symmetric clamp — playhead stays at 0 on load
+14. ff2aedc — SYNC: raise xcorr correction cap to ±2 beats (was ±0.5)
+15. 5f4337b — DECK: auto-position playhead to first downbeat on track load
+16. f848480 — DECK: firstBar1AnchorSec from worker + clear stale BPM data on new load
+17. 1c8549a — BPM: restore kick-exclusive phSc scoring (was onK alone, should be onK−onP)
+18. edde4ee — BPM: phrase voting (phSc16/phSc32) + manual bar-1 anchor override UI
+
+Live bundle at session end: main-XTT71I0o.js (Vercel auto-deploy of edde4ee)
+
+### CORE PLATFORM STATE
+
+Working:
+- Audio sync (BPM rates match, kicks lock via cross-correlation)
+- Visual sync (rate-aware beat grid renders identically across decks)
+- Re-align on all seek paths (drag, click, beat-step, CUE, master scrubs)
+- Sync engages while paused, persists through pause/play
+- M button + SYNC button properly decoupled
+- Library deck A/B buttons always visible
+- Beat-step arrows: one beat per click, quantize to grid when sync engaged
+- Drag scrub: anchor-based, seek on release only
+- Track auto-position to first downbeat on load
+- Manual ±1 beat anchor override with localStorage persistence
+- Phrase voting (phSc4/16/32) — voted same on all tested tracks
+- Path C cross-correlation: validated with 4.0+ confidence, applying corrections
+
+### CRITICAL BLOCKER FOR DOGFOOD
+
+Analyzer fails on most tracks. Tested 4 tracks: Shadow Work, You Will Never
+Know, Racing Heart, Tuesday Maybe — ALL had wrong beat grid placement.
+
+bestPh detection picks wrong beat of bar on tracks with kicks + claps on
+every bar. Kick-exclusive scoring helped some but not enough. Phrase
+voting (16/32-beat) doesn't help when accents are uniform across phrases.
+
+Manual override works but users won't manually verify each track. Need
+real analyzer fix before dogfood.
+
+### NEXT SESSION PRIORITY
+
+Survey existing downbeat detection solutions (madmom ONNX, Essentia.js,
+custom multi-pass) and choose path forward. Survey investigation already
+requested — no code yet. Estimated 10-25 hours of analyzer work to reach
+95%+ accuracy.
+
+### DEFERRED
+
+- Telemetry/PostHog integration (2-3 hours)
+- Design migration to new design branch (5-10 hours)
+- Dogfood with Jake (after analyzer fixed)
+
+### OPEN TECHNICAL DEBT (lower priority)
+
+- Delete dphase() function (replaced by bar-1 anchor)
+- Delete diagnostic logs (SYNC-XCORR, GRID-DIAG, phase override logs)
+- Delete USE_LEGACY_FRAME_SNAP flag
+- Delete unused nudge primitive
+- Fix toggle() pause-bookkeeping rate-unaware bug
