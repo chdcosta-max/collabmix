@@ -255,6 +255,11 @@ self.onmessage=function(e){
   const halfBeatFrames=floatBeatLag*0.5;
   const msPerFrame=1000/ar;
   const dpBeatsFloat = new Float64Array(dpBeats.length);
+  // Per-beat attackSlope, captured in the refinement loop; used by the
+  // Sub-cause F post-processing gate to detect "beat 0 anchored to a
+  // no-kick position" (Rocket Jam / Symbiotic Symphony / Boundless Heart
+  // class). 0 if a beat skipped refinement (silence/flat/edge/mono).
+  const beatAttackSlopes = new Float64Array(dpBeats.length);
 
   if (USE_LEGACY_FRAME_SNAP) {
     // Legacy frame-resolution kick snap (first-rise rollback on onK−onP).
@@ -481,6 +486,7 @@ self.onmessage=function(e){
         const dMs = (refinedSample - centerSample) / sr * 1000;
         deltaSumMs += dMs;
         deltaAbsSumMs += Math.abs(dMs);
+        beatAttackSlopes[i] = maxDiff; // for Sub-cause F gate downstream
       } else {
         dpBeatsFloat[i] = f; // fall back to DP integer frame
       }
@@ -1065,6 +1071,7 @@ self.onmessage=function(e){
     barDownbeatFrame = 0;
   }
 
+  let dropDetectionFired = false;
   // ── Sub-cause D fix (Class 2, Phase 2): drop-detection grid validation ──
   // For off-by-N-beats failures (analyzer locked to first transient at ~0ms,
   // Rekordbox places bar-1 1-2 sec in at the actual phrase drop), use kick
@@ -1179,8 +1186,62 @@ self.onmessage=function(e){
               ' bar1: ' + (anaBar1Sec * 1000).toFixed(1) + 'ms → ' +
               (newBar1Sec * 1000).toFixed(1) + 'ms');
             barDownbeatFrame = newBar1Sec * ar;
+            dropDetectionFired = true;
           }
         }
+      }
+    }
+  }
+
+  // ── Sub-cause F fix: advance bar-1 to first real kick (no-kick beat 0) ──
+  // Targets Rocket Jam / Symbiotic Symphony / Boundless Heart class:
+  // the DP+walk-back anchored bar-1 to a position with NO kick at all
+  // (beat 0 attackSlope effectively zero). The real first kick is N beats
+  // later. Visible result: every bar marker in the track is offset by
+  // N beats from where it should be — the drop visibly doesn't land on
+  // a bar boundary.
+  //
+  // Detect: beat 0 attackSlope < 1e-6 AND the first beat[k>=1] with
+  // slope >= 50% × median(slopes[1..N-1]) has slope > 100 × beat 0 slope.
+  // Action: shift bar-1 forward by k beats (capped at 3).
+  //
+  // The shift cap is the safety belt: if beats 1, 2, 3 are ALSO weak
+  // (e.g., In This World — track legitimately starts with quiet kicks
+  // but bar-1 is still at the beginning), we don't advance. Diagnostic
+  // in tools/sota-eval/ROCKET_JAM_FIX.md showed cap=3 gives +2 rescues
+  // (Boundless Heart, It Has To Be Like This) with 0 regressions on the
+  // 272-track harness, plus correctly anchors Rocket Jam off-harness.
+  // Skip if drop-detection already shifted — the beatAttackSlopes array was
+  // computed at the ORIGINAL dpBeats positions, so post-drop-detection the
+  // "beat 0" position no longer corresponds to slopes[0]. Re-firing on the
+  // original silence signature would double-shift correctly-rescued tracks
+  // (Shuttered and White Moon hit this in pre-guard testing).
+  if (!dropDetectionFired && beatAttackSlopes.length >= 8 && beatAttackSlopes[0] < 1e-6) {
+    // Need beats 1..N for the median baseline
+    const otherSlopes = [];
+    const probeUpTo = Math.min(beatAttackSlopes.length, 30);
+    for (let k = 1; k < probeUpTo; k++) {
+      if (beatAttackSlopes[k] > 0) otherSlopes.push(beatAttackSlopes[k]);
+    }
+    if (otherSlopes.length >= 4) {
+      otherSlopes.sort(function (a, b) { return a - b; });
+      const medianSlope = otherSlopes[Math.floor(otherSlopes.length / 2)];
+      const firstKickMinSlope = medianSlope * 0.50;
+      let firstKickBeat = -1;
+      for (let k = 1; k < probeUpTo; k++) {
+        if (beatAttackSlopes[k] >= firstKickMinSlope) { firstKickBeat = k; break; }
+      }
+      if (firstKickBeat > 0 && firstKickBeat <= 3 &&
+          beatAttackSlopes[firstKickBeat] > beatAttackSlopes[0] * 100) {
+        const beatFrames = finalPeriod * ar;
+        const newBar1Frame = barDownbeatFrame + firstKickBeat * beatFrames;
+        console.log('[BPM-NOKICK-BEAT0] track ' + id +
+          ': beat0Slope=' + beatAttackSlopes[0].toExponential(2) +
+          ' firstKickBeat=' + firstKickBeat +
+          ' slope=' + beatAttackSlopes[firstKickBeat].toExponential(2) +
+          ' shift +' + firstKickBeat + 'β  bar1: ' + (barDownbeatFrame/ar*1000).toFixed(1) +
+          'ms → ' + (newBar1Frame/ar*1000).toFixed(1) + 'ms');
+        barDownbeatFrame = newBar1Frame;
       }
     }
   }
