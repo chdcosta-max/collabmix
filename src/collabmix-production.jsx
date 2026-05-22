@@ -4229,6 +4229,61 @@ function Deck({ id, ch, ctx:ac, color, local, remote, onChange, midi:mt, bpmResu
     const bN=normJoint(bassArr),mN=normJoint(midArr),hN=normJoint(highArr);
     console.log('[WF-BANDS] Phase 2 joint-norm path active for deck', id, '— jointMax=', jointMax.toFixed(4),
       'WF_W=', WF_W, '— bass/mid/high arrays now share a common scale so spectral contrast is preserved.');
+    // ── TEMP DIAGNOSTIC (Phase 2 contrast investigation, May 21) ──
+    // Pick 5 exemplar columns by spectral signature and dump the full pipeline
+    // for each: raw band envelopes → joint-normalized → centroid → final RGB.
+    // Fires on every Deck A track load. Tells us which stage drops contrast.
+    if (id === "A") {
+      const n=bN.length;
+      let kickIdx=-1,hihatIdx=-1,dropIdx=-1,quietIdx=-1,peakIdx=-1;
+      let kickScore=-1,hihatScore=-1,dropScore=-1,quietScore=Infinity,peakScore=-1;
+      for(let i=0;i<n;i++){
+        const bv=bN[i],mv=mN[i],hv=hN[i];
+        const total=bv+mv+hv;
+        const env=bv*0.7+mv*0.2+hv*0.1;
+        const bassDom=bv-Math.max(mv,hv);
+        if(bv>0.5&&bassDom>kickScore){kickScore=bassDom;kickIdx=i;}
+        const trebleDom=hv-Math.max(bv,mv);
+        if(hv>0.3&&trebleDom>hihatScore){hihatScore=trebleDom;hihatIdx=i;}
+        const allHot=Math.min(bv,mv,hv);
+        if(allHot>dropScore){dropScore=allHot;dropIdx=i;}
+        if(total<quietScore&&total>0.005){quietScore=total;quietIdx=i;}
+        if(env>peakScore){peakScore=env;peakIdx=i;}
+      }
+      // Deck A base color is violet #7B61FF = (123, 97, 255).
+      const dr=123,dg=97,db=255;
+      const exemplars=[
+        ['kick    (bass-dominant) ',kickIdx],
+        ['hi-hat  (treble-dom)    ',hihatIdx],
+        ['drop    (all bands hot) ',dropIdx],
+        ['quiet   (near silence)  ',quietIdx],
+        ['peak    (loudest env)   ',peakIdx],
+      ];
+      console.log('[WF-DIAG] ───────── Rocket Jam / Deck A contrast trace ─────────');
+      console.log('[WF-DIAG] Deck A base color: rgb(123,97,255) — #7B61FF');
+      console.log('[WF-DIAG] jointMax (pre-norm scale factor):', jointMax.toFixed(4));
+      for(const [label,i] of exemplars){
+        if(i<0){console.log('[WF-DIAG]',label,'NOT FOUND');continue;}
+        const rawB=bassArr[i],rawM=midArr[i],rawH=highArr[i];
+        const bv=bN[i],mv=mN[i],hv=hN[i];
+        const total=bv+mv+hv+1e-6;
+        const centroid=(mv*0.5+hv*1.0)/total;
+        const env=bv*0.7+mv*0.2+hv*0.1;
+        const tonalAmt=(centroid-0.5)*1.4;
+        let cR=dr,cG=dg,cB=db;
+        if(tonalAmt>0){cR=dr+(255-dr)*tonalAmt;cG=dg+(255-dg)*tonalAmt;cB=db+(255-db)*tonalAmt;}
+        else{const k=1+tonalAmt;cR=dr*k;cG=dg*k;cB=db*k;}
+        const peakAmt=Math.pow(env,2.0)*0.85;
+        cR=cR+(255-cR)*peakAmt;cG=cG+(255-cG)*peakAmt;cB=cB+(255-cB)*peakAmt;
+        const time=(i/n*d.duration).toFixed(1)+'s';
+        console.log('[WF-DIAG]',label,'col='+i,'t='+time);
+        console.log('[WF-DIAG]   RAW pre-norm: b='+rawB.toFixed(4)+' m='+rawM.toFixed(4)+' h='+rawH.toFixed(4));
+        console.log('[WF-DIAG]   JOINT-NORM:   b='+bv.toFixed(3)+' m='+mv.toFixed(3)+' h='+hv.toFixed(3));
+        console.log('[WF-DIAG]   env='+env.toFixed(3)+' centroid='+centroid.toFixed(3)+' tonalAmt='+tonalAmt.toFixed(3)+' peakAmt='+peakAmt.toFixed(3));
+        console.log('[WF-DIAG]   RGB OUT: rgb('+(cR|0)+','+(cG|0)+','+(cB|0)+')  vs base rgb('+dr+','+dg+','+db+')');
+      }
+      console.log('[WF-DIAG] ─────────────────────────────────────────────────────');
+    }
     setWfBass(bN);setWfMid(mN);setWfHigh(hN);
     // Broadcast at WF_W samples per band (24,000 → ~400KB total per track load).
     // Original 48,000-sample resolution caused ~800KB and WebSocket backpressure
