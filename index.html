@@ -4,6 +4,25 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>COLLAB//MIX</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap">
+    <style>
+      /* Quiet Pro Tool global defaults — Inter family + tabular numerics. */
+      html, body {
+        font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+        font-variant-numeric: tabular-nums;
+        font-feature-settings: "tnum" 1, "ss01" 1;
+        background: #0F1014;
+        color: #E8E3D8;
+        margin: 0;
+      }
+      /* Every digit aligns vertically — no more visual jumping as BPM / time
+         counters update. Applies even when inline styles override the family. */
+      * {
+        font-variant-numeric: tabular-nums;
+      }
+    </style>
   </head>
   <body>
     <div id="root"></div>
