@@ -1786,3 +1786,114 @@ Full report at `tools/rekordbox-eval/PHASE_1_REPORT.md`.
 - Waveform must look as good or better than Rekordbox
 - Sync must phase-lock in audio (beat-slap = broken product)
 - Manual UI nudge must exist before dogfood, but analyzer cannot rely on it
+
+## May 21 evening — current state snapshot
+
+> Bridges the gap between the May 16 entries above and where we
+> actually are tonight. Full vision reconciliation pending in next
+> session.
+
+### 1. Analyzer state
+
+- **80.9% PASS on the 272-track Rekordbox-truth harness** after the
+  Sub-cause A–G fixes shipped earlier this week (Class 1 walk-back,
+  first-kick rescue, drop-detection grid validation, envelope walk-
+  forward, first-kick anchor, late-cluster walk-back).
+- Work **paused**. Across heuristics, madmom, beat_this, anchor
+  hypothesis, cluster offset, and sync correctness diagnostics, the
+  remaining ~19% of failures are confirmed **not tractable from audio
+  alone** — per-track perceptual offsets vary 7–54 ms, no global
+  correction recovers them.
+- **Manual nudge UI required before dogfood** as the safety net for
+  that residual 19%. Already shipped as the amber ±1 beat anchor
+  buttons in the waveform header (commit `edde4ee`); will likely need
+  a more discoverable affordance before dogfood.
+- Full diagnostic data + investigation history preserved in
+  `tools/rekordbox-eval/PHASE_2_STATUS.md` and
+  `tools/sota-eval/` (cross-reference against SOTA models +
+  Rekordbox truth on the full library).
+
+### 2. Rekordbox integration (Phase 1 + Phase 2 shipped)
+
+- `src/rekordbox-anlz.js` (ANLZ parser),
+  `src/rekordbox-sqlcipher.js` (SQLCipher v4 decryption via Web
+  Crypto), and `src/rekordbox-library.js` (library connector) all
+  live in production.
+- Verified end-to-end: **1,343 tracks, 389 cues, 1,327 with
+  AnalysisDataPath (98.8 %)** on the test library. ~196 ms cold
+  open, ~1 ms per ANLZ decode after.
+- **PQTZ grid override active in production** for Rekordbox-imported
+  tracks via `getBeatGrid(trackId)` + the `effectiveBpmResults`
+  useMemo + the transparent `bpm` shadow. Kicks land on the grid
+  by definition for those tracks. Non-Rekordbox tracks continue to
+  use the analyzer's 80.9% grid + manual nudge as fallback.
+- **PWV5 spectral waveform data** is decoded and available
+  (`getWaveformBands()`), but currently **off the render path**.
+  Kept in code as a calibration reference for the eventual spectral
+  revisit and for future cue-point rendering.
+
+### 3. Waveform rendering
+
+- **Reverted from the Phase 2 spectral attempt back to calm
+  monochrome amplitude** (commit `6fcc4d4` waveform revert section).
+  Single deck hue per renderer, alpha modulated by envelope. Joint
+  band normalization rolled back to per-band. `deckSpectralAnchors`
+  helper removed.
+- Reason: visual contrast between bass and treble in the spectral
+  attempt was subtle vs Pioneer's reference, and the design
+  philosophy lock-in chose Mix//Sync brand identity over Rekordbox
+  literal coloring. Calm monochrome ships cleaner for now.
+- **Spectral work tabled** until dogfood feedback indicates spectral
+  differentiation actually matters to real users in real sessions.
+- Diagnostic data + future revisit notes preserved in
+  `tools/rekordbox-eval/PHASE_2_STATUS.md`. Beat grid data and
+  Rekordbox PQTZ override are untouched by the waveform revert —
+  bars still land on kicks.
+
+### 4. Design
+
+- **"Quiet Pro Tool" direction LOCKED** in
+  `tools/docs/DESIGN_PHILOSOPHY.md` — Japanese minimalism, MUJI /
+  Teenage Engineering / fragment design / Nendo references; NOT
+  Pioneer / Maschine / Linear / Figma.
+- **Structural redesign in progress.** Production tip tonight:
+  `565991d` (Design v3 fixes — edge-to-edge deck row, DeckArt
+  locked 96×96, transport row visible with Elapsed/Remain merged
+  in, library gained vertical room, top-waveform chrome moved off
+  the waveform into a row above).
+- Foundation now in place: warm palette (#0F1014 bg, oak
+  `#C9B79C` accent, desaturated deck violet/teal), album-art deck
+  anchors (96×96), sentence case throughout, tabular nums, A–D
+  inline cue chips, **white circle play as visual anchor**, compact
+  mixer (200 px column / 16 px knobs / 130 px faders).
+- **Reference**: structural decisions from `design-decks` branch
+  (album-art anchors, cue list, transport hierarchy), **NOT** its
+  cool-grey palette. Target aesthetic: Beatport B2B (content-
+  forward, minimal, generous negative space, restrained).
+- **Expect 2–3 more iteration rounds** before user sign-off.
+  Worktrees `../collabmix-booth` (port 5174) and `../collabmix-decks`
+  (port 5175) preserved for ongoing visual reference.
+
+### 5. Unresolved for dogfood
+
+1. Finish design iteration to user approval (2–3 more rounds expected).
+2. Manual UI adjust (anchor + BPM nudge) made discoverable enough
+   that real users can correct the 19% of tracks the analyzer misses
+   on. **Required before dogfood.**
+3. Dogfood with Jake — first real B2B test on the new design with
+   the manual nudge safety net in place.
+
+### 6. Nice-to-have post-dogfood
+
+- **Phase 3 cue points overlay** — Rekordbox PCOB / PCO2 hot cues
+  and memory cues rendered on the waveform. Connector already parsed
+  in Phase 1; rendering work is the remaining piece.
+- **Phase 4 fallback handling polish** — better UX on tracks where
+  Rekordbox match fails, ANLZ data is missing, or PQTZ is absent.
+- **Waveform spectral coloring revisit** with real user feedback to
+  inform whether the visible-frequency-differentiation aesthetic is
+  worth the analyzer + render complexity. Tabled state captured in
+  `PHASE_2_STATUS.md`.
+
+> **May 21 evening status snapshot — full vision reconciliation
+> pending in next session.**
