@@ -175,3 +175,23 @@ Reactions to 8 reference apps during taste-mapping session:
 ## Living Document
 
 This is a working draft. We will refine and add as we see mockups and react. Decisions will get more specific over time. What's here is direction, not final commitment.
+
+## Status log
+
+### May 21 evening
+- Design v3 layout fixes shipped (commit `565991d`). Six fixes from
+  visual review of the prior commit: edge-to-edge deck row, DeckArt
+  locked to 96×96, transport row merged with LCD time (Elapsed left,
+  Remain right) so all controls fit a 220px deck card, library gained
+  vertical room, top-waveform chrome moved off the waveform into a
+  dedicated row above, "{ N beats }" label no longer overlaps the
+  waveform.
+- Still iterating on the look. Target aesthetic is **Beatport B2B** —
+  content-forward, minimal, generous negative space, restrained
+  warm-dark palette with single oak accent. Expect 2–3 more visual
+  rounds before sign-off.
+- Waveform color spectral work **tabled** per
+  `tools/rekordbox-eval/PHASE_2_STATUS.md` — calm monochrome shipping
+  for now; spectral diagnostic data preserved as historical record;
+  resume only after dogfood feedback indicates spectral
+  differentiation matters to real users.
