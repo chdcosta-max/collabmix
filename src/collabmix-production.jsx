@@ -5300,37 +5300,6 @@ export default function CollabMix({ initialPage = "landing", djName = null }) {
     }
   }, [pB?.waveformBass, pB?.waveformMid, pB?.waveformHigh]);
 
-  // Rekordbox waveform override — when a track loads onto a deck AND the
-  // user has a Rekordbox library connected AND the track matches a Rekordbox
-  // entry, fetch the .EXT-derived bands and replace the audio-decoded ones.
-  // The Deck still runs its own decode (used as fallback while Rekordbox
-  // lookup is in flight), but the Rekordbox bands win the last-write race
-  // when they arrive.
-  useEffect(() => {
-    if (!rkLib || !libLoadA?.file) return;
-    let cancelled = false;
-    (async () => {
-      const match = rkLib.matchTrack(libLoadA.file);
-      if (!match) return;
-      const bands = await rkLib.getWaveformBands(match.id);
-      if (cancelled || !bands) return;
-      setWfA({ ...bands, name: libLoadA.track?.title || libLoadA.file.name });
-    })().catch(e => console.warn("[REKORDBOX-A] band fetch failed:", e.message));
-    return () => { cancelled = true; };
-  }, [rkLib, libLoadA]);
-  useEffect(() => {
-    if (!rkLib || !libLoadB?.file) return;
-    let cancelled = false;
-    (async () => {
-      const match = rkLib.matchTrack(libLoadB.file);
-      if (!match) return;
-      const bands = await rkLib.getWaveformBands(match.id);
-      if (cancelled || !bands) return;
-      setWfB({ ...bands, name: libLoadB.track?.title || libLoadB.file.name });
-    })().catch(e => console.warn("[REKORDBOX-B] band fetch failed:", e.message));
-    return () => { cancelled = true; };
-  }, [rkLib, libLoadB]);
-
   // ── Per-track beat-grid manual adjustments ──
   // Auto-detection isn't reliable on every track (reverb-heavy kicks, sub-bass
   // bleed, unusual bar-1 emphasis). Two escape hatches, both keyed per-track:
@@ -5480,6 +5449,39 @@ export default function CollabMix({ initialPage = "landing", djName = null }) {
   const [libLoadA, setLibLoadA] = useState(null);
   const [libLoadB, setLibLoadB] = useState(null);
   const [partnerLibrary, setPartnerLibrary] = useState([]);
+
+  // Rekordbox waveform override — when a track loads onto a deck AND the
+  // user has a Rekordbox library connected AND the track matches a Rekordbox
+  // entry, fetch the .EXT-derived bands and replace the audio-decoded ones.
+  // The Deck still runs its own decode (used as fallback while Rekordbox
+  // lookup is in flight), but the Rekordbox bands win the last-write race
+  // when they arrive.
+  // NOTE: must live AFTER libLoadA/libLoadB declarations — the deps array
+  // evaluates at render time and would hit a TDZ if hoisted above.
+  useEffect(() => {
+    if (!rkLib || !libLoadA?.file) return;
+    let cancelled = false;
+    (async () => {
+      const match = rkLib.matchTrack(libLoadA.file);
+      if (!match) return;
+      const bands = await rkLib.getWaveformBands(match.id);
+      if (cancelled || !bands) return;
+      setWfA({ ...bands, name: libLoadA.track?.title || libLoadA.file.name });
+    })().catch(e => console.warn("[REKORDBOX-A] band fetch failed:", e.message));
+    return () => { cancelled = true; };
+  }, [rkLib, libLoadA]);
+  useEffect(() => {
+    if (!rkLib || !libLoadB?.file) return;
+    let cancelled = false;
+    (async () => {
+      const match = rkLib.matchTrack(libLoadB.file);
+      if (!match) return;
+      const bands = await rkLib.getWaveformBands(match.id);
+      if (cancelled || !bands) return;
+      setWfB({ ...bands, name: libLoadB.track?.title || libLoadB.file.name });
+    })().catch(e => console.warn("[REKORDBOX-B] band fetch failed:", e.message));
+    return () => { cancelled = true; };
+  }, [rkLib, libLoadB]);
 
   // Driver model — loader-is-driver. Server-authoritative: room.deckDrivers
   // arrives in the "joined" message and changes via "deck_driver_change"
