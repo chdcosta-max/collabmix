@@ -2830,6 +2830,34 @@ function VU({ an, color, w=100 }) {
   return <canvas ref={ref} width={w} height={6} style={{width:"100%",borderRadius:2}}/>;
 }
 
+// ── Spectral color anchors per deck ──
+// The waveform's per-column color lerps between bass and treble anchors based
+// on the spectral centroid of that column. Bass-heavy → bassAnchor; treble-
+// heavy → trebleAnchor; mixed → in between. Then peak-amplitude bleaches
+// toward white. This gives a Rekordbox-style hue differentiation between
+// kicks (deep saturated) and hi-hats (light cool) within each deck's identity
+// palette, rather than the prior shade-only modulation around a single base.
+//
+// Returns { bass:[r,g,b], treble:[r,g,b] } for a given deck color. Hardcoded
+// per known deck because identity-mapped anchors looked better than a single
+// derivation formula across both palettes.
+function deckSpectralAnchors(colorHex) {
+  const c = (colorHex || "#FFFFFF").toUpperCase();
+  // Deck A — violet (#7B61FF / rgb(123,97,255))
+  if (c === "#7B61FF") return { bass: [80, 30, 180], treble: [180, 200, 255] };
+  // Deck B — teal (#00BFA5 / rgb(0,191,165))
+  if (c === "#00BFA5") return { bass: [0, 80, 90], treble: [160, 240, 240] };
+  // Fallback: derive from base color (less dramatic but functional for any
+  // future deck identity).
+  const r = parseInt(c.slice(1, 3), 16) || 255;
+  const g = parseInt(c.slice(3, 5), 16) || 255;
+  const b = parseInt(c.slice(5, 7), 16) || 255;
+  return {
+    bass:   [Math.round(r * 0.65), Math.round(g * 0.31), Math.round(b * 0.71)],
+    treble: [Math.round(r + (255 - r) * 0.43), Math.round(g + (255 - g) * 0.65), b],
+  };
+}
+
 function WF({ bands, peaks, freq, prog, onSeek, h=80, hotCues=[], loopStart=null, loopEnd=null, loopActive=false, bpm=null, dur=0, beatPhaseFrac=null, color='#ffffff' }) {
   const ref=useRef(null);
   useEffect(()=>{
@@ -2909,14 +2937,15 @@ function WF({ bands, peaks, freq, prog, onSeek, h=80, hotCues=[], loopStart=null
       ctx.closePath();
       ctx.fill();
 
-      // ── Pass 2: per-column SPECTRAL color overlay. Deck color is the base;
-      // spectral centroid (bv/mv/hv balance) modulates tone — bass darkens
-      // (up to 70%), highs lighten (up to 70% toward white) — and full-
-      // amplitude peaks bleach further toward white (up to 85%). Played
-      // columns get a 1.4× alpha multiplier so the played region still reads
-      // brighter. Deck identity (violet A / teal B) remains dominant via the
-      // Pass 1 silhouette gradient + base color in low-env regions.
-      // Coefficients tuned for visible drop-vs-breakdown contrast (May 21 v2).
+      // ── Pass 2: per-column SPECTRAL color overlay.
+      // Lerp between deck-specific bass and treble anchor colors based on
+      // spectral centroid; then bleach toward white at high amplitude.
+      // Produces Rekordbox-style hue differentiation: bass-heavy columns are
+      // clearly deep/saturated, treble-heavy columns clearly light/cool,
+      // full-spectrum peaks bleach white. Replaces v2's modulate-around-base
+      // formula which only produced shade variation within one hue family.
+      const anchors=deckSpectralAnchors(color);
+      const bA=anchors.bass, tA=anchors.treble;
       for(let x=0;x<W;x++){
         const h=heights[x];
         if(h<=0) continue;
@@ -2925,17 +2954,11 @@ function WF({ bands, peaks, freq, prog, onSeek, h=80, hotCues=[], loopStart=null
         // Spectral centroid: 0 = all bass, 1 = all high.
         const total=bv+mv+hv+1e-6;
         const centroid=(mv*0.5+hv*1.0)/total;
-        const tonalAmt=(centroid-0.5)*1.4;   // −0.7..+0.7 (was ±0.25)
-        let cR=r,cG=g,cB=b;
-        if(tonalAmt>0){
-          cR=r+(255-r)*tonalAmt;
-          cG=g+(255-g)*tonalAmt;
-          cB=b+(255-b)*tonalAmt;
-        } else {
-          const k=1+tonalAmt;                  // 0.30..1.0 — darken on bass
-          cR=r*k; cG=g*k; cB=b*k;
-        }
-        // Peak push toward white at high amplitude (steeper curve, harder bleach).
+        // Lerp anchor → anchor
+        let cR=bA[0]+(tA[0]-bA[0])*centroid;
+        let cG=bA[1]+(tA[1]-bA[1])*centroid;
+        let cB=bA[2]+(tA[2]-bA[2])*centroid;
+        // Peak push toward white at high amplitude.
         const peakAmt=Math.pow(env,2.0)*0.85;
         cR=cR+(255-cR)*peakAmt;
         cG=cG+(255-cG)*peakAmt;
@@ -3281,16 +3304,17 @@ function AnimatedZoomedWF({ bands, dur, progRef, onSeek, h=96, windowSec=8, beat
         ctx.lineWidth=Math.max(0.5,0.5*dpr);
         ctx.stroke();
 
-        // ── Pass 2b: per-column SPECTRAL color overlay (replaces monochrome
-        // deck-color fill). Deck color is the base; spectral centroid
-        // (colB/colM/colH balance) modulates tone — bass darkens (up to 70%),
-        // highs lighten (up to 70% toward white) — and full-amplitude peaks
-        // bleach further toward white (up to 85%). Deck identity (violet A /
-        // teal B) stays dominant in low-env regions via Pass 2a's silhouette
-        // gradient + base color. Aggressive dynamic range on alpha (gamma
-        // 0.55) so peaks dominate (env=0.5 → ~0.69 alpha, env=1.0 → ~0.95).
-        // Per-column 1px rects keep amplitude transitions vertically sharp.
-        // Coefficients tuned for visible drop-vs-breakdown contrast (May 21 v2).
+        // ── Pass 2b: per-column SPECTRAL color overlay.
+        // Lerp between deck-specific bass and treble anchor colors based on
+        // spectral centroid; then bleach toward white at high amplitude.
+        // Produces Rekordbox-style hue differentiation: bass-heavy columns
+        // are clearly deep/saturated, treble-heavy columns clearly light/cool,
+        // full-spectrum peaks bleach white. Replaces v2's modulate-around-base
+        // formula which only produced shade variation within one hue family.
+        // Alpha gamma 0.55 preserved so peaks still dominate; per-column 1px
+        // rects keep amplitude transitions vertically sharp.
+        const anchors=deckSpectralAnchors(deckColor);
+        const bA=anchors.bass, tA=anchors.treble;
         for(let dx=0;dx<physW;dx++){
           const h=heights[dx];
           if(h<=0) continue;
@@ -3298,17 +3322,10 @@ function AnimatedZoomedWF({ bands, dur, progRef, onSeek, h=96, windowSec=8, beat
           const bv=colB[dx], mv=colM[dx], hv=colH[dx];
           const total=bv+mv+hv+1e-6;
           const centroid=(mv*0.5+hv*1.0)/total;
-          const tonalAmt=(centroid-0.5)*1.4;   // −0.7..+0.7 (was ±0.25)
-          let cR=dr,cG=dg,cB=db;
-          if(tonalAmt>0){
-            cR=dr+(255-dr)*tonalAmt;
-            cG=dg+(255-dg)*tonalAmt;
-            cB=db+(255-db)*tonalAmt;
-          } else {
-            const k=1+tonalAmt;                 // 0.30..1.0 — darken on bass
-            cR=dr*k; cG=dg*k; cB=db*k;
-          }
-          const peakAmt=Math.pow(env,2.0)*0.85;  // steeper curve, harder bleach
+          let cR=bA[0]+(tA[0]-bA[0])*centroid;
+          let cG=bA[1]+(tA[1]-bA[1])*centroid;
+          let cB=bA[2]+(tA[2]-bA[2])*centroid;
+          const peakAmt=Math.pow(env,2.0)*0.85;
           cR=cR+(255-cR)*peakAmt;
           cG=cG+(255-cG)*peakAmt;
           cB=cB+(255-cB)*peakAmt;
@@ -4229,61 +4246,6 @@ function Deck({ id, ch, ctx:ac, color, local, remote, onChange, midi:mt, bpmResu
     const bN=normJoint(bassArr),mN=normJoint(midArr),hN=normJoint(highArr);
     console.log('[WF-BANDS] Phase 2 joint-norm path active for deck', id, '— jointMax=', jointMax.toFixed(4),
       'WF_W=', WF_W, '— bass/mid/high arrays now share a common scale so spectral contrast is preserved.');
-    // ── TEMP DIAGNOSTIC (Phase 2 contrast investigation, May 21) ──
-    // Pick 5 exemplar columns by spectral signature and dump the full pipeline
-    // for each: raw band envelopes → joint-normalized → centroid → final RGB.
-    // Fires on every Deck A track load. Tells us which stage drops contrast.
-    if (id === "A") {
-      const n=bN.length;
-      let kickIdx=-1,hihatIdx=-1,dropIdx=-1,quietIdx=-1,peakIdx=-1;
-      let kickScore=-1,hihatScore=-1,dropScore=-1,quietScore=Infinity,peakScore=-1;
-      for(let i=0;i<n;i++){
-        const bv=bN[i],mv=mN[i],hv=hN[i];
-        const total=bv+mv+hv;
-        const env=bv*0.7+mv*0.2+hv*0.1;
-        const bassDom=bv-Math.max(mv,hv);
-        if(bv>0.5&&bassDom>kickScore){kickScore=bassDom;kickIdx=i;}
-        const trebleDom=hv-Math.max(bv,mv);
-        if(hv>0.3&&trebleDom>hihatScore){hihatScore=trebleDom;hihatIdx=i;}
-        const allHot=Math.min(bv,mv,hv);
-        if(allHot>dropScore){dropScore=allHot;dropIdx=i;}
-        if(total<quietScore&&total>0.005){quietScore=total;quietIdx=i;}
-        if(env>peakScore){peakScore=env;peakIdx=i;}
-      }
-      // Deck A base color is violet #7B61FF = (123, 97, 255).
-      const dr=123,dg=97,db=255;
-      const exemplars=[
-        ['kick    (bass-dominant) ',kickIdx],
-        ['hi-hat  (treble-dom)    ',hihatIdx],
-        ['drop    (all bands hot) ',dropIdx],
-        ['quiet   (near silence)  ',quietIdx],
-        ['peak    (loudest env)   ',peakIdx],
-      ];
-      console.log('[WF-DIAG] ───────── Rocket Jam / Deck A contrast trace ─────────');
-      console.log('[WF-DIAG] Deck A base color: rgb(123,97,255) — #7B61FF');
-      console.log('[WF-DIAG] jointMax (pre-norm scale factor):', jointMax.toFixed(4));
-      for(const [label,i] of exemplars){
-        if(i<0){console.log('[WF-DIAG]',label,'NOT FOUND');continue;}
-        const rawB=bassArr[i],rawM=midArr[i],rawH=highArr[i];
-        const bv=bN[i],mv=mN[i],hv=hN[i];
-        const total=bv+mv+hv+1e-6;
-        const centroid=(mv*0.5+hv*1.0)/total;
-        const env=bv*0.7+mv*0.2+hv*0.1;
-        const tonalAmt=(centroid-0.5)*1.4;
-        let cR=dr,cG=dg,cB=db;
-        if(tonalAmt>0){cR=dr+(255-dr)*tonalAmt;cG=dg+(255-dg)*tonalAmt;cB=db+(255-db)*tonalAmt;}
-        else{const k=1+tonalAmt;cR=dr*k;cG=dg*k;cB=db*k;}
-        const peakAmt=Math.pow(env,2.0)*0.85;
-        cR=cR+(255-cR)*peakAmt;cG=cG+(255-cG)*peakAmt;cB=cB+(255-cB)*peakAmt;
-        const time=(i/n*d.duration).toFixed(1)+'s';
-        console.log('[WF-DIAG]',label,'col='+i,'t='+time);
-        console.log('[WF-DIAG]   RAW pre-norm: b='+rawB.toFixed(4)+' m='+rawM.toFixed(4)+' h='+rawH.toFixed(4));
-        console.log('[WF-DIAG]   JOINT-NORM:   b='+bv.toFixed(3)+' m='+mv.toFixed(3)+' h='+hv.toFixed(3));
-        console.log('[WF-DIAG]   env='+env.toFixed(3)+' centroid='+centroid.toFixed(3)+' tonalAmt='+tonalAmt.toFixed(3)+' peakAmt='+peakAmt.toFixed(3));
-        console.log('[WF-DIAG]   RGB OUT: rgb('+(cR|0)+','+(cG|0)+','+(cB|0)+')  vs base rgb('+dr+','+dg+','+db+')');
-      }
-      console.log('[WF-DIAG] ─────────────────────────────────────────────────────');
-    }
     setWfBass(bN);setWfMid(mN);setWfHigh(hN);
     // Broadcast at WF_W samples per band (24,000 → ~400KB total per track load).
     // Original 48,000-sample resolution caused ~800KB and WebSocket backpressure
