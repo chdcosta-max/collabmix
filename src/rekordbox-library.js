@@ -428,6 +428,47 @@ class RekordboxLibrary {
     };
   }
 
+  /** Derive a per-deck beat grid from PQTZ entries.
+   *
+   *  Returns { bpm, beatPeriodSec, beatPhaseFrac, beatPhaseSec,
+   *            firstBar1AnchorSec, source: "rekordbox" }
+   *  with dimensions matching what useBPM emits, so consumers can
+   *  swallow it as a drop-in replacement for `bpm.results[deck]`.
+   *
+   *  Returns null when no PQTZ tag is available for this track. */
+  async getBeatGrid(trackId) {
+    const parsed = await this.getAnlz(trackId);
+    if (!parsed) return null;
+    const pqtz = parsed.tags.find(
+      t => t.type === "PQTZ" && Array.isArray(t.entries) && t.entries.length >= 2
+    );
+    if (!pqtz) return null;
+    const entries = pqtz.entries;
+    // First bar-1 downbeat: first entry where beat === 1. Falls back to
+    // entries[0] if every entry is non-1 (Rekordbox sometimes only stores
+    // off-beats for sampler tracks — rare).
+    const firstDb = entries.find(e => e.beat === 1) || entries[0];
+    const firstBar1AnchorSec = firstDb.time / 1000;
+    // Beat period: prefer the time-delta between the first two entries
+    // (handles slight per-beat tempo variation gracefully). Fall back to
+    // tempo field if entries are spaced unusually (e.g. only one beat-1
+    // entry in a very short loop).
+    const deltaMs = entries[1].time - entries[0].time;
+    const beatPeriodSec = deltaMs > 0
+      ? deltaMs / 1000
+      : 60 / (entries[0].tempo / 100);
+    if (!(beatPeriodSec > 0)) return null;
+    const bpm = entries[0].tempo / 100;
+    return {
+      bpm,
+      beatPeriodSec,
+      beatPhaseFrac: firstBar1AnchorSec / beatPeriodSec,
+      beatPhaseSec:  firstBar1AnchorSec % beatPeriodSec,
+      firstBar1AnchorSec,
+      source: "rekordbox",
+    };
+  }
+
   /** Release sql.js memory. */
   disconnect() {
     try { this._db.close(); } catch {}

@@ -13,6 +13,16 @@ import { connectRekordboxLibrary } from "./rekordbox-library.js";
 // It should look like: wss://collabmix-server-production.up.railway.app
 const SERVER_URL = "wss://collabmix-server-production.up.railway.app";
 
+// ── Feature flags ─────────────────────────────────────────────
+// USE_RB_GRID: when a track loaded onto a deck matches an entry in the user's
+// connected Rekordbox library, override the analyzer's beat grid
+// (beatPeriodSec / beatPhaseFrac / beatPhaseSec / firstBar1AnchorSec) with
+// Rekordbox's PQTZ-derived values for that deck. Waveform rendering is
+// unaffected — every track renders through the local analyzer's 3-band output
+// + the new spectral color formula, so all tracks look identical regardless
+// of source. Flip to false to use analyzer grid everywhere.
+const USE_RB_GRID = true;
+
 // ── Room ID Utilities ────────────────────────────────────────
 function getOrCreateRoomId() {
   const params = new URLSearchParams(window.location.search);
@@ -2855,6 +2865,12 @@ function WF({ bands, peaks, freq, prog, onSeek, h=80, hotCues=[], loopStart=null
       const GAMMA=1.4;
       const heights=new Float32Array(W);
       const envs=new Float32Array(W);
+      // Per-column bv/mv/hv preserved so Pass 2 can drive spectral color from
+      // the same source data as the height calculation. Without this we'd be
+      // recomputing band peaks per pixel in the color pass.
+      const colB=new Float32Array(W);
+      const colM=new Float32Array(W);
+      const colH=new Float32Array(W);
       for(let x=0;x<W;x++){
         const i0=Math.floor(x*len/W), i1=Math.min(len-1,Math.floor((x+1)*len/W));
         let bv=0,mv=0,hv=0;
@@ -2863,6 +2879,7 @@ function WF({ bands, peaks, freq, prog, onSeek, h=80, hotCues=[], loopStart=null
           const mk=mArr?mArr[k]||0:0; if(mk>mv)mv=mk;
           const hk=hArr?hArr[k]||0:0; if(hk>hv)hv=hk;
         }
+        colB[x]=bv; colM[x]=mv; colH[x]=hv;
         const env=bv>mv?(bv>hv?bv:hv):(mv>hv?mv:hv);
         envs[x]=env;
         heights[x]=env<=0?0:Math.min(maxH,Math.pow(env,GAMMA)*maxH);
@@ -2892,14 +2909,36 @@ function WF({ bands, peaks, freq, prog, onSeek, h=80, hotCues=[], loopStart=null
       ctx.closePath();
       ctx.fill();
 
-      // ── Pass 2: per-column amplitude overlay. Brightens loud columns with
-      // a 1px vertical rect across the envelope at alpha ∝ amplitude. Played
-      // columns get a 1.4× multiplier so the played region reads brighter.
-      ctx.fillStyle=`rgb(${r},${g},${b})`;
+      // ── Pass 2: per-column SPECTRAL color overlay. Deck color is the base;
+      // spectral centroid (bv/mv/hv balance) modulates tone — bass darkens,
+      // highs lighten — and full-amplitude peaks bleach toward white. Played
+      // columns get a 1.4× alpha multiplier so the played region still reads
+      // brighter. Deck identity (violet A / teal B) remains dominant via the
+      // Pass 1 silhouette gradient plus the base color in this pass.
       for(let x=0;x<W;x++){
         const h=heights[x];
         if(h<=0) continue;
         const env=envs[x];
+        const bv=colB[x], mv=colM[x], hv=colH[x];
+        // Spectral centroid: 0 = all bass, 1 = all high.
+        const total=bv+mv+hv+1e-6;
+        const centroid=(mv*0.5+hv*1.0)/total;
+        const tonalAmt=(centroid-0.5)*0.5;   // −0.25..+0.25
+        let cR=r,cG=g,cB=b;
+        if(tonalAmt>0){
+          cR=r+(255-r)*tonalAmt;
+          cG=g+(255-g)*tonalAmt;
+          cB=b+(255-b)*tonalAmt;
+        } else {
+          const k=1+tonalAmt;                  // 0.75..1.0 — darken on bass
+          cR=r*k; cG=g*k; cB=b*k;
+        }
+        // Peak push toward white at high amplitude.
+        const peakAmt=Math.pow(env,1.5)*0.65;
+        cR=cR+(255-cR)*peakAmt;
+        cG=cG+(255-cG)*peakAmt;
+        cB=cB+(255-cB)*peakAmt;
+        ctx.fillStyle=`rgb(${cR|0},${cG|0},${cB|0})`;
         const playedMul=x<px?1.40:1.0;
         ctx.globalAlpha=Math.min(1,Math.pow(env,0.75)*0.55*playedMul);
         ctx.fillRect(x,center-h,1,h*2+1);
@@ -3240,17 +3279,37 @@ function AnimatedZoomedWF({ bands, dur, progRef, onSeek, h=96, windowSec=8, beat
         ctx.lineWidth=Math.max(0.5,0.5*dpr);
         ctx.stroke();
 
-        // ── Pass 2b: per-column brightness overlay. Aggressive dynamic range —
-        // gamma 0.55 stretches the curve so peaks dominate (env=0.5 → ~0.69
-        // alpha, env=1.0 → ~0.95). Combined with the very dim Pass 2a baseline,
-        // quiet sections stay translucent (~0.15 total) while loud drops
-        // composite up near 0.98. Per-column 1px rects keep amplitude
-        // transitions vertically sharp — kicks/snares pop as crisp edges.
-        ctx.fillStyle=`rgb(${dr},${dg},${db})`;
+        // ── Pass 2b: per-column SPECTRAL color overlay (replaces monochrome
+        // deck-color fill). Deck color is the base; spectral centroid
+        // (colB/colM/colH balance) modulates tone — bass darkens, highs
+        // lighten — and full-amplitude peaks bleach toward white. Deck
+        // identity (violet A / teal B) stays dominant via Pass 2a's silhouette
+        // gradient plus the base color in this pass. Aggressive dynamic range
+        // on alpha (gamma 0.55) so peaks dominate (env=0.5 → ~0.69 alpha,
+        // env=1.0 → ~0.95). Per-column 1px rects keep amplitude transitions
+        // vertically sharp — kicks/snares pop as crisp edges.
         for(let dx=0;dx<physW;dx++){
           const h=heights[dx];
           if(h<=0) continue;
           const env=envs[dx];
+          const bv=colB[dx], mv=colM[dx], hv=colH[dx];
+          const total=bv+mv+hv+1e-6;
+          const centroid=(mv*0.5+hv*1.0)/total;
+          const tonalAmt=(centroid-0.5)*0.5;
+          let cR=dr,cG=dg,cB=db;
+          if(tonalAmt>0){
+            cR=dr+(255-dr)*tonalAmt;
+            cG=dg+(255-dg)*tonalAmt;
+            cB=db+(255-db)*tonalAmt;
+          } else {
+            const k=1+tonalAmt;
+            cR=dr*k; cG=dg*k; cB=db*k;
+          }
+          const peakAmt=Math.pow(env,1.5)*0.65;
+          cR=cR+(255-cR)*peakAmt;
+          cG=cG+(255-cG)*peakAmt;
+          cB=cB+(255-cB)*peakAmt;
+          ctx.fillStyle=`rgb(${cR|0},${cG|0},${cB|0})`;
           ctx.globalAlpha=Math.min(1,Math.pow(env,0.55)*0.95);
           ctx.fillRect(dx,center-h,1,h*2+1);
         }
@@ -5166,14 +5225,37 @@ export default function CollabMix({ initialPage = "landing", djName = null }) {
   const rtcReconnectTimerRef    = useRef(null); // pending reconnect timer
   const [rtcReconnectExhausted, setRtcReconnectExhausted] = useState(false);
 
-  const bpm = useBPM();
+  const bpmRaw = useBPM();
   const rec = useRecorder({ engineRef: eng });
   const lib = useLibrary();
 
   // ── Rekordbox library (optional): decrypts master.db + reads .EXT files
-  //    to render Rekordbox-quality colored waveforms on the decks ──
+  //    to source per-track beat grids (PQTZ) for tracks the user has in
+  //    Rekordbox. Waveform rendering always uses the local analyzer's 3-band
+  //    output + the spectral color formula so all tracks render identically
+  //    regardless of source. PWV5 / PWV4 readers stay available for future
+  //    cue-point rendering but are not on the runtime render path. ──
   const [rkLib, setRkLib] = useState(null);
   const [rkStatus, setRkStatus] = useState({ phase: "idle" }); // idle | connecting | ready | error
+  const [rkGridA, setRkGridA] = useState(null);
+  const [rkGridB, setRkGridB] = useState(null);
+  // effectiveBpmResults: per-deck beat-grid values that prefer Rekordbox's
+  // PQTZ-derived grid (when present and USE_RB_GRID is on) over the analyzer's
+  // values. Drop-in shape match for bpmRaw.results.A / .B — same field names,
+  // same units. Consumers below read `bpm.results.X` and transparently get
+  // either the override or the analyzer value depending on availability.
+  const effectiveBpmResults = useMemo(() => ({
+    A: (USE_RB_GRID && rkGridA) ? { ...bpmRaw.results.A, ...rkGridA } : bpmRaw.results.A,
+    B: (USE_RB_GRID && rkGridB) ? { ...bpmRaw.results.B, ...rkGridB } : bpmRaw.results.B,
+  }), [bpmRaw.results, rkGridA, rkGridB]);
+  // bpm: shadow of the useBPM return with .results overridden. All other
+  // hook properties (analyze, etc.) preserved via spread. Lets every
+  // consumer of bpm.results read the overridden grid without any site-by-
+  // site rename. To disable Rekordbox grids globally: flip USE_RB_GRID.
+  const bpm = useMemo(() => ({
+    ...bpmRaw,
+    results: effectiveBpmResults,
+  }), [bpmRaw, effectiveBpmResults]);
   const connectRekordbox = useCallback(async () => {
     setRkStatus({ phase: "connecting" });
     try {
@@ -5450,37 +5532,42 @@ export default function CollabMix({ initialPage = "landing", djName = null }) {
   const [libLoadB, setLibLoadB] = useState(null);
   const [partnerLibrary, setPartnerLibrary] = useState([]);
 
-  // Rekordbox waveform override — when a track loads onto a deck AND the
+  // Rekordbox beat-grid override — when a track loads onto a deck AND the
   // user has a Rekordbox library connected AND the track matches a Rekordbox
-  // entry, fetch the .EXT-derived bands and replace the audio-decoded ones.
-  // The Deck still runs its own decode (used as fallback while Rekordbox
-  // lookup is in flight), but the Rekordbox bands win the last-write race
-  // when they arrive.
+  // entry, fetch the PQTZ-derived grid and store it in rkGridA / rkGridB.
+  // effectiveBpmResults (declared above) prefers this over the analyzer's
+  // grid for that deck. Waveform rendering is unaffected — every track
+  // renders through the local analyzer's 3-band output + spectral color
+  // formula for visual uniformity across the entire library. Falls back
+  // cleanly to analyzer grid when:
+  //   • rkLib not connected, or
+  //   • track has no Rekordbox match, or
+  //   • PQTZ is absent for that track (rare; ~1-2% of Rekordbox libraries).
   // NOTE: must live AFTER libLoadA/libLoadB declarations — the deps array
   // evaluates at render time and would hit a TDZ if hoisted above.
   useEffect(() => {
-    if (!rkLib || !libLoadA?.file) return;
+    if (!rkLib || !libLoadA?.file) { setRkGridA(null); return; }
     let cancelled = false;
     (async () => {
       const match = rkLib.matchTrack(libLoadA.file);
-      if (!match) return;
-      const bands = await rkLib.getWaveformBands(match.id);
-      if (cancelled || !bands) return;
-      setWfA({ ...bands, name: libLoadA.track?.title || libLoadA.file.name });
-    })().catch(e => console.warn("[REKORDBOX-A] band fetch failed:", e.message));
-    return () => { cancelled = true; };
+      if (!match) { if (!cancelled) setRkGridA(null); return; }
+      const grid = await rkLib.getBeatGrid(match.id);
+      if (cancelled) return;
+      setRkGridA(grid || null);
+    })().catch(e => console.warn("[REKORDBOX-A] grid fetch failed:", e.message));
+    return () => { cancelled = true; setRkGridA(null); };
   }, [rkLib, libLoadA]);
   useEffect(() => {
-    if (!rkLib || !libLoadB?.file) return;
+    if (!rkLib || !libLoadB?.file) { setRkGridB(null); return; }
     let cancelled = false;
     (async () => {
       const match = rkLib.matchTrack(libLoadB.file);
-      if (!match) return;
-      const bands = await rkLib.getWaveformBands(match.id);
-      if (cancelled || !bands) return;
-      setWfB({ ...bands, name: libLoadB.track?.title || libLoadB.file.name });
-    })().catch(e => console.warn("[REKORDBOX-B] band fetch failed:", e.message));
-    return () => { cancelled = true; };
+      if (!match) { if (!cancelled) setRkGridB(null); return; }
+      const grid = await rkLib.getBeatGrid(match.id);
+      if (cancelled) return;
+      setRkGridB(grid || null);
+    })().catch(e => console.warn("[REKORDBOX-B] grid fetch failed:", e.message));
+    return () => { cancelled = true; setRkGridB(null); };
   }, [rkLib, libLoadB]);
 
   // Driver model — loader-is-driver. Server-authoritative: room.deckDrivers
