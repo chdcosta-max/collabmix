@@ -2862,33 +2862,9 @@ function VU({ an, color, w=100 }) {
   return <canvas ref={ref} width={w} height={6} style={{width:"100%",borderRadius:2}}/>;
 }
 
-// ── Spectral color anchors per deck ──
-// The waveform's per-column color lerps between bass and treble anchors based
-// on the spectral centroid of that column. Bass-heavy → bassAnchor; treble-
-// heavy → trebleAnchor; mixed → in between. Then peak-amplitude bleaches
-// toward white. This gives a Rekordbox-style hue differentiation between
-// kicks (deep saturated) and hi-hats (light cool) within each deck's identity
-// palette, rather than the prior shade-only modulation around a single base.
-//
-// Returns { bass:[r,g,b], treble:[r,g,b] } for a given deck color. Hardcoded
-// per known deck because identity-mapped anchors looked better than a single
-// derivation formula across both palettes.
-function deckSpectralAnchors(colorHex) {
-  const c = (colorHex || "#FFFFFF").toUpperCase();
-  // Deck A — violet (#8068E0 / rgb(123,97,255))
-  if (c === "#8068E0") return { bass: [80, 30, 180], treble: [180, 200, 255] };
-  // Deck B — teal (#4DA396 / rgb(0,191,165))
-  if (c === "#4DA396") return { bass: [0, 80, 90], treble: [160, 240, 240] };
-  // Fallback: derive from base color (less dramatic but functional for any
-  // future deck identity).
-  const r = parseInt(c.slice(1, 3), 16) || 255;
-  const g = parseInt(c.slice(3, 5), 16) || 255;
-  const b = parseInt(c.slice(5, 7), 16) || 255;
-  return {
-    bass:   [Math.round(r * 0.65), Math.round(g * 0.31), Math.round(b * 0.71)],
-    treble: [Math.round(r + (255 - r) * 0.43), Math.round(g + (255 - g) * 0.65), b],
-  };
-}
+// (Spectral color helper from Phase 2 v3 removed — both renderers now use
+//  calm monochrome amplitude per design brief. See PHASE_2_STATUS.md for
+//  the spectral attempt's diagnostic data + future revisit notes.)
 
 function WF({ bands, peaks, freq, prog, onSeek, h=80, hotCues=[], loopStart=null, loopEnd=null, loopActive=false, bpm=null, dur=0, beatPhaseFrac=null, color='#ffffff' }) {
   const ref=useRef(null);
@@ -2969,33 +2945,17 @@ function WF({ bands, peaks, freq, prog, onSeek, h=80, hotCues=[], loopStart=null
       ctx.closePath();
       ctx.fill();
 
-      // ── Pass 2: per-column SPECTRAL color overlay.
-      // Lerp between deck-specific bass and treble anchor colors based on
-      // spectral centroid; then bleach toward white at high amplitude.
-      // Produces Rekordbox-style hue differentiation: bass-heavy columns are
-      // clearly deep/saturated, treble-heavy columns clearly light/cool,
-      // full-spectrum peaks bleach white. Replaces v2's modulate-around-base
-      // formula which only produced shade variation within one hue family.
-      const anchors=deckSpectralAnchors(color);
-      const bA=anchors.bass, tA=anchors.treble;
+      // ── Pass 2: per-column amplitude overlay — calm, monochrome.
+      // Solid deck-color fill with env-driven alpha. Per design brief: the
+      // small in-deck waveform reads as "calm amplitude, not spectral" —
+      // spectral colors live only in AnimatedZoomedWF (top zoomed area).
+      // Per-column color was Phase 2 v3 work; reverted to monochrome here for
+      // visual restraint at small (h=40) size.
+      ctx.fillStyle=`rgb(${r},${g},${b})`;
       for(let x=0;x<W;x++){
         const h=heights[x];
         if(h<=0) continue;
         const env=envs[x];
-        const bv=colB[x], mv=colM[x], hv=colH[x];
-        // Spectral centroid: 0 = all bass, 1 = all high.
-        const total=bv+mv+hv+1e-6;
-        const centroid=(mv*0.5+hv*1.0)/total;
-        // Lerp anchor → anchor
-        let cR=bA[0]+(tA[0]-bA[0])*centroid;
-        let cG=bA[1]+(tA[1]-bA[1])*centroid;
-        let cB=bA[2]+(tA[2]-bA[2])*centroid;
-        // Peak push toward white at high amplitude.
-        const peakAmt=Math.pow(env,2.0)*0.85;
-        cR=cR+(255-cR)*peakAmt;
-        cG=cG+(255-cG)*peakAmt;
-        cB=cB+(255-cB)*peakAmt;
-        ctx.fillStyle=`rgb(${cR|0},${cG|0},${cB|0})`;
         const playedMul=x<px?1.40:1.0;
         ctx.globalAlpha=Math.min(1,Math.pow(env,0.75)*0.55*playedMul);
         ctx.fillRect(x,center-h,1,h*2+1);
@@ -3336,32 +3296,17 @@ function AnimatedZoomedWF({ bands, dur, progRef, onSeek, h=96, windowSec=8, beat
         ctx.lineWidth=Math.max(0.5,0.5*dpr);
         ctx.stroke();
 
-        // ── Pass 2b: per-column SPECTRAL color overlay.
-        // Lerp between deck-specific bass and treble anchor colors based on
-        // spectral centroid; then bleach toward white at high amplitude.
-        // Produces Rekordbox-style hue differentiation: bass-heavy columns
-        // are clearly deep/saturated, treble-heavy columns clearly light/cool,
-        // full-spectrum peaks bleach white. Replaces v2's modulate-around-base
-        // formula which only produced shade variation within one hue family.
-        // Alpha gamma 0.55 preserved so peaks still dominate; per-column 1px
-        // rects keep amplitude transitions vertically sharp.
-        const anchors=deckSpectralAnchors(deckColor);
-        const bA=anchors.bass, tA=anchors.treble;
+        // ── Pass 2b: per-column amplitude overlay — calm, monochrome.
+        // Solid deck-color fill with env-driven alpha. Reverted from Phase 2
+        // v3's anchor-lerp spectral formula — the spectral attempt is
+        // preserved as historical record in PHASE_2_STATUS.md but is not on
+        // the runtime render path. Per design brief: "single hue per deck,
+        // no spectral, no peak-bleach." Beat grid positions unchanged.
+        ctx.fillStyle=`rgb(${dr},${dg},${db})`;
         for(let dx=0;dx<physW;dx++){
           const h=heights[dx];
           if(h<=0) continue;
           const env=envs[dx];
-          const bv=colB[dx], mv=colM[dx], hv=colH[dx];
-          const total=bv+mv+hv+1e-6;
-          const centroid=(mv*0.5+hv*1.0)/total;
-          let cR=bA[0]+(tA[0]-bA[0])*centroid;
-          let cG=bA[1]+(tA[1]-bA[1])*centroid;
-          let cB=bA[2]+(tA[2]-bA[2])*centroid;
-          const peakAmt=Math.pow(env,2.0)*0.85;
-          cR=cR+(255-cR)*peakAmt;
-          cG=cG+(255-cG)*peakAmt;
-          cB=cB+(255-cB)*peakAmt;
-          ctx.fillStyle=`rgb(${cR|0},${cG|0},${cB|0})`;
           ctx.globalAlpha=Math.min(1,Math.pow(env,0.55)*0.95);
           ctx.fillRect(dx,center-h,1,h*2+1);
         }
@@ -4258,26 +4203,15 @@ function Deck({ id, ch, ctx:ac, color, local, remote, onChange, midi:mt, bpmResu
         if(hv>highArr[x])highArr[x]=hv;
       }
     }
-    // JOINT normalize all three bands to the SAME maximum so spectral contrast
-    // is preserved. Previously each band was normalized independently to its
-    // own track-wide max, which made bass-heavy moments and hi-hat sections
-    // both top out at 1.0 in their respective bands. That killed the per-column
-    // centroid math: a kick (bass=track_max, mid≈0, high≈0) looked spectrally
-    // similar to a hi-hat (bass≈0, mid≈0, high=track_max) after per-band norm.
-    // Joint normalization keeps the relative band amplitudes honest — a kick
-    // gets bass=1.0, mid≈0.1, high≈0.05; a hi-hat gets bass≈0.05, mid≈0.2,
-    // high=1.0. The spectral color formula then produces dramatic contrast.
-    let jointMax=0;
-    for(let i=0;i<bassArr.length;i++){
-      if(bassArr[i]>jointMax)jointMax=bassArr[i];
-      if(midArr[i]>jointMax)jointMax=midArr[i];
-      if(highArr[i]>jointMax)jointMax=highArr[i];
-    }
-    if(jointMax<0.0001)jointMax=1;
-    const normJoint=(arr)=>{const out=new Array(arr.length);for(let i=0;i<arr.length;i++)out[i]=Math.round(arr[i]/jointMax*1000)/1000;return out;};
-    const bN=normJoint(bassArr),mN=normJoint(midArr),hN=normJoint(highArr);
-    console.log('[WF-BANDS] Phase 2 joint-norm path active for deck', id, '— jointMax=', jointMax.toFixed(4),
-      'WF_W=', WF_W, '— bass/mid/high arrays now share a common scale so spectral contrast is preserved.');
+    // Per-band normalization. Each band scales to its own track-wide max.
+    // Joint normalization (Phase 2 v2) was only needed for the spectral
+    // color formula, which has been reverted in favor of calm monochrome
+    // amplitude rendering — see PHASE_2_STATUS.md for the spectral attempt's
+    // history. Per-band norm keeps the envelope flat and the silhouette
+    // smooth across the full track.
+    const normBand=(arr)=>{let mx=0;for(let i=0;i<arr.length;i++)mx=Math.max(mx,arr[i]);if(mx<0.0001)return new Array(arr.length).fill(0);const out=new Array(arr.length);for(let i=0;i<arr.length;i++)out[i]=Math.round(arr[i]/mx*1000)/1000;return out;};
+    const bN=normBand(bassArr),mN=normBand(midArr),hN=normBand(highArr);
+    console.log('[WF-BANDS] band extract active for deck', id, '(WF_W=', WF_W, ')');
     setWfBass(bN);setWfMid(mN);setWfHigh(hN);
     // Broadcast at WF_W samples per band (24,000 → ~400KB total per track load).
     // Original 48,000-sample resolution caused ~800KB and WebSocket backpressure
@@ -4334,62 +4268,63 @@ function Deck({ id, ch, ctx:ac, color, local, remote, onChange, midi:mt, bpmResu
   return (
     <div style={{background:D, border:`1px solid ${play?color+"44":"rgba(255,255,255,0.06)"}`, borderRadius:10, overflow:"hidden", display:"flex", flexDirection:"column", boxShadow:play?`0 0 24px ${color}14`:`0 2px 12px rgba(0,0,0,.5)`, transition:"all .3s"}}>
 
-      {/* ── HEADER: badge | track | bpm ── */}
-      <div style={{display:"flex", alignItems:"stretch", minHeight:54, borderBottom:BD}}>
-        <div style={{width:52, flexShrink:0, background:`linear-gradient(180deg,${color}12,${color}06)`, borderRight:`1px solid ${color}22`, display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"center", gap:4}}>
-          <span style={{fontFamily:"'Inter',sans-serif", fontWeight:500, fontSize:24, color, lineHeight:1, letterSpacing:-1}}>{id}</span>
-          <span style={{fontSize:7, color:color+"88", fontFamily:"'Inter',sans-serif", fontWeight:500, letterSpacing:2}}>{local?"YOU":"PRTNR"}</span>
-          {play&&<div style={{width:4,height:4,borderRadius:"50%",background:color,boxShadow:`0 0 8px ${color}`,animation:"blink 1s infinite"}}/>}
+      {/* ── HEADER: 3-part identity row + title/metadata + BPM display ── */}
+      <div style={{padding:"6px 12px 8px", borderBottom:BD, display:"flex", flexDirection:"column", gap:4}}
+        onDragOver={e=>{e.preventDefault();e.stopPropagation();setDragOver(true);}}
+        onDragLeave={()=>setDragOver(false)}
+        onDrop={e=>{e.preventDefault();e.stopPropagation();setDragOver(false);const f=e.dataTransfer.files[0];if(f&&f.type.startsWith("audio/")){load(f);return;}try{const d=JSON.parse(e.dataTransfer.getData("application/json"));if(d?.trackId&&onLibraryTrackDrop)onLibraryTrackDrop(d.trackId);}catch{}}}>
+        {/* 3-part identity row: deck letter · you/partner · play indicator */}
+        <div style={{display:"flex", alignItems:"center", gap:6, fontSize:10, fontFamily:"'Inter',sans-serif", letterSpacing:0}}>
+          <span style={{color, fontWeight:600, letterSpacing:.5}}>{id}</span>
+          <span style={{color:"#605C56"}}>·</span>
+          <span style={{color:"#9B9690", fontWeight:500}}>{isDriver?"you":"partner"}</span>
+          {play&&<span style={{width:5,height:5,borderRadius:"50%",background:color,boxShadow:`0 0 6px ${color}`,marginLeft:4}}/>}
+          {bpmResult?.analyzing&&<span style={{fontSize:8, color:"#f59e0b", marginLeft:"auto", letterSpacing:.5}}>analyzing…</span>}
         </div>
-
-        <div onClick={()=>fr.current?.click()}
-          onDragOver={e=>{e.preventDefault();e.stopPropagation();setDragOver(true);}}
-          onDragLeave={()=>setDragOver(false)}
-          onDrop={e=>{e.preventDefault();e.stopPropagation();setDragOver(false);const f=e.dataTransfer.files[0];if(f&&f.type.startsWith("audio/")){load(f);return;}try{const d=JSON.parse(e.dataTransfer.getData("application/json"));if(d?.trackId&&onLibraryTrackDrop)onLibraryTrackDrop(d.trackId);}catch{}}}
-          style={{flex:1, padding: buf ? "0 14px" : "6px 10px", cursor:"pointer", display:"flex", flexDirection:"column", justifyContent:"center", background:dragOver?color+"08":"transparent", transition:"background .12s", minWidth:0}}>
-          {(buf||remote?.trackName)?(
-            <>
-              <div style={{fontSize:13, fontWeight:500, color:"#E8E3D8", fontFamily:"'Inter',sans-serif", whiteSpace:"nowrap", overflow:"hidden", textOverflow:"ellipsis"}}>{name||remote?.trackName||"—"}</div>
-              <div style={{fontSize:9, color:"#9B9690", fontFamily:"'Inter',sans-serif", marginTop:3, letterSpacing:.3}}>{buf?`${fmt(dur)} · ${trackArtist||`${(buf.sampleRate/1000).toFixed(1)}kHz · ${buf.numberOfChannels===2?"STEREO":"MONO"}`}`:`${fmt(remote?.duration||0)} · ${remote?.artist||"—"}`}</div>
-            </>
-          ):(
-            <div style={{
-              display:"flex", alignItems:"center", gap:12, padding:"8px 12px",
-              border:`1.5px dashed ${dragOver?color:color+"44"}`,
-              borderRadius:8,
-              background: dragOver ? color+"10" : "transparent",
-              transition:"all .12s",
-            }}>
-              <div style={{
-                width:36, height:36, borderRadius:"50%",
-                border:`1.5px solid ${dragOver?color:color+"66"}`,
-                display:"flex", alignItems:"center", justifyContent:"center",
-                color:dragOver?color:color+"cc",
-                fontSize:22, fontWeight:300, flexShrink:0,
-                background: dragOver ? color+"22" : "transparent",
-              }}>+</div>
-              <div>
-                <div style={{fontSize:12, fontWeight:600, color:dragOver?color:color+"dd", fontFamily:"'Inter',sans-serif", letterSpacing:1.5}}>{dragOver?"DROP HERE":"LOAD TRACK"}</div>
-                <div style={{fontSize:9, color:"#605C56", marginTop:2, fontFamily:"'Inter',sans-serif", letterSpacing:.5}}>click or drag · mp3 wav flac aac</div>
+        {/* Title + metadata + key + BPM row */}
+        <div onClick={()=>{if(!(buf||remote?.trackName))fr.current?.click();}}
+          style={{display:"flex", alignItems:"flex-end", gap:14, background:dragOver?color+"08":"transparent", borderRadius:6, transition:"background .12s", cursor:(buf||remote?.trackName)?"default":"pointer", minWidth:0}}>
+          <div style={{flex:1, minWidth:0}}>
+            {(buf||remote?.trackName)?(
+              <>
+                <div style={{fontSize:20, fontWeight:600, color:"#E8E3D8", fontFamily:"'Inter',sans-serif", letterSpacing:-0.3, lineHeight:1.15, whiteSpace:"nowrap", overflow:"hidden", textOverflow:"ellipsis"}}>
+                  {name||remote?.trackName||"—"}
+                </div>
+                <div style={{fontSize:11, color:"#9B9690", fontFamily:"'Inter',sans-serif", marginTop:3, whiteSpace:"nowrap", overflow:"hidden", textOverflow:"ellipsis"}}>
+                  <span style={{fontVariantNumeric:"tabular-nums"}}>{fmt(buf?dur:(remote?.duration||0))}</span>
+                  {buf && <>
+                    <span style={{color:"#605C56"}}> · </span>
+                    <span style={{fontVariantNumeric:"tabular-nums"}}>{(buf.sampleRate/1000).toFixed(1)}kHz</span>
+                    <span style={{color:"#605C56"}}> · </span>
+                    <span>{buf.numberOfChannels===2?"Stereo":"Mono"}</span>
+                  </>}
+                  {trackArtist && <>
+                    <span style={{color:"#605C56"}}> · </span>
+                    <span>{trackArtist}</span>
+                  </>}
+                  {!buf && remote?.artist && <>
+                    <span style={{color:"#605C56"}}> · </span>
+                    <span>{remote.artist}</span>
+                  </>}
+                </div>
+              </>
+            ):(
+              <div style={{padding:"4px 0", color:dragOver?color:color+"99", fontFamily:"'Inter',sans-serif", fontSize:13, fontWeight:500, letterSpacing:.3}}>
+                {dragOver?"Drop track here":"Click or drag to load track"}
               </div>
-            </div>
-          )}
-        </div>
-        <input ref={fr} type="file" accept="audio/*" style={{display:"none"}} onChange={e=>{ const f=e.target.files[0]; e.target.value=""; if(f) load(f); }}/>
-
-        {/* KEY display */}
-        {(()=>{const effectiveKey=deckKey||remote?.key;const ck=effectiveKey?CAMELOT[effectiveKey]:null;const km=ck?.endsWith("A");return ck?(
-          <div style={{flexShrink:0,padding:"0 10px",borderLeft:BD,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",gap:2,minWidth:52}}>
-            <div style={{fontSize:11,fontFamily:"'Inter',sans-serif",fontWeight:500,color:km?"#9B7EC8":color,background:(km?"#9B7EC8":color)+"18",borderRadius:4,padding:"2px 6px",letterSpacing:.5}}>{ck}</div>
-            <div style={{fontSize:7,color:"#9B9690",fontFamily:"'Inter',sans-serif",letterSpacing:1}}>{effectiveKey}</div>
+            )}
           </div>
-        ):null;})()}
-        <div style={{flexShrink:0, padding:"0 14px", borderLeft:BD, display:"flex", flexDirection:"column", alignItems:"flex-end", justifyContent:"center", gap:4, minWidth:96}}>
-          {bpmResult?.analyzing&&<div style={{fontSize:7,color:"#f59e0b",fontFamily:"'Inter',sans-serif",animation:"pulse .8s infinite"}}>ANA...</div>}
-          <div style={{textAlign:"right"}}>
+          {/* KEY display (compact, optional) */}
+          {(()=>{const effectiveKey=deckKey||remote?.key;const ck=effectiveKey?CAMELOT[effectiveKey]:null;const km=ck?.endsWith("A");return ck?(
+            <div style={{flexShrink:0, alignSelf:"center"}}>
+              <div style={{fontSize:11, fontFamily:"'Inter',sans-serif", fontWeight:500, color:km?"#9B7EC8":"#C9B79C", background:(km?"#9B7EC8":"#C9B79C")+"18", borderRadius:4, padding:"2px 6px", letterSpacing:.5, fontVariantNumeric:"tabular-nums"}}>{ck}</div>
+            </div>
+          ):null;})()}
+          {/* BPM display — LCD-style oak, tabular-nums, bold */}
+          <div style={{flexShrink:0, textAlign:"right", alignSelf:"flex-end"}}>
             {(()=>{
               const effectiveBpm = bpmResult?.bpm ?? remote?.bpm;
-              const rateApplies  = !!bpmResult?.bpm; // local rate only scales when WE'RE driving the deck
+              const rateApplies  = !!bpmResult?.bpm;
               const adjustedBpm  = effectiveBpm ? effectiveBpm * (rateApplies ? rate : 1) : null;
               const pctOff       = rateApplies && Math.abs(rate - 1) > 0.001 ? (rate - 1) * 100 : null;
               const pctColor     = pctOff === null ? null
@@ -4397,20 +4332,20 @@ function Deck({ id, ch, ctx:ac, color, local, remote, onChange, midi:mt, bpmResu
                 : Math.abs(pctOff) > 6  ? "#f59e0b"
                 : "#9B9690";
               return (
-                <div style={{display:"flex", alignItems:"baseline", gap:6, justifyContent:"flex-end"}}>
-                  <div title={effectiveBpm?`Natural BPM ${effectiveBpm.toFixed(1)}${pctOff!==null?` · pitch ${pctOff>0?"+":""}${pctOff.toFixed(1)}%`:""}`:undefined} style={{fontSize:32, fontFamily:"'Inter',sans-serif", fontWeight:600, color:effectiveBpm?"#C9B79C":"#2a2a3a", lineHeight:0.95, letterSpacing:-0.5, textShadow:effectiveBpm?"0 0 18px #C9B79C22":"none"}}>{adjustedBpm!=null?adjustedBpm.toFixed(1):"—"}</div>
+                <div style={{display:"flex", alignItems:"baseline", gap:5, justifyContent:"flex-end"}}>
+                  <div title={effectiveBpm?`Natural BPM ${effectiveBpm.toFixed(1)}${pctOff!==null?` · pitch ${pctOff>0?"+":""}${pctOff.toFixed(1)}%`:""}`:undefined} style={{fontSize:28, fontFamily:"'Inter',sans-serif", fontWeight:600, color:effectiveBpm?"#C9B79C":"#2a2a2a", lineHeight:0.95, letterSpacing:-0.5, fontVariantNumeric:"tabular-nums", textShadow:effectiveBpm?"0 0 12px #C9B79C22":"none"}}>{adjustedBpm!=null?adjustedBpm.toFixed(1):"—"}</div>
                   {pctOff !== null && (
-                    <div title={`Track natural BPM ${effectiveBpm.toFixed(1)} pitch-adjusted ${pctOff>0?"+":""}${pctOff.toFixed(1)}%`} style={{fontSize:9, fontFamily:"'Inter',sans-serif", color:pctColor, letterSpacing:.3}}>
+                    <div title={`Track natural BPM ${effectiveBpm.toFixed(1)} pitch-adjusted ${pctOff>0?"+":""}${pctOff.toFixed(1)}%`} style={{fontSize:9, fontFamily:"'Inter',sans-serif", color:pctColor, fontVariantNumeric:"tabular-nums"}}>
                       {pctOff>0?"+":""}{pctOff.toFixed(1)}%
                     </div>
                   )}
                 </div>
               );
             })()}
-            <div style={{fontSize:7, color:"#9B9690", fontFamily:"'Inter',sans-serif", letterSpacing:2.5, marginTop:2}}>BPM</div>
+            <div style={{fontSize:7, color:"#9B9690", fontFamily:"'Inter',sans-serif", letterSpacing:2, marginTop:2}}>BPM</div>
           </div>
-          <VU an={ch?.an} color={color}/>
         </div>
+        <input ref={fr} type="file" accept="audio/*" style={{display:"none"}} onChange={e=>{ const f=e.target.files[0]; e.target.value=""; if(f) load(f); }}/>
       </div>
 
       {/* ── OVERVIEW STRIP — full track structure ── */}
@@ -4418,20 +4353,38 @@ function Deck({ id, ch, ctx:ac, color, local, remote, onChange, midi:mt, bpmResu
         <WF bands={wfBass?{bass:wfBass,mid:wfMid,high:wfHigh}:null} peaks={wfPeaks} freq={wfFreq} prog={prog} onSeek={local?seek:remoteSeek} h={40} hotCues={hotCues} loopStart={loopStart} loopEnd={loopEnd} loopActive={loopActive} bpm={bpmResult?.bpm?(bpmResult.bpm*rate):null} dur={dur} beatPhaseFrac={bpmResult?.beatPhaseFrac??null} color={color}/>
       </div>
 
-      {/* ── HOT CUES + LOOP CONTROLS ── */}
-      <div style={{display:"flex",gap:3,padding:"5px 10px",background:"#08080e",borderBottom:"1px solid #141420",alignItems:"center"}}>
-          {/* Hot cue buttons 1-4 */}
-          {HOT_CUE_COLORS.map((c,i)=>(
-            <button key={i}
-              onClick={()=>{if(!buf)return;if(hotCues[i]!==null){seek(hotCues[i]);}else{setHotCues(p=>{const n=[...p];n[i]=prog;return n;});}}}
-              onContextMenu={e=>{e.preventDefault();if(buf)setHotCues(p=>{const n=[...p];n[i]=null;return n;});}}
-              title={hotCues[i]!==null?"Click:recall  Right-click:clear":"Click to set cue"}
-              style={{width:36,height:28,background:hotCues[i]!==null?`${c}30`:"#0e0e18",border:`1px solid ${hotCues[i]!==null?c+"88":c+"33"}`,color:hotCues[i]!==null?c:c+"66",borderRadius:5,cursor:"pointer",fontFamily:"'Inter',sans-serif",fontSize:11,fontWeight:700,transition:"all .1s",flexShrink:0,boxShadow:hotCues[i]!==null?`0 0 6px ${c}44`:"none"}}>
-              {i+1}
-            </button>
-          ))}
-          <div style={{width:1,height:22,background:"rgba(255,255,255,0.06)",margin:"0 3px",flexShrink:0}}/>
-          {/* Beat loop buttons: 1, 2, 4, 8, 16 beats */}
+      {/* ── A–D CUE CHIPS (inline) + COMPACT LOOP ROW ──
+           Per design brief: 4 cue chips below transport, NOT a side column.
+           Each chip: small color dot · cue letter · timestamp (or em-dash).
+           Click to recall (or set if unset). Right-click to clear. */}
+      <div style={{display:"flex",gap:5,padding:"6px 12px",background:"rgba(255,255,255,0.02)",borderBottom:BD,alignItems:"center"}}>
+          {HOT_CUE_COLORS.slice(0,4).map((c,i)=>{
+            const isSet = hotCues[i] != null;
+            const letter = String.fromCharCode(65+i); // A B C D
+            const ts = isSet ? fmt(hotCues[i] * dur) : "—";
+            return (
+              <button key={i}
+                onClick={()=>{if(!buf)return;if(hotCues[i]!==null){seek(hotCues[i]);}else{setHotCues(p=>{const n=[...p];n[i]=prog;return n;});}}}
+                onContextMenu={e=>{e.preventDefault();if(buf)setHotCues(p=>{const n=[...p];n[i]=null;return n;});}}
+                title={isSet?"Click to recall · Right-click to clear":"Click to set cue at playhead"}
+                style={{flex:1, height:26, padding:"0 8px",
+                  display:"flex", alignItems:"center", gap:6,
+                  background:isSet?`${c}14`:"transparent",
+                  border:`1px solid ${isSet?c+"55":"rgba(255,255,255,0.06)"}`,
+                  borderRadius:5,
+                  cursor:buf?"pointer":"default",
+                  fontFamily:"'Inter',sans-serif",
+                  flexShrink:0, minWidth:0, outline:"none",
+                  transition:"all .1s",
+                }}>
+                <span style={{width:5, height:5, borderRadius:"50%", background:c, opacity:isSet?1:0.35, flexShrink:0}}/>
+                <span style={{fontSize:11, fontWeight:600, color:isSet?"#E8E3D8":"#9B9690", letterSpacing:.3, flexShrink:0}}>{letter}</span>
+                <span style={{fontSize:10, color:isSet?"#9B9690":"#605C56", marginLeft:"auto", fontVariantNumeric:"tabular-nums", whiteSpace:"nowrap"}}>{ts}</span>
+              </button>
+            );
+          })}
+          <div style={{width:1,height:18,background:"rgba(255,255,255,0.06)",margin:"0 4px",flexShrink:0}}/>
+          {/* Beat-loop quick buttons — set + activate a loop of N beats at the playhead. */}
           {[[1,"1"],[2,"2"],[4,"4"],[8,"8"],[16,"16"]].map(([beats,label])=>(
             <button key={beats}
               onClick={()=>{
@@ -4442,26 +4395,21 @@ function Deck({ id, ch, ctx:ac, color, local, remote, onChange, midi:mt, bpmResu
                 const lEnd=Math.min(1,lStart+lDur/(buf?.duration||1));
                 setLoopStart(lStart);setLoopEnd(lEnd);setLoopActive(true);
               }}
-              style={{height:28,padding:"0 8px",background:"#0e0e18",border:"1px solid #C9B79C33",color:"#C9B79C88",borderRadius:4,cursor:"pointer",fontFamily:"'Inter',sans-serif",fontSize:10,fontWeight:600,letterSpacing:.3,flexShrink:0}}>
+              title={`Set ${beats}-beat loop at playhead`}
+              style={{height:24, width:24, background:"transparent", border:"1px solid rgba(255,255,255,0.06)", color:"#9B9690", borderRadius:4, cursor:"pointer", fontFamily:"'Inter',sans-serif", fontSize:10, fontWeight:500, flexShrink:0, outline:"none", padding:0, display:"flex", alignItems:"center", justifyContent:"center"}}>
               {label}
             </button>
           ))}
-          {/* Loop active toggle */}
           {loopStart!==null&&(
-            <button
-              onClick={()=>{
-                const nv=!loopActive;
-                setLoopActive(nv);
-                if(!nv&&src.current)src.current.loop=false;
-              }}
-              style={{height:24,padding:"0 8px",background:loopActive?"#C9B79C1e":"#08080e",border:`1px solid ${loopActive?"#C9B79C66":"#C9B79C1a"}`,color:loopActive?"#C9B79C":"#C9B79C44",borderRadius:4,cursor:"pointer",fontFamily:"'Inter',sans-serif",fontSize:9,fontWeight:loopActive?500:400}}>
-              {loopActive?"⟳ LOOP":"LOOP"}
+            <button onClick={()=>{const nv=!loopActive;setLoopActive(nv);if(!nv&&src.current)src.current.loop=false;}}
+              style={{height:24, padding:"0 8px", background:loopActive?"#C9B79C18":"transparent", border:`1px solid ${loopActive?"#C9B79C66":"rgba(255,255,255,0.06)"}`, color:loopActive?"#C9B79C":"#9B9690", borderRadius:4, cursor:"pointer", fontFamily:"'Inter',sans-serif", fontSize:9, fontWeight:500, flexShrink:0, outline:"none"}}>
+              {loopActive?"⟳ Loop":"Loop"}
             </button>
           )}
           {loopStart!==null&&(
-            <button
-              onClick={()=>{setLoopActive(false);setLoopStart(null);setLoopEnd(null);if(src.current)src.current.loop=false;}}
-              style={{height:26,width:26,background:"transparent",border:"1px solid #ef444422",color:"#ef444455",borderRadius:4,cursor:"pointer",fontSize:10}}>
+            <button onClick={()=>{setLoopActive(false);setLoopStart(null);setLoopEnd(null);if(src.current)src.current.loop=false;}}
+              title="Clear loop"
+              style={{height:24, width:24, background:"transparent", border:"1px solid rgba(239,68,68,0.20)", color:"#ef444488", borderRadius:4, cursor:"pointer", fontSize:10, flexShrink:0, outline:"none", padding:0, display:"flex", alignItems:"center", justifyContent:"center"}}>
               ✕
             </button>
           )}
@@ -4483,18 +4431,23 @@ function Deck({ id, ch, ctx:ac, color, local, remote, onChange, midi:mt, bpmResu
         </div>
       </div>
 
-      {/* ── TRANSPORT ── */}
-      <div style={{display:"flex", alignItems:"center", gap:6, padding:"8px 12px", borderBottom:BD}}>
-        <button onClick={(e)=>{ if(local&&cue) cue(); else if(remoteCue) remoteCue(); }} disabled={!cueEnabled} style={{height:48,padding:"0 12px",background:"rgba(255,255,255,0.04)",border:`1px solid ${cueEnabled?"rgba(255,255,255,0.06)":"rgba(255,255,255,0.06)"}`,color:cueEnabled?"#C9B79C":"rgba(255,255,255,0.06)",borderRadius:7,cursor:cueEnabled?"pointer":"default",fontFamily:"'Inter',sans-serif",fontSize:10,fontWeight:700,letterSpacing:1.5,outline:"none",flexShrink:0}}>Cue</button>
-        {/* Skip-by-one-beat arrows. Two modes:
-            - Sync engaged (quantize): snap to NEXT/PREVIOUS beat grid line
-              (Rekordbox/Serato quantize behavior). Lands the playhead on a
-              beat regardless of where it currently is between beats.
-            - Sync off (relative): step prog by exactly one beatPeriod (or
-              0.005 fallback if BPM not detected). User-current-position +
-              one beat, may or may not land on the grid.
-            Click skip() helper is inline rather than a useCallback because
-            it captures prog/dur/syncRole which change every render anyway. */}
+      {/* ── TRANSPORT: white play anchor + pill Cue/Sync + skip arrows + M ──
+           Per design brief: play is the focal point of each deck — 52px white
+           circle. Cue / Sync recede as 38px pills. Skip arrows compact. M
+           button preserved for master selection. */}
+      <div style={{display:"flex", alignItems:"center", gap:8, padding:"10px 14px", borderBottom:BD, justifyContent:"center"}}>
+        {/* CUE pill */}
+        <button onClick={(e)=>{ if(local&&cue) cue(); else if(remoteCue) remoteCue(); }} disabled={!cueEnabled}
+          style={{height:38, padding:"0 16px", minWidth:60,
+            background:"transparent",
+            border:`1px solid ${cueEnabled?"rgba(255,255,255,0.20)":"rgba(255,255,255,0.06)"}`,
+            color:cueEnabled?"#E8E3D8":"#605C56",
+            borderRadius:6,
+            fontFamily:"'Inter',sans-serif", fontSize:12, fontWeight:500, letterSpacing:.3,
+            cursor:cueEnabled?"pointer":"default", outline:"none", flexShrink:0,
+            transition:"all .15s",
+          }}>Cue</button>
+        {/* Skip back 1 beat */}
         <button onClick={local?()=>{
           const beatPeriod=bpmResult?.beatPeriodSec;
           const beatPhase=bpmResult?.beatPhaseSec??0;
@@ -4502,8 +4455,6 @@ function Deck({ id, ch, ctx:ac, color, local, remote, onChange, midi:mt, bpmResu
           if(isLocked&&beatPeriod&&dur){
             const currentTime=prog*dur;
             const currentBeatPos=(currentTime-beatPhase)/beatPeriod;
-            // -0.001 epsilon makes "exactly on beat" go to the previous beat
-            // rather than staying put (Math.floor(N) === N otherwise).
             const targetBeatNum=Math.floor(currentBeatPos-0.001);
             const newTime=beatPhase+targetBeatNum*beatPeriod;
             seek(Math.max(0,Math.min(1,newTime/dur)));
@@ -4511,10 +4462,22 @@ function Deck({ id, ch, ctx:ac, color, local, remote, onChange, midi:mt, bpmResu
             const step=(beatPeriod&&dur)?(beatPeriod/dur):0.005;
             seek(Math.max(0,prog-step));
           }
-        }:undefined} disabled={!local} title={syncRole!==null?"Snap to previous beat":"Skip back 1 beat"} style={{height:48,width:36,background:"rgba(255,255,255,0.04)",border:"1px solid rgba(255,255,255,0.06)",color:local?"#9B9690":"rgba(255,255,255,0.06)",borderRadius:6,cursor:local?"pointer":"default",fontFamily:"'Inter',sans-serif",fontSize:13,outline:"none"}}>◂◂</button>
-        <button onClick={(e)=>{ if(local&&toggle) toggle(); else if(remoteToggle) remoteToggle(); }} disabled={!enabled} style={{flex:1,height:48,background:playVisual?color+"33":(enabled?"#1a1a26":"#141420"),border:`2px solid ${playVisual?color:(enabled?color+"66":color+"22")}`,color:playVisual?color:(enabled?color:color+"44"),borderRadius:8,cursor:enabled?"pointer":"default",fontSize:24,fontWeight:600,display:"flex",alignItems:"center",justifyContent:"center",boxShadow:playVisual?`0 0 24px ${color}55`:"none",outline:"none",transition:"all .15s"}}>
-          {playVisual?"⏸":"▶"}
-        </button>
+        }:undefined} disabled={!local} title={syncRole!==null?"Snap to previous beat":"Skip back 1 beat"}
+          style={{height:38, width:32, background:"transparent", border:"1px solid rgba(255,255,255,0.12)", color:local?"#9B9690":"#605C56", borderRadius:6, cursor:local?"pointer":"default", fontFamily:"'Inter',sans-serif", fontSize:13, outline:"none", flexShrink:0, padding:0, display:"flex", alignItems:"center", justifyContent:"center"}}>◂</button>
+        {/* WHITE PLAY — 52px circle, visual anchor */}
+        <button onClick={(e)=>{ if(local&&toggle) toggle(); else if(remoteToggle) remoteToggle(); }} disabled={!enabled}
+          style={{width:52, height:52, borderRadius:"50%",
+            background:playVisual?"#FFFFFF":"transparent",
+            border:`1.5px solid ${playVisual?"#FFFFFF":(enabled?"rgba(255,255,255,0.30)":"rgba(255,255,255,0.10)")}`,
+            color:playVisual?"#0F1014":(enabled?"#E8E3D8":"#605C56"),
+            cursor:enabled?"pointer":"default",
+            fontSize:18, fontWeight:500,
+            display:"flex", alignItems:"center", justifyContent:"center",
+            boxShadow:playVisual?"0 0 24px rgba(255,255,255,0.30), 0 0 60px rgba(255,255,255,0.12)":"none",
+            outline:"none", flexShrink:0,
+            transition:"all .2s", padding:0,
+          }}>{playVisual?"❚❚":"▶"}</button>
+        {/* Skip forward 1 beat */}
         <button onClick={local?()=>{
           const beatPeriod=bpmResult?.beatPeriodSec;
           const beatPhase=bpmResult?.beatPhaseSec??0;
@@ -4522,8 +4485,6 @@ function Deck({ id, ch, ctx:ac, color, local, remote, onChange, midi:mt, bpmResu
           if(isLocked&&beatPeriod&&dur){
             const currentTime=prog*dur;
             const currentBeatPos=(currentTime-beatPhase)/beatPeriod;
-            // +0.001 epsilon makes "exactly on beat" advance to the next beat
-            // rather than staying put.
             const targetBeatNum=Math.ceil(currentBeatPos+0.001);
             const newTime=beatPhase+targetBeatNum*beatPeriod;
             seek(Math.max(0,Math.min(1,newTime/dur)));
@@ -4531,68 +4492,62 @@ function Deck({ id, ch, ctx:ac, color, local, remote, onChange, midi:mt, bpmResu
             const step=(beatPeriod&&dur)?(beatPeriod/dur):0.005;
             seek(Math.min(1,prog+step));
           }
-        }:undefined} disabled={!local} title={syncRole!==null?"Snap to next beat":"Skip forward 1 beat"} style={{height:48,width:36,background:"rgba(255,255,255,0.04)",border:"1px solid rgba(255,255,255,0.06)",color:local?"#9B9690":"rgba(255,255,255,0.06)",borderRadius:6,cursor:local?"pointer":"default",fontFamily:"'Inter',sans-serif",fontSize:13,outline:"none"}}>▸▸</button>
-        {onMasterToggle&&(
-          <button
-            onClick={()=>onMasterToggle(id)}
-            title={isMaster ? "This deck is the master (reference) — click to clear" : "Mark this deck as the SYNC master"}
-            style={{
-              height:48, width:32,
-              background: isMaster ? "#22c55e22" : "transparent",
-              border: `1px solid ${isMaster ? "#22c55e" : "#22c55e44"}`,
-              color: isMaster ? "#22c55e" : "#22c55e88",
-              borderRadius:7,
-              cursor:"pointer",
-              fontFamily:"'Inter',sans-serif",
-              fontSize:11, fontWeight:700, letterSpacing:1,
-              outline:"none", flexShrink:0,
-              boxShadow: isMaster ? "0 0 10px #22c55e55" : "none",
-              transition:"all .15s",
-              display:"flex", alignItems:"center", justifyContent:"center",
-            }}>M</button>
-        )}
+        }:undefined} disabled={!local} title={syncRole!==null?"Snap to next beat":"Skip forward 1 beat"}
+          style={{height:38, width:32, background:"transparent", border:"1px solid rgba(255,255,255,0.12)", color:local?"#9B9690":"#605C56", borderRadius:6, cursor:local?"pointer":"default", fontFamily:"'Inter',sans-serif", fontSize:13, outline:"none", flexShrink:0, padding:0, display:"flex", alignItems:"center", justifyContent:"center"}}>▸</button>
+        {/* SYNC pill */}
         {onSync&&(()=>{
           const isAnalyzing = !!buf && !bpmResult?.bpm && !!bpmResult?.analyzing;
-          // syncReady (other-deck-has-BPM) is intentionally NOT in canSync.
-          // The button stays clickable as soon as THIS deck is ready; if the
-          // other deck has no BPM at click time, handleSyncToggle bails with
-          // a "no master BPM" log (graceful no-op). User can click again
-          // once the second track is analyzed.
           const canSync = !!buf && !!bpmResult?.bpm;
           const isSlave  = syncRole === "slave";
           const isMasterRole = syncRole === "master";
-          // SYNC is a global engaged-or-not toggle reachable from either deck.
-          // M button (separate) is the per-deck master indicator. So when sync
-          // is engaged, BOTH decks' SYNC buttons show the lit "engaged" tone;
-          // the M button alone distinguishes master from slave.
           const isLocked = isSlave || isMasterRole;
           const clickable = isLocked || canSync;
-          // States: engaged (filled green + glow + dot — applies to both
-          // master and slave decks when sync is on), canSync (outline),
-          // analyzing (amber pulse), disabled (greyed).
           const tone =
-            isLocked       ? { bg:"#22c55e44",   border:"#22c55e",   color:"#0a1a10",   cursor:"pointer",      opacity:1,   pulse:false, glow:true,  dot:true  }
-            : canSync      ? { bg:"#22c55e18",   border:"#22c55e66", color:"#22c55e",   cursor:"pointer",      opacity:1,   pulse:false, glow:false, dot:false }
-            : isAnalyzing  ? { bg:"#f59e0b14",   border:"#f59e0b55", color:"#f59e0b",   cursor:"progress",     opacity:1,   pulse:true,  glow:false, dot:false }
-            :                { bg:"transparent", border:"#22c55e22", color:"#22c55e44", cursor:"not-allowed",  opacity:0.4, pulse:false, glow:false, dot:false };
-          const label = "SYNC";
+            isLocked      ? { bg:"#22c55e22", border:"#22c55e", color:"#22c55e", opacity:1, glow:true }
+            : canSync     ? { bg:"transparent", border:"rgba(255,255,255,0.20)", color:"#E8E3D8", opacity:1, glow:false }
+            : isAnalyzing ? { bg:"transparent", border:"#f59e0b55", color:"#f59e0b", opacity:1, glow:false }
+            :               { bg:"transparent", border:"rgba(255,255,255,0.06)", color:"#605C56", opacity:0.6, glow:false };
           const tip = isLocked   ? "Sync engaged — click to release"
             : !buf             ? "Load a track"
             : isAnalyzing      ? "Analyzing BPM…"
             : !bpmResult?.bpm  ? "Waiting for BPM"
             : !syncReady       ? "Load a track on the other deck to enable sync"
-            :                    "Engage SYNC (this deck syncs to master)";
+            :                    "Engage Sync";
           return (
-            <button
-              onClick={clickable ? onSync : undefined}
-              disabled={!clickable}
-              title={tip}
-              style={{height:48,padding:"0 10px",background:tone.bg,border:`1px solid ${tone.border}`,color:tone.color,borderRadius:7,cursor:tone.cursor,opacity:tone.opacity,fontFamily:"'Inter',sans-serif",fontSize:10,fontWeight:700,letterSpacing:1.5,outline:"none",flexShrink:0,boxShadow:tone.glow?`0 0 12px #22c55e88`:"none",animation:tone.pulse?"pulse 1.1s ease-in-out infinite":"none",display:"flex",alignItems:"center",gap:6}}>
-              {tone.dot && <span style={{width:6,height:6,borderRadius:"50%",background:"#22c55e",boxShadow:"0 0 6px #22c55e"}}/>}
-              {label}
+            <button onClick={clickable ? onSync : undefined} disabled={!clickable} title={tip}
+              style={{height:38, padding:"0 16px", minWidth:60,
+                background:tone.bg,
+                border:`1px solid ${tone.border}`,
+                color:tone.color,
+                opacity:tone.opacity,
+                borderRadius:6,
+                fontFamily:"'Inter',sans-serif", fontSize:12, fontWeight:500, letterSpacing:.3,
+                cursor:clickable?"pointer":"default", outline:"none", flexShrink:0,
+                transition:"all .15s",
+                boxShadow:tone.glow?"0 0 12px #22c55e55":"none",
+                display:"flex", alignItems:"center", gap:6,
+              }}>
+              {isLocked && <span style={{width:5,height:5,borderRadius:"50%",background:"#22c55e",boxShadow:"0 0 6px #22c55e"}}/>}
+              Sync
             </button>
           );
         })()}
+        {/* M button — master selector */}
+        {onMasterToggle&&(
+          <button onClick={()=>onMasterToggle(id)} title={isMaster ? "Master deck — click to clear" : "Set this deck as master"}
+            style={{height:38, width:32,
+              background:isMaster?"#22c55e22":"transparent",
+              border:`1px solid ${isMaster?"#22c55e":"rgba(255,255,255,0.12)"}`,
+              color:isMaster?"#22c55e":"#9B9690",
+              borderRadius:6,
+              cursor:"pointer", outline:"none", flexShrink:0,
+              fontFamily:"'Inter',sans-serif", fontSize:12, fontWeight:600,
+              boxShadow:isMaster?"0 0 10px #22c55e44":"none",
+              transition:"all .15s",
+              display:"flex", alignItems:"center", justifyContent:"center",
+              padding:0,
+            }}>M</button>
+        )}
       </div>
 
       <div style={{display:"none"}} data-set-rate={id} ref={el=>{if(el)el._setRate=setRate;}}/>
@@ -6814,15 +6769,11 @@ export default function CollabMix({ initialPage = "landing", djName = null }) {
       })()}
 
       {/* DECKS + MIXER ROW */}
-      <div style={{ flexShrink:0, display:"grid", gridTemplateColumns:"1fr 260px 1fr", gap:8, padding:"8px 12px 0", height:"288px", overflow:"hidden" }}>
+      <div style={{ flexShrink:0, display:"grid", gridTemplateColumns:"1fr 200px 1fr", gap:8, padding:"8px 12px 0", height:"250px", overflow:"hidden", maxWidth:1320, margin:"0 auto", width:"100%" }}>
 
-        {/* ── DECK A (shared) ── */}
+        {/* ── DECK A (shared) — outer "Deck A · driver" header bar removed;
+              new inner Deck header has the 3-part identity row at top. ── */}
         <div style={{ display:"flex", flexDirection:"column", minWidth:0, minHeight:0, overflow:"hidden", background:"#1C1816", border:`1px solid ${deckDrivers.A?"#8068E044":"rgba(255,255,255,0.06)"}`, borderRadius:10, transition:"border-color .3s" }}>
-          <div style={{ display:"flex", gap:8, alignItems:"center", padding:"6px 12px", borderBottom:"1px solid rgba(255,255,255,0.06)", background:"#13110F", flexShrink:0 }}>
-            <div style={{ width:6, height:6, borderRadius:"50%", background:deckDrivers.A?"#8068E0":"#282835", boxShadow:deckDrivers.A?"0 0 8px #8068E0":"none", transition:"all .3s" }}/>
-            <span style={{ fontSize:11, fontFamily:"'Inter',sans-serif", fontWeight:600, color:deckDrivers.A?"#8068E0":"#605C56", letterSpacing:.5 }}>Deck A</span>
-            {deckDrivers.A && <span style={{ fontSize:11, fontFamily:"'Inter',sans-serif", fontWeight:400, color:"#8068E0aa", letterSpacing:0 }}>{deckDrivers.A === session.name ? `${deckDrivers.A} (you)` : deckDrivers.A}</span>}
-          </div>
           <div style={{ flex:1, display:"flex", gap:10, padding:"10px 0 10px 10px", overflow:"hidden", minHeight:0 }}>
             <DeckArt artwork={libLoadA?.track?.artwork} fallback="A" color="#8068E0"/>
             <div style={{ flex:1, overflow:"hidden", minHeight:0 }}>
@@ -6845,7 +6796,7 @@ export default function CollabMix({ initialPage = "landing", djName = null }) {
           </div>
 
           {/* CHANNEL STRIPS — 3-column: [CH A] [CENTER] [CH B] */}
-          <div style={{ display:"grid", gridTemplateColumns:"1fr 78px 1fr", flex:1, minHeight:0, overflow:"hidden" }}>
+          <div style={{ display:"grid", gridTemplateColumns:"1fr 64px 1fr", flex:1, minHeight:0, overflow:"hidden" }}>
 
             {/* ─── CH A STRIP ─── */}
             <div style={{ display:"flex", flexDirection:"column", borderRight:"1px solid rgba(255,255,255,0.06)", overflow:"hidden" }}>
@@ -6859,15 +6810,15 @@ export default function CollabMix({ initialPage = "landing", djName = null }) {
                 {/* Channel volume fader — far left (outer edge) */}
                 <div style={{ flexShrink:0, display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"center", padding:"5px 4px", borderRight:"1px solid rgba(255,255,255,0.06)", gap:2 }}>
                   <div style={{ fontSize:6, fontFamily:"'Inter',sans-serif", color:"#8068E055", letterSpacing:1 }}>Vol</div>
-                  <VerticalFader val={eqA.vol} set={v=>updateEqA("vol",v)} color="#8068E0" h={150}/>
+                  <VerticalFader val={eqA.vol} set={v=>updateEqA("vol",v)} color="#8068E0" h={130}/>
                   <div style={{ fontSize:7, fontFamily:"'Inter',sans-serif", color:"#8068E088" }}>{(eqA.vol/1.5*100).toFixed(0)}%</div>
                 </div>
                 {/* Knobs column — inner side */}
                 <div style={{ flex:1, display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"space-evenly", padding:"5px 2px" }}>
-                  <Knob v={eqA.vol} set={v=>updateEqA("vol",v)} min={0} max={1.5} ctr={1} label="Gain" color="#8068E0" size={20}/>
-                  <Knob v={eqA.hi}  set={v=>updateEqA("hi",v)}  min={-12} max={12} ctr={0} label="Hi"   color="#8068E0" size={20}/>
-                  <Knob v={eqA.mid} set={v=>updateEqA("mid",v)} min={-12} max={12} ctr={0} label="Mid"  color="#8068E0" size={20}/>
-                  <Knob v={eqA.lo}  set={v=>updateEqA("lo",v)}  min={-12} max={12} ctr={0} label="Lo"   color="#8068E0" size={20}/>
+                  <Knob v={eqA.vol} set={v=>updateEqA("vol",v)} min={0} max={1.5} ctr={1} label="Gain" color="#8068E0" size={16}/>
+                  <Knob v={eqA.hi}  set={v=>updateEqA("hi",v)}  min={-12} max={12} ctr={0} label="Hi"   color="#8068E0" size={16}/>
+                  <Knob v={eqA.mid} set={v=>updateEqA("mid",v)} min={-12} max={12} ctr={0} label="Mid"  color="#8068E0" size={16}/>
+                  <Knob v={eqA.lo}  set={v=>updateEqA("lo",v)}  min={-12} max={12} ctr={0} label="Lo"   color="#8068E0" size={16}/>
                 </div>
               </div>
             </div>
@@ -6877,7 +6828,7 @@ export default function CollabMix({ initialPage = "landing", djName = null }) {
               {/* Master fader */}
               <div style={{ flex:1, display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"center", gap:3, minHeight:0 }}>
                 <div style={{ fontSize:7, fontFamily:"'Inter',sans-serif", color:"#C9B79C99", letterSpacing:2 }}>Master</div>
-                <VerticalFader val={mvol} set={setMvolLocal} color="#C9B79C" h={150}/>
+                <VerticalFader val={mvol} set={setMvolLocal} color="#C9B79C" h={130}/>
                 <div style={{ fontSize:7, fontFamily:"'Inter',sans-serif", color:"#C9B79C99" }}>{(mvol/1.5*100).toFixed(0)}%</div>
               </div>
               {/* Session info */}
@@ -6902,15 +6853,15 @@ export default function CollabMix({ initialPage = "landing", djName = null }) {
               <div style={{ flex:1, display:"flex", flexDirection:"row", minHeight:0, overflow:"hidden" }}>
                 {/* Knobs column — inner side */}
                 <div style={{ flex:1, display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"space-evenly", padding:"5px 2px" }}>
-                  <Knob v={eqB.vol} set={v=>updateEqB("vol",v)} min={0} max={1.5} ctr={1} label="Gain" color="#4DA396" size={20}/>
-                  <Knob v={eqB.hi}  set={v=>updateEqB("hi",v)}  min={-12} max={12} ctr={0} label="Hi"   color="#4DA396" size={20}/>
-                  <Knob v={eqB.mid} set={v=>updateEqB("mid",v)} min={-12} max={12} ctr={0} label="Mid"  color="#4DA396" size={20}/>
-                  <Knob v={eqB.lo}  set={v=>updateEqB("lo",v)}  min={-12} max={12} ctr={0} label="Lo"   color="#4DA396" size={20}/>
+                  <Knob v={eqB.vol} set={v=>updateEqB("vol",v)} min={0} max={1.5} ctr={1} label="Gain" color="#4DA396" size={16}/>
+                  <Knob v={eqB.hi}  set={v=>updateEqB("hi",v)}  min={-12} max={12} ctr={0} label="Hi"   color="#4DA396" size={16}/>
+                  <Knob v={eqB.mid} set={v=>updateEqB("mid",v)} min={-12} max={12} ctr={0} label="Mid"  color="#4DA396" size={16}/>
+                  <Knob v={eqB.lo}  set={v=>updateEqB("lo",v)}  min={-12} max={12} ctr={0} label="Lo"   color="#4DA396" size={16}/>
                 </div>
                 {/* Channel volume fader — far right (outer edge) */}
                 <div style={{ flexShrink:0, display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"center", padding:"5px 4px", borderLeft:"1px solid rgba(255,255,255,0.06)", gap:2 }}>
                   <div style={{ fontSize:6, fontFamily:"'Inter',sans-serif", color:"#4DA39655", letterSpacing:1 }}>Vol</div>
-                  <VerticalFader val={eqB.vol} set={v=>updateEqB("vol",v)} color="#4DA396" h={150}/>
+                  <VerticalFader val={eqB.vol} set={v=>updateEqB("vol",v)} color="#4DA396" h={130}/>
                   <div style={{ fontSize:7, fontFamily:"'Inter',sans-serif", color:"#4DA39688" }}>{(eqB.vol/1.5*100).toFixed(0)}%</div>
                 </div>
               </div>
@@ -6918,13 +6869,8 @@ export default function CollabMix({ initialPage = "landing", djName = null }) {
           </div>
         </div>
 
-        {/* ── DECK B (shared) ── */}
+        {/* ── DECK B (shared) — outer header bar removed (see Deck A note). ── */}
         <div style={{ display:"flex", flexDirection:"column", minWidth:0, minHeight:0, overflow:"hidden", background:"#1C1816", border:`1px solid ${deckDrivers.B?"#4DA39644":"rgba(255,255,255,0.06)"}`, borderRadius:10, transition:"border-color .3s" }}>
-          <div style={{ display:"flex", gap:8, alignItems:"center", padding:"6px 12px", borderBottom:"1px solid rgba(255,255,255,0.06)", background:"#13110F", flexShrink:0 }}>
-            <div style={{ width:6, height:6, borderRadius:"50%", background:deckDrivers.B?"#4DA396":"#282835", boxShadow:deckDrivers.B?"0 0 8px #4DA396":"none", transition:"all .3s" }}/>
-            <span style={{ fontSize:11, fontFamily:"'Inter',sans-serif", fontWeight:600, color:deckDrivers.B?"#4DA396":"#605C56", letterSpacing:.5 }}>Deck B</span>
-            {deckDrivers.B && <span style={{ fontSize:11, fontFamily:"'Inter',sans-serif", fontWeight:400, color:"#4DA396aa", letterSpacing:0 }}>{deckDrivers.B === session.name ? `${deckDrivers.B} (you)` : deckDrivers.B}</span>}
-          </div>
           <div style={{ flex:1, display:"flex", gap:10, padding:"10px 0 10px 10px", overflow:"hidden", minHeight:0 }}>
             <DeckArt artwork={libLoadB?.track?.artwork} fallback="B" color="#4DA396"/>
             <div style={{ flex:1, overflow:"hidden", minHeight:0 }}>
@@ -6950,7 +6896,7 @@ export default function CollabMix({ initialPage = "landing", djName = null }) {
       </div>}
 
       {/* ── CROSSFADER ROW — same grid as deck row, only center column has content ── */}
-      <div style={{ flexShrink:0, display:"grid", gridTemplateColumns:"1fr 260px 1fr", gap:8, padding:"4px 12px", background:"#070710", borderTop:"1px solid rgba(255,255,255,0.06)", borderBottom:"1px solid rgba(255,255,255,0.06)" }}>
+      <div style={{ flexShrink:0, display:"grid", gridTemplateColumns:"1fr 200px 1fr", gap:8, padding:"4px 12px", background:"#070710", borderTop:"1px solid rgba(255,255,255,0.06)", borderBottom:"1px solid rgba(255,255,255,0.06)" }}>
         <div/>{/* empty left */}
         <div style={{ display:"flex", alignItems:"center", gap:8, padding:"4px 6px" }}>
           {/* invisible spacer matching CTR button width so slider is visually centered */}
