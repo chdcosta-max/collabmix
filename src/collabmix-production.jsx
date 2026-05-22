@@ -2910,11 +2910,13 @@ function WF({ bands, peaks, freq, prog, onSeek, h=80, hotCues=[], loopStart=null
       ctx.fill();
 
       // ── Pass 2: per-column SPECTRAL color overlay. Deck color is the base;
-      // spectral centroid (bv/mv/hv balance) modulates tone — bass darkens,
-      // highs lighten — and full-amplitude peaks bleach toward white. Played
+      // spectral centroid (bv/mv/hv balance) modulates tone — bass darkens
+      // (up to 70%), highs lighten (up to 70% toward white) — and full-
+      // amplitude peaks bleach further toward white (up to 85%). Played
       // columns get a 1.4× alpha multiplier so the played region still reads
       // brighter. Deck identity (violet A / teal B) remains dominant via the
-      // Pass 1 silhouette gradient plus the base color in this pass.
+      // Pass 1 silhouette gradient + base color in low-env regions.
+      // Coefficients tuned for visible drop-vs-breakdown contrast (May 21 v2).
       for(let x=0;x<W;x++){
         const h=heights[x];
         if(h<=0) continue;
@@ -2923,18 +2925,18 @@ function WF({ bands, peaks, freq, prog, onSeek, h=80, hotCues=[], loopStart=null
         // Spectral centroid: 0 = all bass, 1 = all high.
         const total=bv+mv+hv+1e-6;
         const centroid=(mv*0.5+hv*1.0)/total;
-        const tonalAmt=(centroid-0.5)*0.5;   // −0.25..+0.25
+        const tonalAmt=(centroid-0.5)*1.4;   // −0.7..+0.7 (was ±0.25)
         let cR=r,cG=g,cB=b;
         if(tonalAmt>0){
           cR=r+(255-r)*tonalAmt;
           cG=g+(255-g)*tonalAmt;
           cB=b+(255-b)*tonalAmt;
         } else {
-          const k=1+tonalAmt;                  // 0.75..1.0 — darken on bass
+          const k=1+tonalAmt;                  // 0.30..1.0 — darken on bass
           cR=r*k; cG=g*k; cB=b*k;
         }
-        // Peak push toward white at high amplitude.
-        const peakAmt=Math.pow(env,1.5)*0.65;
+        // Peak push toward white at high amplitude (steeper curve, harder bleach).
+        const peakAmt=Math.pow(env,2.0)*0.85;
         cR=cR+(255-cR)*peakAmt;
         cG=cG+(255-cG)*peakAmt;
         cB=cB+(255-cB)*peakAmt;
@@ -3281,13 +3283,14 @@ function AnimatedZoomedWF({ bands, dur, progRef, onSeek, h=96, windowSec=8, beat
 
         // ── Pass 2b: per-column SPECTRAL color overlay (replaces monochrome
         // deck-color fill). Deck color is the base; spectral centroid
-        // (colB/colM/colH balance) modulates tone — bass darkens, highs
-        // lighten — and full-amplitude peaks bleach toward white. Deck
-        // identity (violet A / teal B) stays dominant via Pass 2a's silhouette
-        // gradient plus the base color in this pass. Aggressive dynamic range
-        // on alpha (gamma 0.55) so peaks dominate (env=0.5 → ~0.69 alpha,
-        // env=1.0 → ~0.95). Per-column 1px rects keep amplitude transitions
-        // vertically sharp — kicks/snares pop as crisp edges.
+        // (colB/colM/colH balance) modulates tone — bass darkens (up to 70%),
+        // highs lighten (up to 70% toward white) — and full-amplitude peaks
+        // bleach further toward white (up to 85%). Deck identity (violet A /
+        // teal B) stays dominant in low-env regions via Pass 2a's silhouette
+        // gradient + base color. Aggressive dynamic range on alpha (gamma
+        // 0.55) so peaks dominate (env=0.5 → ~0.69 alpha, env=1.0 → ~0.95).
+        // Per-column 1px rects keep amplitude transitions vertically sharp.
+        // Coefficients tuned for visible drop-vs-breakdown contrast (May 21 v2).
         for(let dx=0;dx<physW;dx++){
           const h=heights[dx];
           if(h<=0) continue;
@@ -3295,17 +3298,17 @@ function AnimatedZoomedWF({ bands, dur, progRef, onSeek, h=96, windowSec=8, beat
           const bv=colB[dx], mv=colM[dx], hv=colH[dx];
           const total=bv+mv+hv+1e-6;
           const centroid=(mv*0.5+hv*1.0)/total;
-          const tonalAmt=(centroid-0.5)*0.5;
+          const tonalAmt=(centroid-0.5)*1.4;   // −0.7..+0.7 (was ±0.25)
           let cR=dr,cG=dg,cB=db;
           if(tonalAmt>0){
             cR=dr+(255-dr)*tonalAmt;
             cG=dg+(255-dg)*tonalAmt;
             cB=db+(255-db)*tonalAmt;
           } else {
-            const k=1+tonalAmt;
+            const k=1+tonalAmt;                 // 0.30..1.0 — darken on bass
             cR=dr*k; cG=dg*k; cB=db*k;
           }
-          const peakAmt=Math.pow(env,1.5)*0.65;
+          const peakAmt=Math.pow(env,2.0)*0.85;  // steeper curve, harder bleach
           cR=cR+(255-cR)*peakAmt;
           cG=cG+(255-cG)*peakAmt;
           cB=cB+(255-cB)*peakAmt;
@@ -4206,9 +4209,26 @@ function Deck({ id, ch, ctx:ac, color, local, remote, onChange, midi:mt, bpmResu
         if(hv>highArr[x])highArr[x]=hv;
       }
     }
-    // Normalize each band independently to 0-1
-    const normBand=(arr)=>{let mx=0;for(let i=0;i<arr.length;i++)mx=Math.max(mx,arr[i]);if(mx<0.0001)return new Array(arr.length).fill(0);const out=new Array(arr.length);for(let i=0;i<arr.length;i++)out[i]=Math.round(arr[i]/mx*1000)/1000;return out;};
-    const bN=normBand(bassArr),mN=normBand(midArr),hN=normBand(highArr);
+    // JOINT normalize all three bands to the SAME maximum so spectral contrast
+    // is preserved. Previously each band was normalized independently to its
+    // own track-wide max, which made bass-heavy moments and hi-hat sections
+    // both top out at 1.0 in their respective bands. That killed the per-column
+    // centroid math: a kick (bass=track_max, mid≈0, high≈0) looked spectrally
+    // similar to a hi-hat (bass≈0, mid≈0, high=track_max) after per-band norm.
+    // Joint normalization keeps the relative band amplitudes honest — a kick
+    // gets bass=1.0, mid≈0.1, high≈0.05; a hi-hat gets bass≈0.05, mid≈0.2,
+    // high=1.0. The spectral color formula then produces dramatic contrast.
+    let jointMax=0;
+    for(let i=0;i<bassArr.length;i++){
+      if(bassArr[i]>jointMax)jointMax=bassArr[i];
+      if(midArr[i]>jointMax)jointMax=midArr[i];
+      if(highArr[i]>jointMax)jointMax=highArr[i];
+    }
+    if(jointMax<0.0001)jointMax=1;
+    const normJoint=(arr)=>{const out=new Array(arr.length);for(let i=0;i<arr.length;i++)out[i]=Math.round(arr[i]/jointMax*1000)/1000;return out;};
+    const bN=normJoint(bassArr),mN=normJoint(midArr),hN=normJoint(highArr);
+    console.log('[WF-BANDS] Phase 2 joint-norm path active for deck', id, '— jointMax=', jointMax.toFixed(4),
+      'WF_W=', WF_W, '— bass/mid/high arrays now share a common scale so spectral contrast is preserved.');
     setWfBass(bN);setWfMid(mN);setWfHigh(hN);
     // Broadcast at WF_W samples per band (24,000 → ~400KB total per track load).
     // Original 48,000-sample resolution caused ~800KB and WebSocket backpressure
