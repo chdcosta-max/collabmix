@@ -36,7 +36,7 @@ A perfectly considered control, a beautiful waveform, an animation that feels ex
 
 ## What This Means Visually
 
-### Colors (current — cool dark, May 22, 2026)
+### Colors (current — cool dark, design v5, May 22, 2026 evening)
 - Background: **cool near-black** `#0A0B0E` — no brown/warm cast, reads
   like Beatport / Spotify dark mode (NOT warm sepia, NOT pure black)
 - Panels / surfaces: cool dark greys, slightly lifted (`#15171A`,
@@ -45,17 +45,33 @@ A perfectly considered control, a beautiful waveform, an animation that feels ex
 - Borders: cool whites at low alpha — `rgba(255,255,255,0.06)` subtle,
   `rgba(255,255,255,0.12)` defined
 - **Surgical warm accent** — deeper amber `#D4A06A`. Used on
-  **2–3 element types ONLY**:
-  - BPM display (color + glow)
-  - Camelot key chip (text + background tint)
-  - Elapsed time when playing (amber when active, neutral when stopped)
-  - Optional thin border accent (active sidebar item) — restraint
-- Deck identity colors — deep, muted, grounded, Scandi-mature (NOT bright,
-  NOT cheesy):
-  - Deck A: `#3B5A6F` — deep navy / teal-blue
-  - Deck B: `#4A5568` — deep slate / gray-blue
+  **the Camelot key chip ONLY** plus thin border accent on the active
+  sidebar item (restraint principle, v5 tightened from v4 by dropping
+  BPM and elapsed-time off the amber list — those felt inconsistent
+  against the white track title).
+- **Active state on buttons: clean white** — NO green. Sync engaged,
+  M (master) engaged both get a white glow / brightness lift matching
+  the white play button when playing. Green removed from active-state
+  palette entirely; only retained for semantic indicators (recording
+  in progress, partner online dot).
+- Deck identity colors — deep, mature, Scandi-honest. Contrast through
+  **temperature** (cool vs warm) so A vs B reads at a glance:
+  - Deck A: `#1F4F7A` — deep saturated Scandi blue
+  - Deck B: `#7C4E3B` — deep aged rust / weathered copper (NOT bright
+    orange)
+- **Beat grid lines glow in deck color** on both the top zoomed
+  waveform and the in-deck waveform: off-beat ticks dim, downbeat ticks
+  bright + through-line, all with subtle canvas shadowBlur for an
+  ambient "alive" feel. Soft inner light, NOT Tron. Phrase (16-bar)
+  markers stay red to keep their structural identity.
+- BPM display: **clean white**, same color family as the track title.
+  Number reads as a primary data point through size, not color.
+- Track time (elapsed/remain): inline with the track title, Rekordbox
+  style — `03:03 / -05:08` tabular-nums, cool gray. NOT in the
+  transport row.
 - 16-bar phrase marker on waveform: **red `#FF3B30`** — strong,
-  unambiguous structural reference against the cool dark background
+  unambiguous structural reference against the cool dark background.
+  Has its own subtle red glow.
 - Frequency band colors (if/when spectral rendering revisited): cohesive
   palette, not random
   - Lows: deep teal-blue
@@ -203,6 +219,45 @@ Reactions to 8 reference apps during taste-mapping session:
 This is a working draft. We will refine and add as we see mockups and react. Decisions will get more specific over time. What's here is direction, not final commitment.
 
 ## Status log
+
+### May 22 evening — design v5 (deck temperature contrast, beat grid glow, transport cleanup)
+- **Deck colors swapped for real temperature contrast.** v4's deep
+  blue-grays (`#3B5A6F` / `#4A5568`) read as identical. v5 splits to
+  Deck A `#1F4F7A` (deep saturated Scandi blue) vs Deck B `#7C4E3B`
+  (deep aged rust copper). Cool vs warm temperature, instant glance
+  identification.
+- **Beat grid lines render in deck identity color with subtle outer
+  glow.** Off-beat ticks dim, downbeats bright + through-line, all
+  with canvas `shadowBlur=3` for ambient "alive" feel. Soft inner
+  light, NOT Tron. Red 16-bar phrase markers unchanged (with their
+  own red glow).
+- **Metadata line simplified.** Was `08:12 · 48.0kHz · Stereo · Kyotto`
+  — now artist name only. Sample rate / channel / duration noise
+  removed; the data lives elsewhere (or doesn't matter to the DJ).
+- **Elapsed / Remain time moved inline with track title** (Rekordbox
+  style). Compact `03:03 / -05:08` tabular-nums sits on the title's
+  own row, right of title. Transport row no longer carries time
+  displays — just Cue · Skip · Play · Skip · Sync · M, centered.
+- **BPM is white now.** v4 had it amber; v5 reads it as inconsistent
+  against the white title — same data family, should be same color.
+  BPM stays large + bold, focal point through size not color.
+- **No green active states.** Sync engaged and M (master) engaged both
+  use white glow / brightness lift matching the white play button.
+  Green removed from active-state palette entirely. Retained only for
+  semantic indicators (recording, partner-online dot).
+- **Mixer center stripped of diagnostics.** "Master out · room-name"
+  text removed from header strip; ROOM / PING / NET diagnostic block
+  removed from below the master fader. VU meter stays, master fader
+  + label stays, channel strips unchanged. Center column now reads as
+  pure controls — no debug noise.
+- **Waveform amplitude scaling.** Reduced `ampPad` from 28 → 6 css
+  px per side on the top zoomed waveform. Peaks now fill nearly the
+  full container height; no dead vertical space between peaks and
+  beat grid markers top/bottom. Grid ticks render after the amplitude
+  fill (intentional overlap so ticks read on top of tall peaks).
+- **Surgical amber tightened.** v4 used amber on BPM, Camelot, and
+  playing-time. v5 reduces to Camelot chip + active sidebar item's
+  thin left border only. Two locations — about as surgical as it gets.
 
 ### May 22 — palette pivot to cool dark + layout fixes
 - **Palette direction reversed.** The warm "Quiet Pro Tool" palette
