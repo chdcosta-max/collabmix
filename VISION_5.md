@@ -1898,125 +1898,158 @@ Full report at `tools/rekordbox-eval/PHASE_1_REPORT.md`.
 > **May 21 evening status snapshot — full vision reconciliation
 > pending in next session.**
 
-## May 23 evening — Design palette pivot + 10-iteration glow rendering pass
+## May 23 evening — major design evolution day
 
-### Major design pivot — warm "Quiet Pro Tool" → cool dark Beatport-style
+> This section replaces the May 21 evening snapshot above as the
+> current state of truth. May 21 is preserved as historical record.
 
-Visual review of design v3 (commit `565991d`) on May 22 morning
-concluded the warm palette read as "retro / military, not clean or
-minimal." Direction reversed entirely:
+### What changed today
 
-- Background warm `#0F1014` → cool near-black `#0A0B0E`
-- Text warm `#E8E3D8` → clean `#F5F5F7`
-- Panel grays warm → cool throughout (`#15171A`, `#1F2126`)
-- Single oak accent `#C9B79C` (applied broadly) → surgical amber
-  `#D4A06A` (now used ONLY on the active sidebar item's thin left
-  border in the library — about as restrained as it gets)
-- Deck colors went through 6 rounds of iteration before landing on
-  the current pair (see iteration history below)
-- Underlying philosophy (restraint, MUJI / Teenage Engineering
-  references, Inter, sentence case, tabular nums, album-art deck
-  anchors, white-circle play, calm monochrome amplitude waveforms,
-  edge-to-edge layout) **unchanged** — direction change was purely
-  palette + glow rendering, not principles.
+Today represented a major aesthetic pivot for Mix//Sync. Started
+with the "warm Quiet Pro Tool" direction locked in
+`DESIGN_PHILOSOPHY.md` and ended with that direction explicitly
+superseded.
 
-Shipped as `5b09651` (Design v4 — cool dark palette + layout fixes).
+### Key design decisions (locked in)
 
-### Iteration history May 22-23 (10 commits)
+#### 1. Palette pivot — warm → cool dark
 
-| Commit | Tag | What changed |
-| --- | --- | --- |
-| `5b09651` | v4 | Cool palette swap, transport clipping fix, waveform 120→78, crossfader relocated into mixer card, library polish |
-| `cad2098` | v5 | Temperature-contrast deck pair (navy/slate), beat grid glow in deck color, title row Rekordbox-style time, BPM → white, Sync/M green → white, mixer center diagnostic strip removed, ampPad 28→6 |
-| `be6cb8d` | v5.2 | Library dashed-outline bug fix, AUDIO/REC/MIDI strip moved to top header, deck waveform gap removed, Camelot chip amber→white, red phrase through-line removed (outer ticks only) |
-| `8e81414` | v5.3 | Grid markers switched white (deck-color grid was invisible on rust waveforms), ampPad 6→11, deck pair pushed more saturated |
-| `bde9aee` | v5.4 | ampPad 11→18 (proper grid clearance), Deck A blue pushed brighter |
-| `d6f4c3f` | v5.5 | Cool pair rethemed — abandoned temperature contrast, both decks in cool family but distinct hues; deck-color halo back on the (still-white) grid ticks |
-| `be3f2d0` | v5.6 | First actual glow rendering — silhouette shadow blur 14·dpr + inverted gradient (peaks bright) |
-| `c39028b` | v5.7 | Glow cranked: shadowBlur 14→28, shadow alpha 0.65→0.90, peak boost +60→+90 |
-| `0feee47` | v5.8 | True neon multi-pass: silhouette → `Path2D`, three additive passes with `globalCompositeOperation='lighter'` (wide 70·dpr halo + concentrated 28·dpr halo + base), pure black canvas |
-| `e1de1db` | v5.9 | Color tuning under v5.8 glow: blue pulled darker, purple replaced with electric green per user club-lighting reference |
-| `80929d9` | v5.10 | Inverted Pass 2b gradient — body of waveform is now deep base color across full column height; subtle +40 lift only at very peak tips (was +180 across whole edges, washing body to near-white) |
+- Warm "Quiet Pro Tool" palette rejected after user saw it
+  executed ("retro / military, not clean or minimal")
+- New direction: Beatport-leaning cool dark with **NO warm cast**
+- Background: `#0A0B0E` (near-black, no brown / sepia)
+- Text: `#F5F5F7` (clean white, not warm)
+- Surfaces: cool dark grays (`#15171A`, `#1F2126` levels)
+- **ZERO amber on deck cards** (key chip, BPM, all white)
+- Amber `#D4A06A` accent surgical use ONLY on active sidebar
+  border in the library
 
-### Current state (commit `80929d9`)
+#### 2. Deck identity colors — iterated through ~10 options
 
-**Deck colors:**
-- Deck A: `#0F4FA0` — deep electric night blue (full saturation,
-  brightness pushed down so v5.8 additive halo reads as "deep blue
-  light" not cyan)
-- Deck B: `#1FC97A` — vivid electric cyan-green (LED club stage
-  light, NOT lime / Matrix / fluorescent)
+Final state at session end (commit `80929d9`):
+- **Deck A: `#0F4FA0`** (deep electric night blue)
+- **Deck B: `#1FC97A`** (electric green, from DJ booth reference
+  photo)
+- Reference rejected: brown / rust copper (too earthy / aged)
+- Reference rejected: purple / lavender (felt amateur)
+- Reference accepted: cool family pair, both glowing in dark room
 
-**Waveform rendering (top zoomed, AnimatedZoomedWF):**
-- Pure black canvas clear `#000000`
-- Silhouette geometry built into a `Path2D` once per frame,
-  re-filled across three additive passes (`'lighter'` composite)
-- Pass A: shadowBlur 70·dpr, shadow alpha 1.0, fill alpha 0.18
-  (wide atmospheric spread)
-- Pass B: shadowBlur 28·dpr, fill alpha 0.30 (concentrated halo)
-- Pass C: shadowBlur 0, uniform deep base color (silhouette body)
-- Composite reset to `source-over` before AA stroke, per-column
-  overlay, grid markers, playhead, hot cues — those stay crisp
-- Per-column Pass 2b cached gradient: deep body (0.95 alpha across
-  0.05–0.95 of column height), subtle +40 peak lift only at the
-  very top/bottom (0.0/1.0). Tall columns get a thin highlight at
-  the actual amplitude peak tip; short columns are pure deep base
-- Grid markers white with deck-color shadow halo (atmospheric)
-- 16-bar phrase markers red, outer-rail ticks only (no through-line)
-- ampPad 18 (matches tickRailPad exactly — amplitude region and
-  grid rail meet without overlap)
+#### 3. Waveform rendering — major architectural work
 
-### Known limitation — Canvas 2D rendering ceiling
+- v5.8 introduced **multi-pass additive glow rendering**
+- v5.10 inverted peak gradient (deep color = body, subtle
+  brightness only at peak tips)
+- Three glow passes layered: wide halo + concentrated halo +
+  crisp shape
+- **KNOWN LIMITATION**: canvas rendering may have hit ceiling for
+  "neon glow in dark room" aesthetic. May require WebGL approach
+  if that aesthetic is critical to dogfood. User to decide with
+  fresh eyes.
 
-After 5 iterations on glow rendering (v5.6 → v5.10), the current
-multi-pass additive Canvas 2D approach is at its quality ceiling
-for the "neon glow in a dark room" aesthetic the user is targeting.
-Visual review through v5.10 shows real improvement over the flat
-v5.6 baseline but the result still falls short of reference images
-(Reflect-style atmospheric color bleed, real neon physics).
+#### 4. Layout decisions locked
 
-Specifically:
-- Canvas `shadowBlur` halos render at fixed alpha — no real
-  light-physics falloff
-- `globalCompositeOperation='lighter'` accumulates but can't model
-  bloom / dispersion the way a shader can
-- Per-column gradient is approximate — true lit-from-within depth
-  needs per-fragment lighting math
+- Edge-to-edge deck row (no center gutter, no maxWidth)
+- 96×96 album art square as deck visual anchor
+- Track title row with inline elapsed / remaining time
+  (Rekordbox-style: `01:35 / -06:36`)
+- Metadata below title: artist name only (dropped duration,
+  sample rate, channel info)
+- A–D cue chips inline below transport (not A–H column on right)
+- **WHITE play button as visual anchor** (largest control, glows
+  white when active)
+- Cue / Sync as smaller pills
+- Sync and M active state: **WHITE glow (NO green — user explicit)**
+- BPM in white (no amber)
+- Camelot key chip in white (no amber)
+- Mixer column compact, slim
+- Crossfader moved INSIDE mixer column bottom (was separate strip
+  eating library space)
+- AUDIO / REC / MIDI moved to TOP HEADER next to session info
+  (was strip below decks eating library space)
+- No gap between Deck A and Deck B waveforms (waveforms sit
+  edge-to-edge in top zoomed area)
+- Library expanded to substantially more vertical room
 
-If the "true neon glow" aesthetic is critical for dogfood / launch,
-the next iteration may need to **migrate the top waveform rendering
-to WebGL** with a custom fragment shader (gaussian bloom, additive
-HDR-ish compositing, per-pixel glow falloff). That's a substantial
-architectural change but is the technical lever required to reach
-the visual target. Tabling for now — v5.10 ships as the
-Canvas-2D-quality high-water mark.
+#### 5. Waveform treatment
 
-### Other locked design decisions (carried from May 22-23 session)
+- Calm monochrome amplitude (NOT spectral — that was tabled today)
+- White beat grid markers (functional reference points)
+- White grid markers carry deck-color glow halo (subtle)
+- Red 16-bar phrase markers — outer ticks only, NO through-line
+  crossing the waveform body
+- `ampPad 18` = clear visible space between waveform peaks and
+  grid markers
+- Multi-pass additive glow rendering (per v5.8 + v5.10)
+- Pure black background for maximum glow contrast
 
-- **AUDIO / REC / MIDI** panel toggles live in the top header (next
-  to session-name / Share / Leave). Detail panel content opens
-  below the deck row only when an active panel is selected.
-- **A–D cue chips inline** in the deck card (4 chips below
-  transport, not a side column).
-- **Edge-to-edge waveform layout** — both deck waveforms sit
-  directly stacked with no chrome row between them. Zoom selector
-  floats as a small backdrop-blur overlay in the top-right corner.
-- **White grid markers** with deck-color shadow halo on both decks.
-  16-bar phrase markers red on outer rails only.
-- **BPM in clean white** (`#F5F5F7`) — same family as track title,
-  no amber tint.
-- **Sync / M white active state** with brightness lift glow
-  (matches the white play button) — no green for active states.
-  Green retained only for semantic indicators (recording, partner
-  online dot).
-- **Library expanded vertical real estate** — gained ~140 px
-  cumulative across the v4–v5.2 layout cleanup (shorter waveform,
-  taller deck row, crossfader moved into mixer, panel strip
-  relocated, chrome gap removed).
-- **Manual nudge controls dropped from UI in v5.2** (grid offset,
-  bar-1 nudge, BPM nudge). State + handlers preserved in parent
-  component; need a new discoverable affordance pre-dogfood (was
-  already a VISION_5 known TODO).
+#### 6. What was removed from UI (needs new home)
+
+**Manual nudge controls** (grid offset, bar-1 nudge, BPM nudge):
+- REMOVED from visible UI in v5.2 chrome cleanup
+- State and handlers still exist in parent component
+- These are **REQUIRED** to have a UI surface before dogfood
+- Was in waveform chrome row — needs new home, possibly:
+  - Hover-reveal on the waveform itself
+  - Inside mixer column
+  - Small expandable panel
+  - To be determined in next session
+
+### DESIGN_PHILOSOPHY.md status
+
+- Original May 19 "warm Quiet Pro Tool" direction explicitly
+  superseded (block retained as `> SUPERSEDED` for historical
+  context)
+- Cool dark Beatport-leaning direction now canonical
+- All six core principles (restraint, dense-but-clean, negative
+  space, functionality is aesthetic, quiet confidence, one
+  perfect detail) **STILL APPLY** — only palette and color
+  execution changed
+- Sentence case, tabular nums, Inter typography all preserved
+- Anti-patterns from original (no skeuomorphism, gradients,
+  glassmorphism, all-caps, multiple accents) still apply
+
+### Commits shipped today (master, in order)
+
+- `5b09651` — Design v4 cool dark palette + layout fixes
+- `cad2098` — Design v5 deck temperature contrast + beat grid glow
+- `be6cb8d` — Design v5.2 cleanup (5 fixes including chrome
+  cleanup)
+- `8e81414` — Design v5.3 white grid markers + amplitude clearance
+- `bde9aee` — Design v5.4 grid clearance + alive Deck A blue
+- `d6f4c3f` — Design v5.5 club-lighting cool pair
+- `be3f2d0` — Design v5.6 actual glow rendering
+- `c39028b` — Design v5.7 vivid pigment + atmospheric glow
+- `0feee47` — Design v5.8 true neon multi-pass glow rendering
+- `e1de1db` — Design v5.9 deep blue + electric green
+- `80929d9` — Design v5.10 inverted peak gradient
+
+### Strategic roadmap — updated for dogfood readiness
+
+**Critical path to dogfood (in order):**
+
+1. **Manual nudge UI — REQUIRED, NOT OPTIONAL**
+   Manual anchor and BPM nudge controls must have a discoverable
+   UI surface. State exists, handlers exist, visible UI does not.
+   This is the safety net for the 20% of tracks the analyzer
+   gets within ±20 ms but not perfect.
+2. **Waveform glow decision**
+   User to decide with fresh eyes: accept current canvas-based
+   glow as "good enough" OR commit to WebGL rebuild for true
+   neon aesthetic. Not blocking other work either way.
+3. **Library deeper polish**
+   Current library has space but track row design could improve.
+   Specific improvements deferred to next session.
+4. **Dogfood with partner**
+   First real B2B session on new design with manual nudge UI in
+   place as safety net.
+
+**Post-dogfood:**
+
+- Phase 3 cue points overlay (Rekordbox PCOB / PCO2 hot cues)
+- Phase 4 fallback polish
+- Waveform spectral coloring revisit (currently tabled,
+  diagnostic data preserved in `PHASE_2_STATUS.md`)
+- Marketing landing page redesign
 
 ### Worktrees preserved
 
@@ -2025,15 +2058,18 @@ Canvas-2D-quality high-water mark.
 - `../collabmix-decks` @ `e700508` (`design-decks`) — kept for
   reference
 
-### Memory updated
+### User work style notes (preserve for future Claude sessions)
 
-Added persistent feedback memory `feedback_deck_color_tuning.md`
-during v5.3: "for deck/accent colors, start at full saturation in
-the hue family, then reduce brightness for depth — never start by
-desaturating (causes dead/muddy 'desaturated-then-dark' look)."
-Earned from 3 cycles of muddy color iterations.
+- Non-designer founder, learns by seeing not articulating
+- Wants direct opinions and pushback, not wishy-washy responses
+- Quality bar: Rekordbox / Traktor level — non-negotiable
+- Will change direction when seeing executed result (philosophy
+  direction changed twice today after seeing builds)
+- Important to let builds finish before reacting / iterating
+- Memory: color principle saved — start at full saturation,
+  reduce brightness for depth, never desaturate first
 
 > **May 23 evening end-of-session snapshot. v5.10 (`80929d9`) is
 > the current production tip. Canvas-2D glow rendering at its
 > quality ceiling; WebGL migration flagged as the lever if the
-> Reflect-style glow target stays critical to dogfood.**
+> Reflect-style neon aesthetic stays critical to dogfood.**
