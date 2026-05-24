@@ -1636,74 +1636,80 @@ function LibraryPanelV2({ lib, onLoad, playingTrack, deckATrackId:deckATrackIdPr
             const baseBg = deckClr ? `${deckClr}12` : "transparent";
             return (
               <div key={t.id} onClick={() => { console.log('[ROW-CLICK]',{id:t.id,title:t.title,artist:t.artist}); onLoad(t, "A"); }}
-                onMouseEnter={e => { e.currentTarget.style.background = deckClr ? `${deckClr}22` : BG2; }}
+                onMouseEnter={e => { e.currentTarget.style.background = deckClr ? `${deckClr}22` : "rgba(255,255,255,0.04)"; }}
                 onMouseLeave={e => { e.currentTarget.style.background = baseBg; }}
                 style={{
-                  display: "flex", alignItems: "center", gap: 8,
-                  padding: "6px 10px 6px 7px", cursor: "pointer", opacity: played && !deckClr ? 0.55 : 1,
+                  display: "flex", alignItems: "center", gap: 12,
+                  padding: "7px 12px 7px 9px", cursor: "pointer", opacity: played && !deckClr ? 0.55 : 1,
                   borderRadius: 4, marginBottom: 1,
                   background: baseBg,
                   borderLeft: `3px solid ${deckClr || "transparent"}`,
                   transition: "background-color 150ms cubic-bezier(0.4, 0, 0.2, 1)",
                 }}>
-                {/* Analysis status dot — small, before the load buttons. */}
-                <div title={t.analyzed ? "Analyzed" : "Metadata only"} style={{
-                  width: 5, height: 5, borderRadius: 3, flexShrink: 0,
-                  background: t.analyzed ? G : MUTED,
-                  boxShadow: t.analyzed ? `0 0 6px ${G}55` : "none",
-                  opacity: t.analyzed ? 1 : 0.55,
-                }} />
-                {/* Always-visible deck-load buttons. A/B at left of each row.
-                    Button is filled when the track is currently loaded on that
-                    deck (replaces the prior deck-badge indicator). Click
-                    stopPropagation so they don't double-fire the row's
-                    default-load-to-A click. */}
-                <button onClick={e => { e.stopPropagation(); onLoad(t, "A"); }}
-                  title="Load to Deck A"
-                  style={{ padding: "3px 9px", fontSize: 11, fontWeight: 700, fontFamily: "'Inter',sans-serif",
-                    background: onDeckA ? `${DECK_A_CLR}` : `${DECK_A_CLR}1f`,
-                    border: `1px solid ${onDeckA ? DECK_A_CLR : DECK_A_CLR + "66"}`,
-                    color: onDeckA ? "#0D0F12" : DECK_A_CLR,
-                    borderRadius: 4, cursor: "pointer", letterSpacing: 0.5, flexShrink: 0,
-                    boxShadow: onDeckA ? `0 0 8px ${DECK_A_CLR}88` : "none" }}>A</button>
-                <button onClick={e => { e.stopPropagation(); onLoad(t, "B"); }}
-                  title="Load to Deck B"
-                  style={{ padding: "3px 9px", fontSize: 11, fontWeight: 700, fontFamily: "'Inter',sans-serif",
-                    background: onDeckB ? `${DECK_B_CLR}` : `${DECK_B_CLR}1f`,
-                    border: `1px solid ${onDeckB ? DECK_B_CLR : DECK_B_CLR + "66"}`,
-                    color: onDeckB ? "#0D0F12" : DECK_B_CLR,
-                    borderRadius: 4, cursor: "pointer", letterSpacing: 0.5, flexShrink: 0,
-                    boxShadow: onDeckB ? `0 0 8px ${DECK_B_CLR}88` : "none" }}>B</button>
+                {/* Album art — 32px, left edge as visual anchor */}
                 <div style={{
                   width: 32, height: 32, background: BG3, borderRadius: 3, flexShrink: 0,
                   backgroundImage: artwork ? `url(${artwork})` : undefined,
                   backgroundSize: "cover", backgroundPosition: "center",
                   display: "flex", alignItems: "center", justifyContent: "center",
                 }}>
-                  {!artwork && <span style={{ fontSize: 11, color: MUTED }}>♪</span>}
+                  {!artwork && <span style={{ fontSize: 12, color: MUTED }}>♪</span>}
                 </div>
+                {/* Title (weight 500) + artist (white at 0.6) */}
                 <div style={{ flex: 1, minWidth: 0 }}>
-                  <div style={{ fontSize: 13, color: TEXT, display: "flex", alignItems: "center", gap: 6, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                    {played && <span style={{ color: G, fontSize: 10 }}>✓</span>}
+                  <div style={{ fontSize: 13, fontWeight: 500, color: TEXT, display: "flex", alignItems: "center", gap: 6, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                    {played && <span style={{ color: "rgba(255,255,255,0.6)", fontSize: 10, flexShrink: 0 }}>✓</span>}
+                    <span title={t.analyzed ? "Analyzed" : "Metadata only"} style={{
+                      width: 5, height: 5, borderRadius: 3, flexShrink: 0,
+                      background: t.analyzed ? "rgba(255,255,255,0.6)" : "rgba(255,255,255,0.2)",
+                      display: "inline-block",
+                    }} />
                     <span style={{ overflow: "hidden", textOverflow: "ellipsis" }}>{t.title || "(untitled)"}</span>
                   </div>
-                  <div style={{ fontSize: 11, color: SUBTLE, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{t.artist || ""}</div>
+                  <div style={{ fontSize: 11, fontWeight: 400, color: "rgba(255,255,255,0.6)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", marginTop: 1 }}>{t.artist || ""}</div>
                 </div>
-                <div style={{ width: 52, textAlign: "right", fontFamily: "'Inter',sans-serif", fontSize: 11, color: t.bpm ? G : MUTED }}>
-                  {t.bpm ? t.bpm.toFixed(1) : "—"}
-                </div>
-                <div style={{ width: 38, display: "flex", justifyContent: "center" }}>
-                  {t.key && <span style={{ fontSize: 9, padding: "2px 5px", background: `${G}15`, border: `1px solid ${G}33`, color: G, borderRadius: 3, fontFamily: "'Inter',sans-serif", letterSpacing: 0.5 }}>{t.key}</span>}
-                </div>
-                <div style={{ width: 50 }}>
+                {/* Energy — thin horizontal bar, replaces underscore/text decoration */}
+                <div style={{ width: 56, flexShrink: 0 }}>
                   {t.energy != null && (
-                    <div style={{ height: 4, background: BG3, borderRadius: 2, overflow: "hidden" }}>
-                      <div style={{ width: `${Math.min(100, t.energy)}%`, height: "100%", background: G }} />
+                    <div style={{ height: 3, background: "rgba(255,255,255,0.08)", borderRadius: 2, overflow: "hidden" }}>
+                      <div style={{ width: `${Math.min(100, t.energy)}%`, height: "100%", background: "rgba(255,255,255,0.6)" }} />
                     </div>
                   )}
                 </div>
-                <div style={{ width: 42, textAlign: "right", fontFamily: "'Inter',sans-serif", fontSize: 10, color: MUTED }}>
-                  {fmtDur(t.duration)}
+                {/* Right cluster — BPM, Key, Duration, tight tabular alignment */}
+                <div style={{ display: "flex", alignItems: "center", gap: 12, flexShrink: 0, fontVariantNumeric: "tabular-nums" }}>
+                  <div style={{ width: 44, textAlign: "right", fontFamily: "'Inter',sans-serif", fontSize: 12, fontWeight: 500, color: t.bpm ? TEXT : MUTED }}>
+                    {t.bpm ? t.bpm.toFixed(1) : "—"}
+                  </div>
+                  <div style={{ width: 36, display: "flex", justifyContent: "center" }}>
+                    {t.key
+                      ? <span style={{ fontSize: 9, padding: "2px 5px", background: "rgba(255,255,255,0.06)", border: "1px solid rgba(255,255,255,0.12)", color: "rgba(255,255,255,0.9)", borderRadius: 3, fontFamily: "'Inter',sans-serif", letterSpacing: 0.5, fontWeight: 500 }}>{t.key}</span>
+                      : <span style={{ fontSize: 10, color: MUTED }}>—</span>}
+                  </div>
+                  <div style={{ width: 40, textAlign: "right", fontFamily: "'Inter',sans-serif", fontSize: 11, color: "rgba(255,255,255,0.6)" }}>
+                    {fmtDur(t.duration)}
+                  </div>
+                </div>
+                {/* A / B load buttons — always visible, filled when track is loaded
+                    on that deck. stopPropagation so they don't double-fire the
+                    row's default-load-to-A click. */}
+                <div style={{ display: "flex", gap: 4, flexShrink: 0 }}>
+                  <button onClick={e => { e.stopPropagation(); onLoad(t, "A"); }}
+                    title="Load to Deck A"
+                    style={{ padding: "3px 9px", fontSize: 11, fontWeight: 700, fontFamily: "'Inter',sans-serif",
+                      background: onDeckA ? DECK_A_CLR : `${DECK_A_CLR}1f`,
+                      border: `1px solid ${onDeckA ? DECK_A_CLR : DECK_A_CLR + "66"}`,
+                      color: onDeckA ? "#0D0F12" : DECK_A_CLR,
+                      borderRadius: 4, cursor: "pointer", letterSpacing: 0.5,
+                      boxShadow: onDeckA ? `0 0 8px ${DECK_A_CLR}88` : "none" }}>A</button>
+                  <button onClick={e => { e.stopPropagation(); onLoad(t, "B"); }}
+                    title="Load to Deck B"
+                    style={{ padding: "3px 9px", fontSize: 11, fontWeight: 700, fontFamily: "'Inter',sans-serif",
+                      background: onDeckB ? DECK_B_CLR : `${DECK_B_CLR}1f`,
+                      border: `1px solid ${onDeckB ? DECK_B_CLR : DECK_B_CLR + "66"}`,
+                      color: onDeckB ? "#0D0F12" : DECK_B_CLR,
+                      borderRadius: 4, cursor: "pointer", letterSpacing: 0.5,
+                      boxShadow: onDeckB ? `0 0 8px ${DECK_B_CLR}88` : "none" }}>B</button>
                 </div>
               </div>
             );
