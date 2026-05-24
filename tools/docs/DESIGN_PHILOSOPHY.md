@@ -226,6 +226,34 @@ This is a working draft. We will refine and add as we see mockups and react. Dec
 
 ## Status log
 
+### May 22 deep night — design v5.10 (invert peak brightness gradient — deep BODY, peak tips only)
+- **Per-column gradient inverted.** v5.8 introduced the peaks-bright
+  cached gradient (peak stops `+180` near-white at gradient
+  positions 0.0 and 1.0; base color only at 0.5 centerline).
+  Visual review on v5.9 showed this was the source of the
+  "thin-deep-band-at-centerline" problem — the +180 lift was
+  rendering the top/bottom of EVERY column as near-white, leaving
+  only a horizontal centerline band reading the deep pigment we
+  kept chasing.
+  v5.10 flips it:
+  - Body of the column (gradient positions 0.05–0.95) = deep base
+    color at high alpha (0.92–0.95). The waveform body now reads
+    as the deep saturated pigment everywhere.
+  - Subtle brightness lift (`+40` above base, not +180) only at
+    the very top tip and very bottom tip (0.0 and 1.0). Tall
+    columns get a thin highlight at the actual amplitude peak;
+    short columns sample only the middle deep stops.
+- **Pass C (silhouette baseline) flattened to uniform deep color**
+  (was peaks-bright gradient mirroring the v5.8 idea). The body
+  is consistently deep pigment now without competing brightness
+  gradients.
+- v5.8 multi-pass additive glow halo (Pass A wide + Pass B
+  concentrated) preserved — that's still rendering the
+  atmospheric outer bleed correctly. The fix was inside the
+  silhouette, not in the halo.
+- Deck colors unchanged from v5.9 (`#0F4FA0` deep blue, `#1FC97A`
+  electric green).
+
 ### May 22 deep night — design v5.9 (color tuning for v5.8 glow rendering)
 - **Deck A `#1A6EE0` → `#0F4FA0`** (deep electric night blue).
   v5.8's multi-pass additive glow was washing the v5.7 mid-tone

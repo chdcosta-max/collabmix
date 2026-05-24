@@ -3314,15 +3314,14 @@ function AnimatedZoomedWF({ bands, dur, progRef, onSeek, h=96, windowSec=8, beat
         ctx.fillStyle=`rgba(${dr},${dg},${db},0.30)`;
         ctx.fill(silhouettePath);
 
-        // Pass C — silhouette baseline gradient (peaks lit, centerline dim).
-        // No shadow — additive accumulation already gives the inside its
-        // brightness. The gradient adds the "light from the peaks" depth.
+        // Pass C — silhouette baseline fill. v5.10: uniform deep base color
+        // (was peaks-bright gradient). The peaks-bright gradient was leaving
+        // the centerline as the only spot reading the deep pigment, while
+        // the edges read near-white from the +alpha bump. The body should
+        // be the deep saturated color everywhere, with brightness only at
+        // the very peak tips (handled by Pass 2b's per-column gradient).
         ctx.shadowBlur=0;
-        const baseGrad=ctx.createLinearGradient(0,center-maxH,0,center+maxH);
-        baseGrad.addColorStop(0,`rgba(${dr},${dg},${db},0.48)`);
-        baseGrad.addColorStop(0.5,`rgba(${dr},${dg},${db},0.10)`);
-        baseGrad.addColorStop(1,`rgba(${dr},${dg},${db},0.48)`);
-        ctx.fillStyle=baseGrad;
+        ctx.fillStyle=`rgba(${dr},${dg},${db},0.45)`;
         ctx.fill(silhouettePath);
 
         // Restore source-over for the AA stroke + downstream passes.
@@ -3337,18 +3336,21 @@ function AnimatedZoomedWF({ bands, dur, progRef, onSeek, h=96, windowSec=8, beat
         ctx.stroke(silhouettePath);
 
         // ── Pass 2b: per-column amplitude overlay — crisp readable core.
-        // v5.8: runs in regular source-over (already restored above). Peak
-        // stops pushed +180 above base → near-white with a slight deck-color
-        // cast, giving each loud column a "lit core" tip against the
-        // additive halo from the multi-pass glow above. Quiet columns only
-        // sample the dim middle stops.
-        const peakR=Math.min(255,dr+180), peakG=Math.min(255,dg+180), peakB=Math.min(255,db+180);
+        // v5.10: gradient INVERTED from v5.8. Body of the waveform is now
+        // the deep base color across nearly the whole column height; only
+        // the very top tip (and mirrored bottom tip) gets a subtle peak
+        // brightness lift (+40 above base, was +180). Result: the waveform
+        // BODY reads as the deep saturated pigment we keep chasing, with a
+        // thin highlight at the actual amplitude peak tips of loud columns.
+        // Short columns sample only the middle deep-base stops — no
+        // accidental "near-white centerline" rendering.
+        const peakR=Math.min(255,dr+40), peakG=Math.min(255,dg+40), peakB=Math.min(255,db+40);
         const colGrad=ctx.createLinearGradient(0,ampTop,0,ampBottom);
-        colGrad.addColorStop(0,   `rgba(${peakR},${peakG},${peakB},1.0)`);
-        colGrad.addColorStop(0.35,`rgba(${peakR},${peakG},${peakB},0.85)`);
-        colGrad.addColorStop(0.5, `rgba(${dr},${dg},${db},0.55)`);
-        colGrad.addColorStop(0.65,`rgba(${peakR},${peakG},${peakB},0.85)`);
-        colGrad.addColorStop(1,   `rgba(${peakR},${peakG},${peakB},1.0)`);
+        colGrad.addColorStop(0,    `rgba(${peakR},${peakG},${peakB},1.0)`);
+        colGrad.addColorStop(0.05, `rgba(${dr},${dg},${db},0.95)`);
+        colGrad.addColorStop(0.5,  `rgba(${dr},${dg},${db},0.92)`);
+        colGrad.addColorStop(0.95, `rgba(${dr},${dg},${db},0.95)`);
+        colGrad.addColorStop(1,    `rgba(${peakR},${peakG},${peakB},1.0)`);
         ctx.fillStyle=colGrad;
         for(let dx=0;dx<physW;dx++){
           const h=heights[dx];
