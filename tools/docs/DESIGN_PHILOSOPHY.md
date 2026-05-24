@@ -36,15 +36,41 @@ A perfectly considered control, a beautiful waveform, an animation that feels ex
 
 ## What This Means Visually
 
-### Colors
-- Background: warm dark gray (NOT pure black) — has warmth, around #0F1014
-- Surface/panels: slightly elevated grays
-- Text: warm white (NOT pure white)
-- ONE accent color used sparingly with intention (exploring amber/warm tones)
-- Frequency band colors: cohesive palette, not random
+### Colors (current — cool dark, May 22, 2026)
+- Background: **cool near-black** `#0A0B0E` — no brown/warm cast, reads
+  like Beatport / Spotify dark mode (NOT warm sepia, NOT pure black)
+- Panels / surfaces: cool dark greys, slightly lifted (`#15171A`,
+  `#1F2126`)
+- Text: **clean white** `#F5F5F7` (NOT warm white)
+- Borders: cool whites at low alpha — `rgba(255,255,255,0.06)` subtle,
+  `rgba(255,255,255,0.12)` defined
+- **Surgical warm accent** — deeper amber `#D4A06A`. Used on
+  **2–3 element types ONLY**:
+  - BPM display (color + glow)
+  - Camelot key chip (text + background tint)
+  - Elapsed time when playing (amber when active, neutral when stopped)
+  - Optional thin border accent (active sidebar item) — restraint
+- Deck identity colors — deep, muted, grounded, Scandi-mature (NOT bright,
+  NOT cheesy):
+  - Deck A: `#3B5A6F` — deep navy / teal-blue
+  - Deck B: `#4A5568` — deep slate / gray-blue
+- 16-bar phrase marker on waveform: **red `#FF3B30`** — strong,
+  unambiguous structural reference against the cool dark background
+- Frequency band colors (if/when spectral rendering revisited): cohesive
+  palette, not random
   - Lows: deep teal-blue
   - Mids: warm amber
   - Highs: soft cream
+
+> ### Colors (SUPERSEDED — May 21 warm "Quiet Pro Tool" palette)
+> Earlier direction used warm dark gray (`#0F1014`), warm white text
+> (`#E8E3D8`), and a single pale-oak accent (`#C9B79C`) applied across
+> many UI elements. May 22 visual review by user determined the warm
+> execution read as "retro / military, not clean or minimal" and the
+> direction reversed to the cool dark Beatport-leaning palette above
+> with surgical warm accents only. Underlying philosophy (restraint,
+> Japanese minimalism, MUJI / Teenage Engineering references, sentence
+> case, tabular nums, Inter typography) unchanged — only palette changed.
 
 ### Typography
 - Sentence case throughout (NEVER all-caps for display)
@@ -177,6 +203,38 @@ Reactions to 8 reference apps during taste-mapping session:
 This is a working draft. We will refine and add as we see mockups and react. Decisions will get more specific over time. What's here is direction, not final commitment.
 
 ## Status log
+
+### May 22 — palette pivot to cool dark + layout fixes
+- **Palette direction reversed.** The warm "Quiet Pro Tool" palette
+  shipped May 21 (`#0F1014` warm bg, `#C9B79C` oak accent) was judged
+  "retro / military, not clean or minimal" on user visual review. New
+  direction: cool near-black `#0A0B0E`, clean white `#F5F5F7`, deck
+  colors deep navy `#3B5A6F` (A) / slate `#4A5568` (B), surgical amber
+  accent `#D4A06A` applied to 2–3 element types only (BPM, Camelot,
+  playing-time elapsed). Beatport-leaning, Scandi-mature.
+- **16-bar phrase markers changed to red `#FF3B30`** — was previously
+  derived from deck identity color; red gives strong unambiguous
+  structural reference against the cool dark waveform background.
+- **Transport clipping fix.** Deck row height bumped 220 → 248 so the
+  52 px white play + 8+8 padding transport row fits inside the deck
+  card without clipping. v3's earlier "fits in 220" claim did not hold
+  on review.
+- **Top waveform height reduced** 120 → 78 (~35% shorter). Rekordbox's
+  reference waveforms run shorter than ours; library reclaims that
+  vertical real estate.
+- **Crossfader relocated** out of the standalone strip between decks
+  and library, into a horizontal strip at the bottom of the mixer
+  card. Frees the full-width vertical strip for the library.
+- **Library polish.** TrackRow padding 5→9 px vertical for more
+  breathing room. Search bar lost its inset shadow; sidebar got more
+  generous label padding; "+ Add music" and "+ New folder" buttons
+  changed from chunky chips to restrained text-button style. Selected
+  sidebar item uses a thin amber left border as the only sidebar
+  accent.
+- Philosophy (restraint, MUJI / Teenage Engineering refs, sentence
+  case, Inter, tabular nums, album-art deck anchors, white-circle play
+  as visual anchor, calm monochrome waveform amplitude) **unchanged**.
+  This was a palette + layout pass, not a direction change.
 
 ### May 21 evening
 - Design v3 layout fixes shipped (commit `565991d`). Six fixes from
