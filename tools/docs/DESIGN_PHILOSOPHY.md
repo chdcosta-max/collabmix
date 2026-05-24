@@ -56,7 +56,8 @@ A perfectly considered control, a beautiful waveform, an animation that feels ex
   in progress, partner online dot).
 - Deck identity colors — confident, alive, Scandi-honest. Contrast
   through **temperature** (cool vs warm) so A vs B reads at a glance:
-  - Deck A: `#2974B6` — saturated mature blue
+  - Deck A: `#1E80D4` — alive saturated blue (Spotify/Beatport accent
+    range; full pigment, moderate brightness)
   - Deck B: `#C16842` — alive aged copper (NOT bright orange, NOT
     muddy brown — the line between alive and screaming)
 - **Beat grid lines render in WHITE** (functional reference, must
@@ -220,6 +221,21 @@ Reactions to 8 reference apps during taste-mapping session:
 This is a working draft. We will refine and add as we see mockups and react. Decisions will get more specific over time. What's here is direction, not final commitment.
 
 ## Status log
+
+### May 22 night — design v5.4 (true amplitude clearance, alive Deck A blue)
+- **ampPad 11 → 18 css px.** v5.3 bumped 6 → 11 but peaks were
+  still touching the grid tick rail; markers existed but didn't
+  visually sit "above" the waveform. At 18 the amplitude region
+  exactly meets the tick rail (tickRailPad is also 18) — no
+  overlap, no gap. White grid markers now read as clearly atop
+  the waveform.
+- **Deck A blue `#2974B6` → `#1E80D4`** (alive saturated blue).
+  v5.3's value was still landing in "dark blue-gray" territory.
+  v5.4 keeps the principle (full saturation in hue family first,
+  then reduce brightness) — drops some lightness vs full neon but
+  retains full pigment so the BLUE identity reads at a glance.
+  Spotify/Beatport accent-blue range. Deck B `#C16842` unchanged
+  — copper landed correctly in v5.3.
 
 ### May 22 night — design v5.3 (white grid markers, amplitude clearance, saturated deck colors)
 - **Beat grid markers render in WHITE on both decks.** v5/v5.2 had
