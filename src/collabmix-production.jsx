@@ -984,7 +984,7 @@ function TrackRow({track, onLoadA, onLoadB, isRec, reasons, canLoad, previewTrac
         if(onDragStart)onDragStart(track);
       }}
       onContextMenu={e=>{e.preventDefault();setCtxMenu({x:e.clientX,y:e.clientY});}}
-      style={{display:"grid",gridTemplateColumns:"28px 36px 1fr 70px 44px 70px 44px 84px",gap:8,alignItems:"center",padding:"9px 14px",background:isRec?"#22c55e07":hov?"rgba(255,255,255,0.025)":"transparent",borderBottom:"1px solid rgba(255,255,255,0.04)",transition:"background .1s",position:"relative",cursor:"grab"}}
+      style={{display:"grid",gridTemplateColumns:"28px 36px 1fr 70px 44px 70px 44px 84px",gap:8,alignItems:"center",padding:"9px 14px",background:isRec?"#22c55e07":hov?"rgba(255,255,255,0.025)":"transparent",borderBottom:"1px solid rgba(255,255,255,0.04)",transition:"background-color 150ms cubic-bezier(0.4, 0, 0.2, 1)",position:"relative",cursor:"grab"}}
     >
       {/* Context menu */}
       {ctxMenu&&(
@@ -1002,7 +1002,7 @@ function TrackRow({track, onLoadA, onLoadB, isRec, reasons, canLoad, previewTrac
       {/* + Quick-add to deck */}
       <div style={{position:"relative"}} ref={deckMenuRef}>
         <button onClick={e=>{e.stopPropagation();setShowDeckMenu(v=>!v);}}
-          style={{width:22,height:22,borderRadius:5,background:showDeckMenu?`${G}22`:hov?`${G}12`:"transparent",border:`1px solid ${hov||showDeckMenu?G+"44":"transparent"}`,color:hov||showDeckMenu?G:"transparent",fontSize:14,lineHeight:1,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",transition:"all .15s",fontFamily:"'Inter',sans-serif"}}>＋</button>
+          style={{width:22,height:22,borderRadius:5,background:showDeckMenu?`${G}22`:hov?`${G}12`:"transparent",border:`1px solid ${hov||showDeckMenu?G+"44":"transparent"}`,color:hov||showDeckMenu?G:"transparent",fontSize:14,lineHeight:1,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",transition:"all 150ms cubic-bezier(0.4, 0, 0.2, 1)",fontFamily:"'Inter',sans-serif"}}>＋</button>
         {showDeckMenu&&(
           <div onClick={e=>e.stopPropagation()} style={{position:"absolute",left:0,top:"calc(100% + 4px)",zIndex:500,background:"rgba(255,255,255,0.04)",border:"1px solid rgba(255,255,255,0.06)",borderRadius:10,padding:6,minWidth:130,boxShadow:"0 12px 32px rgba(0,0,0,.85)"}}>
             <div style={{fontSize:8,color:"#5A5E66",fontFamily:"'Inter',sans-serif",padding:"2px 8px 6px",letterSpacing:1.2}}>Load to deck</div>
@@ -1644,6 +1644,7 @@ function LibraryPanelV2({ lib, onLoad, playingTrack, deckATrackId:deckATrackIdPr
                   borderRadius: 4, marginBottom: 1,
                   background: baseBg,
                   borderLeft: `3px solid ${deckClr || "transparent"}`,
+                  transition: "background-color 150ms cubic-bezier(0.4, 0, 0.2, 1)",
                 }}>
                 {/* Analysis status dot — small, before the load buttons. */}
                 <div title={t.analyzed ? "Analyzed" : "Metadata only"} style={{
@@ -4454,7 +4455,7 @@ function Deck({ id, ch, ctx:ac, color, local, remote, onChange, midi:mt, bpmResu
                   cursor:buf?"pointer":"default",
                   fontFamily:"'Inter',sans-serif",
                   flexShrink:0, minWidth:0, outline:"none",
-                  transition:"all .1s",
+                  transition:"all 150ms cubic-bezier(0.4, 0, 0.2, 1)",
                 }}>
                 <span style={{width:5, height:5, borderRadius:"50%", background:c, opacity:isSet?1:0.35, flexShrink:0}}/>
                 <span style={{fontSize:11, fontWeight:600, color:isSet?"#F5F5F7":"#9CA3AF", letterSpacing:.3, flexShrink:0}}>{letter}</span>
@@ -4507,7 +4508,7 @@ function Deck({ id, ch, ctx:ac, color, local, remote, onChange, midi:mt, bpmResu
             borderRadius:6,
             fontFamily:"'Inter',sans-serif", fontSize:12, fontWeight:500, letterSpacing:.3,
             cursor:cueEnabled?"pointer":"default", outline:"none", flexShrink:0,
-            transition:"all .15s",
+            transition:"all 150ms cubic-bezier(0.4, 0, 0.2, 1)",
           }}>Cue</button>
         {/* Skip back 1 beat */}
         <button onClick={local?()=>{
@@ -4585,7 +4586,7 @@ function Deck({ id, ch, ctx:ac, color, local, remote, onChange, midi:mt, bpmResu
                 borderRadius:6,
                 fontFamily:"'Inter',sans-serif", fontSize:12, fontWeight:500, letterSpacing:.3,
                 cursor:clickable?"pointer":"default", outline:"none", flexShrink:0,
-                transition:"all .15s",
+                transition:"all 150ms cubic-bezier(0.4, 0, 0.2, 1)",
                 boxShadow:tone.glow?"0 0 12px rgba(255,255,255,0.30)":"none",
                 display:"flex", alignItems:"center", gap:6,
               }}>
@@ -4605,7 +4606,7 @@ function Deck({ id, ch, ctx:ac, color, local, remote, onChange, midi:mt, bpmResu
               cursor:"pointer", outline:"none", flexShrink:0,
               fontFamily:"'Inter',sans-serif", fontSize:12, fontWeight:600,
               boxShadow:isMaster?"0 0 10px rgba(255,255,255,0.25)":"none",
-              transition:"all .15s",
+              transition:"all 150ms cubic-bezier(0.4, 0, 0.2, 1)",
               display:"flex", alignItems:"center", justifyContent:"center",
               padding:0,
             }}>M</button>
@@ -4617,7 +4618,7 @@ function Deck({ id, ch, ctx:ac, color, local, remote, onChange, midi:mt, bpmResu
   );
 }
 const TB=(c)=>({height:28,padding:"0 8px",background:"#0A0B0E",border:`1px solid ${c}33`,color:c,borderRadius:5,cursor:"pointer",fontFamily:"'Inter',sans-serif",fontSize:9,outline:"none",display:"flex",alignItems:"center",justifyContent:"center"});
-const TB2=(c,h=28)=>({height:h,width:h+8,background:"#0A0B0E",border:`1px solid ${c}44`,color:c+"bb",borderRadius:7,cursor:"pointer",fontFamily:"'Inter',sans-serif",fontSize:11,outline:"none",display:"flex",alignItems:"center",justifyContent:"center",transition:"all .1s"});
+const TB2=(c,h=28)=>({height:h,width:h+8,background:"#0A0B0E",border:`1px solid ${c}44`,color:c+"bb",borderRadius:7,cursor:"pointer",fontFamily:"'Inter',sans-serif",fontSize:11,outline:"none",display:"flex",alignItems:"center",justifyContent:"center",transition:"all 150ms cubic-bezier(0.4, 0, 0.2, 1)"});
 const sBtn=(c)=>({padding:"5px 9px",fontSize:9,fontFamily:"'Inter',sans-serif",background:c+"0e",border:`1px solid ${c}2a`,color:c,borderRadius:6,cursor:"pointer",letterSpacing:.5,display:"flex",alignItems:"center",justifyContent:"center",gap:4});
 
 // ── VerticalFader Component ──────────────────────────────────
@@ -6827,7 +6828,7 @@ export default function CollabMix({ initialPage = "landing", djName = null }) {
 
         {/* ── DECK A (shared) — outer "Deck A · driver" header bar removed;
               new inner Deck header has the 3-part identity row at top. ── */}
-        <div style={{ display:"flex", flexDirection:"column", minWidth:0, minHeight:0, overflow:"hidden", background:"#15171A", border:`1px solid ${deckDrivers.A?"#1976D244":"rgba(255,255,255,0.06)"}`, borderRadius:10, transition:"border-color .3s" }}>
+        <div style={{ display:"flex", flexDirection:"column", minWidth:0, minHeight:0, overflow:"hidden", background:"#15171A", border:`1px solid ${deckDrivers.A?"#1976D244":"rgba(255,255,255,0.06)"}`, borderRadius:10, transition:"border-color 150ms cubic-bezier(0.4, 0, 0.2, 1)" }}>
           <div style={{ flex:1, display:"flex", alignItems:"flex-start", gap:10, padding:"10px 0 10px 10px", overflow:"hidden", minHeight:0 }}>
             <DeckArt artwork={libLoadA?.track?.artwork} fallback="A" color="#1976D2"/>
             <div style={{ flex:1, overflow:"hidden", minHeight:0 }}>
@@ -6929,7 +6930,7 @@ export default function CollabMix({ initialPage = "landing", djName = null }) {
         </div>
 
         {/* ── DECK B (shared) — outer header bar removed (see Deck A note). ── */}
-        <div style={{ display:"flex", flexDirection:"column", minWidth:0, minHeight:0, overflow:"hidden", background:"#15171A", border:`1px solid ${deckDrivers.B?"#00C85344":"rgba(255,255,255,0.06)"}`, borderRadius:10, transition:"border-color .3s" }}>
+        <div style={{ display:"flex", flexDirection:"column", minWidth:0, minHeight:0, overflow:"hidden", background:"#15171A", border:`1px solid ${deckDrivers.B?"#00C85344":"rgba(255,255,255,0.06)"}`, borderRadius:10, transition:"border-color 150ms cubic-bezier(0.4, 0, 0.2, 1)" }}>
           <div style={{ flex:1, display:"flex", alignItems:"flex-start", gap:10, padding:"10px 0 10px 10px", overflow:"hidden", minHeight:0 }}>
             <DeckArt artwork={libLoadB?.track?.artwork} fallback="B" color="#00C853"/>
             <div style={{ flex:1, overflow:"hidden", minHeight:0 }}>
