@@ -4216,6 +4216,15 @@ function Deck({ id, ch, ctx:ac, color, local, remote, onChange, midi:mt, bpmResu
   const playVisual=isDriver?play:remotePlaying;
   const enabled=local||!!remoteToggle;
   const cueEnabled=local||!!remoteCue;
+  // Pulse trigger — bump counter on play activation so the keyed wrapper
+  // remounts and the one-shot @keyframes playPulse replays. Single pulse on
+  // press, never continuous (would be visual noise during a long set).
+  const prevPlayVisualRef=useRef(playVisual);
+  const [pulseId,setPulseId]=useState(0);
+  useEffect(()=>{
+    if(playVisual&&!prevPlayVisualRef.current)setPulseId(p=>p+1);
+    prevPlayVisualRef.current=playVisual;
+  },[playVisual]);
 
   // Load a file, optionally with library track metadata
   const load=async(f, trackMeta=null)=>{
@@ -4533,19 +4542,37 @@ function Deck({ id, ch, ctx:ac, color, local, remote, onChange, midi:mt, bpmResu
           }
         }:undefined} disabled={!local} title={syncRole!==null?"Snap to previous beat":"Skip back 1 beat"}
           style={{height:38, width:32, background:"transparent", border:"1px solid rgba(255,255,255,0.12)", color:local?"#9CA3AF":"#5A5E66", borderRadius:6, cursor:local?"pointer":"default", fontFamily:"'Inter',sans-serif", fontSize:13, outline:"none", flexShrink:0, padding:0, display:"flex", alignItems:"center", justifyContent:"center"}}>◂</button>
-        {/* WHITE PLAY — 52px circle, visual anchor */}
-        <button onClick={(e)=>{ if(local&&toggle) toggle(); else if(remoteToggle) remoteToggle(); }} disabled={!enabled}
-          style={{width:52, height:52, borderRadius:"50%",
-            background:playVisual?"#FFFFFF":"transparent",
-            border:`1.5px solid ${playVisual?"#FFFFFF":(enabled?"rgba(255,255,255,0.30)":"rgba(255,255,255,0.10)")}`,
-            color:playVisual?"#0A0B0E":(enabled?"#F5F5F7":"#5A5E66"),
-            cursor:enabled?"pointer":"default",
-            fontSize:18, fontWeight:500,
-            display:"flex", alignItems:"center", justifyContent:"center",
-            boxShadow:playVisual?"0 0 24px rgba(255,255,255,0.30), 0 0 60px rgba(255,255,255,0.12)":"none",
-            outline:"none", flexShrink:0,
-            transition:"all .2s", padding:0,
-          }}>{playVisual?"❚❚":"▶"}</button>
+        {/* WHITE PLAY — 52px circle, visual anchor.
+            Pulse: keyed wrapper remounts on pulseId change → @keyframes
+            playPulse fires once (subtle scale 1 → 1.05 → 1, 200ms). */}
+        <div key={pulseId} style={{
+          position:"relative", width:52, height:52, flexShrink:0,
+          animation: pulseId>0 ? "playPulse 200ms cubic-bezier(0.4, 0, 0.2, 1) 1" : undefined,
+        }}>
+          {/* Radial halo — same trigger, expands outward and fades. White at
+              0.9 reads against the dark background. */}
+          {pulseId>0 && (
+            <div style={{
+              position:"absolute", inset:0, borderRadius:"50%",
+              border:"1.5px solid rgba(255,255,255,0.9)",
+              pointerEvents:"none",
+              animation:"playPulseHalo 200ms cubic-bezier(0.4, 0, 0.2, 1) 1 forwards",
+            }}/>
+          )}
+          <button onClick={(e)=>{ if(local&&toggle) toggle(); else if(remoteToggle) remoteToggle(); }} disabled={!enabled}
+            style={{width:52, height:52, borderRadius:"50%",
+              background:playVisual?"rgba(255,255,255,0.9)":"transparent",
+              border:`1.5px solid ${playVisual?"rgba(255,255,255,0.9)":(enabled?"rgba(255,255,255,0.30)":"rgba(255,255,255,0.10)")}`,
+              color:playVisual?"#0A0B0E":(enabled?"#F5F5F7":"#5A5E66"),
+              cursor:enabled?"pointer":"default",
+              fontSize:18, fontWeight:500,
+              display:"flex", alignItems:"center", justifyContent:"center",
+              boxShadow:playVisual?"0 0 24px rgba(255,255,255,0.30), 0 0 60px rgba(255,255,255,0.12)":"none",
+              outline:"none",
+              transition:"background-color 150ms cubic-bezier(0.4, 0, 0.2, 1), border-color 150ms cubic-bezier(0.4, 0, 0.2, 1), color 150ms cubic-bezier(0.4, 0, 0.2, 1), box-shadow 150ms cubic-bezier(0.4, 0, 0.2, 1)",
+              padding:0,
+            }}>{playVisual?"❚❚":"▶"}</button>
+        </div>
         {/* Skip forward 1 beat */}
         <button onClick={local?()=>{
           const beatPeriod=bpmResult?.beatPeriodSec;
@@ -6673,6 +6700,8 @@ export default function CollabMix({ initialPage = "landing", djName = null }) {
         @keyframes pulse{0%,100%{opacity:1}50%{opacity:.4}}
         @keyframes wave{0%,100%{transform:scaleY(.3)}50%{transform:scaleY(1)}}
         @keyframes spin{to{transform:rotate(360deg)}}
+        @keyframes playPulse{0%,100%{transform:scale(1)}50%{transform:scale(1.05)}}
+        @keyframes playPulseHalo{0%{transform:scale(1);opacity:0.9}100%{transform:scale(1.25);opacity:0}}
         *{box-sizing:border-box}
         ::-webkit-scrollbar{width:3px}::-webkit-scrollbar-track{background:#0A0B0E}::-webkit-scrollbar-thumb{background:#3A3D44;border-radius:2px}
       `}</style>
