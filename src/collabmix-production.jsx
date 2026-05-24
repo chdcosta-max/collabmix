@@ -72,12 +72,14 @@ function createEngine() {
 }
 function xg(p) { const a = p * Math.PI / 2; return { a: Math.cos(a), b: Math.sin(a) }; }
 
-// ── Design tokens (Cool Pro Tool palette, May 22, 2026) ────────
-// Cool dark surfaces, clean white text, surgical amber accent. Replaces the
-// warm "Quiet Pro Tool" palette that user May 22 review judged "retro/military".
-// See tools/docs/DESIGN_PHILOSOPHY.md for the direction and rationale.
+// ── Design tokens (Cool Pro Tool palette, May 24, 2026) ────────
+// Cool dark surfaces, clean white text. Single accent: white at varying
+// opacity (amber retired May 24). See tools/docs/DESIGN_PHILOSOPHY.md.
 const TOK = {
-  accent: "#D4A06A", // SURGICAL warm accent — only on BPM, Camelot, playing-time
+  // Single accent — white at three opacity tiers
+  accent:  "rgba(255,255,255,0.9)",  // primary: active states, primary indicators
+  accent2: "rgba(255,255,255,0.6)",  // secondary: hover states, secondary info
+  accent3: "rgba(255,255,255,0.3)",  // tertiary: borders, dividers
   deckA:  "#1976D2", // your deck — Dusk Blue (sRGB; P3 in index.css via --deck-a)
   deckB:  "#00C853", // partner deck — Deep Emerald Glow (sRGB; P3 via --deck-b)
   bg:     "#0A0B0E", // primary background — cool near-black
@@ -89,9 +91,6 @@ const TOK = {
   text:   "#F5F5F7", // primary text — clean white
   subtle: "#9CA3AF", // secondary text — cool gray
   muted:  "#5A5E66", // disabled / tertiary — cool muted
-  // Legacy aliases (kept until all raw hex references migrate to TOK names).
-  oak:    "#D4A06A",
-  gold:   "#D4A06A",
 };
 
 
@@ -940,7 +939,7 @@ function TrackRow({track, onLoadA, onLoadB, isRec, reasons, canLoad, previewTrac
   const fmt=(s)=>s?`${Math.floor(s/60)}:${String(Math.floor(s%60)).padStart(2,"0")}`:"--";
   const camelot=CAMELOT[track.key];
   const isMinor=camelot?.endsWith("A");
-  const keyColor=isMinor?"#D4A06A":G;
+  const keyColor=isMinor?"rgba(255,255,255,0.6)":G;
   const [ac,ac2]=sesAvatarColor(track.artist||track.title||"");
   const initial=(track.artist||track.title||"?")[0].toUpperCase();
   const isPreviewing=previewTrackId===track.id;
@@ -1373,8 +1372,8 @@ function LibraryPanelV2({ lib, onLoad, playingTrack, deckATrackId:deckATrackIdPr
       <div onClick={onClick} style={{
         padding: "8px 14px 8px 11px", cursor: "pointer",
         display: "flex", justifyContent: "space-between", alignItems: "center",
-        borderLeft: `3px solid ${isActive ? "#D4A06A" : "transparent"}`,
-        background: isActive ? "rgba(212,160,106,0.06)" : "transparent",
+        borderLeft: `3px solid ${isActive ? "rgba(255,255,255,0.9)" : "transparent"}`,
+        background: isActive ? "rgba(255,255,255,0.06)" : "transparent",
         color: isActive ? TEXT : SUBTLE, fontSize: 12,
         transition: "color .12s, background .12s",
       }}>
@@ -2388,8 +2387,8 @@ function LibraryPanel({lib, onLoad, playingTrack, previewTrackId, onPreview, onD
                     <button key={k} onClick={()=>setKeyFilter(kf=>kf===k?null:k)}
                       style={{padding:"3px 1px",fontSize:7,fontFamily:"'Inter',sans-serif",
                         background:keyFilter===k?G:"transparent",
-                        color:keyFilter===k?"#000":k.endsWith("A")?"#D4A06A":G,
-                        border:`1px solid ${keyFilter===k?G:k.endsWith("A")?"#D4A06A44":G+"33"}`,
+                        color:keyFilter===k?"#000":k.endsWith("A")?"rgba(255,255,255,0.6)":G,
+                        border:`1px solid ${keyFilter===k?G:k.endsWith("A")?"rgba(255,255,255,0.3)":G+"33"}`,
                         borderRadius:3,cursor:"pointer",textAlign:"center"}}>{k}</button>
                   ))}
                 </div>

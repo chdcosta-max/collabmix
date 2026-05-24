@@ -36,7 +36,7 @@ A perfectly considered control, a beautiful waveform, an animation that feels ex
 
 ## What This Means Visually
 
-### Colors (current — cool dark, design v5, May 22, 2026 evening)
+### Colors (current — cool dark + single white accent, May 24, 2026)
 - Background: **cool near-black** `#0A0B0E` — no brown/warm cast, reads
   like Beatport / Spotify dark mode (NOT warm sepia, NOT pure black)
 - Panels / surfaces: cool dark greys, slightly lifted (`#15171A`,
@@ -44,11 +44,18 @@ A perfectly considered control, a beautiful waveform, an animation that feels ex
 - Text: **clean white** `#F5F5F7` (NOT warm white)
 - Borders: cool whites at low alpha — `rgba(255,255,255,0.06)` subtle,
   `rgba(255,255,255,0.12)` defined
-- **Surgical warm accent** — deeper amber `#D4A06A`. Used on
-  **the Camelot key chip ONLY** plus thin border accent on the active
-  sidebar item (restraint principle, v5 tightened from v4 by dropping
-  BPM and elapsed-time off the amber list — those felt inconsistent
-  against the white track title).
+- **Single accent: white at varying opacity. No amber, no warm accent.**
+  Three tiers, used everywhere an accent is needed:
+  - **Primary** `rgba(255,255,255,0.9)` — active states, primary
+    indicators (active sidebar border, active play / sync glow center)
+  - **Secondary** `rgba(255,255,255,0.6)` — hover states, secondary
+    info (minor-key Camelot text, secondary metadata)
+  - **Tertiary** `rgba(255,255,255,0.3)` — borders, dividers, inactive
+    pill outlines
+  Amber `#D4A06A` retired May 24 — the surgical-warm-accent direction
+  was tried at v5–v5.10 (Camelot chip, active sidebar border) and
+  dropped: even one warm hue against the cool dark surfaces broke the
+  Beatport / Spotify register the rest of the palette was reaching for.
 - **Active state on buttons: clean white** — NO green. Sync engaged,
   M (master) engaged both get a white glow / brightness lift matching
   the white play button when playing. Green removed from active-state
