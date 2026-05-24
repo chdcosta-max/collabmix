@@ -54,18 +54,21 @@ A perfectly considered control, a beautiful waveform, an animation that feels ex
   the white play button when playing. Green removed from active-state
   palette entirely; only retained for semantic indicators (recording
   in progress, partner online dot).
-- Deck identity colors — confident, alive, Scandi-honest. Contrast
-  through **temperature** (cool vs warm) so A vs B reads at a glance:
-  - Deck A: `#1E80D4` — alive saturated blue (Spotify/Beatport accent
-    range; full pigment, moderate brightness)
-  - Deck B: `#C16842` — alive aged copper (NOT bright orange, NOT
-    muddy brown — the line between alive and screaming)
+- Deck identity colors — **"club lighting" cool pair**, both with
+  "their own light source" / glowing-in-a-dark-room character. A vs
+  B reads through hue (blue vs purple), not temperature:
+  - Deck A: `#1B5BAA` — deep electric night blue (dusk skyline /
+    phone screen in dark room / deep stage lighting)
+  - Deck B: `#6B3FA8` — deep electric purple (premium amethyst,
+    high-end venue lighting; NOT neon party, NOT lavender)
 - **Beat grid lines render in WHITE** (functional reference, must
   contrast against any deck color). Off-beat ticks at low alpha,
-  downbeat ticks bright + through-line, all with subtle white
-  shadowBlur. Phrase (16-bar) markers stay red on the outer rails
-  only. Deck-color glow lives on the waveform bars themselves (in
-  the amplitude pixel pass), not the grid.
+  downbeat ticks bright + through-line. **Canvas `shadowColor`
+  around the ticks uses the deck identity color** — white carries
+  the contrast, deck-color halo carries the atmospheric vibe. Phrase
+  (16-bar) markers stay red on the outer rails only with their own
+  red glow. Deck-color glow also lives on the waveform bars
+  themselves (in the amplitude pixel pass).
 - BPM display: **clean white**, same color family as the track title.
   Number reads as a primary data point through size, not color.
 - Track time (elapsed/remain): inline with the track title, Rekordbox
@@ -221,6 +224,27 @@ Reactions to 8 reference apps during taste-mapping session:
 This is a working draft. We will refine and add as we see mockups and react. Decisions will get more specific over time. What's here is direction, not final commitment.
 
 ## Status log
+
+### May 22 late night — design v5.5 (club-lighting cool pair, deck-color grid glow)
+- **Deck pair re-themed to "club lighting" cool tones.** v5.1–v5.4
+  cycled through blue/slate, blue/rust-copper, and saturated
+  variants of those; none landed as "glowing in a dark room"
+  atmospheric. v5.5 abandons the temperature-contrast rule —
+  both decks now in the cool family but distinct hues:
+  - Deck A: `#1B5BAA` — deep electric night blue. Dusk city
+    skyline / phone screen in dark room / deep stage lighting.
+  - Deck B: `#6B3FA8` — deep electric purple. Premium amethyst /
+    high-end venue lighting / between deep amethyst and electric
+    violet (NOT neon party purple, NOT lavender, NOT magenta).
+  Both have "their own light source" — glowing, modern, mature.
+  Crossfader gradient updated to the new rgb pair.
+- **Beat grid glow follows deck identity color again.** Grid
+  LINES still render in white (v5.3 contrast rule preserved) but
+  the canvas `shadowColor` around the ticks is now deck-color
+  rgba (blue halo on Deck A, purple halo on Deck B). White
+  carries the contrast; deck-color glow carries the vibe. The
+  waveform area reads as atmospheric lighting rather than flat
+  white-on-dark. Phrase tick branch still overrides to red glow.
 
 ### May 22 night — design v5.4 (true amplitude clearance, alive Deck A blue)
 - **ampPad 11 → 18 css px.** v5.3 bumped 6 → 11 but peaks were

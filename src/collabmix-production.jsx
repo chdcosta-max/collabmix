@@ -78,8 +78,8 @@ function xg(p) { const a = p * Math.PI / 2; return { a: Math.cos(a), b: Math.sin
 // See tools/docs/DESIGN_PHILOSOPHY.md for the direction and rationale.
 const TOK = {
   accent: "#D4A06A", // SURGICAL warm accent — only on BPM, Camelot, playing-time
-  deckA:  "#1E80D4", // your deck — deep navy / teal-blue
-  deckB:  "#C16842", // partner deck — deep slate / gray-blue
+  deckA:  "#1B5BAA", // your deck — deep navy / teal-blue
+  deckB:  "#6B3FA8", // partner deck — deep slate / gray-blue
   bg:     "#0A0B0E", // primary background — cool near-black
   bg2:    "#15171A", // panels / cards (cool dark, one step lifted)
   bg3:    "#1F2126", // elevated panels / modals (~two steps lifted)
@@ -992,8 +992,8 @@ function TrackRow({track, onLoadA, onLoadB, isRec, reasons, canLoad, previewTrac
         <div onMouseDown={e=>e.stopPropagation()} style={{position:"fixed",left:ctxMenu.x,top:ctxMenu.y,zIndex:9999,background:"rgba(255,255,255,0.04)",border:"1px solid rgba(255,255,255,0.06)",borderRadius:8,padding:"4px 0",minWidth:160,boxShadow:"0 12px 32px rgba(0,0,0,.9)"}}>
           <div style={{padding:"2px 14px 6px",fontSize:7,fontFamily:"'Inter',sans-serif",color:"#5A5E66",letterSpacing:1.2}}>{track.title?.substring(0,24)||track.filename}</div>
           <div style={{height:1,background:"rgba(255,255,255,0.06)",margin:"0 0 4px"}}/>
-          {onLoadA&&<div onClick={()=>{onLoadA(track);setCtxMenu(null);}} style={{padding:"7px 14px",fontSize:10,fontFamily:"'Inter',sans-serif",color:"#1E80D4",cursor:"pointer",background:"transparent"}} onMouseEnter={e=>e.currentTarget.style.background="#1E80D40e"} onMouseLeave={e=>e.currentTarget.style.background="transparent"}>▶ Load to Deck A</div>}
-          {onLoadB&&<div onClick={()=>{onLoadB(track);setCtxMenu(null);}} style={{padding:"7px 14px",fontSize:10,fontFamily:"'Inter',sans-serif",color:"#C16842",cursor:"pointer",background:"transparent"}} onMouseEnter={e=>e.currentTarget.style.background="#C168420e"} onMouseLeave={e=>e.currentTarget.style.background="transparent"}>▶ Load to Deck B</div>}
+          {onLoadA&&<div onClick={()=>{onLoadA(track);setCtxMenu(null);}} style={{padding:"7px 14px",fontSize:10,fontFamily:"'Inter',sans-serif",color:"#1B5BAA",cursor:"pointer",background:"transparent"}} onMouseEnter={e=>e.currentTarget.style.background="#1B5BAA0e"} onMouseLeave={e=>e.currentTarget.style.background="transparent"}>▶ Load to Deck A</div>}
+          {onLoadB&&<div onClick={()=>{onLoadB(track);setCtxMenu(null);}} style={{padding:"7px 14px",fontSize:10,fontFamily:"'Inter',sans-serif",color:"#6B3FA8",cursor:"pointer",background:"transparent"}} onMouseEnter={e=>e.currentTarget.style.background="#6B3FA80e"} onMouseLeave={e=>e.currentTarget.style.background="transparent"}>▶ Load to Deck B</div>}
           {onPreview&&<div onClick={()=>{onPreview(track);setCtxMenu(null);}} style={{padding:"7px 14px",fontSize:10,fontFamily:"'Inter',sans-serif",color:"#9CA3AF",cursor:"pointer",background:"transparent"}} onMouseEnter={e=>e.currentTarget.style.background="#1F212699"} onMouseLeave={e=>e.currentTarget.style.background="transparent"}>{isPreviewing?"⏸ Stop Preview":"▶ Preview"}</div>}
           <div style={{height:1,background:"rgba(255,255,255,0.06)",margin:"4px 0"}}/>
           {onRemoveFromPlaylist&&<div onClick={()=>{onRemoveFromPlaylist(track.id);setCtxMenu(null);}} style={{padding:"7px 14px",fontSize:10,fontFamily:"'Inter',sans-serif",color:"#9CA3AF",cursor:"pointer",background:"transparent"}} onMouseEnter={e=>e.currentTarget.style.background="#9CA3AF10"} onMouseLeave={e=>e.currentTarget.style.background="transparent"}>↩ Remove from Playlist</div>}
@@ -1042,7 +1042,7 @@ function TrackRow({track, onLoadA, onLoadB, isRec, reasons, canLoad, previewTrac
 
       {/* Key — rounded pill, gold for major, violet for minor, white text */}
       <div style={{textAlign:"center"}}>
-        {camelot?<span style={{fontSize:9,fontFamily:"'Inter',sans-serif",color:"#ffffff",background:isMinor?"#1E80D4":"#9CA3AF",borderRadius:4,padding:"2px 6px",display:"inline-block",letterSpacing:.3,fontWeight:500}}>{camelot}</span>:<span style={{fontSize:11,color:"#5A5E66",fontFamily:"'Inter',sans-serif"}}>--</span>}
+        {camelot?<span style={{fontSize:9,fontFamily:"'Inter',sans-serif",color:"#ffffff",background:isMinor?"#1B5BAA":"#9CA3AF",borderRadius:4,padding:"2px 6px",display:"inline-block",letterSpacing:.3,fontWeight:500}}>{camelot}</span>:<span style={{fontSize:11,color:"#5A5E66",fontFamily:"'Inter',sans-serif"}}>--</span>}
       </div>
 
       {/* Energy — colored text label, no bar */}
@@ -1056,8 +1056,8 @@ function TrackRow({track, onLoadA, onLoadB, isRec, reasons, canLoad, previewTrac
           55% opacity so users discover them without needing to hover-and-wait;
           full opacity on row hover. */}
       <div style={{display:"flex",gap:4,opacity:canLoad?(hov?1:0.55):0,transition:"opacity .15s"}}>
-        {onLoadA&&<button onClick={e=>{e.stopPropagation();onLoadA(track);}} title="Load to Deck A" style={{padding:"4px 10px",fontSize:11,fontWeight:700,fontFamily:"'Inter',sans-serif",background:"#1E80D41f",border:"1px solid #1E80D466",color:"#1E80D4",borderRadius:5,cursor:"pointer",letterSpacing:.5}}>→A</button>}
-        {onLoadB&&<button onClick={e=>{e.stopPropagation();onLoadB(track);}} title="Load to Deck B" style={{padding:"4px 10px",fontSize:11,fontWeight:700,fontFamily:"'Inter',sans-serif",background:"#C168421f",border:"1px solid #C1684266",color:"#C16842",borderRadius:5,cursor:"pointer",letterSpacing:.5}}>→B</button>}
+        {onLoadA&&<button onClick={e=>{e.stopPropagation();onLoadA(track);}} title="Load to Deck A" style={{padding:"4px 10px",fontSize:11,fontWeight:700,fontFamily:"'Inter',sans-serif",background:"#1B5BAA1f",border:"1px solid #1B5BAA66",color:"#1B5BAA",borderRadius:5,cursor:"pointer",letterSpacing:.5}}>→A</button>}
+        {onLoadB&&<button onClick={e=>{e.stopPropagation();onLoadB(track);}} title="Load to Deck B" style={{padding:"4px 10px",fontSize:11,fontWeight:700,fontFamily:"'Inter',sans-serif",background:"#6B3FA81f",border:"1px solid #6B3FA866",color:"#6B3FA8",borderRadius:5,cursor:"pointer",letterSpacing:.5}}>→B</button>}
       </div>
     </div>
   );
@@ -1079,7 +1079,7 @@ function LibraryPanelV2({ lib, onLoad, playingTrack, deckATrackId:deckATrackIdPr
   const TEXT = "#F5F5F7";
   const SUBTLE = "#9CA3AF";
   const MUTED = "#5A5E66";
-  const PARTNER = "#C16842";
+  const PARTNER = "#6B3FA8";
 
   // ── Mock data for empty library (prototype — replaced by real data on first import). ──
   const MOCK_TRACKS = [
@@ -1114,8 +1114,8 @@ function LibraryPanelV2({ lib, onLoad, playingTrack, deckATrackId:deckATrackIdPr
   // deck-track state.
   const deckATrackId = useMock ? "m2"  : (deckATrackIdProp || null);
   const deckBTrackId = useMock ? "m5"  : (deckBTrackIdProp || null);
-  const DECK_A_CLR = "#1E80D4"; // deep navy / teal-blue
-  const DECK_B_CLR = "#C16842"; // deep slate / gray-blue
+  const DECK_A_CLR = "#1B5BAA"; // deep navy / teal-blue
+  const DECK_B_CLR = "#6B3FA8"; // deep slate / gray-blue
 
   // Suggestion source: prefer deck A, else deck B. Panel is disabled when neither loaded.
   const suggestionSourceId = deckATrackId || deckBTrackId || null;
@@ -1552,9 +1552,9 @@ function LibraryPanelV2({ lib, onLoad, playingTrack, deckATrackId:deckATrackIdPr
                 }
                 style={{
                   padding: "4px 10px", height: 22,
-                  background: rkStatus.phase === "ready" ? "#C1684222" : "transparent",
-                  border: `1px solid ${rkStatus.phase === "ready" ? "#C16842" : (rkStatus.phase === "error" ? "#ff445566" : BORDER)}`,
-                  color: rkStatus.phase === "ready" ? "#C16842" : (rkStatus.phase === "error" ? "#ff4455" : SUBTLE),
+                  background: rkStatus.phase === "ready" ? "#6B3FA822" : "transparent",
+                  border: `1px solid ${rkStatus.phase === "ready" ? "#6B3FA8" : (rkStatus.phase === "error" ? "#ff445566" : BORDER)}`,
+                  color: rkStatus.phase === "ready" ? "#6B3FA8" : (rkStatus.phase === "error" ? "#ff4455" : SUBTLE),
                   borderRadius: 4, cursor: rkStatus.phase === "connecting" ? "wait" : "pointer",
                   fontFamily: "'Inter',sans-serif", fontSize: 10, letterSpacing: 1, outline: "none",
                   display: "flex", alignItems: "center", gap: 5,
@@ -2103,7 +2103,7 @@ function LibraryPanel({lib, onLoad, playingTrack, previewTrackId, onPreview, onD
                   ?<span style={{color:"#5A5E66",fontStyle:"italic",fontSize:8}}>— {m.msg} —</span>
                   :<>
                     <div style={{display:"flex",gap:4,alignItems:"baseline"}}>
-                      <span style={{color:m.self||m.from===me?"#9CA3AF":"#C16842",fontWeight:500,fontSize:9}}>{m.from}</span>
+                      <span style={{color:m.self||m.from===me?"#9CA3AF":"#6B3FA8",fontWeight:500,fontSize:9}}>{m.from}</span>
                       <span style={{color:"#5A5E66",fontSize:7}}>{m.time}</span>
                     </div>
                     <div style={{color:"#c0c0cc",marginTop:1,wordBreak:"break-word",lineHeight:1.4,fontSize:9}}>{m.msg}</div>
@@ -2567,11 +2567,11 @@ function LibraryPanel({lib, onLoad, playingTrack, previewTrackId, onPreview, onD
                   <div style={{fontSize:9,fontFamily:"'Inter',sans-serif",color:G,letterSpacing:.5,marginBottom:4}}>How to export from Rekordbox</div>
                   {["1. Open Rekordbox on your computer","2. Go to File → Export Collection in xml format","3. Choose a save location and click Export","4. Click the button below to select the exported XML"].map((s,i)=>(
                     <div key={i} style={{fontSize:9,fontFamily:"'Inter',sans-serif",color:"#9CA3AF",display:"flex",gap:8,alignItems:"flex-start"}}>
-                      <span style={{color:"#C16842",fontFamily:"'Inter',sans-serif",fontSize:8,flexShrink:0,marginTop:1}}>{i+1}.</span>{s.slice(3)}
+                      <span style={{color:"#6B3FA8",fontFamily:"'Inter',sans-serif",fontSize:8,flexShrink:0,marginTop:1}}>{i+1}.</span>{s.slice(3)}
                     </div>
                   ))}
                 </div>
-                <button onClick={()=>rekordboxRef.current?.click()} style={{padding:"10px",fontSize:10,fontFamily:"'Inter',sans-serif",background:"#C1684218",border:"1px solid #C1684244",color:"#C16842",borderRadius:7,cursor:"pointer",letterSpacing:.5}}>Select Rekordbox XML file</button>
+                <button onClick={()=>rekordboxRef.current?.click()} style={{padding:"10px",fontSize:10,fontFamily:"'Inter',sans-serif",background:"#6B3FA818",border:"1px solid #6B3FA844",color:"#6B3FA8",borderRadius:7,cursor:"pointer",letterSpacing:.5}}>Select Rekordbox XML file</button>
               </div>
             )}
           </div>
@@ -3130,7 +3130,7 @@ function AnimatedZoomedWF({ bands, dur, progRef, onSeek, h=96, windowSec=8, beat
       // maxH keeps top (center-envH ≥ ampTop) and bottom (center+1+envH ≤ ampBottom).
       const maxH=Math.max(0,Math.min(center-ampTop,ampBottom-1-center));
       if(!dimsLoggedRef.current){
-        const deckId=deckColorRef.current==='#1E80D4'?'A':deckColorRef.current==='#C16842'?'B':'?';
+        const deckId=deckColorRef.current==='#1B5BAA'?'A':deckColorRef.current==='#6B3FA8'?'B':'?';
         console.log(`[WF-DIMS ${deckId}] canvasCss=${canvas.clientWidth}x${canvas.clientHeight} physCanvas=${physW}x${physH} dpr=${dpr} ampPad=${(ampPad/dpr).toFixed(0)}css/${ampPad}phys maxH=${(maxH/dpr).toFixed(1)}css/${maxH}phys`);
         dimsLoggedRef.current=true;
       }
@@ -3407,26 +3407,22 @@ function AnimatedZoomedWF({ bands, dur, progRef, onSeek, h=96, windowSec=8, beat
         // dark waveform background; was previously derived from deck color.
         const PHRASE_RGB='255,59,48';
 
-        // v5.3: beat / downbeat grid lines render in WHITE on BOTH decks.
-        // The previous deck-color treatment blended into the waveform content
-        // (rust grid on rust waveform = invisible). Grid markers are functional
-        // reference points; white maximizes contrast against any deck color.
-        // Deck-color glow lives on the waveform bars themselves (Pass 2 of WF
-        // rendering), separate from this grid-drawing code.
-        // The DECK_RGB constant is kept (still parsed at top of function for
-        // the waveform pixel pass) but no longer applied here.
-        const DECK_RGB=`${dr},${dg},${db}`; void DECK_RGB;
+        // v5.3: grid LINES render in WHITE on both decks (contrast against
+        // any deck color, functional reference structure).
+        // v5.5: shadow GLOW around white grid lines uses DECK identity color
+        // — gives the white markers a deck-toned halo so the waveform area
+        // reads as atmospheric "club lighting" rather than flat white-on-dark.
+        // White ticks carry the contrast; deck-color glow carries the
+        // identity / vibe. Phrase tick branch overrides to red glow.
+        const DECK_RGB=`${dr},${dg},${db}`;
         const OFF_FILL='rgba(255,255,255,0.55)';
         const DOWN_FILL='rgba(255,255,255,1.0)';
         const DOWN_LINE='rgba(255,255,255,0.22)';
         const PHRASE_FILL=`rgba(${PHRASE_RGB},1.0)`;
         const PHRASE_LINE=`rgba(${PHRASE_RGB},0.50)`; void PHRASE_LINE;
 
-        // Subtle white glow — kept very light so it doesn't add visual mass
-        // to the grid markers (they're meant to be quiet structure, not the
-        // hero). Phrase tick branch overrides to red glow for color coherence.
-        ctx.shadowColor='rgba(255,255,255,0.4)';
-        ctx.shadowBlur=2;
+        ctx.shadowColor=`rgba(${DECK_RGB},0.65)`;
+        ctx.shadowBlur=4;
 
         for(let n=startN;n<=endN;n++){
           const beatTime=firstDownbeatSec+n*effectivePeriod;
@@ -3454,9 +3450,9 @@ function AnimatedZoomedWF({ bands, dur, progRef, onSeek, h=96, windowSec=8, beat
             const px=Math.floor(x-phraseTickW/2);
             ctx.fillRect(px,phraseTopY,phraseTickW,phraseTickH);
             ctx.fillRect(px,phraseBotY,phraseTickW,phraseTickH);
-            // Restore white grid shadow for subsequent off/downbeat draws.
-            ctx.shadowColor='rgba(255,255,255,0.4)';
-            ctx.shadowBlur=2;
+            // Restore deck-color glow for subsequent off/downbeat draws.
+            ctx.shadowColor=`rgba(${DECK_RGB},0.65)`;
+            ctx.shadowBlur=4;
           }else if(isDownbeat){
             // Downbeat: 1px deck-color through-line + 2px×12px centered ticks.
             ctx.fillStyle=DOWN_LINE;
@@ -4632,7 +4628,7 @@ function SyncPanel({ bpmA, bpmB, rateA, rateB, onSyncB, onSyncA }) {
   return (
     <div style={{padding:10,display:"flex",flexDirection:"column",gap:8}}>
       <div style={{display:"flex",gap:8,justifyContent:"space-around",background:"#0D0F12",borderRadius:8,padding:"10px",border:"1px solid rgba(255,255,255,0.06)"}}>
-        {[["A","#1E80D4",effA,rateA],["B","#C16842",effB,rateB]].map(([id,c,eff,r])=>(
+        {[["A","#1B5BAA",effA,rateA],["B","#6B3FA8",effB,rateB]].map(([id,c,eff,r])=>(
           <div key={id} style={{textAlign:"center"}}>
             <div style={{fontSize:7,fontFamily:"'Inter',sans-serif",color:c+"44",letterSpacing:2}}>DECK {id}</div>
             <div style={{fontSize:20,fontFamily:"'Inter',sans-serif",fontWeight:700,color:eff?c:"#5A5E66"}}>{eff?eff.toFixed(1):"—"}</div>
@@ -4643,7 +4639,7 @@ function SyncPanel({ bpmA, bpmB, rateA, rateB, onSyncB, onSyncA }) {
       {diff&&<div style={{textAlign:"center",fontSize:8,fontFamily:"'Inter',sans-serif",color:inSync?"#22c55e":"#5A5E66"}}>Δ{diff} BPM {inSync?"✓ IN SYNC":""}</div>}
       <div style={{display:"flex",gap:5}}>
         <button onClick={onSyncB} disabled={!bpmA||!bpmB} style={{flex:1,...sBtn("#9CA3AF")}}>SYNC B→A</button>
-        <button onClick={onSyncA} disabled={!bpmA||!bpmB} style={{flex:1,...sBtn("#C16842")}}>SYNC A→B</button>
+        <button onClick={onSyncA} disabled={!bpmA||!bpmB} style={{flex:1,...sBtn("#6B3FA8")}}>SYNC A→B</button>
       </div>
       {(!bpmA||!bpmB)&&<div style={{fontSize:7,fontFamily:"'Inter',sans-serif",color:"#5A5E66",textAlign:"center",lineHeight:1.9}}>Load tracks to detect BPM<br/>Analysis runs automatically</div>}
     </div>
@@ -4657,7 +4653,7 @@ function RTCPanel({ rtc, partner, syncOk }) {
     <div style={{padding:10,display:"flex",flexDirection:"column",gap:8}}>
       <div style={{display:"flex",justifyContent:"space-between"}}><span style={{fontSize:8,fontFamily:"'Inter',sans-serif",color:"#9CA3AF",letterSpacing:1}}>P2P AUDIO</span><span style={{fontSize:7,fontFamily:"'Inter',sans-serif",color:s.c}}>{s.l}</span></div>
       {live&&<div style={{display:"flex",gap:2,height:16,alignItems:"center",justifyContent:"center"}}>{Array.from({length:12}).map((_,i)=><div key={i} style={{width:3,borderRadius:2,background:"#22c55e",height:"100%",animation:`wave ${.4+(i%4)*.1}s ease-in-out ${i*.06}s infinite`,transformOrigin:"bottom"}}/>)}</div>}
-      <div style={{fontSize:7,fontFamily:"'Inter',sans-serif",color:"#9CA3AF",display:"flex",justifyContent:"space-between"}}><span>Partner</span><span style={{color:partner?"#C16842":"#5A5E66"}}>{partner||"—"}</span></div>
+      <div style={{fontSize:7,fontFamily:"'Inter',sans-serif",color:"#9CA3AF",display:"flex",justifyContent:"space-between"}}><span>Partner</span><span style={{color:partner?"#6B3FA8":"#5A5E66"}}>{partner||"—"}</span></div>
       <div style={{display:"flex",flexDirection:"column",gap:2}}><div style={{display:"flex",justifyContent:"space-between",fontSize:7,fontFamily:"'Inter',sans-serif",color:"#9CA3AF"}}><span>Partner vol</span><span style={{color:"#22c55e"}}>{Math.round(rtc.remVol*100)}%</span></div><input type="range" min={0} max={1.5} step={.01} value={rtc.remVol} onChange={e=>rtc.setRemVol(Number(e.target.value))} style={{width:"100%",cursor:"pointer",accentColor:"#22c55e"}}/></div>
       <div style={{display:"flex",gap:5}}>
         {canCall&&<button onClick={rtc.startCall} style={{flex:1,...sBtn("#22c55e"),fontWeight:700}}>▶ START STREAM</button>}
@@ -4726,7 +4722,7 @@ function ChatPanel({ log, send, me }) {
     <div style={{display:"flex",flexDirection:"column",height:"100%"}}>
       <div style={{flex:1,overflowY:"auto",padding:"7px 9px",display:"flex",flexDirection:"column",gap:3}}>
         {log.length===0&&<div style={{fontSize:8,color:"#5A5E66",fontFamily:"'Inter',sans-serif",textAlign:"center",marginTop:20}}>Chat with your partner here</div>}
-        {log.map((m,i)=><div key={i} style={{fontSize:9,fontFamily:"'Inter',sans-serif"}}>{m.type==="system"?<span style={{color:"#5A5E66",fontStyle:"italic"}}>— {m.msg} —</span>:<><span style={{color:"#5A5E66",fontSize:6}}>{m.time} </span><span style={{color:m.self||m.from===me?"#9CA3AF":"#C16842",fontWeight:700}}>{m.from}: </span><span style={{color:"#c0c0cc"}}>{m.msg}</span></>}</div>)}
+        {log.map((m,i)=><div key={i} style={{fontSize:9,fontFamily:"'Inter',sans-serif"}}>{m.type==="system"?<span style={{color:"#5A5E66",fontStyle:"italic"}}>— {m.msg} —</span>:<><span style={{color:"#5A5E66",fontSize:6}}>{m.time} </span><span style={{color:m.self||m.from===me?"#9CA3AF":"#6B3FA8",fontWeight:700}}>{m.from}: </span><span style={{color:"#c0c0cc"}}>{m.msg}</span></>}</div>)}
         <div ref={end}/>
       </div>
       <div style={{display:"flex",gap:5,padding:"5px 7px",borderTop:"1px solid #15171A"}}>
@@ -4756,7 +4752,7 @@ function ChatBar({ log, send, me }) {
                 <div key={i} style={{ fontSize:9, fontFamily:"'Inter',sans-serif" }}>
                   {m.type==="system"
                     ? <span style={{ color:"#5A5E66", fontStyle:"italic" }}>— {m.msg} —</span>
-                    : <><span style={{ color:"#5A5E66", fontSize:7 }}>{m.time} </span><span style={{ color:m.self||m.from===me?"#9CA3AF":"#C16842", fontWeight:500 }}>{m.from}: </span><span style={{ color:"#9CA3AF" }}>{m.msg}</span></>
+                    : <><span style={{ color:"#5A5E66", fontSize:7 }}>{m.time} </span><span style={{ color:m.self||m.from===me?"#9CA3AF":"#6B3FA8", fontWeight:500 }}>{m.from}: </span><span style={{ color:"#9CA3AF" }}>{m.msg}</span></>
                   }
                 </div>
               ))
@@ -4771,7 +4767,7 @@ function ChatBar({ log, send, me }) {
         </button>
         {!expanded && (() => { const last=log.filter(m=>m.type!=="system").slice(-1)[0]; return last ? (
           <span style={{ fontSize:8, fontFamily:"'Inter',sans-serif", color:"#5A5E66", overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap", flex:1 }}>
-            <span style={{ color:last.from===me?"#9CA3AF55":"#C1684255" }}>{last.from}: </span>{last.msg}
+            <span style={{ color:last.from===me?"#9CA3AF55":"#6B3FA855" }}>{last.from}: </span>{last.msg}
           </span>
         ) : <span style={{ flex:1, fontSize:8, fontFamily:"'Inter',sans-serif", color:"#5A5E66" }}>Message your partner...</span>; })()}
         {expanded && <div style={{ flex:1 }}/>}
@@ -4819,7 +4815,7 @@ function Landing({ onEnter }) {
 
       {/* NAV */}
       <nav style={{ position:"fixed", top:0, left:0, right:0, zIndex:100, padding:"14px 40px", display:"flex", justifyContent:"space-between", alignItems:"center", background:"linear-gradient(180deg,#06070Aee,transparent)", backdropFilter:"blur(8px)" }}>
-        <div style={{ fontFamily:"'Inter',sans-serif", fontWeight:900, fontSize:22, letterSpacing:3, background:"linear-gradient(90deg,#9CA3AF,#C16842)", WebkitBackgroundClip:"text", WebkitTextFillColor:"transparent" }}>MIX//SYNC</div>
+        <div style={{ fontFamily:"'Inter',sans-serif", fontWeight:900, fontSize:22, letterSpacing:3, background:"linear-gradient(90deg,#9CA3AF,#6B3FA8)", WebkitBackgroundClip:"text", WebkitTextFillColor:"transparent" }}>MIX//SYNC</div>
         <div style={{ display:"flex", gap:28, alignItems:"center" }}>
           {["Features","How It Works","Get Started"].map(l=>(
             <span key={l} className="nav-link" style={{ fontSize:11, fontFamily:"'Inter',sans-serif", color:"#9CA3AF", letterSpacing:1, cursor:"pointer" }}>{l.toUpperCase()}</span>
@@ -4835,7 +4831,7 @@ function Landing({ onEnter }) {
 
         {/* Background glow orbs */}
         <div style={{ position:"absolute", top:"20%", left:"15%", width:400, height:400, borderRadius:"50%", background:"radial-gradient(circle,#9CA3AF08,transparent 70%)", animation:"glow 4s ease-in-out infinite", pointerEvents:"none" }}/>
-        <div style={{ position:"absolute", top:"30%", right:"10%", width:300, height:300, borderRadius:"50%", background:"radial-gradient(circle,#C1684208,transparent 70%)", animation:"glow 5s ease-in-out 1s infinite", pointerEvents:"none" }}/>
+        <div style={{ position:"absolute", top:"30%", right:"10%", width:300, height:300, borderRadius:"50%", background:"radial-gradient(circle,#6B3FA808,transparent 70%)", animation:"glow 5s ease-in-out 1s infinite", pointerEvents:"none" }}/>
         <div style={{ position:"absolute", bottom:"20%", left:"40%", width:500, height:200, borderRadius:"50%", background:"radial-gradient(circle,#a855f706,transparent 70%)", animation:"glow 6s ease-in-out 2s infinite", pointerEvents:"none" }}/>
 
         {/* Animated grid lines */}
@@ -4874,7 +4870,7 @@ function Landing({ onEnter }) {
         {/* Floating mixer preview */}
         <div style={{ marginTop:60, width:"100%", maxWidth:860, animation:"float 6s ease-in-out infinite", position:"relative" }}>
           <div style={{ background:"linear-gradient(150deg,#0d0d22,#0A0B0E)", border:"1px solid #1a1a30", borderRadius:16, padding:"20px 24px", boxShadow:"0 40px 80px rgba(0,0,0,.6), 0 0 60px rgba(0,212,255,.06)", display:"grid", gridTemplateColumns:"1fr 80px 1fr", gap:16, alignItems:"center" }}>
-            {["#9CA3AF","#C16842"].map((c,i)=>(
+            {["#9CA3AF","#6B3FA8"].map((c,i)=>(
               <div key={i} style={{ background:"#06060f", borderRadius:10, padding:12, border:`1px solid ${c}22` }}>
                 <div style={{ display:"flex", justifyContent:"space-between", marginBottom:8 }}>
                   <span style={{ fontSize:9, fontFamily:"'Inter',sans-serif", color:c, letterSpacing:2 }}>DECK {i===0?"A":"B"}</span>
@@ -4890,7 +4886,7 @@ function Landing({ onEnter }) {
             ))}
             <div style={{ display:"flex", flexDirection:"column", alignItems:"center", gap:8 }}>
               <div style={{ fontSize:7, fontFamily:"'Inter',sans-serif", color:"#9CA3AF", letterSpacing:1 }}>XF</div>
-              <div style={{ width:"100%", height:4, background:"linear-gradient(90deg,#9CA3AF,#C16842)", borderRadius:2, position:"relative" }}>
+              <div style={{ width:"100%", height:4, background:"linear-gradient(90deg,#9CA3AF,#6B3FA8)", borderRadius:2, position:"relative" }}>
                 <div style={{ position:"absolute", left:"calc(50% - 8px)", top:-6, width:16, height:16, background:"#e8e8f0", borderRadius:3, boxShadow:"0 0 8px rgba(255,255,255,.3)" }}/>
               </div>
               <div style={{ fontSize:7, fontFamily:"'Inter',sans-serif", color:"#22c55e" }}>124.0 BPM</div>
@@ -4956,7 +4952,7 @@ function Landing({ onEnter }) {
 
       {/* FOOTER */}
       <footer style={{ borderTop:"1px solid #15171A", padding:"24px 40px", display:"flex", justifyContent:"space-between", alignItems:"center" }}>
-        <div style={{ fontFamily:"'Inter',sans-serif", fontWeight:800, fontSize:14, letterSpacing:3, background:"linear-gradient(90deg,#9CA3AF,#C16842)", WebkitBackgroundClip:"text", WebkitTextFillColor:"transparent" }}>MIX//SYNC</div>
+        <div style={{ fontFamily:"'Inter',sans-serif", fontWeight:800, fontSize:14, letterSpacing:3, background:"linear-gradient(90deg,#9CA3AF,#6B3FA8)", WebkitBackgroundClip:"text", WebkitTextFillColor:"transparent" }}>MIX//SYNC</div>
         <div style={{ fontSize:8, fontFamily:"'Inter',sans-serif", color:"#5A5E66" }}>Built for DJs who refuse to be in the same room.</div>
         <div style={{ fontSize:8, fontFamily:"'Inter',sans-serif", color:"#5A5E66" }}>Chrome & Edge · HTTPS required for MIDI + WebRTC</div>
       </footer>
@@ -6750,7 +6746,7 @@ export default function CollabMix({ initialPage = "landing", djName = null }) {
                   } catch {}
                 }}
                 style={{ minHeight:wfH, flexShrink:0 }}>
-                <AnimatedZoomedWF bands={wfA} dur={wfA?.dur||0} progRef={progRefA} onSeek={seekDeckA} h={wfH} windowSec={WF_WINDOWS[wfZoom]} beatPhaseFrac={bpm.results["A"]?.beatPhaseFrac??null} beatPeriodSec={bpm.results["A"]?.beatPeriodSec??null} gridOffsetMs={gridOffsetA} barOneOffsetSec={barOneA * (bpm.results["A"]?.beatPeriodSec || 0)} bpmNudge={bpmNudgeA*0.01} deckColor="#1E80D4" rate={rateA}/>
+                <AnimatedZoomedWF bands={wfA} dur={wfA?.dur||0} progRef={progRefA} onSeek={seekDeckA} h={wfH} windowSec={WF_WINDOWS[wfZoom]} beatPhaseFrac={bpm.results["A"]?.beatPhaseFrac??null} beatPeriodSec={bpm.results["A"]?.beatPeriodSec??null} gridOffsetMs={gridOffsetA} barOneOffsetSec={barOneA * (bpm.results["A"]?.beatPeriodSec || 0)} bpmNudge={bpmNudgeA*0.01} deckColor="#1B5BAA" rate={rateA}/>
               </div>
             )}
             {hasB && (
@@ -6767,7 +6763,7 @@ export default function CollabMix({ initialPage = "landing", djName = null }) {
                   } catch {}
                 }}
                 style={{ minHeight:wfH, flexShrink:0 }}>
-                <AnimatedZoomedWF bands={wfB} dur={wfB?.dur||0} progRef={progRefB} onSeek={seekDeckB} h={wfH} windowSec={WF_WINDOWS[wfZoom]} beatPhaseFrac={bpm.results["B"]?.beatPhaseFrac??null} beatPeriodSec={bpm.results["B"]?.beatPeriodSec??null} gridOffsetMs={gridOffsetB} barOneOffsetSec={barOneB * (bpm.results["B"]?.beatPeriodSec || 0)} bpmNudge={bpmNudgeB*0.01} deckColor="#C16842" rate={rateB}/>
+                <AnimatedZoomedWF bands={wfB} dur={wfB?.dur||0} progRef={progRefB} onSeek={seekDeckB} h={wfH} windowSec={WF_WINDOWS[wfZoom]} beatPhaseFrac={bpm.results["B"]?.beatPhaseFrac??null} beatPeriodSec={bpm.results["B"]?.beatPeriodSec??null} gridOffsetMs={gridOffsetB} barOneOffsetSec={barOneB * (bpm.results["B"]?.beatPeriodSec || 0)} bpmNudge={bpmNudgeB*0.01} deckColor="#6B3FA8" rate={rateB}/>
               </div>
             )}
             {/* Zoom selector — floats in the top-right corner of the waveform
@@ -6793,11 +6789,11 @@ export default function CollabMix({ initialPage = "landing", djName = null }) {
 
         {/* ── DECK A (shared) — outer "Deck A · driver" header bar removed;
               new inner Deck header has the 3-part identity row at top. ── */}
-        <div style={{ display:"flex", flexDirection:"column", minWidth:0, minHeight:0, overflow:"hidden", background:"#15171A", border:`1px solid ${deckDrivers.A?"#1E80D444":"rgba(255,255,255,0.06)"}`, borderRadius:10, transition:"border-color .3s" }}>
+        <div style={{ display:"flex", flexDirection:"column", minWidth:0, minHeight:0, overflow:"hidden", background:"#15171A", border:`1px solid ${deckDrivers.A?"#1B5BAA44":"rgba(255,255,255,0.06)"}`, borderRadius:10, transition:"border-color .3s" }}>
           <div style={{ flex:1, display:"flex", alignItems:"flex-start", gap:10, padding:"10px 0 10px 10px", overflow:"hidden", minHeight:0 }}>
-            <DeckArt artwork={libLoadA?.track?.artwork} fallback="A" color="#1E80D4"/>
+            <DeckArt artwork={libLoadA?.track?.artwork} fallback="A" color="#1B5BAA"/>
             <div style={{ flex:1, overflow:"hidden", minHeight:0 }}>
-            <Deck id="A" ch={eng.current?.A} ctx={eng.current?.ctx} color="#1E80D4" local remote={pA} onChange={dh("A")} midi={midiEvt} bpmResult={bpm.results["A"]} bpmAnalyze={bpm.analyze} eqHi={eqA.hi} eqMid={eqA.mid} eqLo={eqA.lo} chanVol={eqA.vol} loadFromLibrary={libLoadA} onTrackInfo={handleTrackInfo} onSync={()=>handleSyncToggle("A")} syncReady={!!(bpm.results["B"]?.bpm || pB?.bpm)} syncRole={syncLocked ? (lastSlaveDeck === "A" ? "slave" : "master") : null} isMaster={masterDeck === "A"} onMasterToggle={handleMasterToggle} onLibraryTrackDrop={(trackId)=>{const t=lib.library.find(x=>x.id===trackId);if(t)handleLibLoad(t,"A");}} onProgUpdate={handleProgA} onWaveform={setWfA} onSeekReady={onDeckASeekReady} onToggleReady={onDeckAToggleReady} onCueReady={onDeckACueReady} onNudgeReady={onDeckANudgeReady} onTransportFire={handleTransportFire} isDriver={!deckDrivers.A || deckDrivers.A === session.name} acNowRef={acNowRef} onBufferReady={onDeckABufferReady} barOneOffsetSec={barOneA * (bpm.results["A"]?.beatPeriodSec || 0)}/>
+            <Deck id="A" ch={eng.current?.A} ctx={eng.current?.ctx} color="#1B5BAA" local remote={pA} onChange={dh("A")} midi={midiEvt} bpmResult={bpm.results["A"]} bpmAnalyze={bpm.analyze} eqHi={eqA.hi} eqMid={eqA.mid} eqLo={eqA.lo} chanVol={eqA.vol} loadFromLibrary={libLoadA} onTrackInfo={handleTrackInfo} onSync={()=>handleSyncToggle("A")} syncReady={!!(bpm.results["B"]?.bpm || pB?.bpm)} syncRole={syncLocked ? (lastSlaveDeck === "A" ? "slave" : "master") : null} isMaster={masterDeck === "A"} onMasterToggle={handleMasterToggle} onLibraryTrackDrop={(trackId)=>{const t=lib.library.find(x=>x.id===trackId);if(t)handleLibLoad(t,"A");}} onProgUpdate={handleProgA} onWaveform={setWfA} onSeekReady={onDeckASeekReady} onToggleReady={onDeckAToggleReady} onCueReady={onDeckACueReady} onNudgeReady={onDeckANudgeReady} onTransportFire={handleTransportFire} isDriver={!deckDrivers.A || deckDrivers.A === session.name} acNowRef={acNowRef} onBufferReady={onDeckABufferReady} barOneOffsetSec={barOneA * (bpm.results["A"]?.beatPeriodSec || 0)}/>
             </div>
           </div>
         </div>
@@ -6818,23 +6814,23 @@ export default function CollabMix({ initialPage = "landing", djName = null }) {
             <div style={{ display:"flex", flexDirection:"column", borderRight:"1px solid rgba(255,255,255,0.06)", overflow:"hidden" }}>
               {/* Header: label + VU inline */}
               <div style={{ padding:"3px 6px", background:"#0D0F12", borderBottom:"1px solid rgba(255,255,255,0.06)", display:"flex", justifyContent:"space-between", alignItems:"center", flexShrink:0 }}>
-                <span style={{ fontFamily:"'Inter',sans-serif", fontSize:11, color:"#1E80D4", fontWeight:600, letterSpacing:1 }}>A</span>
-                <VU an={eng.current?.A?.an} color="#1E80D4" w={50}/>
+                <span style={{ fontFamily:"'Inter',sans-serif", fontSize:11, color:"#1B5BAA", fontWeight:600, letterSpacing:1 }}>A</span>
+                <VU an={eng.current?.A?.an} color="#1B5BAA" w={50}/>
               </div>
               {/* Channel fader LEFT, EQ knobs RIGHT — outer edge layout */}
               <div style={{ flex:1, display:"flex", flexDirection:"row", minHeight:0, overflow:"hidden" }}>
                 {/* Channel volume fader — far left (outer edge) */}
                 <div style={{ flexShrink:0, display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"center", padding:"5px 4px", borderRight:"1px solid rgba(255,255,255,0.06)", gap:2 }}>
-                  <div style={{ fontSize:6, fontFamily:"'Inter',sans-serif", color:"#1E80D455", letterSpacing:1 }}>Vol</div>
-                  <VerticalFader val={eqA.vol} set={v=>updateEqA("vol",v)} color="#1E80D4" h={130}/>
-                  <div style={{ fontSize:7, fontFamily:"'Inter',sans-serif", color:"#1E80D488" }}>{(eqA.vol/1.5*100).toFixed(0)}%</div>
+                  <div style={{ fontSize:6, fontFamily:"'Inter',sans-serif", color:"#1B5BAA55", letterSpacing:1 }}>Vol</div>
+                  <VerticalFader val={eqA.vol} set={v=>updateEqA("vol",v)} color="#1B5BAA" h={130}/>
+                  <div style={{ fontSize:7, fontFamily:"'Inter',sans-serif", color:"#1B5BAA88" }}>{(eqA.vol/1.5*100).toFixed(0)}%</div>
                 </div>
                 {/* Knobs column — inner side */}
                 <div style={{ flex:1, display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"space-evenly", padding:"5px 2px" }}>
-                  <Knob v={eqA.vol} set={v=>updateEqA("vol",v)} min={0} max={1.5} ctr={1} label="Gain" color="#1E80D4" size={16}/>
-                  <Knob v={eqA.hi}  set={v=>updateEqA("hi",v)}  min={-12} max={12} ctr={0} label="Hi"   color="#1E80D4" size={16}/>
-                  <Knob v={eqA.mid} set={v=>updateEqA("mid",v)} min={-12} max={12} ctr={0} label="Mid"  color="#1E80D4" size={16}/>
-                  <Knob v={eqA.lo}  set={v=>updateEqA("lo",v)}  min={-12} max={12} ctr={0} label="Lo"   color="#1E80D4" size={16}/>
+                  <Knob v={eqA.vol} set={v=>updateEqA("vol",v)} min={0} max={1.5} ctr={1} label="Gain" color="#1B5BAA" size={16}/>
+                  <Knob v={eqA.hi}  set={v=>updateEqA("hi",v)}  min={-12} max={12} ctr={0} label="Hi"   color="#1B5BAA" size={16}/>
+                  <Knob v={eqA.mid} set={v=>updateEqA("mid",v)} min={-12} max={12} ctr={0} label="Mid"  color="#1B5BAA" size={16}/>
+                  <Knob v={eqA.lo}  set={v=>updateEqA("lo",v)}  min={-12} max={12} ctr={0} label="Lo"   color="#1B5BAA" size={16}/>
                 </div>
               </div>
             </div>
@@ -6854,23 +6850,23 @@ export default function CollabMix({ initialPage = "landing", djName = null }) {
             <div style={{ display:"flex", flexDirection:"column", borderLeft:"1px solid rgba(255,255,255,0.06)", overflow:"hidden" }}>
               {/* Header: label + VU inline */}
               <div style={{ padding:"3px 6px", background:"#0D0F12", borderBottom:"1px solid rgba(255,255,255,0.06)", display:"flex", justifyContent:"space-between", alignItems:"center", flexShrink:0 }}>
-                <span style={{ fontFamily:"'Inter',sans-serif", fontSize:11, color:"#C16842", fontWeight:600, letterSpacing:1 }}>B</span>
-                <VU an={eng.current?.B?.an} color="#C16842" w={50}/>
+                <span style={{ fontFamily:"'Inter',sans-serif", fontSize:11, color:"#6B3FA8", fontWeight:600, letterSpacing:1 }}>B</span>
+                <VU an={eng.current?.B?.an} color="#6B3FA8" w={50}/>
               </div>
               {/* EQ knobs LEFT, channel fader RIGHT — outer edge layout */}
               <div style={{ flex:1, display:"flex", flexDirection:"row", minHeight:0, overflow:"hidden" }}>
                 {/* Knobs column — inner side */}
                 <div style={{ flex:1, display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"space-evenly", padding:"5px 2px" }}>
-                  <Knob v={eqB.vol} set={v=>updateEqB("vol",v)} min={0} max={1.5} ctr={1} label="Gain" color="#C16842" size={16}/>
-                  <Knob v={eqB.hi}  set={v=>updateEqB("hi",v)}  min={-12} max={12} ctr={0} label="Hi"   color="#C16842" size={16}/>
-                  <Knob v={eqB.mid} set={v=>updateEqB("mid",v)} min={-12} max={12} ctr={0} label="Mid"  color="#C16842" size={16}/>
-                  <Knob v={eqB.lo}  set={v=>updateEqB("lo",v)}  min={-12} max={12} ctr={0} label="Lo"   color="#C16842" size={16}/>
+                  <Knob v={eqB.vol} set={v=>updateEqB("vol",v)} min={0} max={1.5} ctr={1} label="Gain" color="#6B3FA8" size={16}/>
+                  <Knob v={eqB.hi}  set={v=>updateEqB("hi",v)}  min={-12} max={12} ctr={0} label="Hi"   color="#6B3FA8" size={16}/>
+                  <Knob v={eqB.mid} set={v=>updateEqB("mid",v)} min={-12} max={12} ctr={0} label="Mid"  color="#6B3FA8" size={16}/>
+                  <Knob v={eqB.lo}  set={v=>updateEqB("lo",v)}  min={-12} max={12} ctr={0} label="Lo"   color="#6B3FA8" size={16}/>
                 </div>
                 {/* Channel volume fader — far right (outer edge) */}
                 <div style={{ flexShrink:0, display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"center", padding:"5px 4px", borderLeft:"1px solid rgba(255,255,255,0.06)", gap:2 }}>
-                  <div style={{ fontSize:6, fontFamily:"'Inter',sans-serif", color:"#C1684255", letterSpacing:1 }}>Vol</div>
-                  <VerticalFader val={eqB.vol} set={v=>updateEqB("vol",v)} color="#C16842" h={130}/>
-                  <div style={{ fontSize:7, fontFamily:"'Inter',sans-serif", color:"#C1684288" }}>{(eqB.vol/1.5*100).toFixed(0)}%</div>
+                  <div style={{ fontSize:6, fontFamily:"'Inter',sans-serif", color:"#6B3FA855", letterSpacing:1 }}>Vol</div>
+                  <VerticalFader val={eqB.vol} set={v=>updateEqB("vol",v)} color="#6B3FA8" h={130}/>
+                  <div style={{ fontSize:7, fontFamily:"'Inter',sans-serif", color:"#6B3FA888" }}>{(eqB.vol/1.5*100).toFixed(0)}%</div>
                 </div>
               </div>
             </div>
@@ -6881,25 +6877,25 @@ export default function CollabMix({ initialPage = "landing", djName = null }) {
                 decks-and-library so the library can reclaim that vertical
                 strip. A label · slider · B label · CTR reset. ── */}
           <div style={{ flexShrink:0, display:"flex", alignItems:"center", gap:6, padding:"6px 8px", borderTop:"1px solid rgba(255,255,255,0.06)", background:"#0A0B0E" }}>
-            <span style={{ fontSize:9, fontFamily:"'Inter',sans-serif", color:"#1E80D4aa", fontWeight:700, lineHeight:1, letterSpacing:.5, flexShrink:0 }}>A</span>
+            <span style={{ fontSize:9, fontFamily:"'Inter',sans-serif", color:"#1B5BAAaa", fontWeight:700, lineHeight:1, letterSpacing:.5, flexShrink:0 }}>A</span>
             <div style={{ flex:1, position:"relative", height:20, display:"flex", alignItems:"center" }}>
               <div style={{ width:"100%", height:5, borderRadius:3, background:"#06070A", border:"1px solid rgba(255,255,255,0.06)", boxShadow:"inset 0 1px 2px rgba(0,0,0,.7)" }}>
-                <div style={{ height:"100%", width:`${xf*100}%`, background:"linear-gradient(90deg, rgba(30,128,212,0.40), rgba(193,104,66,0.30))", borderRadius:3 }}/>
+                <div style={{ height:"100%", width:`${xf*100}%`, background:"linear-gradient(90deg, rgba(27,91,170,0.40), rgba(107,63,168,0.35))", borderRadius:3 }}/>
               </div>
               <input type="range" min={0} max={1} step={.005} value={xf} onChange={e=>setXfLocal(Number(e.target.value))} style={{ position:"absolute", width:"100%", opacity:0, cursor:"pointer", height:20 }}/>
               <div style={{ position:"absolute", left:`calc(${xf*100}% - 9px)`, width:18, height:16, background:"#232529", border:"1px solid #3A3D44", borderRadius:3, boxShadow:"0 1px 4px rgba(0,0,0,.7)", pointerEvents:"none" }}/>
             </div>
-            <span style={{ fontSize:9, fontFamily:"'Inter',sans-serif", color:"#C16842aa", fontWeight:700, lineHeight:1, letterSpacing:.5, flexShrink:0 }}>B</span>
+            <span style={{ fontSize:9, fontFamily:"'Inter',sans-serif", color:"#6B3FA8aa", fontWeight:700, lineHeight:1, letterSpacing:.5, flexShrink:0 }}>B</span>
             <button onClick={()=>setXfLocal(.5)} title="Center crossfader" style={{ fontSize:7, height:16, padding:"0 6px", background:"transparent", border:"1px solid rgba(255,255,255,0.08)", color:"#5A5E66", borderRadius:3, cursor:"pointer", fontFamily:"'Inter',sans-serif", letterSpacing:.5, flexShrink:0 }}>CTR</button>
           </div>
         </div>
 
         {/* ── DECK B (shared) — outer header bar removed (see Deck A note). ── */}
-        <div style={{ display:"flex", flexDirection:"column", minWidth:0, minHeight:0, overflow:"hidden", background:"#15171A", border:`1px solid ${deckDrivers.B?"#C1684244":"rgba(255,255,255,0.06)"}`, borderRadius:10, transition:"border-color .3s" }}>
+        <div style={{ display:"flex", flexDirection:"column", minWidth:0, minHeight:0, overflow:"hidden", background:"#15171A", border:`1px solid ${deckDrivers.B?"#6B3FA844":"rgba(255,255,255,0.06)"}`, borderRadius:10, transition:"border-color .3s" }}>
           <div style={{ flex:1, display:"flex", alignItems:"flex-start", gap:10, padding:"10px 0 10px 10px", overflow:"hidden", minHeight:0 }}>
-            <DeckArt artwork={libLoadB?.track?.artwork} fallback="B" color="#C16842"/>
+            <DeckArt artwork={libLoadB?.track?.artwork} fallback="B" color="#6B3FA8"/>
             <div style={{ flex:1, overflow:"hidden", minHeight:0 }}>
-            <Deck id="B" ch={eng.current?.B} ctx={eng.current?.ctx} color="#C16842" local remote={pB} onChange={dh("B")} midi={midiEvt} bpmResult={bpm.results["B"]} bpmAnalyze={bpm.analyze} eqHi={eqB.hi} eqMid={eqB.mid} eqLo={eqB.lo} chanVol={eqB.vol} loadFromLibrary={libLoadB} onTrackInfo={handleTrackInfo} onSync={()=>handleSyncToggle("B")} syncReady={!!(bpm.results["A"]?.bpm || pA?.bpm)} syncRole={syncLocked ? (lastSlaveDeck === "B" ? "slave" : "master") : null} isMaster={masterDeck === "B"} onMasterToggle={handleMasterToggle} onLibraryTrackDrop={(trackId)=>{const t=lib.library.find(x=>x.id===trackId);if(t)handleLibLoad(t,"B");}} onProgUpdate={handleProgB} onWaveform={setWfB} onSeekReady={onDeckBSeekReady} onToggleReady={onDeckBToggleReady} onCueReady={onDeckBCueReady} onNudgeReady={onDeckBNudgeReady} onTransportFire={handleTransportFire} isDriver={!deckDrivers.B || deckDrivers.B === session.name} acNowRef={acNowRef} onBufferReady={onDeckBBufferReady} barOneOffsetSec={barOneB * (bpm.results["B"]?.beatPeriodSec || 0)}/>
+            <Deck id="B" ch={eng.current?.B} ctx={eng.current?.ctx} color="#6B3FA8" local remote={pB} onChange={dh("B")} midi={midiEvt} bpmResult={bpm.results["B"]} bpmAnalyze={bpm.analyze} eqHi={eqB.hi} eqMid={eqB.mid} eqLo={eqB.lo} chanVol={eqB.vol} loadFromLibrary={libLoadB} onTrackInfo={handleTrackInfo} onSync={()=>handleSyncToggle("B")} syncReady={!!(bpm.results["A"]?.bpm || pA?.bpm)} syncRole={syncLocked ? (lastSlaveDeck === "B" ? "slave" : "master") : null} isMaster={masterDeck === "B"} onMasterToggle={handleMasterToggle} onLibraryTrackDrop={(trackId)=>{const t=lib.library.find(x=>x.id===trackId);if(t)handleLibLoad(t,"B");}} onProgUpdate={handleProgB} onWaveform={setWfB} onSeekReady={onDeckBSeekReady} onToggleReady={onDeckBToggleReady} onCueReady={onDeckBCueReady} onNudgeReady={onDeckBNudgeReady} onTransportFire={handleTransportFire} isDriver={!deckDrivers.B || deckDrivers.B === session.name} acNowRef={acNowRef} onBufferReady={onDeckBBufferReady} barOneOffsetSec={barOneB * (bpm.results["B"]?.beatPeriodSec || 0)}/>
             </div>
           </div>
         </div>
