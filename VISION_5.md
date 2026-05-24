@@ -2073,3 +2073,178 @@ Final state at session end (commit `80929d9`):
 > the current production tip. Canvas-2D glow rendering at its
 > quality ceiling; WebGL migration flagged as the lever if the
 > Reflect-style neon aesthetic stays critical to dogfood.**
+
+## May 24 morning — Quick Wins
+
+> Executes the five "Quick Wins" items from the design research
+> document produced May 23 evening. Establishes a new color
+> baseline, single-accent rule, motion baseline, library row
+> design, and play-button feedback in five surgical commits.
+> Each was committed independently so any one can be reverted
+> cleanly without unwinding the others.
+
+### Commits shipped today (master, in order)
+
+- `4ba8a05` — v5.11 deck color baseline: Dusk Blue + Deep
+  Emerald Glow (P3 + sRGB)
+- `693c81f` — v5.12 retire amber, single accent (white at three
+  opacity tiers)
+- `f5c777a` — v5.13 standard 150ms motion baseline
+  (cubic-bezier 0.4, 0, 0.2, 1)
+- `f54b84d` — v5.14 library track row hierarchy polish
+- `f6dd7d3` — v5.15 play button single-pulse on activation
+
+### Key decisions locked in
+
+#### 1. Deck identity colors superseded (third time)
+
+- **Deck A: `#1976D2`** (Dusk Blue) — sRGB fallback;
+  `color(display-p3 0.10 0.46 0.82)` on wide-gamut displays
+- **Deck B: `#00C853`** (Deep Emerald Glow) — sRGB fallback;
+  `color(display-p3 0 0.78 0.32)` on wide-gamut displays
+- Supersedes May 23 evening's `#0F4FA0` deep blue + `#1FC97A`
+  electric green
+- **Why**: design research flagged perceptual issue — `#0F4FA0`
+  was deep enough that even the v5.8 additive glow couldn't
+  pull a convincing "lit from inside" reading out of it. Brain
+  reads very dark blue as a static painted shape no matter how
+  much halo sits around it. New Deck A blue is lighter into the
+  range where canvas glow registers as light. Deck B green
+  pushed to a higher chroma in the same direction.
+- **P3 + sRGB pattern**: CSS variables `--deck-a` / `--deck-b`
+  in `src/index.css` declare sRGB first, override with P3
+  inside `@supports (color: color(display-p3 0 0 0))`. Canvas
+  cannot read CSS variables so `TOK.deckA` / `TOK.deckB` mirror
+  the sRGB hex as the single source of truth in JS — keep the
+  two in sync.
+
+#### 2. Single accent — amber retired permanently
+
+- May 23 evening retained `#D4A06A` as a surgical warm accent
+  on the active sidebar border. Removed today.
+- **New rule: single accent = white at three opacity tiers**
+  - **Primary** `rgba(255,255,255,0.9)` — active states,
+    primary indicators (active sidebar border, play active,
+    sync engaged, M master engaged)
+  - **Secondary** `rgba(255,255,255,0.6)` — hover states,
+    secondary info (minor-key Camelot text, artist names,
+    durations)
+  - **Tertiary** `rgba(255,255,255,0.3)` — borders, dividers,
+    inactive pill outlines
+- **Why**: even one warm hue against the cool dark surfaces
+  broke the Beatport / Spotify register the rest of the palette
+  was reaching for. Tried it (v5–v5.10) and dropped it.
+- `TOK.accent` / `TOK.accent2` / `TOK.accent3` exposed as the
+  tier system; legacy `oak` / `gold` aliases removed.
+
+#### 3. Motion baseline established
+
+- **Standard transition**: `all 150ms cubic-bezier(0.4, 0, 0.2, 1)`
+- Low-specificity CSS rule in `src/index.css` applies the
+  standard to buttons / inputs / selects / textareas / links
+  and `[role="button"]` — picks up un-styled controls for free
+- Canvas excluded (waveforms paint per-frame, never
+  transitioned)
+- The most prominent interactive surfaces brought to the
+  standard explicitly: TrackRow + LibraryPanelV2 row
+  backgrounds, cue chips, Cue / Sync / M, deck-card
+  driver-border, mixer TB2 helper, play button
+- Intentionally-fast transitions left alone (VU meter width
+  `.05s`, drag-cap height `.05s`) and intentionally-slow
+  deck-card outer container (`.3s` on track load)
+- **Why**: app felt static without motion. Inline transitions
+  varied across `.1s` / `.12s` / `.15s` / `.2s` / `.3s` with
+  mixed easing. One curve, one duration is the legibility win.
+
+#### 4. Library track row design locked
+
+- Restructured from left-anchored A/B-buttons-first to
+  art-first reading order:
+  `[3px deck border] [32px art] [Title 500 / Artist .6]
+  [energy bar 56w] [BPM Key Dur tabular cluster]
+  [A B load buttons]`
+- Album art moved to the left edge as the visual anchor
+- Title bumped to weight 500 — slight hierarchy lift against
+  artist
+- Artist + duration use the new secondary white tier
+  (`rgba(255,255,255,0.6)`)
+- Analysis-status dot collapsed into the title row inline
+- Energy bar slimmed to 3px, recolored to white-tier over a
+  low-alpha track (was gray-on-darker-gray)
+- BPM / Key / Duration grouped into a single right-aligned
+  tabular cluster — was three separate fixed-width slots with
+  no visual unit
+- Key chip restyled to white tier; em-dash placeholder when
+  missing so spacing stays stable
+- A/B load buttons moved to the far right (action zone),
+  preserving always-visible + filled-when-loaded affordance
+- Hover background brightened to `rgba(255,255,255,0.04)`
+- **Why**: design research flagged library as the weakest
+  competitive area of the app. Decks read pro; library still
+  read generic. Row redesign was the lowest-effort lever to
+  close that gap without touching filters / search / sidebar
+  (those are later sessions).
+
+#### 5. Play button feedback — single pulse on activation
+
+- When `playVisual` transitions false → true, fires once:
+  - Button scales 1 → 1.05 → 1 (subtle physical bump)
+  - Halo ring (white at 0.9) expands 1 → 1.25 with opacity
+    fade to 0
+  - Both 200ms cubic-bezier(0.4, 0, 0.2, 1)
+- Trigger: `pulseId` counter in `useEffect` watching
+  `playVisual`; keyed wrapper remounts on each increment so the
+  one-shot `@keyframes` replays
+- **Single pulse on press, NOT continuous** — continuous would
+  be visual noise during a long set (user explicit)
+- Active background also changed from solid `#FFFFFF` to
+  `rgba(255,255,255,0.9)` for consistency with the new tier
+  system
+- **Why**: design research called out the play press as a
+  "weight-of-the-moment" interaction that deserves a single
+  acknowledgement frame, not silence.
+
+### Where this came from
+
+These five changes are the entire "Quick Wins" section of the
+design research document produced May 23 evening. The research
+identified three classes of issues addressed today:
+
+1. **Perceptual color theory** — Deck A `#0F4FA0` was too deep
+   for canvas-2D glow to register as light (Path A multi-layer
+   compositing is the *other* lever, deferred to its own
+   session)
+2. **Library is the weakest competitive area** — row hierarchy
+   polish closes the gap on the lowest-effort surface
+3. **App felt static** — motion baseline + play pulse give the
+   app a heartbeat without any motion being decorative
+
+### Next session priorities
+
+In order, all blocking various things downstream:
+
+1. **Path A multi-layer offscreen canvas compositing** for
+   waveform glow rendering (4–8 hour focused session). The
+   v5.8 multi-pass additive glow is at canvas-2D's ceiling;
+   Path A separates the wide halo / concentrated halo / crisp
+   shape passes into cached offscreen canvases composited in a
+   single per-frame draw, which should give us enough headroom
+   to push glow intensity without dropping frames.
+2. **Manual nudge UI hover-reveal on waveform** —
+   required pre-dogfood. State and handlers still live in the
+   parent (`gridOffsetA/B`, `barOneA/B`, `bpmNudgeA/B`); needs
+   a discoverable affordance. Hover-reveal on the waveform
+   itself is the candidate; alternatives are the mixer column
+   or a small expandable panel.
+3. **Library smart filter expansion** — separate session.
+   Today's row polish was scoped intentionally narrow; smart
+   filters, search behavior, and sidebar are untouched and
+   are the next library lever.
+
+> **May 24 morning end-of-session snapshot. v5.15 (`f6dd7d3`)
+> is the current production tip. New color baseline + single
+> accent + motion baseline + library row + play pulse all
+> shipped to master and deploying to collabmix.vercel.app.
+> Path A waveform compositing is the next major lever; manual
+> nudge UI is the next blocker on the critical path to
+> dogfood.**
