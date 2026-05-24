@@ -57,10 +57,9 @@ A perfectly considered control, a beautiful waveform, an animation that feels ex
 - Deck identity colors — **"club lighting" cool pair**, both with
   "their own light source" / glowing-in-a-dark-room character. A vs
   B reads through hue (blue vs purple), not temperature:
-  - Deck A: `#1B5BAA` — deep electric night blue (dusk skyline /
-    phone screen in dark room / deep stage lighting)
-  - Deck B: `#6B3FA8` — deep electric purple (premium amethyst,
-    high-end venue lighting; NOT neon party, NOT lavender)
+  - Deck A: `#1A6EE0` — vivid confident blue (not "navy gray")
+  - Deck B: `#7E3FD6` — vivid glowing purple (Reflect-style premium
+    amethyst, NOT neon party, NOT lavender)
 - **Beat grid lines render in WHITE** (functional reference, must
   contrast against any deck color). Off-beat ticks at low alpha,
   downbeat ticks bright + through-line. **Canvas `shadowColor`
@@ -224,6 +223,27 @@ Reactions to 8 reference apps during taste-mapping session:
 This is a working draft. We will refine and add as we see mockups and react. Decisions will get more specific over time. What's here is direction, not final commitment.
 
 ## Status log
+
+### May 22 deep night — design v5.7 (vivid colors, atmospheric glow)
+- **Deck colors pushed to vivid pigment.** v5.6 values still landed
+  as muted dark; v5.7 punches saturation up:
+  - Deck A `#1B5BAA` → `#1A6EE0` — vivid confident blue (not "navy").
+  - Deck B `#6B3FA8` → `#7E3FD6` — vivid glowing purple (Reflect-
+    style premium amethyst).
+  Crossfader gradient updated to the new rgb pair + slightly higher
+  gradient opacity.
+- **Glow intensity cranked to atmospheric.** Previous halo read
+  as faint drop-shadow; v5.7 makes it real light-through-mist:
+  - `shadowBlur` 14*dpr → 28*dpr (real atmospheric spread).
+  - `shadowColor` alpha 0.65 → 0.90 (visible halo).
+  - Inner-gradient peak brightness brightened from +60 → +90 above
+    base color so peak tips actually glow rather than just being
+    saturated.
+  - Silhouette gradient peak stop alpha 0.42 → 0.48, slight bump
+    at the lit centerline transitions.
+  Goal reference: Reflect's vivid glowing purple with visible color
+  extending well beyond the central element. Looking at the
+  waveform now feels like seeing light through mist.
 
 ### May 22 deep night — design v5.6 (actual glow rendering on waveforms)
 - **Outer bloom on the top zoomed waveform silhouette.** Canvas
