@@ -1897,3 +1897,143 @@ Full report at `tools/rekordbox-eval/PHASE_1_REPORT.md`.
 
 > **May 21 evening status snapshot — full vision reconciliation
 > pending in next session.**
+
+## May 23 evening — Design palette pivot + 10-iteration glow rendering pass
+
+### Major design pivot — warm "Quiet Pro Tool" → cool dark Beatport-style
+
+Visual review of design v3 (commit `565991d`) on May 22 morning
+concluded the warm palette read as "retro / military, not clean or
+minimal." Direction reversed entirely:
+
+- Background warm `#0F1014` → cool near-black `#0A0B0E`
+- Text warm `#E8E3D8` → clean `#F5F5F7`
+- Panel grays warm → cool throughout (`#15171A`, `#1F2126`)
+- Single oak accent `#C9B79C` (applied broadly) → surgical amber
+  `#D4A06A` (now used ONLY on the active sidebar item's thin left
+  border in the library — about as restrained as it gets)
+- Deck colors went through 6 rounds of iteration before landing on
+  the current pair (see iteration history below)
+- Underlying philosophy (restraint, MUJI / Teenage Engineering
+  references, Inter, sentence case, tabular nums, album-art deck
+  anchors, white-circle play, calm monochrome amplitude waveforms,
+  edge-to-edge layout) **unchanged** — direction change was purely
+  palette + glow rendering, not principles.
+
+Shipped as `5b09651` (Design v4 — cool dark palette + layout fixes).
+
+### Iteration history May 22-23 (10 commits)
+
+| Commit | Tag | What changed |
+| --- | --- | --- |
+| `5b09651` | v4 | Cool palette swap, transport clipping fix, waveform 120→78, crossfader relocated into mixer card, library polish |
+| `cad2098` | v5 | Temperature-contrast deck pair (navy/slate), beat grid glow in deck color, title row Rekordbox-style time, BPM → white, Sync/M green → white, mixer center diagnostic strip removed, ampPad 28→6 |
+| `be6cb8d` | v5.2 | Library dashed-outline bug fix, AUDIO/REC/MIDI strip moved to top header, deck waveform gap removed, Camelot chip amber→white, red phrase through-line removed (outer ticks only) |
+| `8e81414` | v5.3 | Grid markers switched white (deck-color grid was invisible on rust waveforms), ampPad 6→11, deck pair pushed more saturated |
+| `bde9aee` | v5.4 | ampPad 11→18 (proper grid clearance), Deck A blue pushed brighter |
+| `d6f4c3f` | v5.5 | Cool pair rethemed — abandoned temperature contrast, both decks in cool family but distinct hues; deck-color halo back on the (still-white) grid ticks |
+| `be3f2d0` | v5.6 | First actual glow rendering — silhouette shadow blur 14·dpr + inverted gradient (peaks bright) |
+| `c39028b` | v5.7 | Glow cranked: shadowBlur 14→28, shadow alpha 0.65→0.90, peak boost +60→+90 |
+| `0feee47` | v5.8 | True neon multi-pass: silhouette → `Path2D`, three additive passes with `globalCompositeOperation='lighter'` (wide 70·dpr halo + concentrated 28·dpr halo + base), pure black canvas |
+| `e1de1db` | v5.9 | Color tuning under v5.8 glow: blue pulled darker, purple replaced with electric green per user club-lighting reference |
+| `80929d9` | v5.10 | Inverted Pass 2b gradient — body of waveform is now deep base color across full column height; subtle +40 lift only at very peak tips (was +180 across whole edges, washing body to near-white) |
+
+### Current state (commit `80929d9`)
+
+**Deck colors:**
+- Deck A: `#0F4FA0` — deep electric night blue (full saturation,
+  brightness pushed down so v5.8 additive halo reads as "deep blue
+  light" not cyan)
+- Deck B: `#1FC97A` — vivid electric cyan-green (LED club stage
+  light, NOT lime / Matrix / fluorescent)
+
+**Waveform rendering (top zoomed, AnimatedZoomedWF):**
+- Pure black canvas clear `#000000`
+- Silhouette geometry built into a `Path2D` once per frame,
+  re-filled across three additive passes (`'lighter'` composite)
+- Pass A: shadowBlur 70·dpr, shadow alpha 1.0, fill alpha 0.18
+  (wide atmospheric spread)
+- Pass B: shadowBlur 28·dpr, fill alpha 0.30 (concentrated halo)
+- Pass C: shadowBlur 0, uniform deep base color (silhouette body)
+- Composite reset to `source-over` before AA stroke, per-column
+  overlay, grid markers, playhead, hot cues — those stay crisp
+- Per-column Pass 2b cached gradient: deep body (0.95 alpha across
+  0.05–0.95 of column height), subtle +40 peak lift only at the
+  very top/bottom (0.0/1.0). Tall columns get a thin highlight at
+  the actual amplitude peak tip; short columns are pure deep base
+- Grid markers white with deck-color shadow halo (atmospheric)
+- 16-bar phrase markers red, outer-rail ticks only (no through-line)
+- ampPad 18 (matches tickRailPad exactly — amplitude region and
+  grid rail meet without overlap)
+
+### Known limitation — Canvas 2D rendering ceiling
+
+After 5 iterations on glow rendering (v5.6 → v5.10), the current
+multi-pass additive Canvas 2D approach is at its quality ceiling
+for the "neon glow in a dark room" aesthetic the user is targeting.
+Visual review through v5.10 shows real improvement over the flat
+v5.6 baseline but the result still falls short of reference images
+(Reflect-style atmospheric color bleed, real neon physics).
+
+Specifically:
+- Canvas `shadowBlur` halos render at fixed alpha — no real
+  light-physics falloff
+- `globalCompositeOperation='lighter'` accumulates but can't model
+  bloom / dispersion the way a shader can
+- Per-column gradient is approximate — true lit-from-within depth
+  needs per-fragment lighting math
+
+If the "true neon glow" aesthetic is critical for dogfood / launch,
+the next iteration may need to **migrate the top waveform rendering
+to WebGL** with a custom fragment shader (gaussian bloom, additive
+HDR-ish compositing, per-pixel glow falloff). That's a substantial
+architectural change but is the technical lever required to reach
+the visual target. Tabling for now — v5.10 ships as the
+Canvas-2D-quality high-water mark.
+
+### Other locked design decisions (carried from May 22-23 session)
+
+- **AUDIO / REC / MIDI** panel toggles live in the top header (next
+  to session-name / Share / Leave). Detail panel content opens
+  below the deck row only when an active panel is selected.
+- **A–D cue chips inline** in the deck card (4 chips below
+  transport, not a side column).
+- **Edge-to-edge waveform layout** — both deck waveforms sit
+  directly stacked with no chrome row between them. Zoom selector
+  floats as a small backdrop-blur overlay in the top-right corner.
+- **White grid markers** with deck-color shadow halo on both decks.
+  16-bar phrase markers red on outer rails only.
+- **BPM in clean white** (`#F5F5F7`) — same family as track title,
+  no amber tint.
+- **Sync / M white active state** with brightness lift glow
+  (matches the white play button) — no green for active states.
+  Green retained only for semantic indicators (recording, partner
+  online dot).
+- **Library expanded vertical real estate** — gained ~140 px
+  cumulative across the v4–v5.2 layout cleanup (shorter waveform,
+  taller deck row, crossfader moved into mixer, panel strip
+  relocated, chrome gap removed).
+- **Manual nudge controls dropped from UI in v5.2** (grid offset,
+  bar-1 nudge, BPM nudge). State + handlers preserved in parent
+  component; need a new discoverable affordance pre-dogfood (was
+  already a VISION_5 known TODO).
+
+### Worktrees preserved
+
+- `../collabmix-booth` @ `3ec2995` (`design-booth`) — kept for
+  reference
+- `../collabmix-decks` @ `e700508` (`design-decks`) — kept for
+  reference
+
+### Memory updated
+
+Added persistent feedback memory `feedback_deck_color_tuning.md`
+during v5.3: "for deck/accent colors, start at full saturation in
+the hue family, then reduce brightness for depth — never start by
+desaturating (causes dead/muddy 'desaturated-then-dark' look)."
+Earned from 3 cycles of muddy color iterations.
+
+> **May 23 evening end-of-session snapshot. v5.10 (`80929d9`) is
+> the current production tip. Canvas-2D glow rendering at its
+> quality ceiling; WebGL migration flagged as the lever if the
+> Reflect-style glow target stays critical to dogfood.**
