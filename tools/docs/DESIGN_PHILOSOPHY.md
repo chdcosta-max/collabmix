@@ -224,6 +224,39 @@ This is a working draft. We will refine and add as we see mockups and react. Dec
 
 ## Status log
 
+### May 22 deep night — design v5.8 (true neon multi-pass glow)
+- **Multi-pass additive glow rendering on the top zoomed waveform.**
+  Silhouette path refactored to a `Path2D` so the same geometry
+  can be re-filled cheaply. Three passes composited with
+  `globalCompositeOperation = 'lighter'` (additive — same physics
+  as real light, color accumulates where it overlaps):
+  - Pass A: `shadowBlur = 70*dpr`, deck-color shadow alpha 1.0,
+    fill alpha 0.18 — wide atmospheric spread far past the
+    silhouette edge.
+  - Pass B: `shadowBlur = 28*dpr`, fill alpha 0.30 — concentrated
+    halo around the bright core.
+  - Pass C: `shadowBlur = 0`, peaks-bright baseline gradient —
+    silhouette body fills in with depth.
+  Composite reset to `source-over` before the AA stroke + per-column
+  overlay + grid markers + playhead + hot cues so those stay crisp.
+- **Per-column "lit core" — peak tops near-white.** Pass 2b cached
+  gradient pushes peak stops `+180` above base deck color (was +90)
+  → near-white with a slight deck-color cast at the very tips.
+  Tall columns get a bright core that reads against the deck-color
+  halo. Quiet columns sample only the dim middle stops.
+- **Canvas clear → pure black `#000000`** (was `#06070A`). The
+  additive `lighter` glow needs maximum contrast to bleed into.
+  Section container backgrounds also changed to pure black so the
+  empty / no-track strip stays coherent.
+- Deck colors unchanged from v5.7 (`#1A6EE0` blue, `#7E3FD6`
+  purple) — the colors are right; v5.8 is about the *rendering* of
+  light, not the pigment. Goal reference: looking at a neon sign
+  in a dark room with visible atmospheric bleed across the dark
+  space, not a flat painted shape.
+- Performance: three `ctx.fill(path)` calls per frame plus one
+  large 70*dpr blur. Caching to offscreen canvas is the next lever
+  if scroll/zoom feels laggy.
+
 ### May 22 deep night — design v5.7 (vivid colors, atmospheric glow)
 - **Deck colors pushed to vivid pigment.** v5.6 values still landed
   as muted dark; v5.7 punches saturation up:

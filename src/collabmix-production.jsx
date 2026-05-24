@@ -3136,7 +3136,9 @@ function AnimatedZoomedWF({ bands, dur, progRef, onSeek, h=96, windowSec=8, beat
       }
       const bands=bandsRef.current;
 
-      ctx.fillStyle='#06070A';
+      // v5.8: pure black canvas clear so the additive 'lighter'-composited
+      // glow passes have maximum contrast to bleed into.
+      ctx.fillStyle='#000000';
       ctx.fillRect(0,0,physW,physH);
 
       // Rate-aware visible-buffer-time span. windowSec is treated as WALL
@@ -3245,36 +3247,17 @@ function AnimatedZoomedWF({ bands, dur, progRef, onSeek, h=96, windowSec=8, beat
         ctx.fillStyle='rgba(255,255,255,0.06)';
         ctx.fillRect(0,center,physW,1);
 
-        // ── Pass 2a: smooth filled envelope path at very DIM baseline.
-        // Silhouette path uses selective quadratic curves — three
-        // consecutive monotonic columns get smoothed via quadraticCurveTo
-        // (control = middle point, endpoint = midpoint to next). BUT if
-        // either neighbor delta exceeds STEEP_THRESH (25% of maxH per
-        // column), force lineTo regardless of monotonicity — this
-        // preserves the near-vertical jump on kick/snare onsets where
-        // the amplitude rapidly climbs over 1-2 columns. Both top and
-        // bottom sweeps share the same check (based on |heights[]| only)
-        // so kick edges stay symmetric around the centerline.
-        //
-        // v5.6: gradient brighter at peaks (top/bottom) and dim at
-        // centerline — "light coming from the peaks" feel. Deck-color
-        // shadow blur around the silhouette for atmospheric outer bloom.
-        // v5.7: cranked glow intensity — shadowBlur 14 → 28*dpr, alpha
-        // 0.65 → 0.90 so the halo extends well beyond the waveform shape
-        // with real visible atmospheric bleed (Reflect-style: looking
-        // through mist at colored light, NOT a faint drop-shadow).
+        // ── Silhouette path geometry (Path2D so it can be re-filled by the
+        // multi-pass glow without recomputing). Selective quadratic curves —
+        // three monotonic columns get smoothed via quadraticCurveTo; columns
+        // with delta > STEEP_THRESH force lineTo so kick/snare onsets keep
+        // their near-vertical attack edge. Top + bottom sweeps share the
+        // same check (based on |heights[]|) for symmetric kicks.
         const STEEP_THRESH=maxH*0.15;
-        const baseGrad=ctx.createLinearGradient(0,center-maxH,0,center+maxH);
-        baseGrad.addColorStop(0,`rgba(${dr},${dg},${db},0.48)`);
-        baseGrad.addColorStop(0.5,`rgba(${dr},${dg},${db},0.10)`);
-        baseGrad.addColorStop(1,`rgba(${dr},${dg},${db},0.48)`);
-        ctx.shadowColor=`rgba(${dr},${dg},${db},0.90)`;
-        ctx.shadowBlur=Math.round(28*dpr);
-        ctx.fillStyle=baseGrad;
-        ctx.beginPath();
-        ctx.moveTo(0,center);
-        // Top sweep — selective curve smoothing.
-        if(physW>0) ctx.lineTo(0.5,center-heights[0]);
+        const silhouettePath=new Path2D();
+        silhouettePath.moveTo(0,center);
+        // Top sweep.
+        if(physW>0) silhouettePath.lineTo(0.5,center-heights[0]);
         for(let dx=1;dx<physW-1;dx++){
           const hPrev=heights[dx-1], hCur=heights[dx], hNext=heights[dx+1];
           const yPrev=center-hPrev, yCur=center-hCur, yNext=center-hNext;
@@ -3284,15 +3267,15 @@ function AnimatedZoomedWF({ bands, dur, progRef, onSeek, h=96, windowSec=8, beat
           const monotonic=!steep&&((yPrev<yCur&&yCur<yNext)||(yPrev>yCur&&yCur>yNext));
           if(monotonic){
             const midX=dx+1, midY=(yCur+yNext)*0.5;
-            ctx.quadraticCurveTo(dx+0.5,yCur,midX,midY);
+            silhouettePath.quadraticCurveTo(dx+0.5,yCur,midX,midY);
           } else {
-            ctx.lineTo(dx+0.5,yCur);
+            silhouettePath.lineTo(dx+0.5,yCur);
           }
         }
-        if(physW>1) ctx.lineTo(physW-0.5,center-heights[physW-1]);
-        ctx.lineTo(physW,center);
-        // Bottom sweep (mirror) — same checks based on heights[].
-        if(physW>0) ctx.lineTo(physW-0.5,center+heights[physW-1]);
+        if(physW>1) silhouettePath.lineTo(physW-0.5,center-heights[physW-1]);
+        silhouettePath.lineTo(physW,center);
+        // Bottom sweep (mirror).
+        if(physW>0) silhouettePath.lineTo(physW-0.5,center+heights[physW-1]);
         for(let dx=physW-2;dx>0;dx--){
           const hPrev=heights[dx+1], hCur=heights[dx], hNext=heights[dx-1];
           const yPrev=center+hPrev, yCur=center+hCur, yNext=center+hNext;
@@ -3302,37 +3285,69 @@ function AnimatedZoomedWF({ bands, dur, progRef, onSeek, h=96, windowSec=8, beat
           const monotonic=!steep&&((yPrev<yCur&&yCur<yNext)||(yPrev>yCur&&yCur>yNext));
           if(monotonic){
             const midX=dx, midY=(yCur+yNext)*0.5;
-            ctx.quadraticCurveTo(dx+0.5,yCur,midX,midY);
+            silhouettePath.quadraticCurveTo(dx+0.5,yCur,midX,midY);
           } else {
-            ctx.lineTo(dx+0.5,yCur);
+            silhouettePath.lineTo(dx+0.5,yCur);
           }
         }
-        if(physW>1) ctx.lineTo(0.5,center+heights[0]);
-        ctx.closePath();
-        ctx.fill();
-        // Clear shadow before stroke + downstream passes — bloom only
-        // belongs on the silhouette path, not on the AA stroke or the
-        // per-column overlay (those would smear).
+        if(physW>1) silhouettePath.lineTo(0.5,center+heights[0]);
+        silhouettePath.closePath();
+
+        // ── v5.8 NEON GLOW — three additive passes on the same Path2D.
+        // 'lighter' composite mode means colors ADD where they overlap, the
+        // same physics as real light. Wide halo + concentrated halo + base
+        // silhouette accumulate to a real glowing core with atmospheric
+        // bleed extending well past the waveform shape (Reflect-style).
+        ctx.globalCompositeOperation='lighter';
+
+        // Pass A — wide atmospheric spread. Massive blur, low fill alpha so
+        // the shadow does most of the work and the spread reaches well past
+        // the silhouette edges.
+        ctx.shadowColor=`rgba(${dr},${dg},${db},1.0)`;
+        ctx.shadowBlur=Math.round(70*dpr);
+        ctx.fillStyle=`rgba(${dr},${dg},${db},0.18)`;
+        ctx.fill(silhouettePath);
+
+        // Pass B — concentrated halo. Moderate blur, higher fill alpha so
+        // the bright core area starts to take shape.
+        ctx.shadowBlur=Math.round(28*dpr);
+        ctx.fillStyle=`rgba(${dr},${dg},${db},0.30)`;
+        ctx.fill(silhouettePath);
+
+        // Pass C — silhouette baseline gradient (peaks lit, centerline dim).
+        // No shadow — additive accumulation already gives the inside its
+        // brightness. The gradient adds the "light from the peaks" depth.
         ctx.shadowBlur=0;
-        // Thin AA stroke at higher alpha than the fill baseline — softens
-        // the silhouette edge without obscuring transient peaks.
+        const baseGrad=ctx.createLinearGradient(0,center-maxH,0,center+maxH);
+        baseGrad.addColorStop(0,`rgba(${dr},${dg},${db},0.48)`);
+        baseGrad.addColorStop(0.5,`rgba(${dr},${dg},${db},0.10)`);
+        baseGrad.addColorStop(1,`rgba(${dr},${dg},${db},0.48)`);
+        ctx.fillStyle=baseGrad;
+        ctx.fill(silhouettePath);
+
+        // Restore source-over for the AA stroke + downstream passes.
+        // Stroke etc. should be regular composited — additive on stroke
+        // would over-brighten the edge into pure white.
+        ctx.globalCompositeOperation='source-over';
+
+        // Thin AA stroke softens the silhouette edge without obscuring
+        // transient peaks. Renders on top of the additive accumulation.
         ctx.strokeStyle=`rgba(${dr},${dg},${db},0.55)`;
         ctx.lineWidth=Math.max(0.5,0.5*dpr);
-        ctx.stroke();
+        ctx.stroke(silhouettePath);
 
-        // ── Pass 2b: per-column amplitude overlay.
-        // v5.6: cached vertical gradient — peaks lit, centerline dim.
-        // v5.7: peak stops brightened further (+60 → +90 above base) so
-        // tall columns glow at the tips rather than just being saturated.
-        // Tall columns get "lit from the peaks" inner gradient; quiet
-        // columns sample only the dim middle stops. Per-column globalAlpha
-        // env modulation still multiplies on the gradient alpha.
-        const peakR=Math.min(255,dr+90), peakG=Math.min(255,dg+90), peakB=Math.min(255,db+90);
+        // ── Pass 2b: per-column amplitude overlay — crisp readable core.
+        // v5.8: runs in regular source-over (already restored above). Peak
+        // stops pushed +180 above base → near-white with a slight deck-color
+        // cast, giving each loud column a "lit core" tip against the
+        // additive halo from the multi-pass glow above. Quiet columns only
+        // sample the dim middle stops.
+        const peakR=Math.min(255,dr+180), peakG=Math.min(255,dg+180), peakB=Math.min(255,db+180);
         const colGrad=ctx.createLinearGradient(0,ampTop,0,ampBottom);
         colGrad.addColorStop(0,   `rgba(${peakR},${peakG},${peakB},1.0)`);
-        colGrad.addColorStop(0.4, `rgba(${dr},${dg},${db},0.88)`);
-        colGrad.addColorStop(0.5, `rgba(${dr},${dg},${db},0.50)`);
-        colGrad.addColorStop(0.6, `rgba(${dr},${dg},${db},0.88)`);
+        colGrad.addColorStop(0.35,`rgba(${peakR},${peakG},${peakB},0.85)`);
+        colGrad.addColorStop(0.5, `rgba(${dr},${dg},${db},0.55)`);
+        colGrad.addColorStop(0.65,`rgba(${peakR},${peakG},${peakB},0.85)`);
         colGrad.addColorStop(1,   `rgba(${peakR},${peakG},${peakB},1.0)`);
         ctx.fillStyle=colGrad;
         for(let dx=0;dx<physW;dx++){
@@ -6738,7 +6753,7 @@ export default function CollabMix({ initialPage = "landing", djName = null }) {
         const hasB = !!wfB?.bass;
         if (!hasA && !hasB) {
           return (
-            <div style={{ flexShrink:0, height:40, background:"#06070A", borderBottom:"1px solid #1F2126", display:"flex", alignItems:"center", justifyContent:"center", color:"#5A5E66", fontSize:9, fontFamily:"'Inter',sans-serif", letterSpacing:3, textTransform:"uppercase" }}>
+            <div style={{ flexShrink:0, height:40, background:"#000000", borderBottom:"1px solid #1F2126", display:"flex", alignItems:"center", justifyContent:"center", color:"#5A5E66", fontSize:9, fontFamily:"'Inter',sans-serif", letterSpacing:3, textTransform:"uppercase" }}>
               No track loaded — drop tracks below to start
             </div>
           );
@@ -6753,7 +6768,7 @@ export default function CollabMix({ initialPage = "landing", djName = null }) {
         // were removed; each deck's waveform sits directly above the other.
         const wfH = 90;
         return (
-          <div style={{ position:"relative", flexShrink:0, background:"#06070A", borderBottom:"1px solid #1F2126" }}>
+          <div style={{ position:"relative", flexShrink:0, background:"#000000", borderBottom:"1px solid #1F2126" }}>
             {hasA && (
               <div
                 onDragOver={e=>e.preventDefault()}
