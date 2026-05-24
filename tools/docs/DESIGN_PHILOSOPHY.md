@@ -57,9 +57,11 @@ A perfectly considered control, a beautiful waveform, an animation that feels ex
 - Deck identity colors — **"club lighting" cool pair**, both with
   "their own light source" / glowing-in-a-dark-room character. A vs
   B reads through hue (blue vs purple), not temperature:
-  - Deck A: `#1A6EE0` — vivid confident blue (not "navy gray")
-  - Deck B: `#7E3FD6` — vivid glowing purple (Reflect-style premium
-    amethyst, NOT neon party, NOT lavender)
+  - Deck A: `#0F4FA0` — deep electric night blue (full saturation,
+    brightness pushed down so the v5.8 additive glow reads as deep
+    blue light not cyan)
+  - Deck B: `#1FC97A` — vivid electric cyan-green (LED neon / club
+    stage light; NOT lime, NOT fluorescent, NOT Matrix)
 - **Beat grid lines render in WHITE** (functional reference, must
   contrast against any deck color). Off-beat ticks at low alpha,
   downbeat ticks bright + through-line. **Canvas `shadowColor`
@@ -223,6 +225,25 @@ Reactions to 8 reference apps during taste-mapping session:
 This is a working draft. We will refine and add as we see mockups and react. Decisions will get more specific over time. What's here is direction, not final commitment.
 
 ## Status log
+
+### May 22 deep night — design v5.9 (color tuning for v5.8 glow rendering)
+- **Deck A `#1A6EE0` → `#0F4FA0`** (deep electric night blue).
+  v5.8's multi-pass additive glow was washing the v5.7 mid-tone
+  blue out to "sky blue" — the bright peak cores + halo pulled
+  the visual weight up to a light hue. Pulling the base color
+  darker (full saturation preserved, brightness pushed down per
+  the color principle) keeps the halo reading as "deep blue
+  light" rather than cyan-tinted glow.
+- **Deck B `#7E3FD6` (purple) → `#1FC97A` (electric cyan-green).**
+  Replaces the purple identity with a vivid green matching the
+  user's club-lighting reference (DJ booth neon strips). With
+  v5.8 glow rendering applied, expect bright lit cores at peaks,
+  deep electric green halo bleed across surrounding dark space —
+  neon green light in a dark room. NOT lime / fluorescent / Matrix.
+  Crossfader gradient updated to deep-blue → electric-green.
+- All other v5.8 rendering preserved (multi-pass additive Path2D
+  glow, peak cores +180 above base, pure black canvas, source-over
+  for crisp downstream passes).
 
 ### May 22 deep night — design v5.8 (true neon multi-pass glow)
 - **Multi-pass additive glow rendering on the top zoomed waveform.**
