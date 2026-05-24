@@ -1411,7 +1411,7 @@ function LibraryPanelV2({ lib, onLoad, playingTrack, deckATrackId:deckATrackIdPr
           if (files.length > 0) handleImportFiles(files);
         }
       }}
-      style={{ display: "flex", height: "100%", background: BG, fontFamily: "'Inter',sans-serif", color: TEXT, position: "relative", overflow: "hidden", outline: isDraggingOver ? `2px dashed ${G}` : "2px dashed transparent", outlineOffset: -2, transition: "outline-color .15s" }}>
+      style={{ display: "flex", height: "100%", background: BG, fontFamily: "'Inter',sans-serif", color: TEXT, position: "relative", overflow: "hidden", outline: isDraggingOver ? `2px dashed ${G}` : "none", outlineOffset: -2 }}>
 
       {/* ── LEFT RAIL ── */}
       <div style={{ width: 180, flexShrink: 0, borderRight: `1px solid ${BORDER}`, display: "flex", flexDirection: "column" }}>
@@ -3432,12 +3432,19 @@ function AnimatedZoomedWF({ bands, dur, progRef, onSeek, h=96, windowSec=8, beat
           const isDownbeat=(n%4===0);
 
           if(isPhrase){
-            // Phrase: full-height 2px red line + 2px×16px centered ticks.
-            // Swap shadow to red so the glow stays color-coherent on phrase.
+            // v5.2: phrase columns no longer get a red full-height through-line
+            // (was too visually heavy, competed with waveform content). They
+            // render as a normal downbeat (deck-color through-line + downbeat
+            // ticks) PLUS red top/bottom phrase ticks for identity.
+            ctx.fillStyle=DOWN_LINE;
+            ctx.fillRect(Math.floor(x),0,lineW,physH);
+            ctx.fillStyle=DOWN_FILL;
+            const dx=Math.floor(x-downTickW/2);
+            ctx.fillRect(dx,downTopY,downTickW,downTickH);
+            ctx.fillRect(dx,downBotY,downTickW,downTickH);
+            // Red phrase ticks on the outer rails — color-coherent red glow.
             ctx.shadowColor=`rgba(${PHRASE_RGB},0.7)`;
             ctx.shadowBlur=4;
-            ctx.fillStyle=PHRASE_LINE;
-            ctx.fillRect(Math.floor(x)-(phraseTickW>>1),0,phraseTickW,physH);
             ctx.fillStyle=PHRASE_FILL;
             const px=Math.floor(x-phraseTickW/2);
             ctx.fillRect(px,phraseTopY,phraseTickW,phraseTickH);
@@ -4350,7 +4357,7 @@ function Deck({ id, ch, ctx:ac, color, local, remote, onChange, midi:mt, bpmResu
           {/* KEY display (compact, optional) */}
           {(()=>{const effectiveKey=deckKey||remote?.key;const ck=effectiveKey?CAMELOT[effectiveKey]:null;const km=ck?.endsWith("A");return ck?(
             <div style={{flexShrink:0, alignSelf:"center"}}>
-              <div style={{fontSize:11, fontFamily:"'Inter',sans-serif", fontWeight:500, color:"#D4A06A", background:"#D4A06A18", borderRadius:4, padding:"2px 6px", letterSpacing:.5, fontVariantNumeric:"tabular-nums"}}>{ck}</div>
+              <div style={{fontSize:11, fontFamily:"'Inter',sans-serif", fontWeight:500, color:"#F5F5F7", background:"rgba(255,255,255,0.06)", border:"1px solid rgba(255,255,255,0.08)", borderRadius:4, padding:"2px 6px", letterSpacing:.5, fontVariantNumeric:"tabular-nums"}}>{ck}</div>
             </div>
           ):null;})()}
           {/* BPM display — LCD-style oak, tabular-nums, bold */}
@@ -6662,6 +6669,28 @@ export default function CollabMix({ initialPage = "landing", djName = null }) {
           {midi.active&&<div style={{ fontSize:9, fontFamily:"'Inter',sans-serif", color:G, background:`${G}0d`, border:`1px solid ${G}28`, borderRadius:5, padding:"2px 10px", letterSpacing:.5 }}>MIDI</div>}
         </div>
         <div style={{ display:"flex", gap:8, alignItems:"center" }}>
+          {/* Panel toggles — relocated v5.2 from the deck-row strip into the
+              top header so the library reclaims the vertical space. Each
+              click opens / closes the detail strip below the deck row. */}
+          <div style={{ display:"flex", gap:0, alignItems:"center", paddingRight:8, borderRight:"1px solid rgba(255,255,255,0.06)", marginRight:2 }}>
+            {PANELS.map(([pid, l]) => {
+              const active = panel === pid;
+              return (
+                <button key={pid} onClick={() => setPanel(p => p === pid ? null : pid)}
+                  style={{
+                    padding:"3px 9px", fontSize:8, fontFamily:"'Inter',sans-serif",
+                    background: active ? "rgba(255,255,255,0.08)" : "transparent",
+                    color: active ? "#F5F5F7" : "#5A5E66",
+                    border:"none", borderRadius:3,
+                    cursor:"pointer", outline:"none", letterSpacing:1,
+                    transition:"color .12s, background .12s",
+                  }}
+                  onMouseEnter={e => { if (!active) e.currentTarget.style.color = "#9CA3AF"; }}
+                  onMouseLeave={e => { if (!active) e.currentTarget.style.color = "#5A5E66"; }}
+                >{l}</button>
+              );
+            })}
+          </div>
           <span style={{ fontSize:9, fontFamily:"'Inter',sans-serif", color:"#9CA3AF", letterSpacing:.5 }}>{session.name}</span>
           <ShareButton room={session.room} mixName={session.mixName}/>
           <button onClick={leave} style={{ height:24, padding:"0 10px", background:"transparent", border:"1px solid #ef444433", color:"#ef4444", borderRadius:6, cursor:"pointer", fontFamily:"'Inter',sans-serif", fontSize:9, letterSpacing:.5 }}>Leave</button>
@@ -6697,11 +6726,11 @@ export default function CollabMix({ initialPage = "landing", djName = null }) {
         // maxH collapse, which was visually flattening drops despite the
         // height math being correct. Deck panels below shift down to make
         // room; their fixed row stays intact.
-        // May 22: reduced from 120 → 78 (~35% shorter) so the library reclaims
-        // vertical room. Rekordbox's waveforms run shorter than ours by design.
-        const wfH = 78;
+        // May 22: reduced 120 → 78. v5.2: bumped to 90 since chrome rows
+        // were removed; each deck's waveform sits directly above the other.
+        const wfH = 90;
         return (
-          <div style={{ flexShrink:0, background:"#06070A", borderBottom:"1px solid #1F2126" }}>
+          <div style={{ position:"relative", flexShrink:0, background:"#06070A", borderBottom:"1px solid #1F2126" }}>
             {hasA && (
               <div
                 onDragOver={e=>e.preventDefault()}
@@ -6715,42 +6744,10 @@ export default function CollabMix({ initialPage = "landing", djName = null }) {
                     }
                   } catch {}
                 }}
-                style={{ display:"flex", flexDirection:"column", flexShrink:0 }}>
-                {/* CHROME ROW — sits above waveform, no overlap. Holds deck
-                    label, grid offset, bar-1 nudge, BPM nudge, zoom selector. */}
-                <div style={{ display:"flex", alignItems:"center", gap:6, padding:"3px 10px", background:"rgba(255,255,255,0.02)", borderBottom:"1px solid rgba(255,255,255,0.04)" }}>
-                  <div style={{ display:"flex", gap:6, alignItems:"center", flexShrink:0 }}>
-                    <div style={{ width:5, height:5, borderRadius:"50%", background:"#9CA3AF", boxShadow:"0 0 6px #9CA3AF" }}/>
-                    <span style={{ fontSize:9, fontFamily:"'Inter',sans-serif", fontWeight:600, color:"#9CA3AFaa", letterSpacing:1.5 }}>A</span>
-                  </div>
-                  <div style={{ flex:1 }}/>
-                  <div style={{ display:"flex", gap:2, alignItems:"center", opacity:wfA?.name?1:0.35 }}>
-                    <button onClick={()=>nudgeGridA(-5)} disabled={!wfA?.name} title="Shift grid 5ms earlier" style={{ height:18, width:18, padding:0, fontSize:10, fontFamily:"'Inter',sans-serif", background:"transparent", border:"1px solid rgba(255,255,255,0.12)", color:"#9CA3AF", borderRadius:3, cursor:wfA?.name?"pointer":"default", outline:"none" }}>←</button>
-                    <div onDoubleClick={resetGridA} title="Double-click to reset" style={{ minWidth:44, textAlign:"center", height:18, lineHeight:"18px", padding:"0 4px", fontSize:8, fontFamily:"'Inter',sans-serif", color: gridOffsetA===0 ? "#5A5E66" : "#ef4444", background: gridOffsetA===0 ? "transparent" : "#ef444411", border: `1px solid ${gridOffsetA===0 ? "rgba(255,255,255,0.06)" : "#ef444433"}`, borderRadius:3, userSelect:"none" }}>{gridOffsetA>0?"+":""}{gridOffsetA}ms</div>
-                    <button onClick={()=>nudgeGridA(5)} disabled={!wfA?.name} title="Shift grid 5ms later" style={{ height:18, width:18, padding:0, fontSize:10, fontFamily:"'Inter',sans-serif", background:"transparent", border:"1px solid rgba(255,255,255,0.12)", color:"#9CA3AF", borderRadius:3, cursor:wfA?.name?"pointer":"default", outline:"none" }}>→</button>
-                  </div>
-                  <div style={{ display:"flex", gap:2, alignItems:"center", opacity:wfA?.name?1:0.35 }}>
-                    <button onClick={()=>shiftBarOneA(-1)} disabled={!wfA?.name} title="Shift bar-1 anchor 1 beat earlier (and seek)" style={{ height:18, width:18, padding:0, fontSize:11, fontFamily:"'Inter',sans-serif", background:"transparent", border:"1px solid #f59e0b44", color:"#f59e0bcc", borderRadius:3, cursor:wfA?.name?"pointer":"default", outline:"none" }}>⟨</button>
-                    <div onDoubleClick={resetBarOneA} title="Double-click to reset bar-1 offset" style={{ minWidth:50, textAlign:"center", height:18, lineHeight:"18px", padding:"0 4px", fontSize:8, fontFamily:"'Inter',sans-serif", color: barOneA===0 ? "#5A5E66" : "#f59e0b", background: barOneA===0 ? "transparent" : "#f59e0b14", border: `1px solid ${barOneA===0 ? "rgba(255,255,255,0.06)" : "#f59e0b55"}`, borderRadius:3, userSelect:"none" }}>{barOneA>0?"+":""}{barOneA} beat{Math.abs(barOneA)===1?"":"s"}</div>
-                    <button onClick={()=>shiftBarOneA(1)} disabled={!wfA?.name} title="Shift bar-1 anchor 1 beat later (and seek)" style={{ height:18, width:18, padding:0, fontSize:11, fontFamily:"'Inter',sans-serif", background:"transparent", border:"1px solid #f59e0b44", color:"#f59e0bcc", borderRadius:3, cursor:wfA?.name?"pointer":"default", outline:"none" }}>⟩</button>
-                  </div>
-                  <div style={{ display:"flex", gap:2, alignItems:"center", opacity:wfA?.name?1:0.35 }}>
-                    <button onClick={()=>nudgeBpmA(-1)} disabled={!wfA?.name} title="Decrease BPM by 0.01" style={{ height:18, padding:"0 4px", fontSize:8, fontFamily:"'Inter',sans-serif", background:"transparent", border:"1px solid rgba(255,255,255,0.12)", color:"#9CA3AF", borderRadius:3, cursor:wfA?.name?"pointer":"default", outline:"none" }}>BPM−</button>
-                    <div onDoubleClick={resetBpmA} title="Double-click to reset" style={{ minWidth:60, textAlign:"center", height:18, lineHeight:"18px", padding:"0 4px", fontSize:8, fontFamily:"'Inter',sans-serif", color: bpmNudgeA===0 ? "#5A5E66" : "#ef4444", background: bpmNudgeA===0 ? "transparent" : "#ef444411", border: `1px solid ${bpmNudgeA===0 ? "rgba(255,255,255,0.06)" : "#ef444433"}`, borderRadius:3, userSelect:"none" }}>{bpmNudgeA>0?"+":""}{(bpmNudgeA*0.01).toFixed(2)} BPM</div>
-                    <button onClick={()=>nudgeBpmA(1)} disabled={!wfA?.name} title="Increase BPM by 0.01" style={{ height:18, padding:"0 4px", fontSize:8, fontFamily:"'Inter',sans-serif", background:"transparent", border:"1px solid rgba(255,255,255,0.12)", color:"#9CA3AF", borderRadius:3, cursor:wfA?.name?"pointer":"default", outline:"none" }}>BPM+</button>
-                  </div>
-                  <div style={{ width:1, height:12, background:"rgba(255,255,255,0.12)" }}/>
-                  {WF_ZOOM_LABELS.map((lbl,i)=>(
-                    <button key={i} onClick={()=>setWfZoom(i)} style={{ height:18, padding:"0 7px", fontSize:8, fontFamily:"'Inter',sans-serif", letterSpacing:.5, background:wfZoom===i?"#9CA3AF22":"transparent", border:`1px solid ${wfZoom===i?"#9CA3AF88":"rgba(255,255,255,0.12)"}`, color:wfZoom===i?"#9CA3AF":"#9CA3AF", borderRadius:4, cursor:"pointer", outline:"none" }}>{lbl}</button>
-                  ))}
-                </div>
-                {/* WAVEFORM — clean, no overlapping chrome */}
-                <div style={{ minHeight:wfH, flexShrink:0 }}>
-                  <AnimatedZoomedWF bands={wfA} dur={wfA?.dur||0} progRef={progRefA} onSeek={seekDeckA} h={wfH} windowSec={WF_WINDOWS[wfZoom]} beatPhaseFrac={bpm.results["A"]?.beatPhaseFrac??null} beatPeriodSec={bpm.results["A"]?.beatPeriodSec??null} gridOffsetMs={gridOffsetA} barOneOffsetSec={barOneA * (bpm.results["A"]?.beatPeriodSec || 0)} bpmNudge={bpmNudgeA*0.01} deckColor="#1F4F7A" rate={rateA}/>
-                </div>
+                style={{ minHeight:wfH, flexShrink:0 }}>
+                <AnimatedZoomedWF bands={wfA} dur={wfA?.dur||0} progRef={progRefA} onSeek={seekDeckA} h={wfH} windowSec={WF_WINDOWS[wfZoom]} beatPhaseFrac={bpm.results["A"]?.beatPhaseFrac??null} beatPeriodSec={bpm.results["A"]?.beatPeriodSec??null} gridOffsetMs={gridOffsetA} barOneOffsetSec={barOneA * (bpm.results["A"]?.beatPeriodSec || 0)} bpmNudge={bpmNudgeA*0.01} deckColor="#1F4F7A" rate={rateA}/>
               </div>
             )}
-            {hasA && hasB && <div style={{ height:1, background:"#0d0d18" }}/>}
             {hasB && (
               <div
                 onDragOver={e=>e.preventDefault()}
@@ -6764,29 +6761,20 @@ export default function CollabMix({ initialPage = "landing", djName = null }) {
                     }
                   } catch {}
                 }}
-                style={{ display:"flex", flexDirection:"column", flexShrink:0 }}>
-                {/* CHROME ROW — sits above waveform, no overlap. Holds deck
-                    label + bar-1 nudge only (grid offset / BPM nudge / zoom
-                    live on Deck A's chrome since they're typically used while
-                    cueing the "next" track). */}
-                <div style={{ display:"flex", alignItems:"center", gap:6, padding:"3px 10px", background:"rgba(255,255,255,0.02)", borderBottom:"1px solid rgba(255,255,255,0.04)" }}>
-                  <div style={{ display:"flex", gap:6, alignItems:"center", flexShrink:0 }}>
-                    <div style={{ width:5, height:5, borderRadius:"50%", background:"#7C4E3B", boxShadow:"0 0 6px #7C4E3B" }}/>
-                    <span style={{ fontSize:9, fontFamily:"'Inter',sans-serif", fontWeight:600, color:"#7C4E3Baa", letterSpacing:1.5 }}>B</span>
-                  </div>
-                  <div style={{ flex:1 }}/>
-                  <div style={{ display:"flex", gap:2, alignItems:"center", opacity:wfB?.name?1:0.35 }}>
-                    <button onClick={()=>shiftBarOneB(-1)} disabled={!wfB?.name} title="Shift bar-1 anchor 1 beat earlier (and seek)" style={{ height:18, width:18, padding:0, fontSize:11, fontFamily:"'Inter',sans-serif", background:"transparent", border:"1px solid #f59e0b44", color:"#f59e0bcc", borderRadius:3, cursor:wfB?.name?"pointer":"default", outline:"none" }}>⟨</button>
-                    <div onDoubleClick={resetBarOneB} title="Double-click to reset bar-1 offset" style={{ minWidth:50, textAlign:"center", height:18, lineHeight:"18px", padding:"0 4px", fontSize:8, fontFamily:"'Inter',sans-serif", color: barOneB===0 ? "#5A5E66" : "#f59e0b", background: barOneB===0 ? "transparent" : "#f59e0b14", border: `1px solid ${barOneB===0 ? "rgba(255,255,255,0.06)" : "#f59e0b55"}`, borderRadius:3, userSelect:"none" }}>{barOneB>0?"+":""}{barOneB} beat{Math.abs(barOneB)===1?"":"s"}</div>
-                    <button onClick={()=>shiftBarOneB(1)} disabled={!wfB?.name} title="Shift bar-1 anchor 1 beat later (and seek)" style={{ height:18, width:18, padding:0, fontSize:11, fontFamily:"'Inter',sans-serif", background:"transparent", border:"1px solid #f59e0b44", color:"#f59e0bcc", borderRadius:3, cursor:wfB?.name?"pointer":"default", outline:"none" }}>⟩</button>
-                  </div>
-                </div>
-                {/* WAVEFORM — clean, no overlapping chrome */}
-                <div style={{ minHeight:wfH, flexShrink:0 }}>
-                  <AnimatedZoomedWF bands={wfB} dur={wfB?.dur||0} progRef={progRefB} onSeek={seekDeckB} h={wfH} windowSec={WF_WINDOWS[wfZoom]} beatPhaseFrac={bpm.results["B"]?.beatPhaseFrac??null} beatPeriodSec={bpm.results["B"]?.beatPeriodSec??null} gridOffsetMs={gridOffsetB} barOneOffsetSec={barOneB * (bpm.results["B"]?.beatPeriodSec || 0)} bpmNudge={bpmNudgeB*0.01} deckColor="#7C4E3B" rate={rateB}/>
-                </div>
+                style={{ minHeight:wfH, flexShrink:0 }}>
+                <AnimatedZoomedWF bands={wfB} dur={wfB?.dur||0} progRef={progRefB} onSeek={seekDeckB} h={wfH} windowSec={WF_WINDOWS[wfZoom]} beatPhaseFrac={bpm.results["B"]?.beatPhaseFrac??null} beatPeriodSec={bpm.results["B"]?.beatPeriodSec??null} gridOffsetMs={gridOffsetB} barOneOffsetSec={barOneB * (bpm.results["B"]?.beatPeriodSec || 0)} bpmNudge={bpmNudgeB*0.01} deckColor="#7C4E3B" rate={rateB}/>
               </div>
             )}
+            {/* Zoom selector — floats in the top-right corner of the waveform
+                section. Restrained, single visual element vs the prior chrome
+                rows. v5.2: A/B chrome rows + per-deck nudge controls removed;
+                nudge UX needs a new discoverable affordance before dogfood
+                (state and handlers still defined in the parent component). */}
+            <div style={{ position:"absolute", top:5, right:8, display:"flex", gap:0, alignItems:"center", background:"rgba(10,11,14,0.65)", backdropFilter:"blur(4px)", borderRadius:4, padding:2 }}>
+              {WF_ZOOM_LABELS.map((lbl,i)=>(
+                <button key={i} onClick={()=>setWfZoom(i)} style={{ height:16, padding:"0 7px", fontSize:7, fontFamily:"'Inter',sans-serif", letterSpacing:.8, background:wfZoom===i?"rgba(255,255,255,0.10)":"transparent", border:"none", color:wfZoom===i?"#F5F5F7":"#5A5E66", borderRadius:3, cursor:"pointer", outline:"none", transition:"color .12s, background .12s" }}>{lbl}</button>
+              ))}
+            </div>
           </div>
         );
       })()}
@@ -6913,18 +6901,13 @@ export default function CollabMix({ initialPage = "landing", djName = null }) {
 
       </div>
 
-      {/* ── PANELS (AUDIO / REC / MIDI) — full-width, below decks ── */}
-      {(panel||true) && <div style={{ flexShrink:0, borderTop:"1px solid rgba(255,255,255,0.06)", background:"#0A0B0E" }}>
-        <div style={{ display:"flex", borderBottom:"1px solid rgba(255,255,255,0.04)" }}>
-          {PANELS.map(([pid,l])=>(
-            <button key={pid} onClick={()=>setPanel(p=>p===pid?null:pid)} style={{ padding:"4px 16px", fontSize:9, fontFamily:"'Inter',sans-serif", background:"transparent", color:panel===pid?"#9CA3AF":"#5A5E66", border:"none", borderBottom:`2px solid ${panel===pid?"#9CA3AF":"transparent"}`, cursor:"pointer", outline:"none", letterSpacing:.5 }}>{l}</button>
-          ))}
-        </div>
-        {panel && <div style={{ maxHeight:120, overflow:"auto", background:"#0D0F12" }}>
-          {panel==="rtc"  && <RTCPanel rtc={rtc} partner={sync.partner} syncOk={sync.status==="connected"}/>}
-          {panel==="rec"  && <RecPanel rec={rec} ready={ready}/>}
-          {panel==="midi" && <MidiPanel midi={midi}/>}
-        </div>}
+      {/* ── PANEL DETAIL (rtc / rec / midi) — opens when the toggle in the
+            top header is active. Wrapper collapses fully when no panel open,
+            so the library gets the full vertical strip back. ── */}
+      {panel && <div style={{ flexShrink:0, borderTop:"1px solid rgba(255,255,255,0.06)", background:"#0D0F12", maxHeight:120, overflow:"auto" }}>
+        {panel==="rtc"  && <RTCPanel rtc={rtc} partner={sync.partner} syncOk={sync.status==="connected"}/>}
+        {panel==="rec"  && <RecPanel rec={rec} ready={ready}/>}
+        {panel==="midi" && <MidiPanel midi={midi}/>}
       </div>}
 
       {/* ── EMBEDDED LIBRARY — fills remaining space below decks ── */}

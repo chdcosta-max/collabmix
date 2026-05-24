@@ -220,6 +220,41 @@ This is a working draft. We will refine and add as we see mockups and react. Dec
 
 ## Status log
 
+### May 22 late — design v5.2 cleanup (stray border, panel relocate, waveform gap, Camelot, phrase line)
+- **Stray dashed border on the library section removed.** LibraryPanelV2's
+  outer wrapper had `outline: "2px dashed transparent"` as the
+  non-dragging default — some browsers render the dashed shape even
+  when transparent. Changed to `outline: "none"`; the dashed indicator
+  only appears now while a drag is actively in progress.
+- **AUDIO / REC / MIDI panel toggles relocated to the top header.**
+  The dedicated strip between the deck row and the library was
+  removed entirely. Toggle buttons live next to the session-name +
+  Share + Leave cluster in the top bar; detail panel content
+  (`RTCPanel` / `RecPanel` / `MidiPanel`) still renders below the
+  decks but only when a panel is open — wrapper collapses fully
+  otherwise. Library reclaims the vertical strip.
+- **Gap between Deck A and Deck B waveforms removed.** The two
+  per-deck chrome rows (each holding an A/B letter label + manual
+  nudge / zoom controls) were stripped. Both top zoomed waveforms now
+  sit edge-to-edge with no horizontal band between them. Waveform
+  height bumped 78 → 90 with the freed space. **Zoom selector**
+  preserved as a small backdrop-blur overlay floating in the
+  waveform's top-right corner. **Manual nudge controls (grid offset,
+  bar-1 nudge, BPM nudge) were dropped from the UI** — state and
+  handlers still defined in the parent so they can be reattached.
+  They need a new discoverable affordance before dogfood (per
+  VISION_5 known TODO).
+- **Camelot key chip dropped from amber to white.** Removes amber
+  from the deck cards entirely — the amber accent now lives only on
+  the active sidebar item's thin left border in the library. About
+  as surgical as it gets.
+- **Red 16-bar phrase through-line removed.** Was the full-height
+  red vertical line crossing the waveform body — too visually heavy,
+  competed with waveform content. Phrase columns now render as a
+  normal downbeat (deck-color through-line + downbeat ticks) PLUS
+  red top/bottom phrase ticks for identity. Red carries the marker;
+  the through-line stops shouting.
+
 ### May 22 evening — design v5 (deck temperature contrast, beat grid glow, transport cleanup)
 - **Deck colors swapped for real temperature contrast.** v4's deep
   blue-grays (`#3B5A6F` / `#4A5568`) read as identical. v5 splits to
