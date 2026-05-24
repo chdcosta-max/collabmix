@@ -3255,11 +3255,20 @@ function AnimatedZoomedWF({ bands, dur, progRef, onSeek, h=96, windowSec=8, beat
         // the amplitude rapidly climbs over 1-2 columns. Both top and
         // bottom sweeps share the same check (based on |heights[]| only)
         // so kick edges stay symmetric around the centerline.
+        //
+        // v5.6: gradient now BRIGHTER at peaks (top/bottom of vertical
+        // gradient) and DIM at centerline — "light coming from the peaks"
+        // feel. Plus deck-color shadow blur around the silhouette fill for
+        // atmospheric outer bloom (club lighting on dark fabric). Shadow is
+        // reset to 0 before the stroke + downstream passes so they stay
+        // crisp.
         const STEEP_THRESH=maxH*0.15;
         const baseGrad=ctx.createLinearGradient(0,center-maxH,0,center+maxH);
-        baseGrad.addColorStop(0,`rgba(${dr},${dg},${db},0.10)`);
-        baseGrad.addColorStop(0.5,`rgba(${dr},${dg},${db},0.18)`);
-        baseGrad.addColorStop(1,`rgba(${dr},${dg},${db},0.10)`);
+        baseGrad.addColorStop(0,`rgba(${dr},${dg},${db},0.42)`);
+        baseGrad.addColorStop(0.5,`rgba(${dr},${dg},${db},0.08)`);
+        baseGrad.addColorStop(1,`rgba(${dr},${dg},${db},0.42)`);
+        ctx.shadowColor=`rgba(${dr},${dg},${db},0.65)`;
+        ctx.shadowBlur=Math.round(14*dpr);
         ctx.fillStyle=baseGrad;
         ctx.beginPath();
         ctx.moveTo(0,center);
@@ -3300,19 +3309,31 @@ function AnimatedZoomedWF({ bands, dur, progRef, onSeek, h=96, windowSec=8, beat
         if(physW>1) ctx.lineTo(0.5,center+heights[0]);
         ctx.closePath();
         ctx.fill();
+        // Clear shadow before stroke + downstream passes — bloom only
+        // belongs on the silhouette path, not on the AA stroke or the
+        // per-column overlay (those would smear).
+        ctx.shadowBlur=0;
         // Thin AA stroke at higher alpha than the fill baseline — softens
         // the silhouette edge without obscuring transient peaks.
         ctx.strokeStyle=`rgba(${dr},${dg},${db},0.55)`;
         ctx.lineWidth=Math.max(0.5,0.5*dpr);
         ctx.stroke();
 
-        // ── Pass 2b: per-column amplitude overlay — calm, monochrome.
-        // Solid deck-color fill with env-driven alpha. Reverted from Phase 2
-        // v3's anchor-lerp spectral formula — the spectral attempt is
-        // preserved as historical record in PHASE_2_STATUS.md but is not on
-        // the runtime render path. Per design brief: "single hue per deck,
-        // no spectral, no peak-bleach." Beat grid positions unchanged.
-        ctx.fillStyle=`rgb(${dr},${dg},${db})`;
+        // ── Pass 2b: per-column amplitude overlay.
+        // v5.6: fillStyle is a CACHED vertical gradient (created once
+        // outside the column loop, reused across all columns). Brightens
+        // toward the peaks at top/bottom and dims toward the centerline so
+        // tall columns get a "lit from the peaks" inner gradient. Quiet
+        // columns sample only the dim middle stops. globalAlpha per-column
+        // env modulation still works as a multiplier on the gradient alpha.
+        const peakR=Math.min(255,dr+60), peakG=Math.min(255,dg+60), peakB=Math.min(255,db+60);
+        const colGrad=ctx.createLinearGradient(0,ampTop,0,ampBottom);
+        colGrad.addColorStop(0,   `rgba(${peakR},${peakG},${peakB},1.0)`);
+        colGrad.addColorStop(0.4, `rgba(${dr},${dg},${db},0.85)`);
+        colGrad.addColorStop(0.5, `rgba(${dr},${dg},${db},0.50)`);
+        colGrad.addColorStop(0.6, `rgba(${dr},${dg},${db},0.85)`);
+        colGrad.addColorStop(1,   `rgba(${peakR},${peakG},${peakB},1.0)`);
+        ctx.fillStyle=colGrad;
         for(let dx=0;dx<physW;dx++){
           const h=heights[dx];
           if(h<=0) continue;

@@ -225,6 +225,28 @@ This is a working draft. We will refine and add as we see mockups and react. Dec
 
 ## Status log
 
+### May 22 deep night — design v5.6 (actual glow rendering on waveforms)
+- **Outer bloom on the top zoomed waveform silhouette.** Canvas
+  `shadowColor` set to deck-color rgba 0.65 + `shadowBlur` 14*dpr,
+  applied to the silhouette `fill()`. Renders an atmospheric halo
+  extending beyond the waveform peaks — club lighting on dark
+  fabric. Shadow reset to 0 before the AA stroke and downstream
+  passes so they stay crisp.
+- **Inner brightness gradient — peaks lit, centerline dim.**
+  Pass 2a silhouette gradient inverted: peaks (top/bottom of vertical
+  gradient) bright at 0.42 alpha, centerline dim at 0.08. Pass 2b
+  per-column overlay switches from solid `rgb(deck)` fill to a cached
+  vertical gradient that brightens toward peaks (full alpha,
+  deck-color+60 lightened) and dims toward centerline (0.50 alpha
+  raw deck-color). Tall columns get "light coming from the peaks"
+  feel; quiet columns sample only the dim middle stops.
+- Combined effect: waveforms now read as **glowing in a dark room**
+  with their own light source — atmospheric outer halo + lit-from-
+  inside peaks. Not painted shapes.
+- No other changes — deck colors (v5.5 blue/purple), white grid
+  markers + deck-color halo, red phrase ticks, ampPad 18 amplitude
+  clearance all preserved.
+
 ### May 22 late night — design v5.5 (club-lighting cool pair, deck-color grid glow)
 - **Deck pair re-themed to "club lighting" cool tones.** v5.1–v5.4
   cycled through blue/slate, blue/rust-copper, and saturated
