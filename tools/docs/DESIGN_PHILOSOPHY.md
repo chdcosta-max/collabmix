@@ -54,16 +54,17 @@ A perfectly considered control, a beautiful waveform, an animation that feels ex
   the white play button when playing. Green removed from active-state
   palette entirely; only retained for semantic indicators (recording
   in progress, partner online dot).
-- Deck identity colors — deep, mature, Scandi-honest. Contrast through
-  **temperature** (cool vs warm) so A vs B reads at a glance:
-  - Deck A: `#1F4F7A` — deep saturated Scandi blue
-  - Deck B: `#7C4E3B` — deep aged rust / weathered copper (NOT bright
-    orange)
-- **Beat grid lines glow in deck color** on both the top zoomed
-  waveform and the in-deck waveform: off-beat ticks dim, downbeat ticks
-  bright + through-line, all with subtle canvas shadowBlur for an
-  ambient "alive" feel. Soft inner light, NOT Tron. Phrase (16-bar)
-  markers stay red to keep their structural identity.
+- Deck identity colors — confident, alive, Scandi-honest. Contrast
+  through **temperature** (cool vs warm) so A vs B reads at a glance:
+  - Deck A: `#2974B6` — saturated mature blue
+  - Deck B: `#C16842` — alive aged copper (NOT bright orange, NOT
+    muddy brown — the line between alive and screaming)
+- **Beat grid lines render in WHITE** (functional reference, must
+  contrast against any deck color). Off-beat ticks at low alpha,
+  downbeat ticks bright + through-line, all with subtle white
+  shadowBlur. Phrase (16-bar) markers stay red on the outer rails
+  only. Deck-color glow lives on the waveform bars themselves (in
+  the amplitude pixel pass), not the grid.
 - BPM display: **clean white**, same color family as the track title.
   Number reads as a primary data point through size, not color.
 - Track time (elapsed/remain): inline with the track title, Rekordbox
@@ -219,6 +220,29 @@ Reactions to 8 reference apps during taste-mapping session:
 This is a working draft. We will refine and add as we see mockups and react. Decisions will get more specific over time. What's here is direction, not final commitment.
 
 ## Status log
+
+### May 22 night — design v5.3 (white grid markers, amplitude clearance, saturated deck colors)
+- **Beat grid markers render in WHITE on both decks.** v5/v5.2 had
+  grid lines using the deck identity color (rust grid on rust
+  waveform = invisible). Switched OFF/DOWN/DOWN_LINE fills to white
+  rgba; shadowColor white at low alpha for a subtle haze. The grid
+  is functional reference structure — must contrast against the
+  waveform body regardless of deck color. Deck-color glow stays on
+  the waveform bars themselves (separate render pass). 16-bar phrase
+  ticks unchanged — still red, outer ticks only.
+- **Waveform amplitude clearance restored.** ampPad bumped 6 → 11
+  css px. At 6 the peaks were physically covering the top/bottom
+  grid tick positions; markers existed but were hidden. At 11 the
+  amplitude region has clear vertical clearance from the tick rail
+  so white markers stay visible above the loudest peaks and below
+  the lowest troughs.
+- **Deck colors pushed to higher saturation.**
+  - Deck A `#1F4F7A` → `#2974B6` — confident mature blue (was reading
+    as muted gray-blue).
+  - Deck B `#7C4E3B` → `#C16842` — alive aged copper (was reading
+    as muddy dark brown).
+  Still grounded, still Scandi-honest, but the BLUE and the COPPER
+  identities come through with real presence from across the room.
 
 ### May 22 late — design v5.2 cleanup (stray border, panel relocate, waveform gap, Camelot, phrase line)
 - **Stray dashed border on the library section removed.** LibraryPanelV2's
