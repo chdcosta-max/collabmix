@@ -531,6 +531,34 @@ function useLibrary(){
     return()=>workerRef.current?.terminate();
   },[]);
 
+  // Bounded fileMap with LRU eviction. fileMap caches resolved File objects
+  // (and the underlying OPFS / picker blob references) so repeat library
+  // access is fast. Without a cap, every track loaded onto a deck in a long
+  // session pinned its blob for the session lifetime — at ~10 MB per blob
+  // that's GBs of held memory by the time a DJ has previewed 100 tracks.
+  // 16 is well above any realistic working set (decked tracks A/B, recently
+  // previewed, recently analyzed) and small enough that pathological loops
+  // can't run away.
+  const FILE_MAP_LRU_LIMIT=16;
+  const fileMapTouch=useCallback((id)=>{
+    const idx=fileMapOrder.current.indexOf(id);
+    if(idx>=0)fileMapOrder.current.splice(idx,1);
+    fileMapOrder.current.push(id);
+    while(fileMapOrder.current.length>FILE_MAP_LRU_LIMIT){
+      const oldId=fileMapOrder.current.shift();
+      delete fileMap.current[oldId];
+    }
+  },[]);
+  const setFile=useCallback((id,file)=>{
+    fileMap.current[id]=file;
+    fileMapTouch(id);
+  },[fileMapTouch]);
+  const removeFile=useCallback((id)=>{
+    delete fileMap.current[id];
+    const idx=fileMapOrder.current.indexOf(id);
+    if(idx>=0)fileMapOrder.current.splice(idx,1);
+  },[]);
+
   // Yield to the event loop / GC between analysis items. Without this, the
   // back-to-back decode→downsample→postMessage cycle gives the collector no
   // room to reclaim transient PCM buffers on bulk passes; resident heap
@@ -866,7 +894,7 @@ function useLibrary(){
         if(!h)continue;
         let file;
         try{file=await h.getFile();}catch{continue;}
-        fileMap.current[track.id]=file;
+        setFile(track.id,file);
         opfsStore(track.id,file); // write to OPFS so future sessions need zero clicks
         // Also store handle in IDB so future sessions work
         try{await cmDbPut("handles",h,track.id);}catch{}
@@ -901,13 +929,14 @@ function useLibrary(){
   const getFile=useCallback(async(id)=>{
     if(fileMap.current[id]){
       console.log('[GET-FILE]',{id,branch:'fileMap-hit'});
+      fileMapTouch(id); // refresh LRU position
       return fileMap.current[id];
     }
     // OPFS: zero permissions, always works, survives browser restarts
     const opfsFile=await opfsGet(id);
     if(opfsFile){
       console.log('[GET-FILE]',{id,branch:'opfs-hit',size:opfsFile.size});
-      fileMap.current[id]=opfsFile;
+      setFile(id,opfsFile);
       return opfsFile;
     }
     // Fall back to IDB file handle (requires browser session or user gesture)
@@ -927,14 +956,14 @@ function useLibrary(){
       }
       const file=await handle.getFile();
       console.log('[GET-FILE]',{id,branch:'idb-handle-hit',size:file?.size});
-      fileMap.current[id]=file;
+      setFile(id,file);
       opfsStore(id,file).catch(()=>{}); // migrate to OPFS so future sessions need zero clicks
       return file;
     }catch(err){
       console.warn('[GET-FILE]',{id,branch:'idb-handle-error',error:err?.message||String(err)});
       return null;
     }
-  },[]);
+  },[fileMapTouch,setFile]);
   // Forward ref so processQ (declared above getFile) can lazily resolve a File
   // by id without closing over a stale getFile identity.
   useEffect(()=>{ getFileRef.current=getFile; },[getFile]);
@@ -969,7 +998,7 @@ function useLibrary(){
     setTimeout(()=>setAnalyzing(false),300);
   },[library,getFile]);
 
-  const clear=()=>{setLibrary([]);fileMap.current={};opfsClear();};
+  const clear=()=>{setLibrary([]);fileMap.current={};fileMapOrder.current=[];opfsClear();};
 
   const reload=useCallback(async()=>{
     try{
@@ -999,7 +1028,7 @@ function useLibrary(){
     processQ();
   },[library,processQ]);
 
-  return{library,queue,crates,importing,importFiles,importFromPicker,previewImport,commitImport,queueAnalysis,getFile,clear,reload,setLibrary,fileMap,analyzing,analyzeAll,extractArtworkForTrack,artworkCache,reconnectFromFolder,scanArtwork};
+  return{library,queue,crates,importing,importFiles,importFromPicker,previewImport,commitImport,queueAnalysis,getFile,clear,reload,setLibrary,fileMap,setFile,removeFile,analyzing,analyzeAll,extractArtworkForTrack,artworkCache,reconnectFromFolder,scanArtwork};
 }
 
 // ── Library Panel UI ──────────────────────────────────────────
@@ -5815,7 +5844,7 @@ export default function CollabMix({ initialPage = "landing", djName = null }) {
       try {
         const [fileHandle] = await window.showOpenFilePicker({ types:[{description:"Audio",accept:{"audio/*":[]}}], multiple:false });
         file = await fileHandle.getFile();
-        lib.fileMap?.current && (lib.fileMap.current[track.id] = file);
+        lib.setFile?.(track.id, file);
       } catch { return; } // user cancelled — do nothing
     }
     // Resume audio context after we have the file (still within user gesture window)
@@ -5861,7 +5890,7 @@ export default function CollabMix({ initialPage = "landing", djName = null }) {
   const handleDeleteTrack = useCallback(async (trackId) => {
     lib.setLibrary?.(prev => prev.filter(t => t.id !== trackId));
     try { await cmDbDelete("tracks", trackId); await cmDbDelete("handles", trackId); } catch {}
-    if (lib.fileMap?.current) delete lib.fileMap.current[trackId];
+    lib.removeFile?.(trackId);
   }, [lib]);
 
   // Audio preview in library
