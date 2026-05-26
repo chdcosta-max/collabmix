@@ -1585,6 +1585,20 @@ function LibraryPanelV2({ lib, onLoad, playingTrack, deckATrackId:deckATrackIdPr
   const [chatInput, setChatInput] = useState("");
   const [playedIds, setPlayedIds] = useState(() => new Set());
   const [isDraggingOver, setIsDraggingOver] = useState(false);
+  // Backstop: a drag that ends outside the wrapper (cursor leaves window,
+  // Escape, another tab steals the drag) won't fire `drop` or symmetric
+  // `dragleave` on us, leaving isDraggingOver stuck `true` and the dashed
+  // outline visible until refresh. Window-level dragend/drop always clears
+  // the flag regardless of where the drag ended.
+  useEffect(() => {
+    const reset = () => setIsDraggingOver(false);
+    window.addEventListener("dragend", reset);
+    window.addEventListener("drop", reset);
+    return () => {
+      window.removeEventListener("dragend", reset);
+      window.removeEventListener("drop", reset);
+    };
+  }, []);
   const [importPreview, setImportPreview] = useState(null); // { items, dupeCount, newCount } | null
   const fileInputRef = useRef(null);
   const chatEndRef = useRef(null);
@@ -1800,7 +1814,20 @@ function LibraryPanelV2({ lib, onLoad, playingTrack, deckATrackId:deckATrackIdPr
 
   return (
     <div
-      onDragOver={(e) => { e.preventDefault(); if (!isDraggingOver) setIsDraggingOver(true); }}
+      onDragOver={(e) => {
+        e.preventDefault();
+        // Only flag as a file-drop target when the drag actually carries
+        // files. Internal drags (track-row reorder, text selection, image
+        // drag, etc.) don't include 'Files' in dataTransfer.types, so they
+        // no longer trigger the dashed outline. Fixes the "outline appears
+        // after a few minutes" bug where an internal drag-end outside the
+        // wrapper left isDraggingOver stuck true.
+        const types = e.dataTransfer?.types;
+        const hasFiles = types && (typeof types.includes === "function"
+          ? types.includes("Files")
+          : Array.from(types).indexOf("Files") >= 0);
+        if (hasFiles && !isDraggingOver) setIsDraggingOver(true);
+      }}
       onDragLeave={(e) => { if (e.currentTarget === e.target) setIsDraggingOver(false); }}
       onDrop={(e) => {
         e.preventDefault();
@@ -7607,8 +7634,12 @@ export default function CollabMix({ initialPage = "landing", djName = null }) {
           May 22: height bumped 220 → 248 so the 68px transport row (52px white
           play + 8+8 vertical padding) fits inside the deck card without
           clipping. Library still gains net vertical room from the shorter
-          waveform (above) + removed crossfader row (below). */}
-      <div style={{ flexShrink:0, display:"grid", gridTemplateColumns:"1fr 200px 1fr", gap:8, padding:"6px 12px 0", height:"248px", overflow:"hidden", width:"100%" }}>
+          waveform (above) + removed crossfader row (below).
+          Grid-edit Commit 2 (cfaaee7): height bumped 248 → 280 to accommodate
+          the new PLAY/GRID tab strip above the transport row (~32 px). Lower
+          than 280 clips the bottom edge of the transport row OR the Grid
+          Edit toolbar when GRID is active. */}
+      <div style={{ flexShrink:0, display:"grid", gridTemplateColumns:"1fr 200px 1fr", gap:8, padding:"6px 12px 0", height:"280px", overflow:"hidden", width:"100%" }}>
 
         {/* ── DECK A (shared) — outer "Deck A · driver" header bar removed;
               new inner Deck header has the 3-part identity row at top. ── */}
