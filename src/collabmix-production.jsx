@@ -5142,8 +5142,14 @@ function Deck({ id, ch, ctx:ac, color, local, remote, onChange, midi:mt, bpmResu
               onMouseLeave={(e) => {
                 e.currentTarget.style.filter = "none";
               }}>
-              <div style={{ flex: 1, background: "#FF3B30" }}/>
-              <div style={{ flex: 1, background: "rgba(255,255,255,0.9)" }}/>
+              {/* White accent on top (~3 of 18 px), solid red below. The
+                  inner divs carry explicit cursor:inherit so the parent
+                  button's cursor:pointer applies no matter where in the
+                  4 × 18 area the cursor lands — needed because the icon is
+                  narrow and div elements don't always inherit cursor
+                  visibly under some Chrome render paths. */}
+              <div style={{ flex: 1, background: "rgba(255,255,255,0.9)", cursor: "inherit" }}/>
+              <div style={{ flex: 5.5, background: "#FF3B30", cursor: "inherit" }}/>
             </button>
           );
         })()}
