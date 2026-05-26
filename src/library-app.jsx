@@ -1,13 +1,22 @@
 import { useState, useEffect, useRef, useCallback, useMemo } from "react";
+import {
+  openCmDB,
+  dbGet as _sharedDbGet,
+  dbGetAll as _sharedDbGetAll,
+  dbPut as _sharedDbPut,
+  dbDelete as _sharedDbDelete,
+  dbClear as _sharedDbClear,
+  putHandle as _sharedPutHandle,
+  opfsStore, opfsGet,
+  ensurePersistentStorage,
+} from "./utils/storage.js";
 
 // ═══════════════════════════════════════════════════════════════
 //  COLLAB//MIX — MUSIC LIBRARY
-//  Standalone app. Shares IndexedDB with the mixer.
+//  Standalone app. Shares IndexedDB with the mixer (via utils/storage.js).
 //  Scan any folder → auto-analyze BPM, key, energy → browse by DJ utility
 // ═══════════════════════════════════════════════════════════════
 
-const DB_NAME = "cm_music_library";
-const DB_VER  = 4;
 const G = "#C8A96E";
 
 // ── Palette ───────────────────────────────────────────────────
@@ -42,85 +51,18 @@ const CAMELOT = {
 };
 const CAMELOT_TO_KEY = Object.fromEntries(Object.entries(CAMELOT).map(([k,v])=>[v,k]));
 
-// ── IndexedDB helpers ─────────────────────────────────────────
-function openDB() {
-  return new Promise((res, rej) => {
-    const req = indexedDB.open(DB_NAME, DB_VER);
-    req.onupgradeneeded = (e) => {
-      const db = e.target.result;
-      if (!db.objectStoreNames.contains("tracks")) {
-        const ts = db.createObjectStore("tracks", { keyPath: "id" });
-        ts.createIndex("artist",  "artist",  { unique: false });
-        ts.createIndex("genre",   "genre",   { unique: false });
-        ts.createIndex("energy",  "energy",  { unique: false });
-        ts.createIndex("bpm",     "bpm",     { unique: false });
-        ts.createIndex("addedAt", "addedAt", { unique: false });
-      }
-      if (!db.objectStoreNames.contains("crates")) {
-        db.createObjectStore("crates", { keyPath: "id" });
-      }
-      if (!db.objectStoreNames.contains("handles")) {
-        db.createObjectStore("handles", { keyPath: "id" });
-      }
-      if (!db.objectStoreNames.contains("settings")) {
-        db.createObjectStore("settings", { keyPath: "key" });
-      }
-      if (!db.objectStoreNames.contains("requests")) {
-        db.createObjectStore("requests", { keyPath: "id" });
-      }
-      if (!db.objectStoreNames.contains("queue")) {
-        db.createObjectStore("queue", { keyPath: "trackId" });
-      }
-    };
-    req.onsuccess = () => res(req.result);
-    req.onerror   = () => rej(req.error);
-  });
-}
-
-function dbGet(db, store, key) {
-  return new Promise((res, rej) => {
-    const tx = db.transaction(store, "readonly");
-    const req = tx.objectStore(store).get(key);
-    req.onsuccess = () => res(req.result);
-    req.onerror   = () => rej(req.error);
-  });
-}
-
-function dbPut(db, store, val) {
-  return new Promise((res, rej) => {
-    const tx = db.transaction(store, "readwrite");
-    const req = tx.objectStore(store).put(val);
-    req.onsuccess = () => res();
-    req.onerror   = () => rej(req.error);
-  });
-}
-
-function dbGetAll(db, store) {
-  return new Promise((res, rej) => {
-    const tx = db.transaction(store, "readonly");
-    const req = tx.objectStore(store).getAll();
-    req.onsuccess = () => res(req.result);
-    req.onerror   = () => rej(req.error);
-  });
-}
-
-function dbDelete(db, store, key) {
-  return new Promise((res, rej) => {
-    const tx = db.transaction(store, "readwrite");
-    const req = tx.objectStore(store).delete(key);
-    req.onsuccess = () => res();
-    req.onerror   = () => rej(req.error);
-  });
-}
-
-function dbClear(db, store) {
-  return new Promise((res, rej) => {
-    const tx = db.transaction(store, "readwrite");
-    const req = tx.objectStore(store).clear();
-    req.onsuccess = () => res();
-    req.onerror   = () => rej(req.error);
-  });
-}
+// ── IDB helpers — thin shims that delegate to src/utils/storage.js ─────────
+// Call sites historically pass a `db` first arg (cached in dbRef.current from
+// openDB). The shared utility opens + caches its own DB connection so the
+// arg is ignored, but the shim preserves call-site signatures unchanged.
+// Raw `db.transaction(...)` calls elsewhere in this file still work because
+// openCmDB() returns the same cached connection that openDB() used to.
+function openDB() { return openCmDB(); }
+function dbGet(_db, store, key)    { return _sharedDbGet(store, key); }
+function dbPut(_db, store, val)    { return _sharedDbPut(store, val); }
+function dbGetAll(_db, store)      { return _sharedDbGetAll(store); }
+function dbDelete(_db, store, key) { return _sharedDbDelete(store, key); }
+function dbClear(_db, store)       { return _sharedDbClear(store); }
 
 // ── ID3 parser ────────────────────────────────────────────────
 function parseID3(buffer) {
@@ -1176,6 +1118,14 @@ export default function MusicLibrary() {
 
   // ── Init DB + worker ────────────────────────────────────────
   useEffect(() => {
+    // Idempotent persist() — pre-fix this app never requested persistent
+    // storage at all. Users who imported only here had their library on
+    // Chrome's evictable tier, the proximate cause of the May-25 "library
+    // disappeared between sessions" report. Mount-time + idempotent means
+    // pre-fix users get upgraded on first launch of this build.
+    ensurePersistentStorage().then(state => {
+      console.log('[STORAGE-PERSIST-MOUNT]', { app: 'library', state });
+    }).catch(() => {});
     openDB().then(async db => {
       dbRef.current = db;
       const [ts, cs, qs, savedItunes, savedRb, savedRbDir, savedScanDir] = await Promise.all([
@@ -1230,18 +1180,29 @@ export default function MusicLibrary() {
     activeRef.current = true;
     const db = dbRef.current;
     if (!db) { activeRef.current=false; return; }
-    const handleRec = await dbGet(db,"handles",id);
-    if (!handleRec) { activeRef.current=false; processQueue(); return; }
-    try {
-      // Support both FileSystemFileHandle (.handle) and plain File objects (.file)
-      let file;
-      if (handleRec.file) {
+    // Resolve file: OPFS first (zero-permission, survives revocation) then
+    // legacy {id, file}, then FileSystemFileHandle. Matches the mixer's
+    // getFile priority so both apps behave identically for any record shape.
+    let file = await opfsGet(id);
+    if (!file) {
+      const handleRec = await dbGet(db,"handles",id);
+      if (!handleRec) { activeRef.current=false; processQueue(); return; }
+      if (handleRec.file && typeof handleRec.file.arrayBuffer === "function") {
         file = handleRec.file;
+      } else if (handleRec.handle && typeof handleRec.handle.queryPermission === "function") {
+        try {
+          const perm = await handleRec.handle.queryPermission({ mode:"read" });
+          if (perm !== "granted") await handleRec.handle.requestPermission({ mode:"read" });
+          file = await handleRec.handle.getFile();
+        } catch (err) {
+          console.warn('[LIBRARY-ANALYSIS-HANDLE-ERR]', { id, error: err?.message || String(err) });
+          activeRef.current=false; processQueue(); return;
+        }
       } else {
-        const perm = await handleRec.handle.queryPermission({ mode:"read" });
-        if (perm !== "granted") await handleRec.handle.requestPermission({ mode:"read" });
-        file = await handleRec.handle.getFile();
+        activeRef.current=false; processQueue(); return;
       }
+    }
+    try {
       if (!audioCtxRef.current) audioCtxRef.current = new (window.AudioContext||window.webkitAudioContext)();
       const ab = await file.arrayBuffer();
       const buf = await audioCtxRef.current.decodeAudioData(ab);
@@ -1317,11 +1278,23 @@ export default function MusicLibrary() {
         addedAt: Date.now(),
       };
 
+      // OPFS is the source of truth for the bytes. <input type=file> gives a
+      // plain File (no FileSystemFileHandle to save), so the only way these
+      // tracks survive a permission/session boundary is the OPFS copy. If the
+      // OPFS write fails, skip the track rather than leaving a metadata
+      // entry that points at nothing.
+      try {
+        await opfsStore(id, file);
+      } catch (err) {
+        console.error('[LIBRARY-OPFS-FAIL]', { id, filename: file.name, error: err?.message || String(err) });
+        continue;
+      }
       setTracks(prev => [track, ...prev]);
       if (db) {
         await dbPut(db, "tracks", track);
-        // Store the File object directly — no FileSystemFileHandle needed
-        await dbPut(db, "handles", { id, file });
+        // No FileSystemFileHandle from <input> — record opfsBacked so the
+        // mixer's getFile uses the OPFS copy directly (zero-permission path).
+        await dbPut(db, "handles", { id, handle: null, opfsBacked: true });
       }
       queueRef.current.push({ id });
     }
@@ -1364,11 +1337,20 @@ export default function MusicLibrary() {
         // Check if a cloud-imported iTunes track matches this file
         const cloudMatch = cloudByFilename[name] || cloudByFilenameNoExt[nameNoExt];
         if (cloudMatch) {
-          // Link the local file handle to the existing cloud track
+          // Link the local file handle to the existing cloud track. Mirror
+          // bytes to OPFS so the mixer's getFile zero-permission path works.
           const updated = { ...cloudMatch, cloudOnly: false };
+          let opfsOk = false;
+          try {
+            const f = await handle.getFile();
+            await opfsStore(cloudMatch.id, f);
+            opfsOk = true;
+          } catch (err) {
+            console.warn('[LIBRARY-OPFS-MIRROR-FAIL]', { id: cloudMatch.id, error: err?.message || String(err) });
+          }
           setTracks(prev => prev.map(t => t.id === cloudMatch.id ? updated : t));
           await dbPut(db, "tracks",  updated);
-          await dbPut(db, "handles", { id: cloudMatch.id, handle });
+          await dbPut(db, "handles", { id: cloudMatch.id, handle, opfsBacked: opfsOk });
           if (!cloudMatch.analyzed) queueRef.current.push({ id: cloudMatch.id });
           continue;
         }
@@ -1406,9 +1388,20 @@ export default function MusicLibrary() {
           addedAt:  Date.now(),
         };
 
+        // Mirror bytes to OPFS so playback survives permission revocation /
+        // browser-restart even before the user re-grants folder access. The
+        // FileSystemFileHandle stays alongside as the fast path for re-scans.
+        try {
+          const f = await handle.getFile();
+          await opfsStore(id, f);
+        } catch (err) {
+          console.warn('[LIBRARY-OPFS-MIRROR-FAIL]', { id, error: err?.message || String(err) });
+          // Non-fatal: handle is still stored, mixer will fall back to picker
+          // re-grant if the user opens the track without OPFS bytes.
+        }
         setTracks(prev => [track, ...prev]);
         await dbPut(db, "tracks",  track);
-        await dbPut(db, "handles", { id, handle });
+        await dbPut(db, "handles", { id, handle, opfsBacked: true });
         queueRef.current.push({ id });
       }
     } catch(scanErr) {
