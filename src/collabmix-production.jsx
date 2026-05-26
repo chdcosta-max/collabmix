@@ -26,6 +26,23 @@ import {
 // It should look like: wss://collabmix-server-production.up.railway.app
 const SERVER_URL = "wss://collabmix-server-production.up.railway.app";
 
+// ── ID3 / artwork extraction parameters ──────────────────────
+// Source-file window read into memory for parseID3. 4 MB covers any
+// realistic embedded artwork (audiophile 24-bit/192k releases often embed
+// 1.5–3 MB JPEGs; standard releases <1 MB). The previous 1 MB window
+// dropped APIC frames entirely whenever total ID3 size pushed past 1 MB,
+// which is what produced "Home In The Sky" / "Sunbeam" -style tracks with
+// no artwork at all. Bumped together with removing parseID3's internal
+// 500 KB JPEG truncation (which produced "Racing Heart"-style half-rendered
+// artwork). Per-track import cost is one transient ArrayBuffer of this size
+// during _importFileObjects — sequential, so peak is one window not N.
+const ID3_READ_WINDOW = 4 * 1024 * 1024;
+
+// Artwork parser version stamp. Bump when the extraction logic changes so
+// scanArtwork can re-process tracks whose artwork was produced by an older
+// parser. v2 = post-May-26: no 500 KB truncation, 4 MB read window.
+const ARTWORK_PARSER_VERSION = 2;
+
 // ── Feature flags ─────────────────────────────────────────────
 // USE_RB_GRID: when a track loaded onto a deck matches an entry in the user's
 // connected Rekordbox library, override the analyzer's beat grid
@@ -237,7 +254,16 @@ function parseID3(buffer){
         if(p<off+10+fsz){
           const picBytes=bytes.slice(p,off+10+fsz);
           const mime=(picBytes[0]===0xFF&&picBytes[1]===0xD8)?"image/jpeg":(picBytes[0]===0x89&&picBytes[1]===0x50)?"image/png":"image/jpeg";
-          const b64=btoa(Array.from(picBytes.slice(0,Math.min(picBytes.length,500000))).map(b=>String.fromCharCode(b)).join(""));
+          // No size cap: the previous 500 KB inner slice silently truncated
+          // any embedded JPEG larger than half a megabyte mid-stream, so the
+          // browser decoded the top portion and filled the rest with default
+          // garbage. downscaleArtwork then encoded that half-corrupt image
+          // into a 200x200 thumbnail with broken lower scanlines. The
+          // bounded-memory rationale for the cap no longer applies because
+          // downscaleArtwork already compresses the data URL to ~10-20 KB
+          // before it lands in IDB. Caller still bounds the source via the
+          // file.slice() window in _importFileObjects (currently 4 MB).
+          const b64=btoa(Array.from(picBytes).map(b=>String.fromCharCode(b)).join(""));
           tags.artwork=`data:${mime};base64,${b64}`;
         }
       }catch{}
@@ -613,7 +639,7 @@ function useLibrary(){
       const id=`t_${Date.now()}_${Math.random().toString(36).slice(2,6)}`;
       console.log('[IMPORT-ITER]',{index:i,total:audio.length,filename:file.name,id});
       let tags={};
-      try{const sl=file.slice(0,1048576);tags=parseID3(await sl.arrayBuffer());}catch{}
+      try{const sl=file.slice(0,ID3_READ_WINDOW);tags=parseID3(await sl.arrayBuffer());}catch{}
       // Downscale artwork to 200x200 JPEG @0.7 — keeps thumbnails visible while
       // dropping per-track memory from ~666 KB to ~10-20 KB (~35× reduction).
       // If compression fails, keep the original — better than losing artwork.
@@ -636,7 +662,7 @@ function useLibrary(){
       if(isDupe){skippedCount++;continue;}
       // Store artwork in both memory cache and track record so it survives page reloads
       if(tags.artwork){artworkCache.current[id]=tags.artwork;}
-      const track={id,filename:file.name.replace(/\.[^.]+$/,""),title,artist,album:tags.album||"",genre:tags.genre||"",label:tags.label||"",bpm:tags.bpm?parseFloat(tags.bpm):null,key:tags.key||null,duration:null,energy:null,analyzed:false,error:false,addedAt:Date.now(),artwork:tags.artwork||null};
+      const track={id,filename:file.name.replace(/\.[^.]+$/,""),title,artist,album:tags.album||"",genre:tags.genre||"",label:tags.label||"",bpm:tags.bpm?parseFloat(tags.bpm):null,key:tags.key||null,duration:null,energy:null,analyzed:false,error:false,addedAt:Date.now(),artwork:tags.artwork||null,artworkVersion:tags.artwork?ARTWORK_PARSER_VERSION:undefined};
       // Don't pin File in fileMap or queue for analysis — both retained the File
       // reference for the whole session, and 300+ pinned blobs caused OOM. getFile
       // will hit OPFS first; analysis is deferred to handleLibLoad → queueAnalysis.
@@ -681,7 +707,7 @@ function useLibrary(){
     const seenInBatch=[];
     for(const file of audio){
       let id3={};
-      try{const sl=file.slice(0,1048576);id3=parseID3(await sl.arrayBuffer());}catch{}
+      try{const sl=file.slice(0,ID3_READ_WINDOW);id3=parseID3(await sl.arrayBuffer());}catch{}
       const cleaned=cleanFilename(file.name);
       const parsed=parseArtistTitle(cleaned);
       const title=id3.title||parsed.title;
@@ -764,16 +790,20 @@ function useLibrary(){
     const file=await getFileFn(trackId);
     if(!file)return null;
     try{
-      const sl=file.slice(0,1048576);
+      const sl=file.slice(0,ID3_READ_WINDOW);
       const tags=parseID3(await sl.arrayBuffer());
       if(tags.artwork){
-        artworkCache.current[trackId]=tags.artwork;
-        // Persist artwork back into the IDB track record so it survives future reloads
+        // Always downscale before persisting — raw embedded JPEGs can be
+        // 1-3 MB and would multiply across the library state, the 5s IDB
+        // poll's deserialization, and the in-memory cache.
+        const compressed=await downscaleArtwork(tags.artwork);
+        const art=compressed||tags.artwork;
+        artworkCache.current[trackId]=art;
         try{
           const existing=await cmDbGet("tracks",trackId);
-          if(existing&&!existing.artwork){await cmDbPut("tracks",{...existing,artwork:tags.artwork});}
+          if(existing&&!existing.artwork){await cmDbPut("tracks",{...existing,artwork:art,artworkVersion:ARTWORK_PARSER_VERSION});}
         }catch{}
-        return tags.artwork;
+        return art;
       }
     }catch{}
     artworkCache.current[trackId]=false; // mark as checked, no artwork
@@ -816,15 +846,17 @@ function useLibrary(){
         }
         if(!track.artwork&&artworkCache.current[track.id]!==false){
           try{
-            const sl=file.slice(0,1048576);
+            const sl=file.slice(0,ID3_READ_WINDOW);
             const tags=parseID3(await sl.arrayBuffer());
             if(tags.artwork){
-              artworkCache.current[track.id]=tags.artwork;
+              const compressed=await downscaleArtwork(tags.artwork);
+              const art=compressed||tags.artwork;
+              artworkCache.current[track.id]=art;
               try{
                 const existing=await cmDbGet("tracks",track.id);
                 if(existing&&!existing.artwork){
-                  await cmDbPut("tracks",{...existing,artwork:tags.artwork});
-                  artworkUpdates.push({id:track.id,artwork:tags.artwork});
+                  await cmDbPut("tracks",{...existing,artwork:art,artworkVersion:ARTWORK_PARSER_VERSION});
+                  artworkUpdates.push({id:track.id,artwork:art});
                 }
               }catch{}
             }else{artworkCache.current[track.id]=false;}
@@ -900,24 +932,38 @@ function useLibrary(){
   // as a base64 data URL, and persists it back to the IDB track record.
   const scanArtwork=useCallback(async()=>{
     setAnalyzing(true);
-    const toProcess=(library||[]).filter(t=>!t.artwork);
+    // Process tracks that are either missing artwork OR carry artwork from an
+    // older parser version. v2 was introduced when the 500 KB JPEG truncation
+    // was removed (commit XXX), so any track without an artworkVersion >= 2
+    // marker may have a half-corrupt thumbnail (the "Racing Heart" symptom).
+    // Bulk re-processing stamps the version after a successful re-extract
+    // so this scan is a no-op for already-clean tracks on subsequent runs.
+    const toProcess=(library||[]).filter(t=>!t.artwork||(t.artworkVersion||0)<ARTWORK_PARSER_VERSION);
     for(const track of toProcess){
       let file=null;
       try{file=await getFile(track.id);}catch{}
       if(!file)continue;
       try{
-        const sl=file.slice(0,1048576);
+        const sl=file.slice(0,ID3_READ_WINDOW);
         const tags=parseID3(await sl.arrayBuffer());
         if(tags.artwork){
-          artworkCache.current[track.id]=tags.artwork;
+          // Always downscale before persisting — raw embedded JPEGs can be
+          // 1-3 MB and would explode resident library state at scale.
+          const compressed=await downscaleArtwork(tags.artwork);
+          const art=compressed||tags.artwork;
+          artworkCache.current[track.id]=art;
           try{
             const existing=await cmDbGet("tracks",track.id);
             if(existing){
-              await cmDbPut("tracks",{...existing,artwork:tags.artwork});
-              setLibrary(prev=>prev.map(t=>t.id===track.id?{...t,artwork:tags.artwork}:t));
+              await cmDbPut("tracks",{...existing,artwork:art,artworkVersion:ARTWORK_PARSER_VERSION});
+              setLibrary(prev=>prev.map(t=>t.id===track.id?{...t,artwork:art,artworkVersion:ARTWORK_PARSER_VERSION}:t));
             }
           }catch{}
-        }else{
+        }else if(!track.artwork){
+          // Only mark "no artwork" cache flag when the track had no artwork
+          // to begin with. If we're re-scanning an existing artworked track
+          // and the new extraction failed, KEEP the existing (possibly
+          // imperfect) artwork rather than blanking it.
           artworkCache.current[track.id]=false;
         }
       }catch{}
@@ -1013,6 +1059,37 @@ function useLibrary(){
     return {imported,skipped,crates:(payload.crates||[]).length};
   },[reload]);
 
+  // Force re-extract artwork for a single track. Parallel recovery flow to
+  // reanalyze() from Session 1 — for tracks where the embedded source
+  // changed, the bulk scanArtwork pass missed something, or the user wants
+  // to nudge a single broken thumbnail without running the whole library.
+  // Unlike scanArtwork, this bypasses both filters (missing-artwork AND
+  // stale-version) and always tries.
+  const reExtractArtwork=useCallback(async(id)=>{
+    const file=await getFileRef.current?.(id);
+    if(!file){console.warn('[REEXTRACT-ARTWORK] no file for',id);return false;}
+    try{
+      const sl=file.slice(0,ID3_READ_WINDOW);
+      const tags=parseID3(await sl.arrayBuffer());
+      if(!tags.artwork){
+        console.log('[REEXTRACT-ARTWORK] no artwork in source',id);
+        return false;
+      }
+      const compressed=await downscaleArtwork(tags.artwork);
+      const art=compressed||tags.artwork;
+      artworkCache.current[id]=art;
+      const existing=await cmDbGet("tracks",id);
+      if(existing){
+        await cmDbPut("tracks",{...existing,artwork:art,artworkVersion:ARTWORK_PARSER_VERSION});
+        setLibrary(prev=>prev.map(t=>t.id===id?{...t,artwork:art,artworkVersion:ARTWORK_PARSER_VERSION}:t));
+      }
+      return true;
+    }catch(err){
+      console.warn('[REEXTRACT-ARTWORK] failed',id,err);
+      return false;
+    }
+  },[]);
+
   const reanalyze=useCallback(async(id)=>{
     const t=library.find(x=>x.id===id);
     if(!t)return;
@@ -1024,7 +1101,7 @@ function useLibrary(){
     processQ();
   },[library,processQ]);
 
-  return{library,queue,crates,importing,importFiles,importFromPicker,previewImport,commitImport,queueAnalysis,reanalyze,getFile,clear,reload,setLibrary,fileMap,setFile,removeFile,analyzing,analyzeAll,extractArtworkForTrack,artworkCache,reconnectFromFolder,scanArtwork,exportLibrary,importLibraryJson};
+  return{library,queue,crates,importing,importFiles,importFromPicker,previewImport,commitImport,queueAnalysis,reanalyze,reExtractArtwork,getFile,clear,reload,setLibrary,fileMap,setFile,removeFile,analyzing,analyzeAll,extractArtworkForTrack,artworkCache,reconnectFromFolder,scanArtwork,exportLibrary,importLibraryJson};
 }
 
 // ── Library Panel UI ──────────────────────────────────────────
@@ -1100,7 +1177,7 @@ function AlbumArt({ src, size = 36, radius = 4, alt = "", isActive = false, onCl
   );
 }
 
-function TrackRow({track, onLoadA, onLoadB, isRec, reasons, canLoad, previewTrackId, onPreview, onDelete, onRemoveFromPlaylist, onReanalyze, onDragStart, extractArtwork}){
+function TrackRow({track, onLoadA, onLoadB, isRec, reasons, canLoad, previewTrackId, onPreview, onDelete, onRemoveFromPlaylist, onReanalyze, onReExtractArtwork, onDragStart, extractArtwork}){
   const [hov,setHov]=useState(false);
   const [showDeckMenu,setShowDeckMenu]=useState(false);
   const [ctxMenu,setCtxMenu]=useState(null); // {x,y}
@@ -1168,6 +1245,7 @@ function TrackRow({track, onLoadA, onLoadB, isRec, reasons, canLoad, previewTrac
           {onPreview&&<div onClick={()=>{onPreview(track);setCtxMenu(null);}} style={{padding:"7px 14px",fontSize:10,fontFamily:"'Inter',sans-serif",color:"#9CA3AF",cursor:"pointer",background:"transparent"}} onMouseEnter={e=>e.currentTarget.style.background="#1F212699"} onMouseLeave={e=>e.currentTarget.style.background="transparent"}>{isPreviewing?"⏸ Stop Preview":"▶ Preview"}</div>}
           <div style={{height:1,background:"rgba(255,255,255,0.06)",margin:"4px 0"}}/>
           {onReanalyze&&<div onClick={()=>{onReanalyze(track.id);setCtxMenu(null);}} style={{padding:"7px 14px",fontSize:10,fontFamily:"'Inter',sans-serif",color:"#9CA3AF",cursor:"pointer",background:"transparent"}} onMouseEnter={e=>e.currentTarget.style.background="#9CA3AF10"} onMouseLeave={e=>e.currentTarget.style.background="transparent"}>↻ Re-analyze</div>}
+          {onReExtractArtwork&&<div onClick={()=>{onReExtractArtwork(track.id);setCtxMenu(null);}} style={{padding:"7px 14px",fontSize:10,fontFamily:"'Inter',sans-serif",color:"#9CA3AF",cursor:"pointer",background:"transparent"}} onMouseEnter={e=>e.currentTarget.style.background="#9CA3AF10"} onMouseLeave={e=>e.currentTarget.style.background="transparent"}>↻ Re-extract artwork</div>}
           {onRemoveFromPlaylist&&<div onClick={()=>{onRemoveFromPlaylist(track.id);setCtxMenu(null);}} style={{padding:"7px 14px",fontSize:10,fontFamily:"'Inter',sans-serif",color:"#9CA3AF",cursor:"pointer",background:"transparent"}} onMouseEnter={e=>e.currentTarget.style.background="#9CA3AF10"} onMouseLeave={e=>e.currentTarget.style.background="transparent"}>↩ Remove from Playlist</div>}
           {onDelete&&<div onClick={()=>{onDelete(track.id);setCtxMenu(null);}} style={{padding:"7px 14px",fontSize:10,fontFamily:"'Inter',sans-serif",color:"#ef4444",cursor:"pointer",background:"transparent"}} onMouseEnter={e=>e.currentTarget.style.background="#ef444410"} onMouseLeave={e=>e.currentTarget.style.background="transparent"}>🗑 Remove from Library</div>}
         </div>
@@ -2329,7 +2407,7 @@ function LibraryPanel({lib, onLoad, playingTrack, previewTrackId, onPreview, onD
             }}/>
           </label>
           {/* SCAN ARTWORK — re-reads ID3 APIC for tracks missing artwork */}
-          <button title="Re-scan ID3 artwork for tracks missing cover art" disabled={lib.analyzing} onClick={()=>lib.scanArtwork?.()} style={{background:"transparent",border:"1px solid #9CA3AF44",color:"#9CA3AF",fontFamily:"'Inter',sans-serif",fontSize:8,letterSpacing:1,padding:"3px 6px",borderRadius:4,cursor:lib.analyzing?"default":"pointer",opacity:lib.analyzing?0.4:1,transition:"opacity 0.2s, border-color 0.2s"}} onMouseEnter={e=>{if(!lib.analyzing)e.currentTarget.style.borderColor="#9CA3AF";}} onMouseLeave={e=>{e.currentTarget.style.borderColor="#9CA3AF44";}}>Scan artwork</button>
+          <button title="Re-scan ID3 artwork (missing + outdated/broken thumbnails)" disabled={lib.analyzing} onClick={()=>lib.scanArtwork?.()} style={{background:"transparent",border:"1px solid #9CA3AF44",color:"#9CA3AF",fontFamily:"'Inter',sans-serif",fontSize:8,letterSpacing:1,padding:"3px 6px",borderRadius:4,cursor:lib.analyzing?"default":"pointer",opacity:lib.analyzing?0.4:1,transition:"opacity 0.2s, border-color 0.2s"}} onMouseEnter={e=>{if(!lib.analyzing)e.currentTarget.style.borderColor="#9CA3AF";}} onMouseLeave={e=>{e.currentTarget.style.borderColor="#9CA3AF44";}}>Scan artwork</button>
           <button title={lib.analyzing?"Analyzing...":"Analyze library"} onClick={()=>lib.analyzeAll?.(lib.getFile)} style={{background:"none",border:"none",cursor:"pointer",padding:"2px 3px",borderRadius:4,opacity:lib.analyzing?0.5:1,transition:"opacity 0.2s",display:"flex",alignItems:"center"}}>
             <svg width="18" height="14" viewBox="0 0 18 14" fill="none" xmlns="http://www.w3.org/2000/svg">
               <rect x="0"  y="5"  width="2" height="4" rx="1" fill={lib.analyzing?"#9CA3AF":"#9CA3AF"}/>
@@ -2659,6 +2737,7 @@ function LibraryPanel({lib, onLoad, playingTrack, previewTrackId, onPreview, onD
                   onDelete={onDelete}
                   onRemoveFromPlaylist={activeCrateId?removeFromPlaylist:undefined}
                   onReanalyze={lib.reanalyze?(id)=>lib.reanalyze(id):undefined}
+                  onReExtractArtwork={lib.reExtractArtwork?(id)=>lib.reExtractArtwork(id):undefined}
                   extractArtwork={lib.extractArtworkForTrack?(id)=>lib.extractArtworkForTrack(id,lib.getFile):undefined}
                 />
               );

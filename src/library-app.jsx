@@ -1269,7 +1269,7 @@ export default function MusicLibrary() {
 
       let tags = {};
       try {
-        const sl = await file.slice(0, 262144).arrayBuffer(); // 256KB — enough for large embedded artwork
+        const sl = await file.slice(0, 4 * 1024 * 1024).arrayBuffer(); // 4 MB — captures any realistic embedded artwork (was 256 KB; dropped APIC frames > ~200 KB)
         tags = parseID3(sl);
       } catch {}
 
@@ -1381,7 +1381,7 @@ export default function MusicLibrary() {
 
         let tags = {};
         try {
-          const sl = await (await handle.getFile()).slice(0, 262144).arrayBuffer();
+          const sl = await (await handle.getFile()).slice(0, 4 * 1024 * 1024).arrayBuffer();
           tags = parseID3(sl);
         } catch {}
 
