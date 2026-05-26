@@ -7328,7 +7328,7 @@ export default function CollabMix({ initialPage = "landing", djName = null }) {
 
   const G = "#9CA3AF"; // gold accent — matches App.jsx landing
   return (
-    <div style={{ height:"100vh", overflow:"hidden", background:"#0A0B0E", fontFamily:"'Inter',sans-serif", color:"#F5F5F7", display:"flex", flexDirection:"column" }}>
+    <div style={{ height:"100vh", overflow:"hidden", background:"#000000", fontFamily:"'Inter',sans-serif", color:"#F5F5F7", display:"flex", flexDirection:"column" }}>
       <style>{`
         @keyframes blink{0%,100%{box-shadow:0 0 5px currentColor}50%{box-shadow:0 0 14px currentColor}}
         @keyframes pulse{0%,100%{opacity:1}50%{opacity:.4}}
@@ -7364,7 +7364,7 @@ export default function CollabMix({ initialPage = "landing", djName = null }) {
       <link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:wght@600;700&family=DM+Sans:wght@300;400;500&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet"/>
 
       {/* TOP BAR — matches App.jsx nav */}
-      <div style={{ background:"#0A0B0Ef0", backdropFilter:"blur(16px)", borderBottom:"1px solid rgba(255,255,255,0.06)", padding:"8px 18px", display:"flex", alignItems:"center", gap:12, flexShrink:0 }}>
+      <div style={{ background:"#000000f0", backdropFilter:"blur(16px)", borderBottom:"1px solid rgba(255,255,255,0.06)", padding:"8px 18px", display:"flex", alignItems:"center", gap:12, flexShrink:0 }}>
         <div onClick={()=>leave()} style={{ display:"flex", alignItems:"center", gap:8, cursor:"pointer" }}>
           <div style={{ width:28, height:28, borderRadius:7, border:`1px solid ${G}38`, display:"flex", alignItems:"center", justifyContent:"center", background:`${G}08` }}>
             <span style={{ fontFamily:"'Inter',sans-serif", fontSize:9, color:G }}>{"//"}</span>
