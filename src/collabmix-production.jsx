@@ -1028,7 +1028,23 @@ function useLibrary(){
     processQ();
   },[library,processQ]);
 
-  return{library,queue,crates,importing,importFiles,importFromPicker,previewImport,commitImport,queueAnalysis,getFile,clear,reload,setLibrary,fileMap,setFile,removeFile,analyzing,analyzeAll,extractArtworkForTrack,artworkCache,reconnectFromFolder,scanArtwork};
+  // Force re-analyze a single track. Mark unanalyzed, persist, then enqueue
+  // (queue holds id only — file is resolved lazily by processQ). Skip flags
+  // are intentionally NOT set: re-analyze means we want fresh BPM/key, not
+  // to re-use whatever ID3 had. Recovery path for tracks analyzed under the
+  // pre-May 25 full-rate pipeline or with bad ID3-supplied values.
+  const reanalyze=useCallback(async(id)=>{
+    const t=library.find(x=>x.id===id);
+    if(!t)return;
+    if(queueRef.current.some(q=>q.id===id))return;
+    const reset={...t,bpm:null,key:null,energy:null,analyzed:false,error:false};
+    setLibrary(prev=>prev.map(x=>x.id===id?reset:x));
+    try{await cmDbPut("tracks",reset);}catch{}
+    queueRef.current.push({id,skipBPM:false,skipKey:false});
+    processQ();
+  },[library,processQ]);
+
+  return{library,queue,crates,importing,importFiles,importFromPicker,previewImport,commitImport,queueAnalysis,reanalyze,getFile,clear,reload,setLibrary,fileMap,setFile,removeFile,analyzing,analyzeAll,extractArtworkForTrack,artworkCache,reconnectFromFolder,scanArtwork};
 }
 
 // ── Library Panel UI ──────────────────────────────────────────
@@ -1037,7 +1053,7 @@ function useLibrary(){
 const SES_AVATAR_COLORS=[["#8B5CF6","#6D28D9"],["#9CA3AF","#A07840"],["#9CA3AF","#0099bb"],["#22c55e","#16a34a"],["#f59e0b","#d97706"],["#ef4444","#dc2626"],["#ec4899","#db2777"],["#14b8a6","#0d9488"]];
 function sesAvatarColor(str=""){let h=0;for(let i=0;i<str.length;i++)h=(h<<5)-h+str.charCodeAt(i);return SES_AVATAR_COLORS[Math.abs(h)%SES_AVATAR_COLORS.length];}
 
-function TrackRow({track, onLoadA, onLoadB, isRec, reasons, canLoad, previewTrackId, onPreview, onDelete, onRemoveFromPlaylist, onDragStart, extractArtwork}){
+function TrackRow({track, onLoadA, onLoadB, isRec, reasons, canLoad, previewTrackId, onPreview, onDelete, onRemoveFromPlaylist, onReanalyze, onDragStart, extractArtwork}){
   const [hov,setHov]=useState(false);
   const [showDeckMenu,setShowDeckMenu]=useState(false);
   const [ctxMenu,setCtxMenu]=useState(null); // {x,y}
@@ -1104,6 +1120,7 @@ function TrackRow({track, onLoadA, onLoadB, isRec, reasons, canLoad, previewTrac
           {onLoadB&&<div onClick={()=>{onLoadB(track);setCtxMenu(null);}} style={{padding:"7px 14px",fontSize:10,fontFamily:"'Inter',sans-serif",color:"#00C853",cursor:"pointer",background:"transparent"}} onMouseEnter={e=>e.currentTarget.style.background="#00C8530e"} onMouseLeave={e=>e.currentTarget.style.background="transparent"}>▶ Load to Deck B</div>}
           {onPreview&&<div onClick={()=>{onPreview(track);setCtxMenu(null);}} style={{padding:"7px 14px",fontSize:10,fontFamily:"'Inter',sans-serif",color:"#9CA3AF",cursor:"pointer",background:"transparent"}} onMouseEnter={e=>e.currentTarget.style.background="#1F212699"} onMouseLeave={e=>e.currentTarget.style.background="transparent"}>{isPreviewing?"⏸ Stop Preview":"▶ Preview"}</div>}
           <div style={{height:1,background:"rgba(255,255,255,0.06)",margin:"4px 0"}}/>
+          {onReanalyze&&<div onClick={()=>{onReanalyze(track.id);setCtxMenu(null);}} style={{padding:"7px 14px",fontSize:10,fontFamily:"'Inter',sans-serif",color:"#9CA3AF",cursor:"pointer",background:"transparent"}} onMouseEnter={e=>e.currentTarget.style.background="#9CA3AF10"} onMouseLeave={e=>e.currentTarget.style.background="transparent"}>↻ Re-analyze</div>}
           {onRemoveFromPlaylist&&<div onClick={()=>{onRemoveFromPlaylist(track.id);setCtxMenu(null);}} style={{padding:"7px 14px",fontSize:10,fontFamily:"'Inter',sans-serif",color:"#9CA3AF",cursor:"pointer",background:"transparent"}} onMouseEnter={e=>e.currentTarget.style.background="#9CA3AF10"} onMouseLeave={e=>e.currentTarget.style.background="transparent"}>↩ Remove from Playlist</div>}
           {onDelete&&<div onClick={()=>{onDelete(track.id);setCtxMenu(null);}} style={{padding:"7px 14px",fontSize:10,fontFamily:"'Inter',sans-serif",color:"#ef4444",cursor:"pointer",background:"transparent"}} onMouseEnter={e=>e.currentTarget.style.background="#ef444410"} onMouseLeave={e=>e.currentTarget.style.background="transparent"}>🗑 Remove from Library</div>}
         </div>
@@ -2578,6 +2595,7 @@ function LibraryPanel({lib, onLoad, playingTrack, previewTrackId, onPreview, onD
                   onPreview={onPreview}
                   onDelete={onDelete}
                   onRemoveFromPlaylist={activeCrateId?removeFromPlaylist:undefined}
+                  onReanalyze={lib.reanalyze?(id)=>lib.reanalyze(id):undefined}
                   extractArtwork={lib.extractArtworkForTrack?(id)=>lib.extractArtworkForTrack(id,lib.getFile):undefined}
                 />
               );
