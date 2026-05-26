@@ -170,6 +170,25 @@ export async function putHandle(id, handle) {
 export async function getHandleRecord(id) {
   return dbGet("handles", id);
 }
+// Tolerant reader: returns { handle?, file?, opfsBacked } regardless of which
+// legacy record shape is on disk. Three shapes exist in the wild:
+//   - { id, handle: FileSystemFileHandle }   (library-app folder-scan path)
+//   - { id, file: File }                     (library-app <input> path; legacy)
+//   - { id }                                  (mixer pre-v5; handle was lost
+//                                              during put due to a spread-on-
+//                                              non-plain-object bug)
+// Lazy migration rewrites all three into { id, handle?, opfsBacked: true }
+// over time, but until that completes consumers should call this helper.
+export function resolveHandleRecord(rec) {
+  if (!rec) return null;
+  const out = { handle: null, file: null, opfsBacked: !!rec.opfsBacked };
+  if (rec.handle && typeof rec.handle.queryPermission === "function") {
+    out.handle = rec.handle;
+  } else if (rec.file && typeof rec.file.arrayBuffer === "function") {
+    out.file = rec.file;
+  }
+  return out;
+}
 
 // ── OPFS — audio backing store, single source of truth for the bytes ─────
 export async function opfsStore(trackId, file) {

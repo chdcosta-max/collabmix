@@ -2,6 +2,18 @@ import { useState, useEffect, useRef, useCallback, useMemo } from "react";
 import { WORKER_SRC } from "./bpm-worker-source.js";
 import { logEvent, setSessionContext, captureHandledError } from "./utils/telemetry.js";
 import { connectRekordboxLibrary } from "./rekordbox-library.js";
+import {
+  openCmDB,
+  dbGet as cmDbGet,
+  dbGetAll as cmDbAll,
+  dbPut as cmDbPut,
+  dbDelete as cmDbDelete,
+  putHandle as cmDbPutHandle,
+  opfsStore, opfsGet, opfsDelete, opfsClear,
+  ensurePersistentStorage,
+  resolveHandleRecord,
+  hasMigrationRun, markMigrationRun,
+} from "./utils/storage.js";
 
 // ═══════════════════════════════════════════════════════════════
 //  MIX//SYNC  — PRODUCTION READY
@@ -306,114 +318,13 @@ function createLibWorker(){return new Worker(URL.createObjectURL(new Blob([LIB_W
 // ── Energy color map ──────────────────────────────────────────
 const ENERGY_COLOR={"Ambient":"#4A90D9","Warm-Up":"#22C55E","Build":"#F59E0B","Peak Hour":"#FF6B35","Hard":"#EF4444"};
 
-// ── Shared IndexedDB helpers (cm_music_library — same DB as standalone library app) ──
-const CM_DB_NAME="cm_music_library", CM_DB_VER=4;
-function openCmDB(){
-  return new Promise((res,rej)=>{
-    const req=indexedDB.open(CM_DB_NAME,CM_DB_VER);
-    req.onupgradeneeded=e=>{
-      const db=e.target.result;
-      if(!db.objectStoreNames.contains("tracks"))   db.createObjectStore("tracks",{keyPath:"id"});
-      if(!db.objectStoreNames.contains("crates"))   db.createObjectStore("crates",{keyPath:"id"});
-      if(!db.objectStoreNames.contains("handles"))  db.createObjectStore("handles",{keyPath:"id"});
-      if(!db.objectStoreNames.contains("settings")) db.createObjectStore("settings");
-      if(!db.objectStoreNames.contains("requests")) db.createObjectStore("requests",{keyPath:"id"});
-      if(!db.objectStoreNames.contains("queue"))    db.createObjectStore("queue",{keyPath:"trackId"});
-    };
-    req.onsuccess=e=>res(e.target.result);
-    req.onerror=e=>rej(e.target.error);
-  });
-}
-async function cmDbAll(store){
-  const db=await openCmDB();
-  return new Promise((res,rej)=>{const tx=db.transaction(store,"readonly");const r=tx.objectStore(store).getAll();r.onsuccess=e=>res(e.target.result);r.onerror=e=>rej(e.target.error);});
-}
-async function cmDbGet(store,key){
-  const db=await openCmDB();
-  return new Promise((res,rej)=>{const tx=db.transaction(store,"readonly");const r=tx.objectStore(store).get(key);r.onsuccess=e=>res(e.target.result);r.onerror=e=>rej(e.target.error);});
-}
-async function cmDbDelete(store,key){
-  const db=await openCmDB();
-  return new Promise((res,rej)=>{const tx=db.transaction(store,"readwrite");const r=tx.objectStore(store).delete(key);r.onsuccess=()=>res();r.onerror=e=>rej(e.target.error);});
-}
-async function cmDbPut(store,item){
-  const t0=performance.now();
-  const key=item?.id??'<no-id>';
-  console.log('[IDB-PUT-START]',{store,key,at:Date.now()});
-  const db=await openCmDB();
-  return new Promise((res,rej)=>{
-    const tx=db.transaction(store,"readwrite");
-    const r=tx.objectStore(store).put(item);
-    r.onsuccess=()=>{
-      console.log('[IDB-PUT-OK]',{store,key,ms:Math.round(performance.now()-t0)});
-      res();
-    };
-    r.onerror=e=>{
-      const err=e.target.error;
-      console.error('[IDB-PUT-FAIL]',{store,key,error:err?.message||String(err),ms:Math.round(performance.now()-t0)});
-      rej(err);
-    };
-  });
-}
-// Store FileSystemFileHandle with explicit out-of-line key (handles store uses no keyPath in Library app)
-async function cmDbPutHandle(trackId,handle){
-  const db=await openCmDB();
-  return new Promise((res,rej)=>{
-    const tx=db.transaction("handles","readwrite");
-    const store=tx.objectStore("handles");
-    // Try out-of-line key first (Library app pattern), fall back to inline id property
-    try{store.put(handle,trackId);}catch{try{store.put({id:trackId,...handle});}catch{}}
-    tx.oncomplete=()=>res();
-    tx.onerror=e=>rej(e.target.error);
-  });
-}
-
-// ── OPFS helpers — Origin Private File System, zero-permission persistent audio storage ──
-// Files stored here survive page reloads and browser restarts with NO user gesture needed.
-const OPFS_DIR="cm_audio";
-async function opfsStore(trackId,file){
-  const t0=performance.now();
-  console.log('[OPFS-WRITE-START]',{id:trackId,fileSize:file?.size??'unknown',at:Date.now()});
-  try{
-    const root=await navigator.storage.getDirectory();
-    const dir=await root.getDirectoryHandle(OPFS_DIR,{create:true});
-    const fh=await dir.getFileHandle(trackId,{create:true});
-    const wr=await fh.createWritable();
-    await wr.write(file);
-    await wr.close();
-    console.log('[OPFS-WRITE-OK]',{id:trackId,ms:Math.round(performance.now()-t0)});
-    return true;
-  }catch(err){
-    console.error('[OPFS-WRITE-FAIL]',{id:trackId,error:err?.message||String(err),ms:Math.round(performance.now()-t0)});
-    throw err;
-  }
-}
-async function opfsGet(trackId){
-  try{
-    const root=await navigator.storage.getDirectory();
-    const dir=await root.getDirectoryHandle(OPFS_DIR,{create:false});
-    const fh=await dir.getFileHandle(trackId);
-    const file=await fh.getFile();
-    console.log('[OPFS-READ-OK]',{id:trackId,fileSize:file?.size});
-    return file;
-  }catch(err){
-    console.warn('[OPFS-READ-FAIL]',{id:trackId,error:err?.message||String(err),name:err?.name});
-    return null;
-  }
-}
-async function opfsDelete(trackId){
-  try{
-    const root=await navigator.storage.getDirectory();
-    const dir=await root.getDirectoryHandle(OPFS_DIR,{create:false});
-    await dir.removeEntry(trackId);
-  }catch{}
-}
-async function opfsClear(){
-  try{
-    const root=await navigator.storage.getDirectory();
-    await root.removeEntry(OPFS_DIR,{recursive:true});
-  }catch{}
-}
+// IDB + OPFS helpers moved to src/utils/storage.js (shared with /library.html).
+// The previous inline cmDbPutHandle had a fatal bug: it spread the
+// FileSystemFileHandle into a plain object via `{id, ...handle}`, but Handles
+// have no enumerable own properties, so the handle field was silently dropped
+// and only `{id}` was written. Lazy migration (Commit 4) rewrites those
+// orphaned records by extracting bytes via the existing OPFS copy when one
+// exists, or marking the record as needing user-driven reconnect otherwise.
 
 // Strip extension + leading "01 " / "01-" / "1. " / "01) " track-number prefix.
 function cleanFilename(filename) {
@@ -939,13 +850,28 @@ function useLibrary(){
       setFile(id,opfsFile);
       return opfsFile;
     }
-    // Fall back to IDB file handle (requires browser session or user gesture)
+    // Fall back to IDB handle record. The record may be any of three shapes
+    // in the wild (see resolveHandleRecord in utils/storage.js) — handle in
+    // hand, plain File from the library-app legacy <input> path, or an
+    // orphaned {id} from the pre-v5 mixer cmDbPutHandle bug. resolveHandleRecord
+    // returns a uniform shape so the branch logic below can stay simple.
     try{
-      const handle=await cmDbGet("handles",id);
-      if(!handle){
-        console.log('[GET-FILE]',{id,branch:'no-handle-null'});
+      const rec=await cmDbGet("handles",id);
+      const resolved=resolveHandleRecord(rec);
+      if(!resolved||(!resolved.handle&&!resolved.file)){
+        console.log('[GET-FILE]',{id,branch:'no-usable-handle',recShape:rec?Object.keys(rec):null});
         return null;
       }
+      // Legacy {id, file} path: File is already in hand. Promote to OPFS so
+      // the next session takes the zero-permission path.
+      if(resolved.file){
+        console.log('[GET-FILE]',{id,branch:'legacy-file-record',size:resolved.file.size});
+        setFile(id,resolved.file);
+        opfsStore(id,resolved.file).catch(()=>{});
+        return resolved.file;
+      }
+      // Standard handle path: re-grant permission if needed, then read.
+      const handle=resolved.handle;
       const perm=await handle.queryPermission({mode:"read"});
       if(perm!=="granted"){
         const req=await handle.requestPermission({mode:"read"});
@@ -957,7 +883,7 @@ function useLibrary(){
       const file=await handle.getFile();
       console.log('[GET-FILE]',{id,branch:'idb-handle-hit',size:file?.size});
       setFile(id,file);
-      opfsStore(id,file).catch(()=>{}); // migrate to OPFS so future sessions need zero clicks
+      opfsStore(id,file).catch(()=>{}); // mirror to OPFS so future sessions need zero clicks
       return file;
     }catch(err){
       console.warn('[GET-FILE]',{id,branch:'idb-handle-error',error:err?.message||String(err)});
@@ -5404,6 +5330,23 @@ export default function CollabMix({ initialPage = "landing", djName = null }) {
   const [page, setPage]         = useState(initialPage); // "landing"|"lobby"|"session"
   const eng                     = useRef(null);
   const [ready, setReady]       = useState(true);
+  // Persistence state: drives the Safari/denied banner. Idempotent — runs on
+  // every mount, fast no-op if already on the persistent tier. This is the
+  // primary fix for the "library disappeared between sessions" report: pre-
+  // May-25 builds only requested persistence inside _importFileObjects, so
+  // users who imported via /library.html (which never called persist()) or
+  // whose first import predated the May 7 fix were silently on Chrome's
+  // evictable tier and their data could be wiped under disk pressure.
+  const [storagePersistence, setStoragePersistence] = useState(null); // null|"persisted"|"denied"|"unsupported"
+  useEffect(() => {
+    let alive = true;
+    ensurePersistentStorage().then(state => {
+      if (!alive) return;
+      setStoragePersistence(state);
+      console.log('[STORAGE-PERSIST-MOUNT]', { state });
+    }).catch(() => alive && setStoragePersistence("denied"));
+    return () => { alive = false; };
+  }, []);
   const [session, setSession]   = useState({ url:SERVER_URL, room:"preview", name:"DJ Preview" });
   const [xf, setXf]             = useState(.5);
   const [mvol, setMvol]         = useState(.85);
