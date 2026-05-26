@@ -3567,7 +3567,7 @@ function WF({ bands, peaks, freq, prog, onSeek, h=80, hotCues=[], loopStart=null
 //
 // 60fps RAF. ResizeObserver watches the canvas — the draw loop never reads
 // clientWidth.
-function AnimatedZoomedWF({ bands, dur, progRef, onSeek, h=96, windowSec=8, beatPhaseFrac=null, beatPeriodSec=null, gridOffsetMs=0, barOneOffsetSec=0, bpmNudge=0, deckColor="#FFFFFF", rate=1, editMode=false }) {
+function AnimatedZoomedWF({ bands, dur, progRef, onSeek, h=96, windowSec=8, beatPhaseFrac=null, beatPeriodSec=null, gridOffsetMs=0, barOneOffsetSec=0, bpmNudge=0, deckColor="#FFFFFF", rate=1 }) {
   const ref=useRef(null);
   const raf=useRef(null);
   const colBufRef=useRef(null); // {bv, mv, hv, heights: Float32Array, len} — per-column scratch
@@ -3998,13 +3998,9 @@ function AnimatedZoomedWF({ bands, dur, progRef, onSeek, h=96, windowSec=8, beat
         // White ticks carry the contrast; deck-color glow carries the
         // identity / vibe. Phrase tick branch overrides to red glow.
         const DECK_RGB=`${dr},${dg},${db}`;
-        // Grid line alpha boosts in edit mode — beats read more prominently
-        // so the user can place the anchor precisely against the kick. Off-
-        // beat goes 0.55 → 0.80, down-line through-line goes 0.22 → 0.45.
-        // Phrase + downbeat fills are already at 1.0 so untouched.
-        const OFF_FILL = editMode ? 'rgba(255,255,255,0.80)' : 'rgba(255,255,255,0.55)';
+        const OFF_FILL='rgba(255,255,255,0.55)';
         const DOWN_FILL='rgba(255,255,255,1.0)';
-        const DOWN_LINE = editMode ? 'rgba(255,255,255,0.45)' : 'rgba(255,255,255,0.22)';
+        const DOWN_LINE='rgba(255,255,255,0.22)';
         const PHRASE_FILL=`rgba(${PHRASE_RGB},1.0)`;
         const PHRASE_LINE=`rgba(${PHRASE_RGB},0.50)`; void PHRASE_LINE;
 
@@ -4061,15 +4057,11 @@ function AnimatedZoomedWF({ bands, dur, progRef, onSeek, h=96, windowSec=8, beat
 
       // Playhead — FIXED at canvas center (physW/2). It does NOT move with progress;
       // progress is encoded by the waveform scrolling LEFT as the track plays.
-      // In edit mode the playhead is bright red (#FF3B30, same as phrase
-      // markers) so the user can sight it against the kick when setting the
-      // bar-1 anchor.
       const cx=physW>>1; // physW/2
       ctx.fillStyle='rgba(0,0,0,0.55)';
       ctx.fillRect(cx-3,0,8,physH);
-      const playheadColor = editMode ? '#FF3B30' : '#ffffff';
-      ctx.fillStyle=playheadColor;
-      ctx.shadowColor=playheadColor;
+      ctx.fillStyle='#ffffff';
+      ctx.shadowColor='#ffffff';
       ctx.shadowBlur=16;
       ctx.fillRect(cx-1,0,3,physH);
       ctx.shadowBlur=0;
@@ -4077,7 +4069,7 @@ function AnimatedZoomedWF({ bands, dur, progRef, onSeek, h=96, windowSec=8, beat
 
     draw();
     return()=>{cancelAnimationFrame(raf.current); ro.disconnect();};
-  },[h,windowSec,progRef,editMode]);
+  },[h,windowSec,progRef]);
 
   // Drag-only seek with ANCHOR-based tracking (Rekordbox-style) and SEEK-ON-
   // RELEASE. Mousedown captures cursor X + prog AT THAT MOMENT. Mousemove
@@ -4349,110 +4341,7 @@ function Knob({ v, set, min=-12, max=12, ctr=0, label, color="#9CA3AF", size=38,
 // ── Deck ─────────────────────────────────────────────────────
 const HOT_CUE_COLORS=["#9CA3AF","#ef4444","#22c55e","#f59e0b"];
 
-// ── Grid Edit toolbar ─────────────────────────────────────────
-// Renders in place of the deck's normal transport row when that deck is in
-// edit mode. Minimal toolbar — Set Beat 1, BPM input + TAP, ÷2 / ×2, nudge
-// ◀ / ▶, Done. Saves are continuous: every action calls onGridEdit, which
-// writes through to IDB (lib.setGridEdit) and propagates via the existing
-// effectiveBpmResults merge — partner sees corrected grid via onChange,
-// sync handlers + beat-skip buttons see the edited values immediately.
-function GridEditOverlay({ deckId, prog, dur, effectiveBpm, effectiveAnchor, onGridEdit, onDone }) {
-  const [bpmInput, setBpmInput] = useState(() => effectiveBpm != null ? effectiveBpm.toFixed(2) : "");
-  const tapTimesRef = useRef([]);
-  // Keep the local BPM input synced when the source changes externally (TAP,
-  // ÷2/×2, partner edit). Skip while user is actively typing — InputElement
-  // focus check.
-  useEffect(() => {
-    if (document.activeElement?.dataset?.gridBpmInput !== deckId) {
-      setBpmInput(effectiveBpm != null ? effectiveBpm.toFixed(2) : "");
-    }
-  }, [effectiveBpm, deckId]);
-  const currentTime = (prog || 0) * (dur || 0);
-  const setAnchorAtPlayhead = () => {
-    if (dur > 0) onGridEdit({ gridAnchorSec: Math.max(0, Math.min(dur, currentTime)) });
-  };
-  const commitBpm = () => {
-    const n = parseFloat(bpmInput);
-    if (isFinite(n) && n > 40 && n < 250) onGridEdit({ bpmOverride: Math.round(n * 100) / 100 });
-    else setBpmInput(effectiveBpm != null ? effectiveBpm.toFixed(2) : "");
-  };
-  const halveBpm  = () => effectiveBpm && onGridEdit({ bpmOverride: effectiveBpm / 2 });
-  const doubleBpm = () => effectiveBpm && onGridEdit({ bpmOverride: effectiveBpm * 2 });
-  const nudge = (deltaSec) => {
-    const next = Math.max(0, (effectiveAnchor || 0) + deltaSec);
-    onGridEdit({ gridAnchorSec: next });
-  };
-  const onTap = () => {
-    const now = performance.now();
-    const arr = tapTimesRef.current;
-    arr.push(now);
-    if (arr.length > 8) arr.shift();
-    if (arr.length >= 4) {
-      const intervals = [];
-      for (let i = 1; i < arr.length; i++) intervals.push(arr[i] - arr[i - 1]);
-      intervals.sort((a, b) => a - b);
-      const median = intervals[Math.floor(intervals.length / 2)];
-      const bpm = 60000 / median;
-      if (bpm > 60 && bpm < 200) onGridEdit({ bpmOverride: Math.round(bpm * 10) / 10 });
-    }
-  };
-  // Style tokens — Quiet Pro Tool, single-accent (white opacity tiers).
-  const itemBtn = {
-    height: 38, padding: "0 12px",
-    background: "transparent",
-    border: "1px solid rgba(255,255,255,0.20)",
-    color: "#F5F5F7",
-    borderRadius: 6,
-    fontFamily: "'Inter',sans-serif", fontSize: 11, fontWeight: 500, letterSpacing: 0.3,
-    cursor: "pointer", outline: "none", flexShrink: 0,
-    transition: "all 150ms cubic-bezier(0.4, 0, 0.2, 1)",
-  };
-  const primary = {
-    ...itemBtn,
-    padding: "0 18px",
-    background: "rgba(255,255,255,0.06)",
-    border: "1px solid rgba(255,255,255,0.4)",
-    fontWeight: 600,
-  };
-  return (
-    <div data-grid-edit-toolbar={deckId} style={{
-      display: "flex", alignItems: "center", gap: 8,
-      padding: "8px 12px", borderBottom: "1px solid rgba(255,255,255,0.06)",
-      justifyContent: "center", flexWrap: "wrap",
-    }}>
-      <button onClick={setAnchorAtPlayhead} title="Set the first downbeat to the current playhead position (shortcut: X)" style={primary}>Set Beat 1</button>
-      <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
-        <input
-          data-grid-bpm-input={deckId}
-          type="text" inputMode="decimal"
-          value={bpmInput}
-          onChange={(e) => setBpmInput(e.target.value)}
-          onBlur={commitBpm}
-          onKeyDown={(e) => { if (e.key === "Enter") { e.currentTarget.blur(); } }}
-          style={{
-            width: 64, height: 38, textAlign: "center",
-            background: "rgba(255,255,255,0.04)",
-            border: "1px solid rgba(255,255,255,0.20)",
-            color: "#F5F5F7", borderRadius: 6,
-            fontFamily: "'Inter',sans-serif", fontSize: 13, fontWeight: 500,
-            fontVariantNumeric: "tabular-nums", outline: "none",
-          }}/>
-        <span style={{ fontSize: 8, fontFamily: "'Inter',sans-serif", color: "rgba(255,255,255,0.4)", letterSpacing: 1.5 }}>BPM</span>
-      </div>
-      <button onClick={onTap} title="Tap to derive BPM (4+ taps)" style={itemBtn}>TAP</button>
-      <button onClick={halveBpm}  title="Halve BPM — line density doubles, downbeat unchanged" style={itemBtn}>÷2</button>
-      <button onClick={doubleBpm} title="Double BPM — line density halves, downbeat unchanged" style={itemBtn}>×2</button>
-      <button onClick={() => nudge(-0.001)} title="Nudge anchor 1 ms left (Shift+← = 10 ms)" style={{ ...itemBtn, padding: "0 10px" }}>◀</button>
-      <button onClick={() => nudge(+0.001)} title="Nudge anchor 1 ms right (Shift+→ = 10 ms)" style={{ ...itemBtn, padding: "0 10px" }}>▶</button>
-      {/* Metronome v1 stub — audio click deferred to future session. Visual
-          beat-grid pulse on AnimatedZoomedWF (when editMode is on) gives
-          visual rhythm feedback for now. */}
-      <button onClick={onDone} title="Exit edit mode (shortcut: Escape)" style={{ ...itemBtn, marginLeft: 8 }}>Done</button>
-    </div>
-  );
-}
-
-function Deck({ id, ch, ctx:ac, color, local, remote, onChange, midi:mt, bpmResult, bpmAnalyze, eqHi=0, eqMid=0, eqLo=0, chanVol=1, loadFromLibrary=null, onTrackInfo=null, onSync=null, syncReady=true, syncRole=null, isMaster=false, onMasterToggle=null, onLibraryTrackDrop=null, onProgUpdate=null, onWaveform=null, onSeekReady=null, remoteSeek=null, onToggleReady=null, onCueReady=null, remoteToggle=null, remoteCue=null, onTransportFire=null, isDriver=true, onNudgeReady=null, acNowRef=null, onBufferReady=null, barOneOffsetSec=0, isEditMode=false, onToggleGridEdit=null, onGridEdit=null }) {
+function Deck({ id, ch, ctx:ac, color, local, remote, onChange, midi:mt, bpmResult, bpmAnalyze, eqHi=0, eqMid=0, eqLo=0, chanVol=1, loadFromLibrary=null, onTrackInfo=null, onSync=null, syncReady=true, syncRole=null, isMaster=false, onMasterToggle=null, onLibraryTrackDrop=null, onProgUpdate=null, onWaveform=null, onSeekReady=null, remoteSeek=null, onToggleReady=null, onCueReady=null, remoteToggle=null, remoteCue=null, onTransportFire=null, isDriver=true, onNudgeReady=null, acNowRef=null, onBufferReady=null, barOneOffsetSec=0, onGridEdit=null }) {
   const [buf,setBuf]=useState(null),[name,setName]=useState(null),[play,setPlay]=useState(false);
   const [prog,setProg]=useState(0),[dur,setDur]=useState(0);
   const progRef=useRef(0); // mirror of prog for parent AnimatedZoomedWF without 60fps setState
@@ -5064,6 +4953,47 @@ function Deck({ id, ch, ctx:ac, color, local, remote, onChange, midi:mt, bpmResu
               <div style={{fontSize:11, fontFamily:"'Inter',sans-serif", fontWeight:500, color:"#F5F5F7", background:"rgba(255,255,255,0.06)", border:"1px solid rgba(255,255,255,0.08)", borderRadius:4, padding:"2px 6px", letterSpacing:.5, fontVariantNumeric:"tabular-nums"}}>{ck}</div>
             </div>
           ):null;})()}
+          {/* Set-Beat-1 button — single 14×14 red dot next to KEY/BPM. Click
+              writes the current playhead position into the loaded track's
+              gridAnchorSec field via onGridEdit (which wraps lib.setGridEdit
+              with the track id baked in). The downstream rendering uses
+              Commit 1's effectiveBpmResults merge, so the beat grid snaps to
+              the new anchor immediately. Disabled when no track is loaded. */}
+          {(()=>{
+            const canEdit = !!buf && !!onGridEdit;
+            return (
+              <button
+                onClick={() => {
+                  if (!canEdit) return;
+                  const playhead = (progRef.current ?? prog ?? 0) * (dur || 0);
+                  if (dur > 0) onGridEdit({ gridAnchorSec: Math.max(0, Math.min(dur, playhead)) });
+                }}
+                disabled={!canEdit}
+                title={canEdit ? "Set beat 1 at playhead" : "Load a track to edit the grid"}
+                style={{
+                  flexShrink: 0,
+                  alignSelf: "center",
+                  width: 14,
+                  height: 14,
+                  borderRadius: 3,
+                  background: canEdit ? "rgba(255,59,48,0.55)" : "rgba(255,59,48,0.15)",
+                  border: "1px solid rgba(255,59,48,0.7)",
+                  cursor: canEdit ? "pointer" : "default",
+                  outline: "none", padding: 0,
+                  transition: "background-color 150ms cubic-bezier(0.4, 0, 0.2, 1), box-shadow 150ms cubic-bezier(0.4, 0, 0.2, 1)",
+                }}
+                onMouseEnter={(e) => {
+                  if (!canEdit) return;
+                  e.currentTarget.style.background = "rgba(255,59,48,1)";
+                  e.currentTarget.style.boxShadow = "0 0 8px rgba(255,59,48,0.4)";
+                }}
+                onMouseLeave={(e) => {
+                  e.currentTarget.style.background = canEdit ? "rgba(255,59,48,0.55)" : "rgba(255,59,48,0.15)";
+                  e.currentTarget.style.boxShadow = "none";
+                }}
+              />
+            );
+          })()}
           {/* BPM display — LCD-style oak, tabular-nums, bold */}
           <div style={{flexShrink:0, textAlign:"right", alignSelf:"flex-end"}}>
             {(()=>{
@@ -5159,70 +5089,9 @@ function Deck({ id, ch, ctx:ac, color, local, remote, onChange, midi:mt, bpmResu
           )}
       </div>
 
-      {/* ── TAB STRIP — PLAY | GRID — primary entry to Grid Edit mode.
-           Two tabs per deck. Click switches active tab. Active tab is
-           visually distinguished via a subtle white underline (DESIGN
-           PHILOSOPHY 0.9 tier, single-accent). GRID tab disables when this
-           deck is the current sync master — DJ workflow is to disengage
-           sync first if you need to recalibrate the master's grid. */}
-      <div style={{display:"flex", alignItems:"center", gap:0, padding:"0 12px", borderBottom:BD, background:"transparent"}}>
-        {(() => {
-          const tabActive = isEditMode ? "GRID" : "PLAY";
-          const baseTab = {
-            flex: "0 0 auto", padding: "8px 14px",
-            background: "transparent", border: "none", outline: "none",
-            fontFamily: "'Inter',sans-serif", fontSize: 10, fontWeight: 500, letterSpacing: 1.5,
-            cursor: "pointer", position: "relative",
-            transition: "color 150ms cubic-bezier(0.4, 0, 0.2, 1)",
-          };
-          const activeUnderline = {
-            position: "absolute", left: 14, right: 14, bottom: -1, height: 1.5,
-            background: "rgba(255,255,255,0.9)", borderRadius: 1,
-          };
-          const gridDisabled = !!isMaster; // sync guard — refuse while master
-          return (
-            <>
-              <button
-                onClick={() => { if (isEditMode && onToggleGridEdit) onToggleGridEdit(); }}
-                style={{ ...baseTab, color: tabActive === "PLAY" ? "#F5F5F7" : "rgba(255,255,255,0.4)" }}>
-                PLAY
-                {tabActive === "PLAY" && <span style={activeUnderline}/>}
-              </button>
-              <button
-                onClick={() => {
-                  if (gridDisabled) return;
-                  if (!isEditMode && onToggleGridEdit) onToggleGridEdit();
-                }}
-                disabled={gridDisabled}
-                title={gridDisabled ? "Disengage sync to edit this deck's grid" : "Edit beat grid (anchor, BPM, ÷2 / ×2)"}
-                style={{
-                  ...baseTab,
-                  color: gridDisabled ? "rgba(255,255,255,0.2)"
-                       : tabActive === "GRID" ? "#F5F5F7" : "rgba(255,255,255,0.4)",
-                  cursor: gridDisabled ? "not-allowed" : "pointer",
-                }}>
-                GRID
-                {tabActive === "GRID" && <span style={activeUnderline}/>}
-              </button>
-            </>
-          );
-        })()}
-      </div>
-
       {/* ── TRANSPORT — Cue · Skip · Play · Skip · Sync · M.
            Elapsed/Remain moved inline with the track title (v5) so this row
            is now just transport actions, centered. ── */}
-      {isEditMode ? (
-        <GridEditOverlay
-          deckId={id}
-          prog={prog}
-          dur={dur}
-          effectiveBpm={bpmResult?.bpm}
-          effectiveAnchor={bpmResult?.firstBar1AnchorSec}
-          onGridEdit={onGridEdit || (() => {})}
-          onDone={onToggleGridEdit || (() => {})}
-        />
-      ) : (
       <div style={{display:"flex", alignItems:"center", gap:8, padding:"8px 12px", borderBottom:BD, justifyContent:"center"}}>
         {/* CUE pill */}
         <button onClick={(e)=>{ if(local&&cue) cue(); else if(remoteCue) remoteCue(); }} disabled={!cueEnabled}
@@ -5355,7 +5224,6 @@ function Deck({ id, ch, ctx:ac, color, local, remote, onChange, midi:mt, bpmResu
             }}>M</button>
         )}
       </div>
-      )}
 
       <div style={{display:"none"}} data-set-rate={id} ref={el=>{if(el)el._setRate=setRate;}}/>
     </div>
@@ -6049,14 +5917,6 @@ export default function CollabMix({ initialPage = "landing", djName = null }) {
   // TODO: implement continuous tempo lock at the audio engine level.
   // Currently toggle is visual + master-BPM-change-driven only.
   const [syncLocked, setSyncLocked] = useState(false);
-  // Grid edit mode — null | "A" | "B". One deck at a time. Primary entry is
-  // the visible GRID button rendered on each deck (modelled after Rekordbox's
-  // grid-edit affordance). Keyboard X / arrows / Escape are secondary power-
-  // user shortcuts. While a deck is in edit mode its transport row is
-  // replaced by GridEditOverlay; the other deck keeps normal controls.
-  const [gridEditMode, setGridEditMode] = useState(null);
-  const gridEditModeRef = useRef(null);
-  useEffect(() => { gridEditModeRef.current = gridEditMode; }, [gridEditMode]);
   // Ref mirror so dh() and other handlers can read the latest syncLocked even
   // when called from a stale memoized callback. Deck's toggle (useCallback at
   // line ~3790) omits onChange from its deps, so the captured `dh` keeps an
@@ -6403,17 +6263,6 @@ export default function CollabMix({ initialPage = "landing", djName = null }) {
     const fresh = lib.library?.find(t => t.id === libLoadB.track.id) || libLoadB.track;
     setUserGridB(_buildUserGrid(fresh));
   }, [libLoadB, lib.library]);
-  // Auto-exit edit mode when the track on the editing deck changes (loaded a
-  // different track, or unloaded). Avoids stale gridEditMode pointing at a
-  // deck whose displayed track no longer matches what the user was editing.
-  useEffect(() => {
-    if (gridEditMode === "A") setGridEditMode(null);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [libLoadA?.track?.id]);
-  useEffect(() => {
-    if (gridEditMode === "B") setGridEditMode(null);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [libLoadB?.track?.id]);
 
   // Driver model — loader-is-driver. Server-authoritative: room.deckDrivers
   // arrives in the "joined" message and changes via "deck_driver_change"
@@ -6728,45 +6577,16 @@ export default function CollabMix({ initialPage = "landing", djName = null }) {
   }, [session, sync.partner, sync.ping]);
 
   // Cmd+Shift+E (or Ctrl+Shift+E) — throw a test error so Sentry capture can be verified.
-  // Grid Edit secondary keyboard shortcuts (only active while a deck is in
-  // edit mode — primary entry is the visible GRID button on each deck):
-  //   X        — set bar 1 anchor at current playhead
-  //   ← / →    — nudge anchor ±1 ms (Shift = ±10 ms)
-  //   Escape   — exit edit mode
   useEffect(() => {
     const onKey = (e) => {
       if ((e.metaKey || e.ctrlKey) && e.shiftKey && (e.key === "E" || e.key === "e")) {
         e.preventDefault();
         throw new Error("Sentry test error — triggered by Cmd+Shift+E");
       }
-      const editingDeck = gridEditModeRef.current;
-      if (!editingDeck) return;
-      // Ignore shortcuts while the user is typing in an input/textarea.
-      const tag = (e.target?.tagName || "").toUpperCase();
-      if (tag === "INPUT" || tag === "TEXTAREA" || e.target?.isContentEditable) return;
-      if (e.key === "Escape") { e.preventDefault(); setGridEditMode(null); return; }
-      if (e.key === "x" || e.key === "X") {
-        e.preventDefault();
-        const prog = editingDeck === "A" ? (progRefA.current || 0) : (progRefB.current || 0);
-        const dur  = editingDeck === "A" ? (wfA?.dur || 0) : (wfB?.dur || 0);
-        const trackId = editingDeck === "A" ? libLoadA?.track?.id : libLoadB?.track?.id;
-        if (trackId && dur > 0) lib.setGridEdit?.(trackId, { gridAnchorSec: prog * dur });
-        return;
-      }
-      if (e.key === "ArrowLeft" || e.key === "ArrowRight") {
-        e.preventDefault();
-        const trackId = editingDeck === "A" ? libLoadA?.track?.id : libLoadB?.track?.id;
-        if (!trackId) return;
-        const stepSec = (e.shiftKey ? 0.010 : 0.001) * (e.key === "ArrowLeft" ? -1 : 1);
-        const currAnchor = (editingDeck === "A" ? bpm.results.A : bpm.results.B)?.firstBar1AnchorSec ?? 0;
-        const next = Math.max(0, currAnchor + stepSec);
-        lib.setGridEdit?.(trackId, { gridAnchorSec: next });
-        return;
-      }
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [lib, libLoadA, libLoadB, wfA?.dur, wfB?.dur, bpm.results]);
+  }, []);
 
   // Deterministic role election to avoid WebRTC offer/answer glare.
   // Lexicographically smaller name initiates; same-name fallback uses URL
@@ -7596,7 +7416,7 @@ export default function CollabMix({ initialPage = "landing", djName = null }) {
                   } catch {}
                 }}
                 style={{ minHeight:wfH, flexShrink:0 }}>
-                <AnimatedZoomedWF bands={wfA} dur={wfA?.dur||0} progRef={progRefA} onSeek={seekDeckA} h={wfH} windowSec={WF_WINDOWS[wfZoom]} beatPhaseFrac={bpm.results["A"]?.beatPhaseFrac??null} beatPeriodSec={bpm.results["A"]?.beatPeriodSec??null} gridOffsetMs={gridOffsetA} barOneOffsetSec={barOneA * (bpm.results["A"]?.beatPeriodSec || 0)} bpmNudge={bpmNudgeA*0.01} deckColor="#1976D2" rate={rateA} editMode={gridEditMode === "A"}/>
+                <AnimatedZoomedWF bands={wfA} dur={wfA?.dur||0} progRef={progRefA} onSeek={seekDeckA} h={wfH} windowSec={WF_WINDOWS[wfZoom]} beatPhaseFrac={bpm.results["A"]?.beatPhaseFrac??null} beatPeriodSec={bpm.results["A"]?.beatPeriodSec??null} gridOffsetMs={gridOffsetA} barOneOffsetSec={barOneA * (bpm.results["A"]?.beatPeriodSec || 0)} bpmNudge={bpmNudgeA*0.01} deckColor="#1976D2" rate={rateA}/>
               </div>
             )}
             {hasB && (
@@ -7613,7 +7433,7 @@ export default function CollabMix({ initialPage = "landing", djName = null }) {
                   } catch {}
                 }}
                 style={{ minHeight:wfH, flexShrink:0 }}>
-                <AnimatedZoomedWF bands={wfB} dur={wfB?.dur||0} progRef={progRefB} onSeek={seekDeckB} h={wfH} windowSec={WF_WINDOWS[wfZoom]} beatPhaseFrac={bpm.results["B"]?.beatPhaseFrac??null} beatPeriodSec={bpm.results["B"]?.beatPeriodSec??null} gridOffsetMs={gridOffsetB} barOneOffsetSec={barOneB * (bpm.results["B"]?.beatPeriodSec || 0)} bpmNudge={bpmNudgeB*0.01} deckColor="#00C853" rate={rateB} editMode={gridEditMode === "B"}/>
+                <AnimatedZoomedWF bands={wfB} dur={wfB?.dur||0} progRef={progRefB} onSeek={seekDeckB} h={wfH} windowSec={WF_WINDOWS[wfZoom]} beatPhaseFrac={bpm.results["B"]?.beatPhaseFrac??null} beatPeriodSec={bpm.results["B"]?.beatPeriodSec??null} gridOffsetMs={gridOffsetB} barOneOffsetSec={barOneB * (bpm.results["B"]?.beatPeriodSec || 0)} bpmNudge={bpmNudgeB*0.01} deckColor="#00C853" rate={rateB}/>
               </div>
             )}
             {/* Zoom selector — floats in the top-right corner of the waveform
@@ -7635,11 +7455,13 @@ export default function CollabMix({ initialPage = "landing", djName = null }) {
           play + 8+8 vertical padding) fits inside the deck card without
           clipping. Library still gains net vertical room from the shorter
           waveform (above) + removed crossfader row (below).
-          Grid-edit Commit 2 (cfaaee7): height bumped 248 → 280 to accommodate
-          the new PLAY/GRID tab strip above the transport row (~32 px). Lower
-          than 280 clips the bottom edge of the transport row OR the Grid
-          Edit toolbar when GRID is active. */}
-      <div style={{ flexShrink:0, display:"grid", gridTemplateColumns:"1fr 200px 1fr", gap:8, padding:"6px 12px 0", height:"280px", overflow:"hidden", width:"100%" }}>
+          Grid-edit redesign (May 26): the PLAY/GRID tab strip that motivated
+          the 248 → 280 bump was removed in favour of a single small Set-Beat-1
+          button on each deck (no vertical addition), so height returned to
+          248. The grid edit data layer + sync migration from Commit 1 stays
+          in place — user clicks the red dot to call lib.setGridEdit at the
+          current playhead. */}
+      <div style={{ flexShrink:0, display:"grid", gridTemplateColumns:"1fr 200px 1fr", gap:8, padding:"6px 12px 0", height:"248px", overflow:"hidden", width:"100%" }}>
 
         {/* ── DECK A (shared) — outer "Deck A · driver" header bar removed;
               new inner Deck header has the 3-part identity row at top. ── */}
@@ -7647,7 +7469,7 @@ export default function CollabMix({ initialPage = "landing", djName = null }) {
           <div style={{ flex:1, display:"flex", alignItems:"flex-start", gap:10, padding:"10px 0 10px 10px", overflow:"hidden", minHeight:0 }}>
             <DeckArt artwork={libLoadA?.track?.artwork} fallback="A" color="#1976D2"/>
             <div style={{ flex:1, overflow:"hidden", minHeight:0 }}>
-            <Deck id="A" ch={eng.current?.A} ctx={eng.current?.ctx} color="#1976D2" local remote={pA} onChange={dh("A")} midi={midiEvt} bpmResult={bpm.results["A"]} bpmAnalyze={bpm.analyze} eqHi={eqA.hi} eqMid={eqA.mid} eqLo={eqA.lo} chanVol={eqA.vol} loadFromLibrary={libLoadA} onTrackInfo={handleTrackInfo} onSync={()=>handleSyncToggle("A")} syncReady={!!(bpm.results["B"]?.bpm || pB?.bpm)} syncRole={syncLocked ? (lastSlaveDeck === "A" ? "slave" : "master") : null} isMaster={masterDeck === "A"} onMasterToggle={handleMasterToggle} onLibraryTrackDrop={(trackId)=>{const t=lib.library.find(x=>x.id===trackId);if(t)handleLibLoad(t,"A");}} onProgUpdate={handleProgA} onWaveform={setWfA} onSeekReady={onDeckASeekReady} onToggleReady={onDeckAToggleReady} onCueReady={onDeckACueReady} onNudgeReady={onDeckANudgeReady} onTransportFire={handleTransportFire} isDriver={!deckDrivers.A || deckDrivers.A === session.name} acNowRef={acNowRef} onBufferReady={onDeckABufferReady} barOneOffsetSec={barOneA * (bpm.results["A"]?.beatPeriodSec || 0)} isEditMode={gridEditMode === "A"} onToggleGridEdit={() => setGridEditMode(prev => prev === "A" ? null : "A")} onGridEdit={(fields) => libLoadA?.track?.id && lib.setGridEdit?.(libLoadA.track.id, fields)}/>
+            <Deck id="A" ch={eng.current?.A} ctx={eng.current?.ctx} color="#1976D2" local remote={pA} onChange={dh("A")} midi={midiEvt} bpmResult={bpm.results["A"]} bpmAnalyze={bpm.analyze} eqHi={eqA.hi} eqMid={eqA.mid} eqLo={eqA.lo} chanVol={eqA.vol} loadFromLibrary={libLoadA} onTrackInfo={handleTrackInfo} onSync={()=>handleSyncToggle("A")} syncReady={!!(bpm.results["B"]?.bpm || pB?.bpm)} syncRole={syncLocked ? (lastSlaveDeck === "A" ? "slave" : "master") : null} isMaster={masterDeck === "A"} onMasterToggle={handleMasterToggle} onLibraryTrackDrop={(trackId)=>{const t=lib.library.find(x=>x.id===trackId);if(t)handleLibLoad(t,"A");}} onProgUpdate={handleProgA} onWaveform={setWfA} onSeekReady={onDeckASeekReady} onToggleReady={onDeckAToggleReady} onCueReady={onDeckACueReady} onNudgeReady={onDeckANudgeReady} onTransportFire={handleTransportFire} isDriver={!deckDrivers.A || deckDrivers.A === session.name} acNowRef={acNowRef} onBufferReady={onDeckABufferReady} barOneOffsetSec={barOneA * (bpm.results["A"]?.beatPeriodSec || 0)} onGridEdit={(fields) => libLoadA?.track?.id && lib.setGridEdit?.(libLoadA.track.id, fields)}/>
             </div>
           </div>
         </div>
@@ -7749,7 +7571,7 @@ export default function CollabMix({ initialPage = "landing", djName = null }) {
           <div style={{ flex:1, display:"flex", alignItems:"flex-start", gap:10, padding:"10px 0 10px 10px", overflow:"hidden", minHeight:0 }}>
             <DeckArt artwork={libLoadB?.track?.artwork} fallback="B" color="#00C853"/>
             <div style={{ flex:1, overflow:"hidden", minHeight:0 }}>
-            <Deck id="B" ch={eng.current?.B} ctx={eng.current?.ctx} color="#00C853" local remote={pB} onChange={dh("B")} midi={midiEvt} bpmResult={bpm.results["B"]} bpmAnalyze={bpm.analyze} eqHi={eqB.hi} eqMid={eqB.mid} eqLo={eqB.lo} chanVol={eqB.vol} loadFromLibrary={libLoadB} onTrackInfo={handleTrackInfo} onSync={()=>handleSyncToggle("B")} syncReady={!!(bpm.results["A"]?.bpm || pA?.bpm)} syncRole={syncLocked ? (lastSlaveDeck === "B" ? "slave" : "master") : null} isMaster={masterDeck === "B"} onMasterToggle={handleMasterToggle} onLibraryTrackDrop={(trackId)=>{const t=lib.library.find(x=>x.id===trackId);if(t)handleLibLoad(t,"B");}} onProgUpdate={handleProgB} onWaveform={setWfB} onSeekReady={onDeckBSeekReady} onToggleReady={onDeckBToggleReady} onCueReady={onDeckBCueReady} onNudgeReady={onDeckBNudgeReady} onTransportFire={handleTransportFire} isDriver={!deckDrivers.B || deckDrivers.B === session.name} acNowRef={acNowRef} onBufferReady={onDeckBBufferReady} barOneOffsetSec={barOneB * (bpm.results["B"]?.beatPeriodSec || 0)} isEditMode={gridEditMode === "B"} onToggleGridEdit={() => setGridEditMode(prev => prev === "B" ? null : "B")} onGridEdit={(fields) => libLoadB?.track?.id && lib.setGridEdit?.(libLoadB.track.id, fields)}/>
+            <Deck id="B" ch={eng.current?.B} ctx={eng.current?.ctx} color="#00C853" local remote={pB} onChange={dh("B")} midi={midiEvt} bpmResult={bpm.results["B"]} bpmAnalyze={bpm.analyze} eqHi={eqB.hi} eqMid={eqB.mid} eqLo={eqB.lo} chanVol={eqB.vol} loadFromLibrary={libLoadB} onTrackInfo={handleTrackInfo} onSync={()=>handleSyncToggle("B")} syncReady={!!(bpm.results["A"]?.bpm || pA?.bpm)} syncRole={syncLocked ? (lastSlaveDeck === "B" ? "slave" : "master") : null} isMaster={masterDeck === "B"} onMasterToggle={handleMasterToggle} onLibraryTrackDrop={(trackId)=>{const t=lib.library.find(x=>x.id===trackId);if(t)handleLibLoad(t,"B");}} onProgUpdate={handleProgB} onWaveform={setWfB} onSeekReady={onDeckBSeekReady} onToggleReady={onDeckBToggleReady} onCueReady={onDeckBCueReady} onNudgeReady={onDeckBNudgeReady} onTransportFire={handleTransportFire} isDriver={!deckDrivers.B || deckDrivers.B === session.name} acNowRef={acNowRef} onBufferReady={onDeckBBufferReady} barOneOffsetSec={barOneB * (bpm.results["B"]?.beatPeriodSec || 0)} onGridEdit={(fields) => libLoadB?.track?.id && lib.setGridEdit?.(libLoadB.track.id, fields)}/>
             </div>
           </div>
         </div>
