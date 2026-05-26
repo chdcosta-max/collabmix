@@ -1121,6 +1121,28 @@ function useLibrary(){
     return {imported,skipped,crates:(payload.crates||[]).length};
   },[reload]);
 
+  // Persist a user grid edit for a single track. Writes new gridAnchorSec /
+  // bpmOverride / gridEditedAt to the IDB record and updates in-memory
+  // library state so the downstream effective-grid merge picks it up
+  // immediately. Either field can be cleared by passing `null` explicitly
+  // (omitting the key leaves the prior value alone).
+  // The gridEditedAt stamp signals to any future re-analysis that the user
+  // has manually corrected this track's grid — re-analyzers update bpm /
+  // beatPeriodSec via the analyzer worker, but the user override fields are
+  // only ever touched by this function, so the user's work is preserved
+  // across re-analysis by construction.
+  const setGridEdit=useCallback(async(id,fields)=>{
+    const existing=await cmDbGet("tracks",id);
+    if(!existing){console.warn('[GRID-EDIT] no track for',id);return false;}
+    const patch={...existing,gridEditedAt:Date.now()};
+    if(Object.prototype.hasOwnProperty.call(fields,'gridAnchorSec'))patch.gridAnchorSec=fields.gridAnchorSec;
+    if(Object.prototype.hasOwnProperty.call(fields,'bpmOverride'))patch.bpmOverride=fields.bpmOverride;
+    try{await cmDbPut("tracks",patch);}catch(err){console.warn('[GRID-EDIT] persist failed',err);return false;}
+    setLibrary(prev=>prev.map(t=>t.id===id?patch:t));
+    console.log('[GRID-EDIT]',{id,fields,gridEditedAt:patch.gridEditedAt});
+    return true;
+  },[]);
+
   // Force re-extract artwork for a single track. Parallel recovery flow to
   // reanalyze() from Session 1 — for tracks where the embedded source
   // changed, the bulk scanArtwork pass missed something, or the user wants
@@ -1206,7 +1228,7 @@ function useLibrary(){
     return ()=>{}; // satisfy React deps lint without cancelling the timer
   },[library,scanArtwork,analyzeAll]);
 
-  return{library,queue,crates,importing,importFiles,importFromPicker,previewImport,commitImport,queueAnalysis,reanalyze,reExtractArtwork,getFile,clear,reload,setLibrary,fileMap,setFile,removeFile,analyzing,progress,analyzeAll,extractArtworkForTrack,artworkCache,reconnectFromFolder,scanArtwork,exportLibrary,importLibraryJson};
+  return{library,queue,crates,importing,importFiles,importFromPicker,previewImport,commitImport,queueAnalysis,reanalyze,reExtractArtwork,setGridEdit,getFile,clear,reload,setLibrary,fileMap,setFile,removeFile,analyzing,progress,analyzeAll,extractArtworkForTrack,artworkCache,reconnectFromFolder,scanArtwork,exportLibrary,importLibraryJson};
 }
 
 // ── Library Panel UI ──────────────────────────────────────────
@@ -5891,15 +5913,41 @@ export default function CollabMix({ initialPage = "landing", djName = null }) {
   const [rkStatus, setRkStatus] = useState({ phase: "idle" }); // idle | connecting | ready | error
   const [rkGridA, setRkGridA] = useState(null);
   const [rkGridB, setRkGridB] = useState(null);
-  // effectiveBpmResults: per-deck beat-grid values that prefer Rekordbox's
-  // PQTZ-derived grid (when present and USE_RB_GRID is on) over the analyzer's
-  // values. Drop-in shape match for bpmRaw.results.A / .B — same field names,
-  // same units. Consumers below read `bpm.results.X` and transparently get
-  // either the override or the analyzer value depending on availability.
-  const effectiveBpmResults = useMemo(() => ({
-    A: (USE_RB_GRID && rkGridA) ? { ...bpmRaw.results.A, ...rkGridA } : bpmRaw.results.A,
-    B: (USE_RB_GRID && rkGridB) ? { ...bpmRaw.results.B, ...rkGridB } : bpmRaw.results.B,
-  }), [bpmRaw.results, rkGridA, rkGridB]);
+  // Per-deck user grid override for the currently-loaded track. Populated
+  // from the IDB track record's gridAnchorSec / bpmOverride fields whenever
+  // a track loads or its library entry updates (e.g. after the user edits
+  // the grid). Shape mirrors bpmRaw.results.* so it can spread cleanly in
+  // the effectiveBpmResults merge below — same field names, same units.
+  // Null when the loaded track has no user override.
+  const [userGridA, setUserGridA] = useState(null);
+  const [userGridB, setUserGridB] = useState(null);
+  // effectiveBpmResults: per-deck beat-grid values. Precedence (lowest →
+  // highest): analyzer → Rekordbox PQTZ override → user manual edit.
+  // Drop-in shape match for bpmRaw.results.A / .B — same field names, same
+  // units. Consumers below read `bpm.results.X` and transparently get the
+  // effective grid regardless of source. After a spread, if the user
+  // override changed bpm or anchor, we re-derive beatPhaseSec/beatPhaseFrac
+  // so they stay internally consistent with the new beatPeriodSec/anchor.
+  const effectiveBpmResults = useMemo(() => {
+    const mergeOne = (raw, rk, user) => {
+      let r = raw || {};
+      if (USE_RB_GRID && rk) r = { ...r, ...rk };
+      if (user) {
+        r = { ...r, ...user };
+        const period = r.beatPeriodSec;
+        const anchor = r.firstBar1AnchorSec;
+        if (period > 0 && anchor != null) {
+          r.beatPhaseSec  = anchor % period;
+          r.beatPhaseFrac = anchor / period;
+        }
+      }
+      return r;
+    };
+    return {
+      A: mergeOne(bpmRaw.results.A, rkGridA, userGridA),
+      B: mergeOne(bpmRaw.results.B, rkGridB, userGridB),
+    };
+  }, [bpmRaw.results, rkGridA, rkGridB, userGridA, userGridB]);
   // bpm: shadow of the useBPM return with .results overridden. All other
   // hook properties (analyze, etc.) preserved via spread. Lets every
   // consumer of bpm.results read the overridden grid without any site-by-
@@ -6034,149 +6082,45 @@ export default function CollabMix({ initialPage = "landing", djName = null }) {
     }
   }, [pB?.waveformBass, pB?.waveformMid, pB?.waveformHigh]);
 
-  // ── Per-track beat-grid manual adjustments ──
-  // Auto-detection isn't reliable on every track (reverb-heavy kicks, sub-bass
-  // bleed, unusual bar-1 emphasis). Two escape hatches, both keyed per-track:
-  //   gridOffset (ms) — shifts the first downbeat earlier/later. Fixes WHERE
-  //                     the grid starts. ±5 ms per click.
-  //   bpmNudge   (in 0.01-BPM units) — changes the SPACING between beats. Fixes
-  //                     tempo drift across the track when the detected period
-  //                     is slightly off. ±0.01 BPM per click.
-  // Keyed by track name (library title or filename minus extension).
-  const [gridOffsetA, setGridOffsetA] = useState(0); // milliseconds
-  const [bpmNudgeA, setBpmNudgeA] = useState(0);     // in 0.01-BPM clicks
-  useEffect(() => {
-    if (!wfA?.name) return;
-    let savedOff = null, savedBpm = null;
-    try { savedOff = localStorage.getItem(`gridOffset:${wfA.name}`); } catch (e) { console.warn('localStorage.getItem failed', `gridOffset:${wfA.name}`, e); }
-    try { savedBpm = localStorage.getItem(`bpmNudge:${wfA.name}`); } catch (e) { console.warn('localStorage.getItem failed', `bpmNudge:${wfA.name}`, e); }
-    setGridOffsetA(savedOff ? parseFloat(savedOff) : 0);
-    setBpmNudgeA(savedBpm ? parseInt(savedBpm, 10) : 0);
-  }, [wfA?.name]);
-  useEffect(() => {
-    if (!wfA?.name) return;
-    try { localStorage.setItem(`gridOffset:${wfA.name}`, String(gridOffsetA)); } catch (e) { console.warn('localStorage.setItem failed', `gridOffset:${wfA.name}`, e); }
-  }, [gridOffsetA, wfA?.name]);
-  useEffect(() => {
-    if (!wfA?.name) return;
-    try { localStorage.setItem(`bpmNudge:${wfA.name}`, String(bpmNudgeA)); } catch (e) { console.warn('localStorage.setItem failed', `bpmNudge:${wfA.name}`, e); }
-  }, [bpmNudgeA, wfA?.name]);
-  const nudgeGridA = (deltaMs) => setGridOffsetA((v) => v + deltaMs);
-  const resetGridA = () => setGridOffsetA(0);
-  const nudgeBpmA = (deltaClicks) => setBpmNudgeA((v) => v + deltaClicks);
-  const resetBpmA = () => setBpmNudgeA(0);
+  // ── Per-track beat-grid overrides (retired localStorage knobs) ──
+  // The pre-Commit-1 nudge state (gridOffsetA/B, bpmNudgeA/B, barOneA/B) was
+  // never exposed via UI, so the localStorage values were always 0 in
+  // practice. User grid edits now live on the IDB track record
+  // (gridAnchorSec, bpmOverride) and flow through effectiveBpmResults
+  // declared above — every consumer of bpm.results.X automatically picks
+  // up the effective grid, including the sync path, the beat-skip buttons,
+  // and the partner broadcast. The variables below are kept as zero
+  // constants only to satisfy the downstream JSX in <AnimatedZoomedWF> and
+  // <Deck> until Commit 2 retires those props alongside the new Grid Edit
+  // toolbar. The math at AnimatedZoomedWF:firstDownbeatSec is
+  //   beatPhaseFrac × beatPeriodSec + gridOffsetMs/1000 + barOneOffsetSec
+  // with the new pipeline, gridOffsetMs and barOneOffsetSec contribute 0
+  // and the first two terms already include any user override via
+  // effectiveBpmResults.
+  const gridOffsetA = 0, gridOffsetB = 0;
+  const bpmNudgeA = 0, bpmNudgeB = 0;
+  const barOneA = 0, barOneB = 0;
 
-  // Manual bar-1 anchor override (integer beats, clamped ±5). When the
-  // analyzer's bar-phase detection picks the wrong beat of the bar (e.g.,
-  // Shadow Work-style "snare-on-3 louder than kick-on-1" patterns where
-  // phSc4 and phSc16 both still pick the snare bucket), the user can shift
-  // the anchor by whole beats to land on the real downbeat. Beat-aligned
-  // shifts are a no-op modulo beatPeriodSec, so sync math is unaffected.
-  // Keyed by wfA.name for per-track persistence, same convention as
-  // gridOffset / bpmNudge above.
-  const [barOneA, setBarOneA] = useState(0);
+  // One-time localStorage cleanup. The previous knobs persisted under three
+  // key prefixes (gridOffset:, bpmNudge:, barOneOffset:) for any track ever
+  // loaded onto a deck — even though the values were never user-edited,
+  // each load wrote "0" entries. Drain them on first launch post-deploy
+  // and set a flag so we never poll localStorage again. Bridge is gated on
+  // the flag so it stays a one-shot.
   useEffect(() => {
-    if (!wfA?.name) return;
-    let saved = null;
-    try { saved = localStorage.getItem(`barOneOffset:${wfA.name}`); } catch (e) { console.warn('localStorage.getItem failed', `barOneOffset:${wfA.name}`, e); }
-    const parsed = saved ? parseInt(saved, 10) : 0;
-    setBarOneA(isFinite(parsed) ? parsed : 0);
-  }, [wfA?.name]);
-  useEffect(() => {
-    if (!wfA?.name) return;
-    try { localStorage.setItem(`barOneOffset:${wfA.name}`, String(barOneA)); } catch (e) { console.warn('localStorage.setItem failed', `barOneOffset:${wfA.name}`, e); }
-  }, [barOneA, wfA?.name]);
-  // Shift the bar-1 anchor by `delta` beats AND seek the playhead by the same
-  // delta. The grid moves with the anchor (firstDownbeatSec += offset × bps in
-  // AnimatedZoomedWF) and the playhead lands on the corrected downbeat so the
-  // visual marker stays aligned with where audio is playing.
-  const shiftBarOneA = (delta) => {
-    const bps = bpm.results['A']?.beatPeriodSec;
-    const dur = wfA?.dur;
-    setBarOneA((v) => {
-      const next = Math.max(-5, Math.min(5, v + delta));
-      if (next === v) return v;
-      if (bps && dur && seekFnsRef.current.A) {
-        const currentProg = progRefA.current || 0;
-        const newProg = Math.max(0, Math.min(1, currentProg + delta * bps / dur));
-        seekFnsRef.current.A(newProg);
-      }
-      return next;
-    });
-  };
-  const resetBarOneA = () => {
-    const bps = bpm.results['A']?.beatPeriodSec;
-    const dur = wfA?.dur;
-    setBarOneA((v) => {
-      if (v === 0) return 0;
-      if (bps && dur && seekFnsRef.current.A) {
-        const currentProg = progRefA.current || 0;
-        const newProg = Math.max(0, Math.min(1, currentProg - v * bps / dur));
-        seekFnsRef.current.A(newProg);
-      }
-      return 0;
-    });
-  };
-
-  const [gridOffsetB, setGridOffsetB] = useState(0); // milliseconds
-  const [bpmNudgeB, setBpmNudgeB] = useState(0);     // in 0.01-BPM clicks
-  useEffect(() => {
-    if (!wfB?.name) return;
-    let savedOff = null, savedBpm = null;
-    try { savedOff = localStorage.getItem(`gridOffset:${wfB.name}`); } catch (e) { console.warn('localStorage.getItem failed', `gridOffset:${wfB.name}`, e); }
-    try { savedBpm = localStorage.getItem(`bpmNudge:${wfB.name}`); } catch (e) { console.warn('localStorage.getItem failed', `bpmNudge:${wfB.name}`, e); }
-    setGridOffsetB(savedOff ? parseFloat(savedOff) : 0);
-    setBpmNudgeB(savedBpm ? parseInt(savedBpm, 10) : 0);
-  }, [wfB?.name]);
-  useEffect(() => {
-    if (!wfB?.name) return;
-    try { localStorage.setItem(`gridOffset:${wfB.name}`, String(gridOffsetB)); } catch (e) { console.warn('localStorage.setItem failed', `gridOffset:${wfB.name}`, e); }
-  }, [gridOffsetB, wfB?.name]);
-  useEffect(() => {
-    if (!wfB?.name) return;
-    try { localStorage.setItem(`bpmNudge:${wfB.name}`, String(bpmNudgeB)); } catch (e) { console.warn('localStorage.setItem failed', `bpmNudge:${wfB.name}`, e); }
-  }, [bpmNudgeB, wfB?.name]);
-
-  // Manual bar-1 anchor override for Deck B (mirror of barOneA above).
-  const [barOneB, setBarOneB] = useState(0);
-  useEffect(() => {
-    if (!wfB?.name) return;
-    let saved = null;
-    try { saved = localStorage.getItem(`barOneOffset:${wfB.name}`); } catch (e) { console.warn('localStorage.getItem failed', `barOneOffset:${wfB.name}`, e); }
-    const parsed = saved ? parseInt(saved, 10) : 0;
-    setBarOneB(isFinite(parsed) ? parsed : 0);
-  }, [wfB?.name]);
-  useEffect(() => {
-    if (!wfB?.name) return;
-    try { localStorage.setItem(`barOneOffset:${wfB.name}`, String(barOneB)); } catch (e) { console.warn('localStorage.setItem failed', `barOneOffset:${wfB.name}`, e); }
-  }, [barOneB, wfB?.name]);
-  const shiftBarOneB = (delta) => {
-    const bps = bpm.results['B']?.beatPeriodSec;
-    const dur = wfB?.dur;
-    setBarOneB((v) => {
-      const next = Math.max(-5, Math.min(5, v + delta));
-      if (next === v) return v;
-      if (bps && dur && seekFnsRef.current.B) {
-        const currentProg = progRefB.current || 0;
-        const newProg = Math.max(0, Math.min(1, currentProg + delta * bps / dur));
-        seekFnsRef.current.B(newProg);
-      }
-      return next;
-    });
-  };
-  const resetBarOneB = () => {
-    const bps = bpm.results['B']?.beatPeriodSec;
-    const dur = wfB?.dur;
-    setBarOneB((v) => {
-      if (v === 0) return 0;
-      if (bps && dur && seekFnsRef.current.B) {
-        const currentProg = progRefB.current || 0;
-        const newProg = Math.max(0, Math.min(1, currentProg - v * bps / dur));
-        seekFnsRef.current.B(newProg);
-      }
-      return 0;
-    });
-  };
+    const FLAG = "cm_grid_localstorage_migrated";
+    try {
+      if (localStorage.getItem(FLAG)) return;
+      const stale = Object.keys(localStorage).filter(k =>
+        k.startsWith("gridOffset:") ||
+        k.startsWith("bpmNudge:") ||
+        k.startsWith("barOneOffset:")
+      );
+      for (const k of stale) localStorage.removeItem(k);
+      localStorage.setItem(FLAG, "1");
+      if (stale.length) console.log("[GRID-MIGRATE] cleared", stale.length, "legacy localStorage keys");
+    } catch (e) { console.warn("[GRID-MIGRATE] failed", e); }
+  }, []);
 
   // Library: track which deck is playing + metadata for recommendations
   const [playingTrack, setPlayingTrack] = useState(null);
@@ -6221,6 +6165,36 @@ export default function CollabMix({ initialPage = "landing", djName = null }) {
     })().catch(e => console.warn("[REKORDBOX-B] grid fetch failed:", e.message));
     return () => { cancelled = true; setRkGridB(null); };
   }, [rkLib, libLoadB]);
+
+  // User grid override population for each deck. Watches the currently-loaded
+  // track (libLoadX) AND the library state so that an edit made via
+  // lib.setGridEdit immediately reflects in the per-deck override. Synthesizes
+  // an override object compatible with bpmRaw.results.X — only the fields the
+  // user actually changed are non-null, so the merge in effectiveBpmResults
+  // spreads them cleanly without clobbering analyzer values the user didn't
+  // touch. Returns null when no override is set.
+  const _buildUserGrid = (track) => {
+    if (!track) return null;
+    const hasOverride = track.gridAnchorSec != null || track.bpmOverride != null;
+    if (!hasOverride) return null;
+    const override = {};
+    if (track.bpmOverride != null) {
+      override.bpm = track.bpmOverride;
+      if (track.bpmOverride > 0) override.beatPeriodSec = 60 / track.bpmOverride;
+    }
+    if (track.gridAnchorSec != null) override.firstBar1AnchorSec = track.gridAnchorSec;
+    return override;
+  };
+  useEffect(() => {
+    if (!libLoadA?.track?.id) { setUserGridA(null); return; }
+    const fresh = lib.library?.find(t => t.id === libLoadA.track.id) || libLoadA.track;
+    setUserGridA(_buildUserGrid(fresh));
+  }, [libLoadA, lib.library]);
+  useEffect(() => {
+    if (!libLoadB?.track?.id) { setUserGridB(null); return; }
+    const fresh = lib.library?.find(t => t.id === libLoadB.track.id) || libLoadB.track;
+    setUserGridB(_buildUserGrid(fresh));
+  }, [libLoadB, lib.library]);
 
   // Driver model — loader-is-driver. Server-authoritative: room.deckDrivers
   // arrives in the "joined" message and changes via "deck_driver_change"
