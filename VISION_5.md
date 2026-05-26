@@ -2341,3 +2341,99 @@ Three commits (d1b5177, eb67661, c1f68c2):
 > 100+ tracks, then storage bug (Session 2), then artwork-on-
 > demand (separate session) if 5000-track resident becomes a
 > real constraint.**
+
+## May 25 evening — Storage fix (Session 2)
+
+User reported library disappearing between browser sessions —
+entire library showing zero tracks on app reopen. The May 7 fix
+(`navigator.storage.persist()` on first import) was real but only
+half the surface: the standalone library app at `/library.html`
+never called persist() at all, didn't use OPFS, and wrote `handles`
+records in a shape the mixer couldn't read. The mixer's own
+`cmDbPutHandle` was also broken — `{id, ...handle}` silently
+dropped the handle field because `FileSystemFileHandle` has no
+enumerable own properties. Both apps were also declaring the
+`settings` store with divergent keyPaths (latent, never triggered
+because nothing wrote to it).
+
+Seven commits implementing the full layered fix:
+
+**Commit 1 (57535b6) — Shared `src/utils/storage.js`.**
+All IDB / OPFS / persist calls now live in one module. Schema is
+v5: new `migrations` store, settings rebuilt with consistent
+keyPath, normalized `handles` shape, OPFS dir owned by the utility,
+`versionchange` listener so multi-tab upgrades don't deadlock.
+
+**Commit 2 (b851180) — Mixer uses shared utility + mount persist.**
+~115 lines of inline cmDb*/opfs* helpers gone. Aliased imports
+preserve call-site names. `ensurePersistentStorage()` runs once
+per mount, idempotent — fixes the pre-May-7 cohort whose storage
+was never persisted. `getFile` uses `resolveHandleRecord` to
+tolerate all 3 legacy record shapes.
+
+**Commit 3 (274212f) — Library-app uses shared utility + OPFS writes.**
+Shimmed IDB helpers preserve `(db, store, val)` call-site shape.
+Mount-time persist call (this app NEVER called it before — the
+proximate cause of the report). OPFS writes added to both
+`handleImport` (file input) and `scanFolder` (folder picker).
+The legacy `{id, file}` `handles` write is gone — replaced with
+`{id, handle, opfsBacked: true}` or `{id, handle: null,
+opfsBacked: true}` for the input path.
+
+**Commit 4 (05ab765) — Lazy v4→v5 handle-shape migration.**
+`runHandleMigration()` walks `handles` at idle time on each app's
+first launch, normalizes legacy shapes, copies any embedded `File`
+to OPFS, marks orphans as `needsReconnect`. Marker stored in the
+`migrations` store on completion. Partial runs are safe — re-run
+on the next launch is idempotent.
+
+**Commit 5 (d1a83dc) — JSON export/import.**
+`lib.exportLibrary()` bundles tracks + crates + queue into a single
+JSON download. Audio bytes are NOT exported (too large). Artwork
+data URLs included (already compressed). `lib.importLibraryJson(file)`
+dedupes by id, merges crates, reloads. Two new icon buttons
+("Export", "Import") in the mixer library toolbar. Critical safety
+net for browsers where persist() is unavailable.
+
+**Commit 6 (962530b) — STORAGE.md + upgrade toast + Safari banner.**
+STORAGE.md is the single source of truth for the schema, the 5
+layers, the 5 legacy record shapes, the read-priority order, and
+the anti-patterns that caused the original drift. Upgrade toast
+("Library upgraded — tracks now permanently saved") shows once per
+origin after v5 migration completes, auto-dismisses in 6s. Banner
+appears when `persist()` is denied/unsupported with copy pointing
+the user to the new Export button. Dismissible per origin.
+
+### Verification
+
+- **Build clean**: `vite build` produces a 541 kB main bundle (was
+  540 kB pre-fix — within noise). Both apps build, both load with no
+  module-resolution errors. Storage shared chunk extracted to 147 kB.
+- **Syntax/parse clean**: all three changed files pass esbuild JSX
+  parse.
+- **Lint**: not runnable in this repo — `npm run lint` errors with
+  "ESLint couldn't find eslint.config.js". Pre-existing (ESLint v9
+  migration not done). Flagged for a separate cleanup session.
+- **Live verification pending**: requires a browser. The IDB v5
+  upgrade, lazy migration, OPFS writes, and `persist()` request
+  cannot be exercised from node. User should test on production
+  after deploy with a fresh-import + close-browser-fully + reopen
+  flow.
+
+### What this does NOT fix
+- **Live verification by Claude.** I cannot run the browser
+  pipeline. The architectural changes are sound but unmeasured
+  against real user data.
+- **Safari `persist()` denial.** Banner surfaces this honestly but
+  the only remedy is the JSON export workflow.
+- **Tracks orphaned by the pre-v5 `cmDbPutHandle` bug with no OPFS
+  bytes.** The migration marks them `needsReconnect`. UI surface
+  for that flag is the existing "Reconnect music folder" button —
+  no new affordance shipped this session.
+
+> **May 25 evening end-of-session tip: 962530b. Full storage
+> layered fix shipped to master and deploying to
+> collabmix.vercel.app. Next session: live verification of the
+> migration + import + survive-restart cycle on real user data.
+> Then: artwork-on-demand for the 5000-track resident ceiling
+> (Session 3).**
