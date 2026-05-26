@@ -1065,7 +1065,7 @@ function AlbumArt({ src, size = 36, radius = 4, alt = "", isActive = false, onCl
         flexShrink: 0,
         overflow: "hidden",
         position: "relative",
-        background: showImg ? "#000" : "rgba(255,255,255,0.04)",
+        background: showImg ? "#000" : "rgba(255,255,255,0.06)",
         display: "flex", alignItems: "center", justifyContent: "center",
         outline: isActive ? "2px solid rgba(255,255,255,0.9)" : "none",
         transition: "outline 150ms cubic-bezier(0.4, 0, 0.2, 1)",
@@ -1084,10 +1084,15 @@ function AlbumArt({ src, size = 36, radius = 4, alt = "", isActive = false, onCl
           style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }}
         />
       ) : (
-        <svg width={iconSize} height={iconSize} viewBox="0 0 16 16" fill="none" aria-hidden="true">
-          <path d="M6 12V3l7-1v8" stroke="rgba(255,255,255,0.3)" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round"/>
-          <ellipse cx="4.5" cy="12" rx="1.7" ry="1.4" stroke="rgba(255,255,255,0.3)" strokeWidth="1.2" fill="none"/>
-          <ellipse cx="11.5" cy="10" rx="1.7" ry="1.4" stroke="rgba(255,255,255,0.3)" strokeWidth="1.2" fill="none"/>
+        // Filled note heads + thicker stem at slightly higher alpha (0.4)
+        // so the fallback reads at 11–15px display sizes. Stroked outlines
+        // at 1.2px effectively disappeared after AA. Filled ellipses give
+        // the glyph visual weight without bumping into the secondary
+        // (0.6) accent tier reserved for active states.
+        <svg width={iconSize} height={iconSize} viewBox="0 0 16 16" fill="rgba(255,255,255,0.4)" aria-hidden="true">
+          <path d="M6 12V3l7-1.5v8" stroke="rgba(255,255,255,0.4)" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" fill="none"/>
+          <ellipse cx="4.5" cy="12" rx="2" ry="1.5"/>
+          <ellipse cx="11.5" cy="10" rx="2" ry="1.5"/>
         </svg>
       )}
       {children}
@@ -1821,14 +1826,7 @@ function LibraryPanelV2({ lib, onLoad, playingTrack, deckATrackId:deckATrackIdPr
                   transition: "background-color 150ms cubic-bezier(0.4, 0, 0.2, 1)",
                 }}>
                 {/* Album art — 32px, left edge as visual anchor */}
-                <div style={{
-                  width: 32, height: 32, background: BG3, borderRadius: 3, flexShrink: 0,
-                  backgroundImage: artwork ? `url(${artwork})` : undefined,
-                  backgroundSize: "cover", backgroundPosition: "center",
-                  display: "flex", alignItems: "center", justifyContent: "center",
-                }}>
-                  {!artwork && <span style={{ fontSize: 12, color: MUTED }}>♪</span>}
-                </div>
+                <AlbumArt src={artwork} size={32} radius={3} alt={t.title||""}/>
                 {/* Title (weight 500) + artist (white at 0.6) */}
                 <div style={{ flex: 1, minWidth: 0 }}>
                   <div style={{ fontSize: 13, fontWeight: 500, color: TEXT, display: "flex", alignItems: "center", gap: 6, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>

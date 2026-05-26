@@ -604,14 +604,14 @@ function TrackRow({ track, selected, onClick, onAddToCrate, crates, onPlay, onSe
       <div
         onClick={e=>{ e.stopPropagation(); if (!track.cloudOnly && onPreview) onPreview(track); }}
         title={track.cloudOnly ? undefined : isPreviewing ? "Click to stop preview" : "Click to preview"}
-        style={{ width:34, height:34, aspectRatio:"1 / 1", borderRadius:6, flexShrink:0, background: artworkUrl?"#000":"rgba(255,255,255,0.04)", display:"flex", alignItems:"center", justifyContent:"center", userSelect:"none", position:"relative", overflow:"hidden", cursor:track.cloudOnly?"default":"pointer", outline:isPreviewing?`2px solid ${G}`:"none", transition:"outline 150ms cubic-bezier(0.4, 0, 0.2, 1)" }}>
+        style={{ width:34, height:34, aspectRatio:"1 / 1", borderRadius:6, flexShrink:0, background: artworkUrl?"#000":"rgba(255,255,255,0.06)", display:"flex", alignItems:"center", justifyContent:"center", userSelect:"none", position:"relative", overflow:"hidden", cursor:track.cloudOnly?"default":"pointer", outline:isPreviewing?`2px solid ${G}`:"none", transition:"outline 150ms cubic-bezier(0.4, 0, 0.2, 1)" }}>
         {artworkUrl ? (
           <img src={artworkUrl} alt="" loading="lazy" draggable={false} style={{ width:"100%", height:"100%", objectFit:"cover", display:"block" }} onError={()=>setArtworkUrl(null)}/>
         ) : (
-          <svg width={14} height={14} viewBox="0 0 16 16" fill="none" aria-hidden="true">
-            <path d="M6 12V3l7-1v8" stroke="rgba(255,255,255,0.3)" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round"/>
-            <ellipse cx="4.5" cy="12" rx="1.7" ry="1.4" stroke="rgba(255,255,255,0.3)" strokeWidth="1.2" fill="none"/>
-            <ellipse cx="11.5" cy="10" rx="1.7" ry="1.4" stroke="rgba(255,255,255,0.3)" strokeWidth="1.2" fill="none"/>
+          <svg width={14} height={14} viewBox="0 0 16 16" fill="rgba(255,255,255,0.4)" aria-hidden="true">
+            <path d="M6 12V3l7-1.5v8" stroke="rgba(255,255,255,0.4)" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" fill="none"/>
+            <ellipse cx="4.5" cy="12" rx="2" ry="1.5"/>
+            <ellipse cx="11.5" cy="10" rx="2" ry="1.5"/>
           </svg>
         )}
         {isPreviewing && (
