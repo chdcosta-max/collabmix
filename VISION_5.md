@@ -2437,3 +2437,141 @@ the user to the new Export button. Dismissible per origin.
 > migration + import + survive-restart cycle on real user data.
 > Then: artwork-on-demand for the 5000-track resident ceiling
 > (Session 3).**
+
+## May 25, 2026 — Evening session
+
+Big session — critical reliability fixes, protocol establishment,
+beatgrid editor v1, and a 1,070-line dead-code purge. Final commit
+`cc426d1`.
+
+### CRITICAL FIXES
+- **Memory architecture fix.** Three latent OOM paths corrected:
+  - `parseID3` was silently truncating APIC artwork at 500 KB,
+    feeding partially-decoded JPEGs into `downscaleArtwork`. This
+    produced the "Racing Heart" / "You Will Never Know" half-
+    rendered thumbnails. Removed the cap; embedded bytes are now
+    passed through whole.
+  - Library worker's `postMessage` was structured-cloning the
+    full-rate stereo PCM (~50 MB per track). Switched to
+    transferable mono 11 kHz buffers (~2.6 MB) matching the deck
+    worker's pattern.
+  - `fileMap.current` grew unbounded across sessions; capped at 16
+    entries with LRU eviction. Routes all writes through `setFile`
+    / `removeFile` helpers so the cap can't drift.
+- **Storage fix — library survives full Chrome quit.** Lazy v4→v5
+  IDB migration normalizes legacy `handles` record shapes
+  (`{id,file}`, `{id}` orphans from the prior `cmDbPutHandle` bug,
+  canonical `{id,handle}`) into a uniform `{id, handle?,
+  opfsBacked?, file?}`. Verified at 135 tracks: library survives
+  full quit/restart cycles. `navigator.storage.persist()` now
+  requested at mount in BOTH apps (mixer + standalone library) so
+  pre-fix users get upgraded on first launch of the new build.
+- **Album art rendering fix.** `AlbumArt` component replaces five
+  inline render sites that drifted in styling. Square via CSS
+  `aspect-ratio: 1/1`, `object-fit: cover`, `loading="lazy"`, on-
+  error fallback to the subtle music-note SVG instead of the
+  browser's broken-image glyph.
+- **Album art recovery — re-extraction.** Added
+  `artworkVersion` field on track records; `scanArtwork` and
+  per-track context-menu re-extract trigger a fresh pull for any
+  track without `artworkVersion >= 2`. Recovery path for the
+  ~half-rendered thumbnails that already existed in IDB pre-fix.
+- **Pre-existing drag-handler bug fix.** Dotted gold outline
+  around `LibraryPanelV2` could get stuck "on" when internal drags
+  (track-row reorders, text selection) ended outside the wrapper
+  without firing `drop`. Two-part fix: `onDragOver` now gates on
+  `dataTransfer.types.includes("Files")`, and a window-level
+  `dragend` + `drop` listener resets the flag as a safety
+  backstop. Visible benefit: the outline only appears for actual
+  file drags, never gets stuck across sessions.
+
+### PROTOCOL ESTABLISHED
+- **CLAUDE.md** created with Verification Protocol baked in. The
+  protocol mandates a verification report on every shipped change
+  with explicit build status, runtime check, test data, and a
+  separate "verified vs assumed" section. **Including bundle byte
+  verification** — every visible UI string and DOM-marker is
+  scanned in the emitted bundle before declaring a UI feature
+  shipped.
+- **Three "shipped but invisible" UI bugs caught only because of
+  the protocol:**
+  - Session 1's `↻ Re-analyze` right-click menu item was shipped
+    into the dead `TrackRow` / `LibraryPanel` v1 code path —
+    invisible to the user the whole time.
+  - Session 2.5's `↻ Re-extract artwork` item: same issue, same
+    code path.
+  - Session 4's `Scan artwork` and `Analyze library` toolbar
+    buttons: same issue, no UI surface in `LibraryPanelV2`.
+  - All three were caught by checking `document.body.innerText.
+    includes('GRID') === false` (and equivalents) before declaring
+    "the feature works." Bundle byte scan + DOM presence check
+    are now standard.
+- **Investigation-first pattern confirmed.** Step-1 read /
+  step-2 propose / step-3 implement remains the cheapest path
+  through ambiguous bug reports. The grid-editor work especially
+  benefited from this — the "missing tab strip" / "missing
+  toolbar" issues surfaced before any commit was made.
+
+### FEATURES SHIPPED
+- **Auto-maintenance.** Artwork scan + BPM/key analysis now run
+  silently in the background on app mount (after a 4 s settle
+  delay) and on every new track import. Toolbar "Scan artwork"
+  and "Analyze library" buttons removed — UI is now invisible
+  unless work is in flight, in which case a subtle progress line
+  at the bottom of the library shows "Updating artwork… N of M"
+  or "Analyzing N of M". Sequential (artwork → analysis) so they
+  don't contend on main-thread `decodeAudioData`.
+- **Right-click menu cleaned of developer-speak.** `↻ Re-analyze`
+  and `↻ Re-extract artwork` items removed (auto-maintenance
+  covers both cases). Final menu: track title (dim header) ·
+  Load to Deck A · Load to Deck B · Remove from Library.
+- **Beatgrid editor v1 — Set-Beat-1 marker.** Single ~4×18 px
+  vertical bar icon to the left of the Cue button on each deck.
+  White accent on top (~3 px), red `#FF3B30` below (~15 px) —
+  Rekordbox's beatgrid-marker visual language. Click writes the
+  current playhead position to the track's `gridAnchorSec` field
+  via `lib.setGridEdit`. **Snap-to-transient** active on every
+  click: scans ±50 ms of the live `AudioBuffer` at sample
+  precision, finds the loudest sample, snaps if `peakAbs ≥ 2 ×
+  meanAbs`, falls back to the raw playhead otherwise. Persists
+  in IndexedDB. Sync handlers, beat-skip buttons, and partner
+  broadcast all respect user edits via the new
+  `effectiveBpmResults` merge (precedence: analyzer → Rekordbox
+  PQTZ → user override). Verified working: 11.56× ratio kick
+  snap on Deck B test.
+- **Pure black background.** App background flipped from
+  `#0A0B0E` (cool near-black) to `#000000` for OLED display
+  optimization. Three surfaces touched: `index.html` body,
+  CollabMix root container, top bar (preserving the `f0` alpha
+  for the backdrop blur). Deck cards (`#15171A`), library rail
+  (`#0D0F12`), and other component-level surfaces unchanged —
+  now read with sharper visual hierarchy against the true-black
+  page bg.
+
+### CODE CLEANUP
+- **1,070 lines of dead code removed** in a single commit. Seven
+  components purged after grep-confirmed zero JSX consumers:
+  `TrackRow` (141 lines), `LibraryPanel` v1 (625), `ZoomedWF`
+  (154), `BeatGrid` (43), `SyncPanel` (25), `ChatPanel` (20),
+  `ChatBar` (51). Bundle output identical pre/post deletion —
+  Vite's tree-shaker had already excluded all of it — confirming
+  the cleanup is purely source-level with zero runtime risk.
+- Main file: **7,674 → 6,604 lines** (−13.9%).
+
+### FINAL COMMIT
+`cc426d1` — Delete 7 dead components.
+
+### DEFERRED for next session
+- Brand + UX design principles conversation: target user, tone,
+  differentiators, "the one thing Mix//Sync stands for."
+- Path A waveform glow rendering.
+- "Scan computer for music" feature.
+- Rekordbox XML import.
+- iTunes XML import.
+- USB drive handling.
+- AcoustID metadata fix (track ID lookup for tracks without
+  good ID3 metadata).
+- Library UI deeper redesign.
+- Empty state design.
+- Metronome audio for the beatgrid editor (visual pulse v1
+  shipped; audio click deferred).
