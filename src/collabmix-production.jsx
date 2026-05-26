@@ -398,6 +398,15 @@ function useLibrary(){
   const [crates,setCrates]=useState([]); // playlists from shared IDB
   const [importing,setImporting]=useState(false);
   const [analyzing,setAnalyzing]=useState(false);
+  // Background-maintenance progress. {kind, done, total} when work is in
+  // flight, null when idle. Surfaces in the subtle bottom-of-library
+  // indicator. Updated from inside the processQ worker.onmessage callback
+  // (analysis) and from inside scanArtwork's iteration loop (artwork).
+  const [progress,setProgress]=useState(null);
+  // Running max of the analysis queue size since the last drain. Lets the
+  // indicator show "Analyzing N of M…" where M is sticky until the queue
+  // empties and resets. Without this, M would shrink as the worker drains.
+  const analysisTotalRef=useRef(0);
   const workerRef=useRef(null),queueRef=useRef([]),activeRef=useRef(false),fileMap=useRef({});
   const fileMapOrder=useRef([]); // LRU access order for fileMap eviction
   const audioCtx=useRef(null);
@@ -406,6 +415,10 @@ function useLibrary(){
   const processQRef=useRef(null); // forward ref so startup effect can call processQ
   const getFileRef=useRef(null);  // forward ref so processQ can lazily resolve a File by id
   const hasAutoQueued=useRef(false); // ensure startup analysis runs once
+  // Background maintenance guard — ensures the mount-time auto-trigger fires
+  // at most once per app load. Prevents re-triggering when the IDB poll
+  // refreshes library state, or when the user toggles views.
+  const autoMaintStartedRef=useRef(false);
   // Fingerprints to skip setState when nothing actually changed (avoids RAF stutter)
   const libFingerprintRef=useRef('');
   const queueFingerprintRef=useRef('');
@@ -464,6 +477,19 @@ function useLibrary(){
         return updated;
       });
       activeRef.current=false;
+      // Surface progress for the bottom-of-library indicator. `done` = how
+      // many tracks have completed in the current batch (total minus pending
+      // + active). When the queue drains, clear progress and reset the
+      // sticky total so the NEXT batch starts fresh.
+      const pending=queueRef.current.length+(activeRef.current?1:0);
+      if(pending===0){
+        setProgress(null);
+        analysisTotalRef.current=0;
+      }else{
+        if(pending>analysisTotalRef.current)analysisTotalRef.current=pending;
+        const total=analysisTotalRef.current;
+        setProgress({kind:"analysis",done:total-pending,total});
+      }
       scheduleNextAnalysis();
     };
     return()=>workerRef.current?.terminate();
@@ -689,11 +715,29 @@ function useLibrary(){
       // Persist metadata + handle to IDB so tracks survive page reloads
       try{await cmDbPut("tracks",track);}catch(err){console.error('[IMPORT-ITER-IDB-CAUGHT]',{id,error:err?.message||String(err)});}
       if(handle){try{await cmDbPutHandle(id,handle);}catch(err){console.error('[IMPORT-ITER-HANDLE-CAUGHT]',{id,error:err?.message||String(err)});}}
+      // Auto-queue for BPM/key/energy analysis. Push the ID only — processQ
+      // resolves the File lazily at decode time and releases it, so the queue
+      // does NOT pin Files (the May 6 OOM mode). Same Session 1 pipeline as
+      // the manual analyzeAll: serial decode, mono 11 kHz, transferable
+      // buffers, AudioContext recycle. New imports therefore auto-analyze
+      // without the user clicking anything.
+      if(!track.bpm||!track.key){
+        if(!queueRef.current.some(q=>q.id===id)){
+          queueRef.current.push({id,skipBPM:!!track.bpm,skipKey:!!track.key});
+        }
+      }
       importedCount++;
     }
     console.log('[IMPORT-DONE]',{importedCount,skippedCount,totalCandidates:audio.length,ms:Math.round(performance.now()-tImport0)});
     if(skippedCount>0){
       console.log(`[library] Imported ${importedCount} tracks, skipped ${skippedCount} duplicate${skippedCount===1?"":"s"}`);
+    }
+    // Seed progress for the bottom-of-library indicator, then kick processQ.
+    const pending=queueRef.current.length+(activeRef.current?1:0);
+    if(pending>0){
+      if(pending>analysisTotalRef.current)analysisTotalRef.current=pending;
+      const total=analysisTotalRef.current;
+      setProgress({kind:"analysis",done:total-pending,total});
     }
     setImporting(false); processQ();
   },[processQ,library]);
@@ -779,6 +823,15 @@ function useLibrary(){
           queueRef.current.push({id:track.id,skipBPM:!!track.bpm,skipKey:!!track.key});
         }
       }
+    }
+    // Seed the progress indicator's sticky total. processQ + worker.onmessage
+    // will update done/total as the queue drains. If nothing was queued, no
+    // progress is shown.
+    const pending=queueRef.current.length+(activeRef.current?1:0);
+    if(pending>0){
+      if(pending>analysisTotalRef.current)analysisTotalRef.current=pending;
+      const total=analysisTotalRef.current;
+      setProgress({kind:"analysis",done:total-pending,total});
     }
     processQ();
     setTimeout(()=>setAnalyzing(false),500);
@@ -939,10 +992,13 @@ function useLibrary(){
     // Bulk re-processing stamps the version after a successful re-extract
     // so this scan is a no-op for already-clean tracks on subsequent runs.
     const toProcess=(library||[]).filter(t=>!t.artwork||(t.artworkVersion||0)<ARTWORK_PARSER_VERSION);
+    const total=toProcess.length;
+    if(total>0)setProgress({kind:"artwork",done:0,total});
+    let processed=0;
     for(const track of toProcess){
       let file=null;
       try{file=await getFile(track.id);}catch{}
-      if(!file)continue;
+      if(!file){processed++;if(total>0)setProgress({kind:"artwork",done:processed,total});continue;}
       try{
         const sl=file.slice(0,ID3_READ_WINDOW);
         const tags=parseID3(await sl.arrayBuffer());
@@ -967,7 +1023,13 @@ function useLibrary(){
           artworkCache.current[track.id]=false;
         }
       }catch{}
+      processed++;
+      if(total>0)setProgress({kind:"artwork",done:processed,total});
     }
+    // Clear progress only if the analysis path isn't running. If both happen
+    // back-to-back (auto-maint sequences them), the next setProgress call
+    // from analyzeAll / processQ takes over.
+    if(queueRef.current.length===0&&!activeRef.current)setProgress(null);
     setTimeout(()=>setAnalyzing(false),300);
   },[library,getFile]);
 
@@ -1101,7 +1163,50 @@ function useLibrary(){
     processQ();
   },[library,processQ]);
 
-  return{library,queue,crates,importing,importFiles,importFromPicker,previewImport,commitImport,queueAnalysis,reanalyze,reExtractArtwork,getFile,clear,reload,setLibrary,fileMap,setFile,removeFile,analyzing,analyzeAll,extractArtworkForTrack,artworkCache,reconnectFromFolder,scanArtwork,exportLibrary,importLibraryJson};
+  // Automatic background maintenance. Replaces the previous "Scan artwork" +
+  // "Analyze library" toolbar buttons with invisible auto-recovery. Fires
+  // once per app load after a 4 s post-mount delay (lets initial render +
+  // IDB load settle before consuming resources). Runs the two passes
+  // SEQUENTIALLY (artwork first, then analysis) to avoid contention on
+  // main-thread decodeAudioData. Both passes use the exact same code paths
+  // as the manual triggers — the streaming serial-queue + Web Worker pipeline
+  // from Session 1 (mono 11 kHz downsample, transferable buffers, idle yield
+  // between worker results, AudioContext recycle every 50 tracks). No new
+  // memory paths introduced.
+  useEffect(()=>{
+    if(autoMaintStartedRef.current)return;
+    if(!library||library.length===0)return; // wait for IDB load to populate library
+    autoMaintStartedRef.current=true;
+    const t=setTimeout(async()=>{
+      try{
+        const lib=library||[];
+        const needsArtwork=lib.some(x=>!x.artwork||(x.artworkVersion||0)<ARTWORK_PARSER_VERSION);
+        const needsAnalysis=lib.some(x=>!x.analyzed||x.error);
+        console.log('[AUTO-MAINT]',{libSize:lib.length,needsArtwork,needsAnalysis});
+        if(needsArtwork){
+          console.log('[AUTO-MAINT] starting artwork scan');
+          await scanArtwork();
+          console.log('[AUTO-MAINT] artwork scan complete');
+        }
+        if(needsAnalysis){
+          console.log('[AUTO-MAINT] starting analyzeAll');
+          analyzeAll();
+          // analyzeAll returns immediately after seeding the queue; the
+          // actual worker progress drains in the background via processQ +
+          // onmessage. No need to await here.
+        }
+      }catch(err){
+        console.warn('[AUTO-MAINT] failed',err);
+      }
+    },4000);
+    // Intentionally no cleanup: if library changes during the delay we still
+    // want the timer to fire. The body re-reads library state at fire time
+    // via the closure, and the autoMaintStartedRef guard prevents this
+    // effect from re-firing on subsequent library changes.
+    return ()=>{}; // satisfy React deps lint without cancelling the timer
+  },[library,scanArtwork,analyzeAll]);
+
+  return{library,queue,crates,importing,importFiles,importFromPicker,previewImport,commitImport,queueAnalysis,reanalyze,reExtractArtwork,getFile,clear,reload,setLibrary,fileMap,setFile,removeFile,analyzing,progress,analyzeAll,extractArtworkForTrack,artworkCache,reconnectFromFolder,scanArtwork,exportLibrary,importLibraryJson};
 }
 
 // ── Library Panel UI ──────────────────────────────────────────
@@ -1812,45 +1917,12 @@ function LibraryPanelV2({ lib, onLoad, playingTrack, deckATrackId:deckATrackIdPr
               }}>
               <span style={{ fontSize: 12 }}>✦</span> SUGGESTIONS
             </button>
-            {/* SCAN ARTWORK — bulk re-extracts artwork for tracks that are
-                missing it or were produced by an older parser (artworkVersion
-                < 2, i.e. pre-May-26). Disabled while another bulk op runs. */}
-            <button
-              onClick={() => lib.scanArtwork?.()}
-              disabled={lib.analyzing}
-              title="Scan artwork — re-extract missing or outdated thumbnails from source files"
-              style={{
-                padding: "4px 10px", height: 22,
-                background: "transparent",
-                border: `1px solid ${BORDER}`,
-                color: lib.analyzing ? MUTED : SUBTLE,
-                borderRadius: 4, cursor: lib.analyzing ? "wait" : "pointer",
-                fontFamily: "'Inter',sans-serif", fontSize: 10, letterSpacing: 1, outline: "none",
-                display: "flex", alignItems: "center", gap: 5,
-                opacity: lib.analyzing ? 0.5 : 1,
-                transition: "border-color 150ms cubic-bezier(0.4, 0, 0.2, 1), color 150ms cubic-bezier(0.4, 0, 0.2, 1)",
-              }}>
-              <span style={{ fontSize: 11 }}>♪</span> SCAN ARTWORK
-            </button>
-            {/* ANALYZE LIBRARY — bulk BPM/key/energy for unanalyzed tracks.
-                Powered by the streaming serial analyzer from Session 1. */}
-            <button
-              onClick={() => lib.analyzeAll?.(lib.getFile)}
-              disabled={lib.analyzing}
-              title={lib.analyzing ? "Analyzing…" : "Analyze library — BPM, key, energy"}
-              style={{
-                padding: "4px 10px", height: 22,
-                background: lib.analyzing ? "rgba(255,255,255,0.04)" : "transparent",
-                border: `1px solid ${BORDER}`,
-                color: lib.analyzing ? TEXT : SUBTLE,
-                borderRadius: 4, cursor: lib.analyzing ? "wait" : "pointer",
-                fontFamily: "'Inter',sans-serif", fontSize: 10, letterSpacing: 1, outline: "none",
-                display: "flex", alignItems: "center", gap: 5,
-                transition: "border-color 150ms cubic-bezier(0.4, 0, 0.2, 1), color 150ms cubic-bezier(0.4, 0, 0.2, 1)",
-              }}>
-              <span style={{ fontSize: 11 }}>⌁</span>
-              {lib.analyzing ? "ANALYZING…" : "ANALYZE LIBRARY"}
-            </button>
+            {/* SCAN ARTWORK + ANALYZE LIBRARY toolbar buttons removed —
+                background maintenance now runs automatically on app mount and
+                on each new import. Progress surfaces via the subtle indicator
+                at the bottom of the track list. Methods stay callable
+                (lib.scanArtwork / lib.analyzeAll) for per-track recovery via
+                the right-click context menu and for internal triggers. */}
             {/* Rekordbox library connect pill — shown beside SUGGESTIONS. */}
             {onConnectRekordbox && (
               <button
@@ -2091,6 +2163,27 @@ function LibraryPanelV2({ lib, onLoad, playingTrack, deckATrackId:deckATrackIdPr
             );
           })()}
         </div>
+        {/* Background maintenance progress — subtle status text at the bottom
+            of the library column. Auto-hides when idle (lib.progress is
+            null). Single line, low-opacity, sentence case per Quiet Pro Tool.
+            Replaces the prior toolbar SCAN ARTWORK / ANALYZE LIBRARY buttons
+            with invisible, automatic recovery. */}
+        {lib.progress && (
+          <div style={{
+            padding: "6px 14px", fontSize: 10, fontFamily: "'Inter',sans-serif",
+            color: "rgba(255,255,255,0.4)", letterSpacing: 0.3,
+            borderTop: `1px solid ${BORDER}`,
+            display: "flex", alignItems: "center", gap: 8,
+            background: "transparent",
+          }}>
+            <span style={{ width: 6, height: 6, borderRadius: "50%", background: "rgba(255,255,255,0.4)", animation: "pulse 1.6s ease-in-out infinite", flexShrink: 0 }}/>
+            <span>
+              {lib.progress.kind === "artwork"
+                ? `Updating artwork… ${lib.progress.done} of ${lib.progress.total}`
+                : `Analyzing ${lib.progress.done} of ${lib.progress.total}…`}
+            </span>
+          </div>
+        )}
       </div>
 
       {/* ── RIGHT RAIL ── split ratio persisted via queueFraction (default 0.4) ── */}
