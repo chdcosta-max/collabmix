@@ -13,6 +13,7 @@ import {
   ensurePersistentStorage,
   resolveHandleRecord,
   hasMigrationRun, markMigrationRun,
+  runHandleMigration,
 } from "./utils/storage.js";
 
 // ═══════════════════════════════════════════════════════════════
@@ -5338,6 +5339,7 @@ export default function CollabMix({ initialPage = "landing", djName = null }) {
   // whose first import predated the May 7 fix were silently on Chrome's
   // evictable tier and their data could be wiped under disk pressure.
   const [storagePersistence, setStoragePersistence] = useState(null); // null|"persisted"|"denied"|"unsupported"
+  const [migrationResult, setMigrationResult] = useState(null); // null|{migrated,orphaned,total,skipped}
   useEffect(() => {
     let alive = true;
     ensurePersistentStorage().then(state => {
@@ -5345,6 +5347,18 @@ export default function CollabMix({ initialPage = "landing", djName = null }) {
       setStoragePersistence(state);
       console.log('[STORAGE-PERSIST-MOUNT]', { state });
     }).catch(() => alive && setStoragePersistence("denied"));
+    // Lazy handle-shape migration. Fires after persist() resolves to avoid
+    // racing the mount's IDB initial reads. Idempotent — if it already ran,
+    // returns { skipped: true } immediately.
+    const idle = (cb) => (typeof requestIdleCallback === "function"
+      ? requestIdleCallback(cb, { timeout: 1500 })
+      : setTimeout(cb, 250));
+    idle(() => {
+      runHandleMigration().then(result => {
+        if (!alive) return;
+        if (!result.skipped) setMigrationResult(result);
+      }).catch(err => console.warn('[STORAGE-MIGRATION-ERR]', err?.message || err));
+    });
     return () => { alive = false; };
   }, []);
   const [session, setSession]   = useState({ url:SERVER_URL, room:"preview", name:"DJ Preview" });

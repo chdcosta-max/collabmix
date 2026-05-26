@@ -9,6 +9,7 @@ import {
   putHandle as _sharedPutHandle,
   opfsStore, opfsGet,
   ensurePersistentStorage,
+  runHandleMigration,
 } from "./utils/storage.js";
 
 // ═══════════════════════════════════════════════════════════════
@@ -1126,6 +1127,14 @@ export default function MusicLibrary() {
     ensurePersistentStorage().then(state => {
       console.log('[STORAGE-PERSIST-MOUNT]', { app: 'library', state });
     }).catch(() => {});
+    // Lazy handle-shape migration — idempotent, completes on either app's
+    // first launch. Whichever app the user opens first runs it.
+    const _idle = (cb) => (typeof requestIdleCallback === "function"
+      ? requestIdleCallback(cb, { timeout: 1500 })
+      : setTimeout(cb, 250));
+    _idle(() => {
+      runHandleMigration().catch(err => console.warn('[STORAGE-MIGRATION-ERR]', err?.message || err));
+    });
     openDB().then(async db => {
       dbRef.current = db;
       const [ts, cs, qs, savedItunes, savedRb, savedRbDir, savedScanDir] = await Promise.all([

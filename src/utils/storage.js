@@ -253,3 +253,71 @@ export async function hasMigrationRun(id) {
 export async function markMigrationRun(id, details = {}) {
   return dbPut("migrations", { id, ranAt: Date.now(), ...details });
 }
+
+// ── Lazy handle-shape migration (v4 → v5) ─────────────────────────────────
+// One-shot, idempotent, runs at idle time after each app's mount. Walks the
+// `handles` store and normalizes legacy record shapes:
+//
+//   { id, file: File }            (library-app <input> path):
+//     → copy File to OPFS, rewrite as { id, handle: null, opfsBacked: true }
+//   { id }  (orphan — mixer pre-v5 cmDbPutHandle wrote {id, ...handle} which
+//                     silently dropped the handle field. Bytes may still exist
+//                     in OPFS if the user previously deck-loaded the track):
+//     → if OPFS has bytes, rewrite as { id, handle: null, opfsBacked: true }.
+//     → if not, mark as { id, handle: null, needsReconnect: true } so the UI
+//       can surface a re-pick prompt without silently failing.
+//   { id, handle: FileSystemFileHandle }    (library-app folder-scan path):
+//     → unchanged. Already canonical.
+//   { id: "scan_dir" | "itunes_file" | "rb_dir" | "rb_file", handle: ... }
+//     → these are FOLDER / SETTINGS handles, not per-track. Skipped.
+//
+// Yields between records via requestIdleCallback so it doesn't compete with
+// the app's mount-time work. Tab-close partway is safe: the migration marker
+// is only written on completion, so the next launch restarts. Normalized
+// records are skipped on every pass (no-op for them), so restart is cheap.
+const MIGRATION_ID = "handles_v4_to_v5";
+const SETTINGS_HANDLE_IDS = new Set(["scan_dir", "itunes_file", "rb_dir", "rb_file"]);
+
+export async function runHandleMigration() {
+  if (await hasMigrationRun(MIGRATION_ID)) return { skipped: true };
+  const all = await dbGetAll("handles");
+  const todo = all.filter(rec =>
+    rec && !SETTINGS_HANDLE_IDS.has(rec.id) && !rec.opfsBacked
+  );
+  if (todo.length === 0) {
+    await markMigrationRun(MIGRATION_ID, { migrated: 0, skipped: all.length });
+    return { migrated: 0, total: all.length };
+  }
+  console.log("[storage] starting handle-shape migration", { count: todo.length });
+  let migrated = 0, orphaned = 0;
+  for (const rec of todo) {
+    await new Promise(r => {
+      const tick = () => r();
+      if (typeof requestIdleCallback === "function") requestIdleCallback(tick, { timeout: 250 });
+      else setTimeout(tick, 0);
+    });
+    try {
+      // Legacy {id, file}: promote File to OPFS, drop the File from IDB.
+      if (rec.file && typeof rec.file.arrayBuffer === "function") {
+        await opfsStore(rec.id, rec.file);
+        await dbPut("handles", { id: rec.id, handle: null, opfsBacked: true });
+        migrated++;
+        continue;
+      }
+      // Orphan {id} — may have OPFS bytes from a prior deck-load.
+      const opfsFile = await opfsGet(rec.id);
+      if (opfsFile) {
+        await dbPut("handles", { id: rec.id, handle: null, opfsBacked: true });
+        migrated++;
+      } else {
+        await dbPut("handles", { id: rec.id, handle: null, needsReconnect: true });
+        orphaned++;
+      }
+    } catch (err) {
+      console.warn("[storage] migration record failed", { id: rec.id, error: err?.message || String(err) });
+    }
+  }
+  await markMigrationRun(MIGRATION_ID, { migrated, orphaned, total: todo.length });
+  console.log("[storage] handle-shape migration complete", { migrated, orphaned, total: todo.length });
+  return { migrated, orphaned, total: todo.length };
+}
