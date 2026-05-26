@@ -4953,47 +4953,6 @@ function Deck({ id, ch, ctx:ac, color, local, remote, onChange, midi:mt, bpmResu
               <div style={{fontSize:11, fontFamily:"'Inter',sans-serif", fontWeight:500, color:"#F5F5F7", background:"rgba(255,255,255,0.06)", border:"1px solid rgba(255,255,255,0.08)", borderRadius:4, padding:"2px 6px", letterSpacing:.5, fontVariantNumeric:"tabular-nums"}}>{ck}</div>
             </div>
           ):null;})()}
-          {/* Set-Beat-1 button — single 14×14 red dot next to KEY/BPM. Click
-              writes the current playhead position into the loaded track's
-              gridAnchorSec field via onGridEdit (which wraps lib.setGridEdit
-              with the track id baked in). The downstream rendering uses
-              Commit 1's effectiveBpmResults merge, so the beat grid snaps to
-              the new anchor immediately. Disabled when no track is loaded. */}
-          {(()=>{
-            const canEdit = !!buf && !!onGridEdit;
-            return (
-              <button
-                onClick={() => {
-                  if (!canEdit) return;
-                  const playhead = (progRef.current ?? prog ?? 0) * (dur || 0);
-                  if (dur > 0) onGridEdit({ gridAnchorSec: Math.max(0, Math.min(dur, playhead)) });
-                }}
-                disabled={!canEdit}
-                title={canEdit ? "Set beat 1 at playhead" : "Load a track to edit the grid"}
-                style={{
-                  flexShrink: 0,
-                  alignSelf: "center",
-                  width: 14,
-                  height: 14,
-                  borderRadius: 3,
-                  background: canEdit ? "rgba(255,59,48,0.55)" : "rgba(255,59,48,0.15)",
-                  border: "1px solid rgba(255,59,48,0.7)",
-                  cursor: canEdit ? "pointer" : "default",
-                  outline: "none", padding: 0,
-                  transition: "background-color 150ms cubic-bezier(0.4, 0, 0.2, 1), box-shadow 150ms cubic-bezier(0.4, 0, 0.2, 1)",
-                }}
-                onMouseEnter={(e) => {
-                  if (!canEdit) return;
-                  e.currentTarget.style.background = "rgba(255,59,48,1)";
-                  e.currentTarget.style.boxShadow = "0 0 8px rgba(255,59,48,0.4)";
-                }}
-                onMouseLeave={(e) => {
-                  e.currentTarget.style.background = canEdit ? "rgba(255,59,48,0.55)" : "rgba(255,59,48,0.15)";
-                  e.currentTarget.style.boxShadow = "none";
-                }}
-              />
-            );
-          })()}
           {/* BPM display — LCD-style oak, tabular-nums, bold */}
           <div style={{flexShrink:0, textAlign:"right", alignSelf:"flex-end"}}>
             {(()=>{
@@ -5089,10 +5048,48 @@ function Deck({ id, ch, ctx:ac, color, local, remote, onChange, midi:mt, bpmResu
           )}
       </div>
 
-      {/* ── TRANSPORT — Cue · Skip · Play · Skip · Sync · M.
+      {/* ── TRANSPORT — Set-Beat-1 · Cue · Skip · Play · Skip · Sync · M.
            Elapsed/Remain moved inline with the track title (v5) so this row
            is now just transport actions, centered. ── */}
       <div style={{display:"flex", alignItems:"center", gap:8, padding:"8px 12px", borderBottom:BD, justifyContent:"center"}}>
+        {/* Set-Beat-1 marker — Rekordbox-style two-tone vertical bar (red top
+            half / white bottom half). Visual language pros recognise as "a
+            beat marker on the timeline". Click writes the current playhead
+            position to gridAnchorSec via onGridEdit; downstream merge in
+            effectiveBpmResults moves the beat grid immediately. Disabled
+            (opacity .3) when no track is loaded. */}
+        {(()=>{
+          const canEdit = !!buf && !!onGridEdit;
+          return (
+            <button
+              onClick={() => {
+                if (!canEdit) return;
+                const playhead = (progRef.current ?? prog ?? 0) * (dur || 0);
+                if (dur > 0) onGridEdit({ gridAnchorSec: Math.max(0, Math.min(dur, playhead)) });
+              }}
+              disabled={!canEdit}
+              title={canEdit ? "Set beat 1 at playhead" : "Load a track to edit the grid"}
+              style={{
+                width: 4, height: 18, padding: 0,
+                background: "transparent", border: "none", outline: "none",
+                cursor: canEdit ? "pointer" : "default",
+                opacity: canEdit ? 1 : 0.3,
+                display: "flex", flexDirection: "column",
+                flexShrink: 0, alignSelf: "center",
+                transition: "opacity 150ms cubic-bezier(0.4, 0, 0.2, 1), filter 150ms cubic-bezier(0.4, 0, 0.2, 1)",
+              }}
+              onMouseEnter={(e) => {
+                if (!canEdit) return;
+                e.currentTarget.style.filter = "drop-shadow(0 0 4px rgba(255,59,48,0.7))";
+              }}
+              onMouseLeave={(e) => {
+                e.currentTarget.style.filter = "none";
+              }}>
+              <div style={{ flex: 1, background: "#FF3B30" }}/>
+              <div style={{ flex: 1, background: "rgba(255,255,255,0.9)" }}/>
+            </button>
+          );
+        })()}
         {/* CUE pill */}
         <button onClick={(e)=>{ if(local&&cue) cue(); else if(remoteCue) remoteCue(); }} disabled={!cueEnabled}
           style={{height:38, padding:"0 16px", minWidth:60,
