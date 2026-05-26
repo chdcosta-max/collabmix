@@ -2248,3 +2248,96 @@ In order, all blocking various things downstream:
 > Path A waveform compositing is the next major lever; manual
 > nudge UI is the next blocker on the critical path to
 > dogfood.**
+
+## May 25 — Memory fix (analysis path)
+
+Importing 100+ tracks could push Chrome past 8 GB and crash the tab.
+The May 6 OOM fix removed auto-queue on import + mount and made
+`_importFileObjects` itself pin-free, but the bulk analysis path
+(`analyzeAll`, wired to the toolbar "Analyze library" button) still
+had the original shape: pre-resolve every File via `getFile`, push
+File-bearing items into `queueRef` all at once. For 5000 tracks
+that's 5000 live blob references queued before any draining starts.
+The May 8 verification ("182 MB at 135 tracks") was for resident
+library state with compressed artwork, not for an active analysis
+pass — `analyzeAll` was assumed lazy, but wasn't.
+
+Three commits (d1b5177, eb67661, c1f68c2):
+
+**Streaming analyzer (d1b5177)**
+- `analyzeAll` now pushes `{id, skipBPM, skipKey}` only. Files are
+  resolved one at a time by `processQ` at the moment of analysis,
+  then released. Bulk-path File pinning is gone.
+- `processQ` downmixes to mono and decimates to **11025 Hz with a
+  60 s cap**. The three worker analyzers only need a fraction of
+  the input: `dbpm` bandpasses to 100–400 Hz (well below 5.5 kHz
+  Nyquist), `dkey` reads ~2 s of FFT hops at chroma fundamentals
+  ≤880 Hz, `denergy` uses the first 30 s of RMS+ZCR. Worker now
+  receives ≈2.6 MB instead of the ≈50 MB full-rate stereo PCM
+  it used to get. Box-filter average over each source window
+  doubles as anti-aliasing.
+- Mono PCM ArrayBuffer is **transferred** (not structured-cloned)
+  to LIB_WORKER — matches the deck BPM worker pattern at
+  `bpm-worker-source.js:130`. Previously the library worker was
+  the only postMessage in the app that did a full structured
+  clone, transiently tripling PCM memory per track.
+- Intermediate buffers (compressed ArrayBuffer, full-rate
+  AudioBuffer) are explicitly nulled before the worker round-trip
+  so they're GC-eligible while the worker runs.
+- AudioContext is recycled (close + recreate) every 50 tracks.
+  Chrome leaks small internal buffers per decode that aren't
+  reclaimed until `close()`.
+- `requestIdleCallback` yield between worker results — gives the
+  GC room to run on library-scale passes.
+
+**fileMap LRU cap (eb67661)**
+- `fileMap.current` cached every resolved File for the session
+  lifetime. A DJ previewing 100 tracks pinned ~1 GB of blob
+  references; every deck-load stayed pinned even after unload.
+- New `fileMapTouch / setFile / removeFile` helpers, cap of 16.
+  Comfortably above any realistic working set (decked tracks,
+  recent previews, in-flight analyzer) and small enough that
+  pathological loops can't run away.
+
+**Force re-analyze (c1f68c2)**
+- Right-click any track → "↻ Re-analyze". Marks the track
+  unanalyzed, persists the reset, queues it for the new pipeline.
+  Recovery path for tracks analyzed under the pre-May 25 full-
+  rate code or with bad ID3 BPM/key tags.
+
+### Verification
+
+- **Build clean**: `vite build` produces a 540 kB main bundle
+  (vs. 540 kB pre-fix — no size regression).
+- **Worker math sanity check**: synthetic 120 BPM click track
+  + 440 Hz A4 sine at 11025 Hz mono → `dbpm` returns 120, `dkey`
+  returns A, `denergy` returns Peak Hour. All three analyzers
+  produce correct results at the new SR.
+- **Pending**: live import test of 100+ tracks on production
+  (collabmix.vercel.app) to confirm the resident heap stays under
+  500 MB during the analysis pass.
+
+### What this does NOT fix
+
+- **Resident library state at extreme scale.** At ~1.3 MB/track
+  (per the May 8 artwork-compression measurement) a 5000-track
+  library still carries ~6.5 GB of in-memory artwork data URLs
+  plus the React state and IDB poll's deserialization allocation.
+  This is the next ceiling. Fix is artwork-on-demand (drop
+  in-memory `artworkCache.current`, lazy-fetch from IDB per
+  visible row) — separate session, deliberately deferred.
+- **Very long single tracks.** `decodeAudioData` always decodes
+  the full compressed file before we can truncate. An 8-min
+  48 kHz stereo song peaks at ~184 MB transient during the
+  decode→downsample step. Serial processing means peak memory
+  is bounded by the longest single track, not the library size.
+  1-hour DJ mixes would still peak at ~750 MB. Acceptable trade
+  given the user library composition (5–8 min EDM tracks).
+  WebCodecs `AudioDecoder` would unlock partial decode if this
+  ever becomes a real constraint.
+
+> **May 25 end-of-session tip: c1f68c2. Analysis-path memory fix
+> shipped to production. Next sessions: live verification at
+> 100+ tracks, then storage bug (Session 2), then artwork-on-
+> demand (separate session) if 5000-track resident becomes a
+> real constraint.**
