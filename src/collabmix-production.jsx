@@ -5409,6 +5409,19 @@ export default function CollabMix({ initialPage = "landing", djName = null }) {
   // evictable tier and their data could be wiped under disk pressure.
   const [storagePersistence, setStoragePersistence] = useState(null); // null|"persisted"|"denied"|"unsupported"
   const [migrationResult, setMigrationResult] = useState(null); // null|{migrated,orphaned,total,skipped}
+  const [persistenceBannerDismissed, setPersistenceBannerDismissed] = useState(() => {
+    try { return localStorage.getItem("cm_storage_banner_dismissed") === "1"; } catch { return false; }
+  });
+  // Auto-dismiss the upgrade toast 6s after migration completes.
+  useEffect(() => {
+    if (!migrationResult) return;
+    const t = setTimeout(() => setMigrationResult(null), 6000);
+    return () => clearTimeout(t);
+  }, [migrationResult]);
+  const dismissPersistenceBanner = () => {
+    try { localStorage.setItem("cm_storage_banner_dismissed", "1"); } catch {}
+    setPersistenceBannerDismissed(true);
+  };
   useEffect(() => {
     let alive = true;
     ensurePersistentStorage().then(state => {
@@ -6855,9 +6868,31 @@ export default function CollabMix({ initialPage = "landing", djName = null }) {
         @keyframes spin{to{transform:rotate(360deg)}}
         @keyframes playPulse{0%,100%{transform:scale(1)}50%{transform:scale(1.05)}}
         @keyframes playPulseHalo{0%{transform:scale(1);opacity:0.9}100%{transform:scale(1.25);opacity:0}}
+        @keyframes cmToastIn{0%{opacity:0;transform:translateY(8px)}100%{opacity:1;transform:translateY(0)}}
         *{box-sizing:border-box}
         ::-webkit-scrollbar{width:3px}::-webkit-scrollbar-track{background:#0A0B0E}::-webkit-scrollbar-thumb{background:#3A3D44;border-radius:2px}
       `}</style>
+
+      {/* Storage banner — non-blocking, dismissible. Appears only when the
+          browser denies persist() (Safari, private mode) or the API is
+          unsupported. Tells the user to use the Export button as backup. */}
+      {!persistenceBannerDismissed && (storagePersistence === "denied" || storagePersistence === "unsupported") && (
+        <div style={{ background:"rgba(255,255,255,0.04)", borderBottom:"1px solid rgba(255,255,255,0.08)", padding:"6px 18px", display:"flex", alignItems:"center", gap:12, fontSize:10, fontFamily:"'Inter',sans-serif", color:"rgba(255,255,255,0.6)", flexShrink:0 }}>
+          <span style={{ flex:1, letterSpacing:0.3 }}>Persistent storage unavailable in this browser. Use Export Library to back up.</span>
+          <button onClick={dismissPersistenceBanner} style={{ background:"transparent", border:"none", color:"rgba(255,255,255,0.4)", fontSize:11, cursor:"pointer", padding:"2px 6px", transition:"color 150ms cubic-bezier(0.4, 0, 0.2, 1)" }} onMouseEnter={e=>e.currentTarget.style.color="rgba(255,255,255,0.9)"} onMouseLeave={e=>e.currentTarget.style.color="rgba(255,255,255,0.4)"}>×</button>
+        </div>
+      )}
+
+      {/* Upgrade toast — subtle, auto-dismisses after 6s. Shown once per
+          origin on the first launch after the May-25 storage migration. */}
+      {migrationResult && (
+        <div style={{ position:"fixed", bottom:24, left:"50%", transform:"translateX(-50%)", background:"rgba(20,20,24,0.95)", border:"1px solid rgba(255,255,255,0.12)", borderRadius:6, padding:"8px 16px", fontSize:10, fontFamily:"'Inter',sans-serif", color:"rgba(255,255,255,0.9)", letterSpacing:0.3, zIndex:9999, animation:"cmToastIn 150ms cubic-bezier(0.4, 0, 0.2, 1)", boxShadow:"0 12px 32px rgba(0,0,0,0.6)" }}>
+          Library upgraded — tracks now permanently saved
+          {migrationResult.orphaned > 0 && (
+            <span style={{ marginLeft:8, color:"rgba(255,255,255,0.5)" }}>· {migrationResult.orphaned} need reconnect</span>
+          )}
+        </div>
+      )}
       <link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:wght@600;700&family=DM+Sans:wght@300;400;500&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet"/>
 
       {/* TOP BAR — matches App.jsx nav */}
