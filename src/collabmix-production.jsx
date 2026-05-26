@@ -4341,6 +4341,49 @@ function Knob({ v, set, min=-12, max=12, ctr=0, label, color="#9CA3AF", size=38,
 // ── Deck ─────────────────────────────────────────────────────
 const HOT_CUE_COLORS=["#9CA3AF","#ef4444","#22c55e","#f59e0b"];
 
+// Snap-to-transient — find the loudest sample within ±50 ms of the target
+// time and return its position in seconds. Falls back to the raw target when
+// no clear transient exists (peakAbs < 2 × meanAbs of the window). Matches
+// the Rekordbox/Serato/Traktor "drop the playhead roughly, app snaps to the
+// kick" pattern. Pure function; safe to call on the live AudioBuffer because
+// it only reads channel data, never writes.
+//
+// Returns { position, snapped, peakAbs, meanAbs, ratio } so the caller can
+// log which path fired. Defaults tuned for kick-drum detection: 50 ms is
+// ~10% of beat period at 120 BPM, wide enough to forgive imprecise dropping
+// but narrow enough to avoid bleeding into the next beat.
+const GRID_SNAP_WINDOW_SEC = 0.050;
+const GRID_SNAP_THRESHOLD = 2.0;
+function snapToTransient(buf, targetSec) {
+  const target = targetSec;
+  if (!buf) return { position: target, snapped: false, reason: "no-buffer" };
+  const sr = buf.sampleRate;
+  const totalSamples = buf.length;
+  const targetSample = Math.round(target * sr);
+  const halfWindow = Math.round(GRID_SNAP_WINDOW_SEC * sr);
+  const start = Math.max(0, targetSample - halfWindow);
+  const end   = Math.min(totalSamples, targetSample + halfWindow);
+  if (end - start < 2) return { position: target, snapped: false, reason: "window-too-small" };
+  const chans = buf.numberOfChannels;
+  const ch0 = buf.getChannelData(0);
+  const ch1 = chans > 1 ? buf.getChannelData(1) : null;
+  let peakAbs = 0;
+  let peakIdx = targetSample;
+  let sumAbs = 0;
+  for (let i = start; i < end; i++) {
+    const v = ch1 ? (ch0[i] + ch1[i]) * 0.5 : ch0[i];
+    const a = v < 0 ? -v : v;
+    sumAbs += a;
+    if (a > peakAbs) { peakAbs = a; peakIdx = i; }
+  }
+  const meanAbs = sumAbs / (end - start);
+  const ratio = meanAbs > 0 ? peakAbs / meanAbs : 0;
+  if (ratio < GRID_SNAP_THRESHOLD) {
+    return { position: target, snapped: false, reason: "no-clear-transient", peakAbs, meanAbs, ratio };
+  }
+  return { position: peakIdx / sr, snapped: true, peakAbs, meanAbs, ratio };
+}
+
 function Deck({ id, ch, ctx:ac, color, local, remote, onChange, midi:mt, bpmResult, bpmAnalyze, eqHi=0, eqMid=0, eqLo=0, chanVol=1, loadFromLibrary=null, onTrackInfo=null, onSync=null, syncReady=true, syncRole=null, isMaster=false, onMasterToggle=null, onLibraryTrackDrop=null, onProgUpdate=null, onWaveform=null, onSeekReady=null, remoteSeek=null, onToggleReady=null, onCueReady=null, remoteToggle=null, remoteCue=null, onTransportFire=null, isDriver=true, onNudgeReady=null, acNowRef=null, onBufferReady=null, barOneOffsetSec=0, onGridEdit=null }) {
   const [buf,setBuf]=useState(null),[name,setName]=useState(null),[play,setPlay]=useState(false);
   const [prog,setProg]=useState(0),[dur,setDur]=useState(0);
@@ -5064,8 +5107,22 @@ function Deck({ id, ch, ctx:ac, color, local, remote, onChange, midi:mt, bpmResu
             <button
               onClick={() => {
                 if (!canEdit) return;
-                const playhead = (progRef.current ?? prog ?? 0) * (dur || 0);
-                if (dur > 0) onGridEdit({ gridAnchorSec: Math.max(0, Math.min(dur, playhead)) });
+                if (!(dur > 0)) return;
+                const playhead = (progRef.current ?? prog ?? 0) * dur;
+                const clamped = Math.max(0, Math.min(dur, playhead));
+                const result = snapToTransient(buf, clamped);
+                console.log('[GRID-SNAP]', {
+                  deck: id,
+                  path: result.snapped ? "snapped" : "raw",
+                  raw: clamped.toFixed(4),
+                  position: result.position.toFixed(4),
+                  delta_ms: Math.round((result.position - clamped) * 1000),
+                  peakAbs: result.peakAbs?.toFixed(4),
+                  meanAbs: result.meanAbs?.toFixed(4),
+                  ratio: result.ratio?.toFixed(2),
+                  reason: result.reason,
+                });
+                onGridEdit({ gridAnchorSec: result.position });
               }}
               disabled={!canEdit}
               title={canEdit ? "Set beat 1 at playhead" : "Load a track to edit the grid"}
