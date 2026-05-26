@@ -596,12 +596,24 @@ function TrackRow({ track, selected, onClick, onAddToCrate, crates, onPlay, onSe
         )}
       </div>
 
-      {/* Artwork — click to preview */}
+      {/* Artwork — click to preview. Square via aspect-ratio (belt-and-
+          suspenders to width/height). object-fit:cover keeps any aspect ratio
+          source centered without distortion. onError → null falls back to
+          the music-note SVG so a broken data URL never shows the browser's
+          broken-image glyph. loading="lazy" defers off-screen rows. */}
       <div
         onClick={e=>{ e.stopPropagation(); if (!track.cloudOnly && onPreview) onPreview(track); }}
         title={track.cloudOnly ? undefined : isPreviewing ? "Click to stop preview" : "Click to preview"}
-        style={{ width:34, height:34, borderRadius:6, flexShrink:0, background: artworkUrl?"#000":`linear-gradient(135deg,${ac},${ac2})`, display:"flex", alignItems:"center", justifyContent:"center", fontSize:13, fontWeight:700, color:"#fff", fontFamily:"'DM Sans',sans-serif", boxShadow:`0 2px 8px ${ac}44`, userSelect:"none", position:"relative", overflow:"hidden", cursor:track.cloudOnly?"default":"pointer", outline:isPreviewing?`2px solid ${G}`:"none", transition:"outline .1s" }}>
-        {artworkUrl ? <img src={artworkUrl} alt="" style={{ width:"100%", height:"100%", objectFit:"cover", display:"block" }} onError={()=>setArtworkUrl(null)}/> : initial}
+        style={{ width:34, height:34, aspectRatio:"1 / 1", borderRadius:6, flexShrink:0, background: artworkUrl?"#000":"rgba(255,255,255,0.04)", display:"flex", alignItems:"center", justifyContent:"center", userSelect:"none", position:"relative", overflow:"hidden", cursor:track.cloudOnly?"default":"pointer", outline:isPreviewing?`2px solid ${G}`:"none", transition:"outline 150ms cubic-bezier(0.4, 0, 0.2, 1)" }}>
+        {artworkUrl ? (
+          <img src={artworkUrl} alt="" loading="lazy" draggable={false} style={{ width:"100%", height:"100%", objectFit:"cover", display:"block" }} onError={()=>setArtworkUrl(null)}/>
+        ) : (
+          <svg width={14} height={14} viewBox="0 0 16 16" fill="none" aria-hidden="true">
+            <path d="M6 12V3l7-1v8" stroke="rgba(255,255,255,0.3)" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round"/>
+            <ellipse cx="4.5" cy="12" rx="1.7" ry="1.4" stroke="rgba(255,255,255,0.3)" strokeWidth="1.2" fill="none"/>
+            <ellipse cx="11.5" cy="10" rx="1.7" ry="1.4" stroke="rgba(255,255,255,0.3)" strokeWidth="1.2" fill="none"/>
+          </svg>
+        )}
         {isPreviewing && (
           <div style={{ position:"absolute", inset:0, background:"rgba(0,0,0,.5)", display:"flex", alignItems:"center", justifyContent:"center" }}>
             <span style={{ fontSize:13, animation:"pulse 1s ease-in-out infinite" }}>⏸</span>

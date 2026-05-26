@@ -1033,6 +1033,68 @@ function useLibrary(){
 const SES_AVATAR_COLORS=[["#8B5CF6","#6D28D9"],["#9CA3AF","#A07840"],["#9CA3AF","#0099bb"],["#22c55e","#16a34a"],["#f59e0b","#d97706"],["#ef4444","#dc2626"],["#ec4899","#db2777"],["#14b8a6","#0d9488"]];
 function sesAvatarColor(str=""){let h=0;for(let i=0;i<str.length;i++)h=(h<<5)-h+str.charCodeAt(i);return SES_AVATAR_COLORS[Math.abs(h)%SES_AVATAR_COLORS.length];}
 
+// Single source of truth for album-art rendering across the mixer. Replaces
+// five previous inline render sites that drifted in three ways:
+//   - <img> sites had no onError, so a broken data URL rendered as the
+//     browser's broken-image icon (Session 2.5 "no art shows broken state").
+//   - Some sites used backgroundImage on a div without backgroundSize:cover
+//     (queue/suggestions), which rendered the source at intrinsic size and
+//     clipped from the top-left ("only half the picture").
+//   - Fallback styling was inconsistent (letter initials, "♪" glyph, deck-
+//     color gradient) and none matched the Quiet Pro Tool palette.
+//
+// AlbumArt enforces: square via CSS aspect-ratio 1/1 (belt-and-suspenders to
+// width/height), object-fit cover, loading="lazy" so off-screen library rows
+// don't decode at mount, single subtle music-note SVG fallback on the spec's
+// rgba(255,255,255,0.04) background, onError → fallback so broken sources
+// degrade gracefully instead of showing the browser glyph.
+function AlbumArt({ src, size = 36, radius = 4, alt = "", isActive = false, onClick, title, style = {}, children }) {
+  const [errored, setErrored] = useState(false);
+  // Reset error state if the src changes (e.g. after Reconnect folder)
+  useEffect(() => { setErrored(false); }, [src]);
+  const showImg = !!src && !errored;
+  const iconSize = Math.max(10, Math.round(size * 0.42));
+  return (
+    <div
+      onClick={onClick}
+      title={title}
+      style={{
+        width: size, height: size,
+        aspectRatio: "1 / 1",
+        borderRadius: radius,
+        flexShrink: 0,
+        overflow: "hidden",
+        position: "relative",
+        background: showImg ? "#000" : "rgba(255,255,255,0.04)",
+        display: "flex", alignItems: "center", justifyContent: "center",
+        outline: isActive ? "2px solid rgba(255,255,255,0.9)" : "none",
+        transition: "outline 150ms cubic-bezier(0.4, 0, 0.2, 1)",
+        cursor: onClick ? "pointer" : "default",
+        userSelect: "none",
+        ...style,
+      }}
+    >
+      {showImg ? (
+        <img
+          src={src}
+          alt={alt}
+          loading="lazy"
+          draggable={false}
+          onError={() => setErrored(true)}
+          style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }}
+        />
+      ) : (
+        <svg width={iconSize} height={iconSize} viewBox="0 0 16 16" fill="none" aria-hidden="true">
+          <path d="M6 12V3l7-1v8" stroke="rgba(255,255,255,0.3)" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round"/>
+          <ellipse cx="4.5" cy="12" rx="1.7" ry="1.4" stroke="rgba(255,255,255,0.3)" strokeWidth="1.2" fill="none"/>
+          <ellipse cx="11.5" cy="10" rx="1.7" ry="1.4" stroke="rgba(255,255,255,0.3)" strokeWidth="1.2" fill="none"/>
+        </svg>
+      )}
+      {children}
+    </div>
+  );
+}
+
 function TrackRow({track, onLoadA, onLoadB, isRec, reasons, canLoad, previewTrackId, onPreview, onDelete, onRemoveFromPlaylist, onReanalyze, onDragStart, extractArtwork}){
   const [hov,setHov]=useState(false);
   const [showDeckMenu,setShowDeckMenu]=useState(false);
@@ -1121,12 +1183,18 @@ function TrackRow({track, onLoadA, onLoadB, isRec, reasons, canLoad, previewTrac
       </div>
 
       {/* Artwork — click to preview */}
-      <div onClick={e=>{e.stopPropagation();if(onPreview)onPreview(track);}} title={isPreviewing?"Stop preview":"Preview"}
-        style={{width:36,height:36,borderRadius:4,flexShrink:0,background:(artworkSrc||track.artwork)?"#000":"#1F2126",display:"flex",alignItems:"center",justifyContent:"center",fontSize:14,fontWeight:700,color:eColor,fontFamily:"'Inter',sans-serif",userSelect:"none",position:"relative",overflow:"hidden",cursor:"pointer",outline:isPreviewing?`2px solid ${G}`:"none",transition:"outline .1s"}}>
-        {(artworkSrc||track.artwork)?<img src={artworkSrc||track.artwork} alt="" style={{width:"100%",height:"100%",objectFit:"cover",position:"absolute",inset:0}}/>:<span style={{position:"relative",zIndex:1}}>{initial}</span>}
+      <AlbumArt
+        src={artworkSrc||track.artwork}
+        size={36}
+        radius={4}
+        alt={track.title||track.filename||""}
+        isActive={isPreviewing}
+        onClick={e=>{e.stopPropagation();if(onPreview)onPreview(track);}}
+        title={isPreviewing?"Stop preview":"Preview"}
+      >
         {isPreviewing&&<div style={{position:"absolute",inset:0,background:"rgba(0,0,0,.6)",display:"flex",alignItems:"center",justifyContent:"center",zIndex:2}}><span style={{fontSize:11}}>⏸</span></div>}
         {!isPreviewing&&hov&&<div style={{position:"absolute",inset:0,background:"rgba(0,0,0,.45)",display:"flex",alignItems:"center",justifyContent:"center",zIndex:2}}><span style={{fontSize:10,color:"#fff"}}>▶</span></div>}
-      </div>
+      </AlbumArt>
 
       {/* Title + artist + label */}
       <div style={{overflow:"hidden",minWidth:0}}>
@@ -1840,11 +1908,12 @@ function LibraryPanelV2({ lib, onLoad, playingTrack, deckATrackId:deckATrackIdPr
                     onMouseEnter={e => e.currentTarget.style.background = BG2}
                     onMouseLeave={e => e.currentTarget.style.background = "transparent"}
                     style={{ display: "flex", alignItems: "center", gap: 8, padding: "5px 8px", cursor: "pointer", borderRadius: 3 }}>
-                    <div style={{ width: 26, height: 26, background: BG3, borderRadius: 2, flexShrink: 0,
-                      backgroundImage: (lib.artworkCache?.[t.id] || t.artwork) ? `url(${lib.artworkCache?.[t.id] || t.artwork})` : undefined,
-                      backgroundSize: "cover", backgroundPosition: "center",
-                      display: "flex", alignItems: "center", justifyContent: "center", fontSize: 10, color: MUTED,
-                    }}>{!(lib.artworkCache?.[t.id] || t.artwork) && "♪"}</div>
+                    <AlbumArt
+                      src={lib.artworkCache?.[t.id] || t.artwork}
+                      size={26}
+                      radius={2}
+                      alt={t.title||""}
+                    />
                     <div style={{ flex: 1, minWidth: 0 }}>
                       <div style={{ fontSize: 11, color: TEXT, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{t.title}</div>
                       <div style={{ fontSize: 10, color: SUBTLE, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{t.artist}</div>
@@ -1959,12 +2028,12 @@ function LibraryPanelV2({ lib, onLoad, playingTrack, deckATrackId:deckATrackIdPr
                   display: "flex", alignItems: "center", gap: 10, padding: "8px 10px",
                   cursor: "pointer", borderRadius: 4, marginBottom: 2,
                 }}>
-                <div style={{
-                  width: 36, height: 36, background: BG3, borderRadius: 3, flexShrink: 0,
-                  backgroundImage: artwork ? `url(${artwork})` : undefined,
-                  backgroundSize: "cover", backgroundPosition: "center",
-                  display: "flex", alignItems: "center", justifyContent: "center",
-                }}>{!artwork && <span style={{ fontSize: 11, color: MUTED }}>♪</span>}</div>
+                <AlbumArt
+                  src={artwork}
+                  size={36}
+                  radius={3}
+                  alt={t.title||""}
+                />
                 <div style={{ flex: 1, minWidth: 0 }}>
                   <div style={{ fontSize: 12, color: TEXT, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", fontWeight: 500 }}>{t.title}</div>
                   <div style={{ fontSize: 10, color: SUBTLE, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{t.artist}</div>
@@ -2622,11 +2691,7 @@ function LibraryPanel({lib, onLoad, playingTrack, previewTrackId, onPreview, onD
                 onMouseLeave={e=>e.currentTarget.style.background="transparent"}>
                 <div style={{display:"flex",gap:7,alignItems:"center"}}>
                   {/* mini artwork */}
-                  {(()=>{const[ac,ac2]=sesAvatarColor(track.artist||track.title||"");const init=(track.artist||track.title||"?")[0].toUpperCase();return(
-                    <div style={{width:26,height:26,borderRadius:4,flexShrink:0,background:track.artwork?`#000`:`linear-gradient(135deg,${ac},${ac2})`,display:"flex",alignItems:"center",justifyContent:"center",fontSize:10,fontWeight:700,color:"#fff",position:"relative",overflow:"hidden"}}>
-                      {track.artwork?<img src={track.artwork} alt="" style={{width:"100%",height:"100%",objectFit:"cover",position:"absolute",inset:0}}/>:<span>{init}</span>}
-                    </div>
-                  );})()}
+                  <AlbumArt src={track.artwork} size={26} radius={4} alt={track.title||""}/>
                   <div style={{flex:1,minWidth:0}}>
                     <div style={{fontSize:9,color:"#F5F5F7",fontFamily:"'Inter',sans-serif",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",fontWeight:500}}>{track.title||track.filename}</div>
                     <div style={{fontSize:8,color:"#9CA3AF",fontFamily:"'Inter',sans-serif",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{track.artist}</div>
@@ -2973,16 +3038,24 @@ function useMidi({ onAction }) {
 // letter — quietly confident, not loud. Crisp 4px corners per Quiet Pro
 // Tool philosophy ("no softer than that — pro tools have crisp edges").
 function DeckArt({ artwork, fallback, color }) {
+  // Local error state so a broken-URL data URL falls back to the deck-color
+  // letter glyph instead of showing the browser's broken-image icon. Reset
+  // whenever the source changes so a reconnect-or-import re-tries.
+  const [errored, setErrored] = useState(false);
+  useEffect(() => { setErrored(false); }, [artwork]);
+  const showImg = !!artwork && !errored;
   return (
     <div style={{
       width: 96, height: 96, flexShrink: 0,
+      aspectRatio: "1 / 1",
       borderRadius: 4, overflow: "hidden",
-      background: artwork ? "transparent" : `${color}1F`,  // 12% deck-color wash
+      background: showImg ? "transparent" : `${color}1F`,  // 12% deck-color wash
       border: "1px solid rgba(255,255,255,0.06)",
       display: "flex", alignItems: "center", justifyContent: "center",
     }}>
-      {artwork ? (
-        <img src={artwork} alt="" draggable={false}
+      {showImg ? (
+        <img src={artwork} alt="" draggable={false} loading="lazy"
+          onError={() => setErrored(true)}
           style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }}/>
       ) : (
         <span style={{
