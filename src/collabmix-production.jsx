@@ -2146,13 +2146,10 @@ function LibraryPanelV2({ lib, onLoad, playingTrack, deckATrackId:deckATrackIdPr
                 </div>
                 <div onClick={() => { onLoad(t, "A"); setRowCtxMenu(null); }} onMouseEnter={onHover} onMouseLeave={onLeave} style={itemStyle}>Load to Deck A</div>
                 <div onClick={() => { onLoad(t, "B"); setRowCtxMenu(null); }} onMouseEnter={onHover} onMouseLeave={onLeave} style={itemStyle}>Load to Deck B</div>
-                <div style={{ height: 1, background: "rgba(255,255,255,0.06)", margin: "4px 0" }}/>
-                {lib.reanalyze && (
-                  <div onClick={() => { lib.reanalyze(t.id); setRowCtxMenu(null); }} onMouseEnter={onHover} onMouseLeave={onLeave} style={itemStyle}>↻ Re-analyze</div>
-                )}
-                {lib.reExtractArtwork && (
-                  <div onClick={() => { lib.reExtractArtwork(t.id); setRowCtxMenu(null); }} onMouseEnter={onHover} onMouseLeave={onLeave} style={itemStyle}>↻ Re-extract artwork</div>
-                )}
+                {/* Re-analyze and Re-extract artwork items removed — auto-
+                    maintenance handles both cases on app mount + on import.
+                    lib.reanalyze and lib.reExtractArtwork remain callable
+                    internally for developer use via the console. */}
                 {onDelete && (
                   <>
                     <div style={{ height: 1, background: "rgba(255,255,255,0.06)", margin: "4px 0" }}/>
