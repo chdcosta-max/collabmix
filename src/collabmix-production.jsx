@@ -1404,6 +1404,26 @@ function LibraryPanelV2({ lib, onLoad, playingTrack, deckATrackId:deckATrackIdPr
   // currently loaded (A takes priority if both are loaded).
   const [showSuggestions, setShowSuggestions] = useState(false);
 
+  // Per-row right-click context menu. {trackId, x, y} when open, null when closed.
+  // Lives at the panel level so only one menu is open at a time. Track rows below
+  // call onContextMenu to populate it; menu closes on outside click or item select.
+  const [rowCtxMenu, setRowCtxMenu] = useState(null);
+  useEffect(() => {
+    if (!rowCtxMenu) return;
+    const close = () => setRowCtxMenu(null);
+    window.addEventListener("click", close);
+    window.addEventListener("scroll", close, true);
+    window.addEventListener("contextmenu", (e) => {
+      // Allow opening a different row's menu without flicker — but close if
+      // the right-click landed outside any track row.
+      if (!e.target.closest?.("[data-track-row]")) setRowCtxMenu(null);
+    });
+    return () => {
+      window.removeEventListener("click", close);
+      window.removeEventListener("scroll", close, true);
+    };
+  }, [rowCtxMenu]);
+
   // (Removed hoveredRowId — A/B chips are now always-visible on the left of
   // each row instead of hover-revealed. Hover-reveal hid the load-to-B path
   // for users who didn't move the mouse over the row.)
@@ -1792,6 +1812,45 @@ function LibraryPanelV2({ lib, onLoad, playingTrack, deckATrackId:deckATrackIdPr
               }}>
               <span style={{ fontSize: 12 }}>✦</span> SUGGESTIONS
             </button>
+            {/* SCAN ARTWORK — bulk re-extracts artwork for tracks that are
+                missing it or were produced by an older parser (artworkVersion
+                < 2, i.e. pre-May-26). Disabled while another bulk op runs. */}
+            <button
+              onClick={() => lib.scanArtwork?.()}
+              disabled={lib.analyzing}
+              title="Scan artwork — re-extract missing or outdated thumbnails from source files"
+              style={{
+                padding: "4px 10px", height: 22,
+                background: "transparent",
+                border: `1px solid ${BORDER}`,
+                color: lib.analyzing ? MUTED : SUBTLE,
+                borderRadius: 4, cursor: lib.analyzing ? "wait" : "pointer",
+                fontFamily: "'Inter',sans-serif", fontSize: 10, letterSpacing: 1, outline: "none",
+                display: "flex", alignItems: "center", gap: 5,
+                opacity: lib.analyzing ? 0.5 : 1,
+                transition: "border-color 150ms cubic-bezier(0.4, 0, 0.2, 1), color 150ms cubic-bezier(0.4, 0, 0.2, 1)",
+              }}>
+              <span style={{ fontSize: 11 }}>♪</span> SCAN ARTWORK
+            </button>
+            {/* ANALYZE LIBRARY — bulk BPM/key/energy for unanalyzed tracks.
+                Powered by the streaming serial analyzer from Session 1. */}
+            <button
+              onClick={() => lib.analyzeAll?.(lib.getFile)}
+              disabled={lib.analyzing}
+              title={lib.analyzing ? "Analyzing…" : "Analyze library — BPM, key, energy"}
+              style={{
+                padding: "4px 10px", height: 22,
+                background: lib.analyzing ? "rgba(255,255,255,0.04)" : "transparent",
+                border: `1px solid ${BORDER}`,
+                color: lib.analyzing ? TEXT : SUBTLE,
+                borderRadius: 4, cursor: lib.analyzing ? "wait" : "pointer",
+                fontFamily: "'Inter',sans-serif", fontSize: 10, letterSpacing: 1, outline: "none",
+                display: "flex", alignItems: "center", gap: 5,
+                transition: "border-color 150ms cubic-bezier(0.4, 0, 0.2, 1), color 150ms cubic-bezier(0.4, 0, 0.2, 1)",
+              }}>
+              <span style={{ fontSize: 11 }}>⌁</span>
+              {lib.analyzing ? "ANALYZING…" : "ANALYZE LIBRARY"}
+            </button>
             {/* Rekordbox library connect pill — shown beside SUGGESTIONS. */}
             {onConnectRekordbox && (
               <button
@@ -1892,7 +1951,19 @@ function LibraryPanelV2({ lib, onLoad, playingTrack, deckATrackId:deckATrackIdPr
             const deckClr = onDeckA ? DECK_A_CLR : onDeckB ? DECK_B_CLR : null;
             const baseBg = deckClr ? `${deckClr}12` : "transparent";
             return (
-              <div key={t.id} onClick={() => { console.log('[ROW-CLICK]',{id:t.id,title:t.title,artist:t.artist}); onLoad(t, "A"); }}
+              <div key={t.id}
+                data-track-row={t.id}
+                onClick={() => { console.log('[ROW-CLICK]',{id:t.id,title:t.title,artist:t.artist}); onLoad(t, "A"); }}
+                onContextMenu={(e) => {
+                  // Position menu at the click point, clamped so it doesn't
+                  // overflow the viewport for rows near the bottom edge.
+                  e.preventDefault();
+                  e.stopPropagation();
+                  const MENU_W = 220, MENU_H = 220;
+                  const x = Math.min(e.clientX, window.innerWidth - MENU_W - 8);
+                  const y = Math.min(e.clientY, window.innerHeight - MENU_H - 8);
+                  setRowCtxMenu({ trackId: t.id, x, y });
+                }}
                 onMouseEnter={e => { e.currentTarget.style.background = deckClr ? `${deckClr}22` : "rgba(255,255,255,0.04)"; }}
                 onMouseLeave={e => { e.currentTarget.style.background = baseBg; }}
                 style={{
@@ -1964,6 +2035,61 @@ function LibraryPanelV2({ lib, onLoad, playingTrack, deckATrackId:deckATrackIdPr
               </div>
             );
           })}
+
+          {/* Track row context menu — single instance for the whole panel,
+              positioned at the right-click point. Closes on outside click via
+              the rowCtxMenu effect above. Items render conditionally — Re-
+              analyze only when lib.reanalyze is exposed (it is, since Session
+              1), Re-extract artwork when lib.reExtractArtwork is exposed
+              (Session 2.6). Quiet Pro Tool styling: rgba-white panel, single
+              accent tier, no decoration. */}
+          {rowCtxMenu && (() => {
+            const t = allTracks.find(x => x.id === rowCtxMenu.trackId);
+            if (!t) return null;
+            const itemStyle = {
+              padding: "8px 14px", fontSize: 11, fontFamily: "'Inter',sans-serif",
+              color: "rgba(255,255,255,0.6)", cursor: "pointer", background: "transparent",
+              transition: "background-color 150ms cubic-bezier(0.4, 0, 0.2, 1), color 150ms cubic-bezier(0.4, 0, 0.2, 1)",
+            };
+            const onHover = (e) => { e.currentTarget.style.background = "rgba(255,255,255,0.04)"; e.currentTarget.style.color = "rgba(255,255,255,0.9)"; };
+            const onLeave = (e) => { e.currentTarget.style.background = "transparent"; e.currentTarget.style.color = "rgba(255,255,255,0.6)"; };
+            const dangerHover = (e) => { e.currentTarget.style.background = "rgba(239,68,68,0.08)"; e.currentTarget.style.color = "#ef4444"; };
+            const dangerLeave = (e) => { e.currentTarget.style.background = "transparent"; e.currentTarget.style.color = "rgba(239,68,68,0.7)"; };
+            return (
+              <div
+                onClick={(e) => e.stopPropagation()}
+                onMouseDown={(e) => e.stopPropagation()}
+                onContextMenu={(e) => e.preventDefault()}
+                style={{
+                  position: "fixed", left: rowCtxMenu.x, top: rowCtxMenu.y,
+                  zIndex: 9999, minWidth: 220,
+                  background: "rgba(20,20,24,0.96)",
+                  border: "1px solid rgba(255,255,255,0.08)",
+                  borderRadius: 6, padding: "4px 0",
+                  boxShadow: "0 12px 32px rgba(0,0,0,0.7)",
+                  backdropFilter: "blur(8px)",
+                }}>
+                <div style={{ padding: "4px 14px 6px", fontSize: 9, color: MUTED, letterSpacing: 1, fontFamily: "'Inter',sans-serif", borderBottom: "1px solid rgba(255,255,255,0.06)", marginBottom: 4 }}>
+                  {(t.title || t.filename || "Track").slice(0, 28)}
+                </div>
+                <div onClick={() => { onLoad(t, "A"); setRowCtxMenu(null); }} onMouseEnter={onHover} onMouseLeave={onLeave} style={itemStyle}>Load to Deck A</div>
+                <div onClick={() => { onLoad(t, "B"); setRowCtxMenu(null); }} onMouseEnter={onHover} onMouseLeave={onLeave} style={itemStyle}>Load to Deck B</div>
+                <div style={{ height: 1, background: "rgba(255,255,255,0.06)", margin: "4px 0" }}/>
+                {lib.reanalyze && (
+                  <div onClick={() => { lib.reanalyze(t.id); setRowCtxMenu(null); }} onMouseEnter={onHover} onMouseLeave={onLeave} style={itemStyle}>↻ Re-analyze</div>
+                )}
+                {lib.reExtractArtwork && (
+                  <div onClick={() => { lib.reExtractArtwork(t.id); setRowCtxMenu(null); }} onMouseEnter={onHover} onMouseLeave={onLeave} style={itemStyle}>↻ Re-extract artwork</div>
+                )}
+                {onDelete && (
+                  <>
+                    <div style={{ height: 1, background: "rgba(255,255,255,0.06)", margin: "4px 0" }}/>
+                    <div onClick={() => { onDelete(t.id); setRowCtxMenu(null); }} onMouseEnter={dangerHover} onMouseLeave={dangerLeave} style={{ ...itemStyle, color: "rgba(239,68,68,0.7)" }}>Remove from Library</div>
+                  </>
+                )}
+              </div>
+            );
+          })()}
         </div>
       </div>
 
