@@ -960,6 +960,59 @@ function useLibrary(){
   // are intentionally NOT set: re-analyze means we want fresh BPM/key, not
   // to re-use whatever ID3 had. Recovery path for tracks analyzed under the
   // pre-May 25 full-rate pipeline or with bad ID3-supplied values.
+  // Export tracks + crates + queue as a JSON file. Audio bytes are NOT
+  // exported (too large for a portable backup). Artwork data URLs ARE
+  // included since they're already compressed (~10–20 KB / track) and
+  // restoring artwork is the user-visible surface that distinguishes a
+  // recovered library from a re-import. Safety net for users where
+  // navigator.storage.persist() is denied (Safari, private mode, embedded
+  // browsers) or who want a portable backup before a major OS / browser change.
+  const exportLibrary=useCallback(async()=>{
+    const [tracks,crates,queue]=await Promise.all([
+      cmDbAll("tracks"),cmDbAll("crates"),cmDbAll("queue"),
+    ]);
+    const payload={
+      schemaVersion:1,
+      exportedAt:Date.now(),
+      appName:"mix-sync",
+      counts:{tracks:tracks.length,crates:crates.length,queue:queue.length},
+      tracks,crates,queue,
+    };
+    const blob=new Blob([JSON.stringify(payload)],{type:"application/json"});
+    const url=URL.createObjectURL(blob);
+    const a=document.createElement("a");
+    a.href=url;
+    a.download=`mixsync-library-${new Date().toISOString().slice(0,10)}.json`;
+    document.body.appendChild(a);a.click();document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+    return {tracks:tracks.length,crates:crates.length,queue:queue.length};
+  },[]);
+
+  // Import a previously exported library JSON. Dedupes by track id. Crates
+  // and queue are merged additively. Audio for newly-restored tracks must be
+  // reconnected via the existing "Reconnect music folder" flow — the JSON
+  // contains metadata only.
+  const importLibraryJson=useCallback(async(file)=>{
+    let payload;
+    try{payload=JSON.parse(await file.text());}
+    catch{return {error:"invalid-json"};}
+    if(!payload||payload.appName!=="mix-sync"||payload.schemaVersion!==1){
+      return {error:"unrecognized-format"};
+    }
+    const existing=await cmDbAll("tracks");
+    const existingIds=new Set(existing.map(t=>t.id));
+    let imported=0,skipped=0;
+    for(const t of payload.tracks||[]){
+      if(existingIds.has(t.id)){skipped++;continue;}
+      try{await cmDbPut("tracks",t);imported++;}catch{}
+    }
+    for(const c of payload.crates||[]){
+      try{await cmDbPut("crates",c);}catch{}
+    }
+    await reload();
+    return {imported,skipped,crates:(payload.crates||[]).length};
+  },[reload]);
+
   const reanalyze=useCallback(async(id)=>{
     const t=library.find(x=>x.id===id);
     if(!t)return;
@@ -971,7 +1024,7 @@ function useLibrary(){
     processQ();
   },[library,processQ]);
 
-  return{library,queue,crates,importing,importFiles,importFromPicker,previewImport,commitImport,queueAnalysis,reanalyze,getFile,clear,reload,setLibrary,fileMap,setFile,removeFile,analyzing,analyzeAll,extractArtworkForTrack,artworkCache,reconnectFromFolder,scanArtwork};
+  return{library,queue,crates,importing,importFiles,importFromPicker,previewImport,commitImport,queueAnalysis,reanalyze,getFile,clear,reload,setLibrary,fileMap,setFile,removeFile,analyzing,analyzeAll,extractArtworkForTrack,artworkCache,reconnectFromFolder,scanArtwork,exportLibrary,importLibraryJson};
 }
 
 // ── Library Panel UI ──────────────────────────────────────────
@@ -2192,6 +2245,22 @@ function LibraryPanel({lib, onLoad, playingTrack, previewTrackId, onPreview, onD
               <path d="M5.5 8L7.5 10L10.5 6.5" stroke="#9CA3AF" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
             </svg>
           </button>
+          {/* EXPORT — JSON backup of tracks + crates + queue (no audio bytes) */}
+          <button title="Export library as JSON backup" onClick={async()=>{
+            try{const r=await lib.exportLibrary?.();console.log('[LIBRARY-EXPORT]',r);}catch(err){console.error('[LIBRARY-EXPORT-FAIL]',err);}
+          }} style={{background:"transparent",border:"1px solid rgba(255,255,255,0.18)",color:"rgba(255,255,255,0.6)",fontFamily:"'Inter',sans-serif",fontSize:8,letterSpacing:1,padding:"3px 6px",borderRadius:4,cursor:"pointer",transition:"border-color 150ms cubic-bezier(0.4, 0, 0.2, 1)"}} onMouseEnter={e=>e.currentTarget.style.borderColor="rgba(255,255,255,0.4)"} onMouseLeave={e=>e.currentTarget.style.borderColor="rgba(255,255,255,0.18)"}>Export</button>
+          {/* IMPORT JSON — restore from a previously exported backup */}
+          <label title="Import library from JSON backup" style={{background:"transparent",border:"1px solid rgba(255,255,255,0.18)",color:"rgba(255,255,255,0.6)",fontFamily:"'Inter',sans-serif",fontSize:8,letterSpacing:1,padding:"3px 6px",borderRadius:4,cursor:"pointer",transition:"border-color 150ms cubic-bezier(0.4, 0, 0.2, 1)"}} onMouseEnter={e=>e.currentTarget.style.borderColor="rgba(255,255,255,0.4)"} onMouseLeave={e=>e.currentTarget.style.borderColor="rgba(255,255,255,0.18)"}>
+            Import
+            <input type="file" accept="application/json,.json" style={{display:"none"}} onChange={async(e)=>{
+              const f=e.target.files?.[0];e.target.value="";
+              if(!f)return;
+              const r=await lib.importLibraryJson?.(f);
+              console.log('[LIBRARY-IMPORT-JSON]',r);
+              if(r?.error)alert(`Import failed: ${r.error}`);
+              else if(r)alert(`Imported ${r.imported} tracks (skipped ${r.skipped} duplicates). Reconnect your music folder to restore playback.`);
+            }}/>
+          </label>
           {/* SCAN ARTWORK — re-reads ID3 APIC for tracks missing artwork */}
           <button title="Re-scan ID3 artwork for tracks missing cover art" disabled={lib.analyzing} onClick={()=>lib.scanArtwork?.()} style={{background:"transparent",border:"1px solid #9CA3AF44",color:"#9CA3AF",fontFamily:"'Inter',sans-serif",fontSize:8,letterSpacing:1,padding:"3px 6px",borderRadius:4,cursor:lib.analyzing?"default":"pointer",opacity:lib.analyzing?0.4:1,transition:"opacity 0.2s, border-color 0.2s"}} onMouseEnter={e=>{if(!lib.analyzing)e.currentTarget.style.borderColor="#9CA3AF";}} onMouseLeave={e=>{e.currentTarget.style.borderColor="#9CA3AF44";}}>Scan artwork</button>
           <button title={lib.analyzing?"Analyzing...":"Analyze library"} onClick={()=>lib.analyzeAll?.(lib.getFile)} style={{background:"none",border:"none",cursor:"pointer",padding:"2px 3px",borderRadius:4,opacity:lib.analyzing?0.5:1,transition:"opacity 0.2s",display:"flex",alignItems:"center"}}>
