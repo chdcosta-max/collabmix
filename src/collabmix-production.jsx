@@ -461,9 +461,12 @@ function useLibrary(){
   const [importing,setImporting]=useState(false);
   const [analyzing,setAnalyzing]=useState(false);
   const workerRef=useRef(null),queueRef=useRef([]),activeRef=useRef(false),fileMap=useRef({});
+  const fileMapOrder=useRef([]); // LRU access order for fileMap eviction
   const audioCtx=useRef(null);
+  const audioCtxJobs=useRef(0); // # tracks decoded since last AudioContext recreate
   const artworkCache=useRef({}); // trackId → data URL, kept in memory
   const processQRef=useRef(null); // forward ref so startup effect can call processQ
+  const getFileRef=useRef(null);  // forward ref so processQ can lazily resolve a File by id
   const hasAutoQueued=useRef(false); // ensure startup analysis runs once
   // Fingerprints to skip setState when nothing actually changed (avoids RAF stutter)
   const libFingerprintRef=useRef('');
@@ -522,29 +525,115 @@ function useLibrary(){
         if(track) cmDbPut("tracks",track).catch(()=>{});
         return updated;
       });
-      activeRef.current=false; processQ();
+      activeRef.current=false;
+      scheduleNextAnalysis();
     };
     return()=>workerRef.current?.terminate();
   },[]);
 
+  // Yield to the event loop / GC between analysis items. Without this, the
+  // back-to-back decode→downsample→postMessage cycle gives the collector no
+  // room to reclaim transient PCM buffers on bulk passes; resident heap
+  // creeps upward across hundreds of tracks until the tab is killed.
+  const scheduleNextAnalysis=useCallback(()=>{
+    if(typeof requestIdleCallback==='function'){
+      requestIdleCallback(()=>processQRef.current?.(),{timeout:250});
+    }else{
+      setTimeout(()=>processQRef.current?.(),50);
+    }
+  },[]);
+
+  // Serial streaming analyzer.
+  // - Queue holds {id, skipBPM, skipKey} (and optionally an inline `file` from
+  //   queueAnalysis where the caller already has it in hand). The bulk path
+  //   (analyzeAll) pushes ID-only items so 5000 track libraries don't pin
+  //   5000 File references at once.
+  // - Audio is decoded on the main thread, then downmixed to mono and decimated
+  //   to 11025 Hz with a 60 s cap. The three worker analyzers (dbpm/dkey/
+  //   denergy) only need a fraction of the input: dbpm bandpasses to 100–400 Hz
+  //   (well below 5.5 kHz Nyquist), dkey reads ~2 s of FFT hops at chroma
+  //   fundamentals ≤880 Hz, denergy uses the first 30 s of RMS+ZCR. We send the
+  //   worker ≈2.6 MB instead of the ≈50 MB full-rate stereo PCM it used to get.
+  // - Intermediate buffers (compressed ArrayBuffer, full-rate AudioBuffer) are
+  //   nulled before the worker postMessage so they're GC-eligible while the
+  //   worker runs. The mono PCM ArrayBuffer is transferred (not cloned),
+  //   matching the deck BPM worker's pattern.
   const processQ=useCallback(()=>{
     if(activeRef.current||queueRef.current.length===0)return;
-    const{id,file,skipBPM,skipKey}=queueRef.current.shift();
+    const item=queueRef.current.shift();
+    const{id,skipBPM,skipKey}=item;
     activeRef.current=true;
     (async()=>{
+      let ab=null,buf=null,mono11k=null;
       try{
+        // Lazy file resolve: inline File if the caller already had one, else
+        // hit the live getFile (OPFS → IDB handle fallback) via forward ref.
+        const file=item.file||(getFileRef.current?await getFileRef.current(id):null);
+        if(!file){
+          setLibrary(prev=>prev.map(t=>t.id===id?{...t,analyzed:true,error:true}:t));
+          activeRef.current=false;
+          scheduleNextAnalysis();
+          return;
+        }
         if(!audioCtx.current)audioCtx.current=new(window.AudioContext||window.webkitAudioContext)();
-        const ab=await file.arrayBuffer();
-        const buf=await audioCtx.current.decodeAudioData(ab);
-        setLibrary(prev=>prev.map(t=>t.id===id?{...t,duration:buf.duration}:t));
-        const cd=[];for(let c=0;c<buf.numberOfChannels;c++)cd.push(buf.getChannelData(c).slice());
-        workerRef.current.postMessage({cd,sr:buf.sampleRate,id,skipBPM,skipKey});
-      }catch{
+        ab=await file.arrayBuffer();
+        buf=await audioCtx.current.decodeAudioData(ab);
+        ab=null; // PCM is in buf, compressed bytes can be released
+
+        const duration=buf.duration;
+        setLibrary(prev=>prev.map(t=>t.id===id?{...t,duration}:t));
+
+        const TARGET_SR=11025;
+        const MAX_SEC=60;
+        const srcSR=buf.sampleRate;
+        const chans=buf.numberOfChannels;
+        const srcSamplesMax=Math.min(buf.length,Math.floor(srcSR*MAX_SEC));
+        const targetLen=Math.max(1,Math.floor(srcSamplesMax*TARGET_SR/srcSR));
+        const ratio=srcSR/TARGET_SR;
+        mono11k=new Float32Array(targetLen);
+        const chData=[];
+        for(let c=0;c<chans;c++)chData.push(buf.getChannelData(c));
+        // Box-filter average over each source window: downmix + low-pass +
+        // decimate in one pass. Sufficient anti-aliasing for the kick band
+        // (100–400 Hz) and chroma band (≤880 Hz) the worker actually uses.
+        for(let i=0;i<targetLen;i++){
+          const start=Math.floor(i*ratio);
+          const end=Math.min(Math.floor((i+1)*ratio),srcSamplesMax);
+          let sum=0,n=0;
+          for(let j=start;j<end;j++){
+            let s=0;
+            for(let c=0;c<chans;c++)s+=chData[c][j];
+            sum+=s/chans;
+            n++;
+          }
+          mono11k[i]=n>0?sum/n:0;
+        }
+        buf=null; // full-rate decoded PCM released before worker round-trip
+
+        workerRef.current.postMessage(
+          {cd:[mono11k],sr:TARGET_SR,id,skipBPM,skipKey},
+          [mono11k.buffer]
+        );
+        mono11k=null; // ArrayBuffer ownership transferred
+
+        // Periodically recycle the AudioContext — Chrome leaks small internal
+        // buffers per decode that aren't reclaimed until close(). At ~50 tracks
+        // this is a few MB; over thousands it adds up.
+        audioCtxJobs.current+=1;
+        if(audioCtxJobs.current>=50){
+          try{await audioCtx.current.close();}catch{}
+          audioCtx.current=null;
+          audioCtxJobs.current=0;
+        }
+      }catch(err){
+        console.warn('[LIB-ANALYZE-ERR]',{id,error:err?.message||String(err)});
+        ab=null;buf=null;mono11k=null;
         setLibrary(prev=>prev.map(t=>t.id===id?{...t,analyzed:true,error:true}:t));
-        activeRef.current=false; processQ();
+        activeRef.current=false;
+        scheduleNextAnalysis();
       }
     })();
-  },[]);
+  },[scheduleNextAnalysis]);
   // Keep ref current so startup effect (which has empty deps) can call processQ
   useEffect(()=>{ processQRef.current=processQ; },[processQ]);
 
@@ -706,35 +795,23 @@ function useLibrary(){
     await _importFileObjects([...files],[]);
   },[_importFileObjects]);
 
-  // Analyze all unanalyzed tracks in library (also extracts + persists artwork for tracks missing it)
-  const analyzeAll=useCallback(async(getFileFn)=>{
+  // Queue every unanalyzed track for BPM/key/energy. The queue holds metadata
+  // only — Files are resolved one at a time by processQ at the moment of
+  // analysis (then released). Previously this pre-resolved every File via
+  // getFileFn and pushed File-bearing queue items, pinning thousands of blobs
+  // at once and OOM'ing on large libraries; same shape as the May 6 import
+  // path bug. Artwork extraction lives on the separate "Scan artwork" button
+  // (scanArtwork) so analyzeAll stays narrow.
+  // Signature keeps `_getFileFn` for backward compatibility with the call site
+  // (`lib.analyzeAll?.(lib.getFile)`); the arg is ignored.
+  const analyzeAll=useCallback(async(_getFileFn)=>{
     setAnalyzing(true);
     const toProcess=library||[];
     for(const track of toProcess){
-      const file=await getFileFn(track.id);
-      if(!file) continue;
-      // Queue for BPM/key analysis if needed
       if(!track.analyzed||track.error){
-        queueRef.current.push({id:track.id,file,skipBPM:!!track.bpm,skipKey:!!track.key});
-      }
-      // Extract and persist artwork if this track is missing it
-      if(!track.artwork&&artworkCache.current[track.id]!==false){
-        try{
-          const sl=file.slice(0,1048576);
-          const tags=parseID3(await sl.arrayBuffer());
-          if(tags.artwork){
-            artworkCache.current[track.id]=tags.artwork;
-            try{
-              const existing=await cmDbGet("tracks",track.id);
-              if(existing&&!existing.artwork){
-                await cmDbPut("tracks",{...existing,artwork:tags.artwork});
-                setLibrary(prev=>prev.map(t=>t.id===track.id?{...t,artwork:tags.artwork}:t));
-              }
-            }catch{}
-          }else{
-            artworkCache.current[track.id]=false;
-          }
-        }catch{}
+        if(!queueRef.current.some(q=>q.id===track.id)){
+          queueRef.current.push({id:track.id,skipBPM:!!track.bpm,skipKey:!!track.key});
+        }
       }
     }
     processQ();
@@ -858,6 +935,9 @@ function useLibrary(){
       return null;
     }
   },[]);
+  // Forward ref so processQ (declared above getFile) can lazily resolve a File
+  // by id without closing over a stale getFile identity.
+  useEffect(()=>{ getFileRef.current=getFile; },[getFile]);
 
   // Re-scan ID3 APIC artwork for every track currently missing an artwork blob.
   // Reads the first 1MB of the source file, parses ID3v2, pulls the APIC frame
