@@ -2874,9 +2874,10 @@ function AnimatedZoomedWF({ bands, dur, progRef, onSeek, h=96, windowSec=8, beat
   // Path A glow tuning. Lower canvas renders a single solid-fill silhouette
   // and gets CSS filter:blur applied via inline style; the browser composites
   // the blur on the GPU. Tune visually by adjusting these three values.
-  const LOWER_CANVAS_BLUR_PX = 20;     // CSS blur radius on the lower canvas
-  const LOWER_CANVAS_OPACITY = 0.85;   // opacity multiplier on the lower canvas
-  const SILHOUETTE_FILL_ALPHA = 1.0;   // alpha of the silhouette fill (pre-blur)
+  const LOWER_CANVAS_BLUR_PX = 20;             // CSS blur radius on the lower canvas
+  const LOWER_CANVAS_OPACITY = 0.85;           // opacity multiplier on the lower canvas
+  const SILHOUETTE_FILL_ALPHA = 1.0;           // alpha of the silhouette fill (pre-blur)
+  const UPPER_CANVAS_SILHOUETTE_ALPHA = 0.9;   // alpha of the crisp body on the upper canvas
 
   const ref=useRef(null);       // upper canvas — crisp draws + drag target
   const lowerRef=useRef(null);  // lower canvas — silhouette fill, CSS-blurred
@@ -3104,15 +3105,20 @@ function AnimatedZoomedWF({ bands, dur, progRef, onSeek, h=96, windowSec=8, beat
         ctx.fillStyle='rgba(255,255,255,0.06)';
         ctx.fillRect(0,center,physW,1);
 
-        // Silhouette → lower canvas (single solid fill); CSS filter:blur on
-        // the lower canvas inline style does the atmospheric spread on the
-        // GPU compositor. Path2D is shared with the AA stroke below so the
-        // crisp edge traces the exact silhouette pre-blur.
+        // Silhouette rendered TWICE per frame, sharing one Path2D:
+        //  1. Lower canvas: solid fill → CSS filter:blur(20px) on the
+        //     element produces the atmospheric halo on the GPU compositor.
+        //  2. Upper canvas: solid fill at UPPER_CANVAS_SILHOUETTE_ALPHA →
+        //     the crisp body that defines the waveform shape against the
+        //     blurred halo underneath. v5.8 had this as Pass C of the
+        //     additive shadowBlur stack at alpha 0.45; Commit 2 dropped it
+        //     by accident, leaving only the AA stroke outline on the upper
+        //     canvas — fixed here.
         const silhouettePath=buildSilhouettePath(heights,center,physW,maxH);
         renderSilhouetteGlow(lctx,silhouettePath,dr,dg,db,SILHOUETTE_FILL_ALPHA);
+        renderSilhouetteGlow(ctx,silhouettePath,dr,dg,db,UPPER_CANVAS_SILHOUETTE_ALPHA);
 
-        // Thin AA stroke softens the silhouette edge without obscuring
-        // transient peaks. Renders on top of the additive accumulation.
+        // Thin AA stroke softens the silhouette edge.
         ctx.strokeStyle=`rgba(${dr},${dg},${db},0.55)`;
         ctx.lineWidth=Math.max(0.5,0.5*dpr);
         ctx.stroke(silhouettePath);
