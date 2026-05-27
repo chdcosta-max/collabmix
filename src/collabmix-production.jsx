@@ -2875,9 +2875,9 @@ function AnimatedZoomedWF({ bands, dur, progRef, onSeek, h=96, windowSec=8, beat
   // and gets CSS filter:blur applied via inline style; the browser composites
   // the blur on the GPU. Tune visually by adjusting these three values.
   const LOWER_CANVAS_BLUR_PX = 20;             // CSS blur radius on the lower canvas
-  const LOWER_CANVAS_OPACITY = 0.85;           // opacity multiplier on the lower canvas
+  const LOWER_CANVAS_OPACITY = 0.55;           // opacity multiplier on the lower canvas
   const SILHOUETTE_FILL_ALPHA = 1.0;           // alpha of the silhouette fill (pre-blur)
-  const UPPER_CANVAS_SILHOUETTE_ALPHA = 0.9;   // alpha of the crisp body on the upper canvas
+  const UPPER_CANVAS_SILHOUETTE_ALPHA = 1.0;   // alpha of the crisp body on the upper canvas
 
   const ref=useRef(null);       // upper canvas — crisp draws + drag target
   const lowerRef=useRef(null);  // lower canvas — silhouette fill, CSS-blurred
