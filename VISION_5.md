@@ -1,3 +1,20 @@
+> # ⚠ NEXT SESSION STARTS HERE ⚠
+>
+> **See section: "Library strategy session — May 27 morning
+> (continuation of May 26 auto-import discussion)"** (near the
+> bottom of this file).
+>
+> **Three PENDING questions need answers before Phase 1 build:**
+> - **Q1:** Existing 135 tracks handling on auto-import
+> - **Q2:** New user first-experience flow
+> - **Q3:** Default mode for new users
+>
+> Once Q1 / Q2 / Q3 are answered and appended to `VISION_5.md`,
+> Phase 1 (Multi-folder watched setup, ~8-12 hours) can begin.
+> Grep this file for `PENDING` to find the open gates.
+
+---
+
 MIX//SYNC — RESUME BRIEF (May 7, 2026 evening — dogfood-ready handoff)
 =================================================================
 
