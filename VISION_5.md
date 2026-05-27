@@ -3214,3 +3214,329 @@ are also placeholders pending final tuning with the glow live.
   XML import, iTunes XML import, USB drive handling, AcoustID
   metadata fix for tracks without good ID3 data, library UI
   deeper redesign.
+
+## Open roadmap discussion — Library auto-import system (May 26 evening, post-Path-A)
+
+After Path A glow rendering shipped, an end-of-day strategic
+discussion turned to the single biggest unresolved UX problem in
+Mix//Sync's current shape: **what happens to a user's library
+after the first import**. This section captures the full
+discussion verbatim so the nuance is preserved across sessions.
+Implementation is multi-session and gated on a brand/UX strategy
+session that has been tabled multiple times — this discussion
+informs that session.
+
+### The core insight
+
+After a user uploads music to Mix//Sync once, they will continue
+to buy and download music separately — and **it will NOT
+automatically appear in the Mix//Sync library.** This creates an
+ongoing friction of manually re-uploading new music, which is a
+huge negative experience and a reason for users to drift back to
+Rekordbox / Traktor / Serato, where their music "just appears."
+
+This is a "death by paper cut" failure mode. Each individual
+re-upload is small. The cumulative effect over weeks of buying
+tracks is users silently giving up on Mix//Sync as their primary
+tool. The first-time import is solved (commit `63ac7f9`, May 6-7);
+the steady-state ongoing-import problem is not.
+
+### The complication — music is scattered, not in one folder
+
+DJs almost never have one folder. They have music scattered
+across the file system, some organized, most not. Real
+distribution looks like:
+
+- **Beatport downloads** → usually `~/Downloads`, not Music
+- **Bandcamp** → wherever the user saved it
+- **Promos from labels** → email attachments, random folders
+- **DJ pools (DJcity, BPM Supreme)** → `~/Downloads`
+- **iTunes / Apple Music** → `~/Music/iTunes/iTunes Media`
+  (managed)
+- **USB drives** → external mounted drives
+- **AirDropped tracks from friends** → `~/Downloads`
+- **SoundCloud rips** → `~/Downloads`
+- **Old library imports** → `~/Music` or custom legacy folders
+
+`~/Downloads` is the **single highest-traffic location** for
+newly acquired music for ~95% of DJs, even those who later
+organize. The solution must handle "scan all music wherever it
+lives," not just "watch one folder."
+
+### The browser constraint — what's actually possible
+
+Mix//Sync is a browser app, and that hard-limits the design
+space. Native apps (Rekordbox, Traktor, Serato) can watch
+folders in the background, receive OS notifications when files
+change, scan the entire file system. Browser apps cannot do any
+of that:
+
+- Browsers can't watch the file system in the background
+- File System Access API requires explicit user permission per
+  folder
+- No root / home directory access (security boundary, by design)
+- No background scanning when the tab is closed
+- Chrome / Edge support the File System Access API; **Safari
+  does NOT yet**
+
+These constraints are non-negotiable — they're security
+boundaries built into the browser platform, not bugs we can work
+around. Anything we ship has to live within them.
+
+### Three approach options considered
+
+- **Option A — Scan the entire user file system.** NOT POSSIBLE
+  in browsers by design. Hard wall.
+- **Option B — Smart default folder list.** Suggest
+  `~/Downloads`, `~/Music`, `~/Music/iTunes/iTunes Media`,
+  `~/Documents`, `~/Desktop`. User confirms each, grants
+  permission. Catches 90%+ of cases.
+- **Option C — Folder + track-by-track hybrid.** Watched folders
+  for predictable cases, plus "watch this file" or "watch this
+  album folder" for one-off random locations.
+
+### Recommended architecture — four tiers
+
+The recommended shape combines Options B and C into a four-tier
+system:
+
+1. **Smart watched folders with default suggestions** (Downloads,
+   Music)
+2. **User can add any custom folder** (USB, Dropbox, organized
+   library)
+3. **Drag-and-drop individual files** (for one-offs from
+   anywhere)
+4. **Smart deduplication** (same file hash in multiple locations
+   = one library entry)
+
+### Critical filtering — where the feature lives or dies
+
+`~/Downloads` contains everything — PDFs, ZIPs, installers,
+photos, screenshots, not just music. The filtering logic is the
+single most failure-prone piece of the system. Too aggressive
+and we miss real tracks; too loose and the library fills with
+garbage and the user loses trust.
+
+Required filtering layers:
+
+- File extension whitelist (`mp3`, `wav`, `aiff`, `flac`, `m4a`,
+  `ogg`, `alac`)
+- Minimum file size (skip tiny non-music files — voice memos,
+  notification sounds)
+- Maximum file size (skip multi-GB non-music — installers, video)
+- Optional: duration check (skip 5-second voice notes that
+  happen to be mp3)
+- Optional: audio characteristics check (sample rate plausible
+  for music, etc.)
+
+This is where the feature lives or dies. A library that
+auto-fills with garbage is worse than no auto-import at all.
+
+### Philosophical question resolved — "DJ track manager vs smart auto-finder"
+
+A philosophical question surfaced during discussion: should
+Mix//Sync be a **DJ track manager** (explicit, user-driven, no
+surprises) or a **smart auto-finder** (figures it out, magical,
+hands-off)? These reflect two different DJ mentalities and two
+different historical product lineages.
+
+**The user resolved this: BOTH.** Mix//Sync should support both
+modes because the real DJ population spans both types:
+
+- **The Organizer** — explicit folder management, no surprises,
+  full control (typically came from Rekordbox / Traktor
+  mentality)
+- **The Collector** — scattered files, downloads stay where they
+  fall, wants the tool to figure it out
+- **The Pragmatist** — middle ground, smart defaults with
+  override ability (most DJs)
+
+Building for just one type would alienate the other two.
+Building for both serves everyone.
+
+### Product implication — three modes
+
+The "both" resolution implies three explicit user-facing modes,
+available during onboarding and changeable in settings anytime:
+
+**Mode 1 — "Auto-discover my music" (Smart Auto-Finder)**
+- We scan high-probability locations automatically
+- Defaults: Downloads, Music, iTunes Media, Desktop
+- New tracks auto-imported as they appear
+- Best for: "I just want my music to be in Mix//Sync"
+- Trade-off: less precise, may import unwanted files
+
+**Mode 2 — "Let me manage my library" (DJ Track Manager)**
+- User explicitly adds folders to watch
+- User explicitly approves new tracks before adding
+- No surprises, full control
+- Best for: "I'm organized and want it that way"
+- Trade-off: more setup, more ongoing curation
+
+**Mode 3 — "Hybrid" (likely default for most users)**
+- Smart defaults for obvious folders (Downloads, Music)
+- User explicitly adds any other folders
+- New tracks auto-imported from approved folders **with
+  notification**
+- Easy to remove imports the user didn't want
+- Best for: "Mostly automatic but I want to know what's
+  happening"
+- Trade-off: slight learning curve
+
+### The shared technical foundation
+
+Critically, **all three modes share the same underlying
+infrastructure** — the difference is UX presets on top, not a
+fork in the code path:
+
+- Folder watching system (whatever folders, however many)
+- File scanning logic (extensions, size, dedup)
+- Library import pipeline
+- Permission management
+- "What's new" notification system
+
+The difference between modes is **how aggressive the defaults
+are** and **how much user approval is in the loop**. Same code
+paths, different UX presets. This means we can ship the
+infrastructure once and the three modes are essentially
+configuration on top of it.
+
+### Brand principle emerging
+
+A brand principle crystallized out of the both-modes
+resolution:
+
+> **"Mix//Sync respects how YOU work, not how WE think you
+> should work."**
+
+This may extend beyond library management to other features and
+could become a Mix//Sync differentiator vs Rekordbox / Traktor
+/ Serato — all of which impose specific workflows. Mix//Sync
+would be the one that bends to fit the user. Worth exploring
+further in the brand / UX strategy session that has been tabled
+multiple times. **This principle should be a key input to that
+session.**
+
+### The Safari problem
+
+The File System Access API is not supported in Safari. Three
+options:
+
+- **Build Chrome / Edge magic, accept Safari limitation**
+  (manual import only on Safari) — pragmatic
+- **Wait for Safari support** (timeline unclear, possibly
+  2026-2027) — delays a major UX win for years
+- **Build different solutions per browser** — most work, most
+  code
+
+**Recommended: Build Chrome / Edge magic.** Most pro DJs use
+Chrome. Safari users still get the app — they just get manual
+import. Communicate honestly on the landing page. (Note: the
+current landing-page copy still says "Works in Chrome & Edge"
+from before Path A made Safari 17+ viable for rendering — that
+copy is already on the open-items list and would need a careful
+rewrite to distinguish "playback works in Safari" from "library
+auto-import doesn't.")
+
+### Realistic phased scope (~28-40 hours across 6 phases)
+
+This is multi-session work. Should not be attempted in one go.
+Phasing:
+
+- **Phase 1 — Multi-folder watched setup (~8-12 hours).** File
+  System Access API integration, smart defaults, permission
+  management, per-folder enable / disable.
+- **Phase 2 — Smart scanning (~6-8 hours).** New file
+  detection, filtering, deduplication, background scan progress.
+- **Phase 3 — Custom folder addition (~3-4 hours).** Add-folder
+  button, management UI, external drive handling.
+- **Phase 4 — Mode selection + UX (~3-5 hours).** Onboarding
+  flow, mode toggle in settings, default behavior split between
+  Auto-Finder / Manager / Hybrid modes.
+- **Phase 5 — Edge cases + polish (~6-8 hours).** Cloud-synced
+  folders (Dropbox, iCloud), moved / renamed files, deletion
+  handling, empty state, notification UX.
+- **Phase 6 — One-off file import (~3-4 hours).** Drag
+  individual file from anywhere.
+
+### Scan logic options
+
+Three candidate strategies for detecting "what's new" in a
+watched folder:
+
+- **Approach 1 — Modification time comparison.** Store
+  `lastScannedAt` per folder, find files with `modifiedAt >
+  lastScannedAt`, filter to audio extensions, filter against
+  existing library, import the diff. Fast, simple, common.
+- **Approach 2 — File hash comparison (SHA-256).** More robust,
+  catches renamed / moved files, slower (must read full file
+  bytes to hash).
+- **Approach 3 — Filename + size comparison.** Simplest,
+  fastest, risk of false negatives (different file with same
+  name and size silently skipped).
+
+**Realistic implementation: Approach 1 with Approach 3 as
+fallback.** Catches ~95% of cases. Approach 2 only if dedup
+across moved-file scenarios becomes a real complaint.
+
+### Why this matters
+
+This is **THE feature that determines whether Mix//Sync becomes
+someone's DJ home or stays a novelty.** Manual re-uploading is
+death by paper cut — users churn. It's table stakes for serious
+DJ tools. Not having it makes Mix//Sync feel like a toy
+regardless of how good everything else is. The Path A glow that
+just shipped, the real-time collaboration, the partner
+spectator view — none of those matter if the user has to
+manually re-import every new track they buy.
+
+This is also why it's multi-session work and gated on strategy.
+Shipping a half-baked version of this is worse than shipping
+nothing — it would train users to distrust the library
+auto-population, which is the exact trust we need to build.
+
+### Next steps flagged for future sessions
+
+1. **Brand / UX strategy session** (tabled 4+ times) should
+   incorporate the **"Mix//Sync respects how YOU work"**
+   principle. The both-modes resolution for library is a strong
+   precedent — that decision pattern should inform other places
+   where we're tempted to impose a single workflow.
+2. **After strategy: Phase 1 build** (multi-folder watched
+   setup) as a focused dedicated session.
+3. **Subsequent phases each get their own session** with
+   verification between.
+4. **User dogfooding throughout** — Chad uses Mix//Sync daily,
+   reports edge cases as they hit real-world libraries.
+
+### Key questions to resolve in the strategy session
+
+These are deliberately not pre-decided. The strategy session
+should pick them up:
+
+- **Where do users actually keep their music?** (Partially
+  answered above — scattered across multiple locations,
+  Downloads is highest traffic — but probably more nuance worth
+  surfacing.)
+- **What file formats matter?** MP3 + WAV + AIFF baseline; FLAC,
+  M4A, OGG common; ALAC, DSD rare but pro.
+- **What about pre-existing library?** (135 tracks already
+  uploaded — re-map to file-system locations, or start fresh
+  with the new system?)
+- **What's the onboarding moment?** First-time wizard, optional
+  upgrade prompt, settings option, all of the above?
+- **Browser strategy?** (Chrome / Edge only with Safari graceful
+  degradation recommended above — needs final sign-off as
+  policy, not just engineering preference.)
+- **Default mode for new users?** (Auto-Finder, Manager, or
+  Hybrid? The discussion leans Hybrid for "most users," but
+  this is a high-impact onboarding default that affects how
+  Mix//Sync first feels.)
+
+### Status
+
+**Discussion only.** Nothing implemented, no commits, no code
+touched. This section exists to preserve the strategic context
+so a future session can pick it up without re-deriving the
+problem from scratch. The next concrete action is the
+brand / UX strategy session, not Phase 1 implementation.
