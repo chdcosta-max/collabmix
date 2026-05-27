@@ -36,11 +36,11 @@ A perfectly considered control, a beautiful waveform, an animation that feels ex
 
 ## What This Means Visually
 
-### Colors (current — pure black + atmospheric Anjunadeep deck pair, May 26, 2026)
+### Colors (current — pure black + high-contrast cool pair, May 26, 2026 evening)
 - Background: **pure black** `#000000` — OLED-optimized, maximum
-  contrast for atmospheric waveform glow rendering (shipped May 25
-  evening). Reads like the Anjunadeep / Universal Audio aesthetic
-  register (NOT warm sepia, NOT cool near-black).
+  contrast for saturated deck identity colors against the page. The
+  black background is the substrate that lets the high-saturation
+  deck colors "pop" rather than wash out.
 - Panels / surfaces: cool dark greys, slightly lifted (`#15171A`,
   `#1F2126`)
 - Text: **clean white** `#F5F5F7` (NOT warm white)
@@ -60,46 +60,90 @@ A perfectly considered control, a beautiful waveform, an animation that feels ex
   palette entirely; retained only for semantic indicators (recording
   in progress, partner online dot, Rekordbox "ready" badge) — held in
   the `STATUS_OK = "#22c55e"` constant, decoupled from any deck color.
-- Deck identity colors — **atmospheric Anjunadeep-aligned pair**,
-  desaturated for premium dark UI. A vs B reads through hue family
-  (blue vs teal) at low saturation, not through brightness or
-  temperature contrast:
-  - Deck A: `#3D5A80` — **Twilight Blue**. Desaturated atmospheric
-    blue; reads like a deep-set / Anjunadeep / Above & Beyond
-    aesthetic. NOT Material `#1976D2`, NOT Pioneer cyan, NOT bright
-    consumer-app blue.
-  - Deck B: `#5F8B95` — **Atmospheric Teal**. Deep ocean teal /
-    sophisticated gray-blue. NOT Material green `#00C853`, NOT
-    party-neon green, NOT Matrix-style fluorescent.
+- Deck identity colors — **high-contrast cool pair**, saturated enough
+  to feel alive against the pure-black background. Both stay in the
+  cool family (no warm waveforms — long-session eye fatigue concern,
+  see "Why no warm deck colors" below), but A vs B reads through
+  strong hue contrast (blue vs purple), instant distinction from
+  across the screen:
+  - Deck A: `#2E86DE` — **Vivid Ocean Blue**. Saturated, alive,
+    distinct. NOT Material `#1976D2` (consumer-app feel), NOT
+    `#3D5A80` (May 26 atmospheric — read as dead / lifeless), NOT
+    Pioneer cyan.
+  - Deck B: `#A855F7` — **Electric Royal Purple**. Saturated cool
+    violet; pairs with Ocean Blue through hue contrast rather than
+    temperature. NOT Material green `#00C853` (party DJ), NOT
+    `#5F8B95` (May 26 atmospheric — too similar to Deck A in the
+    cold-and-similar pair).
 
-> **Why these colors:** Material-Design primaries (`#1976D2` / `#00C853`)
-> shipped in the May 23 Quick Wins block read as "consumer software"
-> rather than "pro DJ tool" — too bright, too saturated, too generic.
-> The atmospheric Anjunadeep palette signals depth and restraint, which
-> is what the rest of the design language has been reaching for since
-> the warm palette was retired in May. Full atmospheric glow effect
-> will be visible once **Path A multi-layer offscreen canvas
-> compositing** ships (deferred from May 24 — the current canvas-2D
-> additive multi-pass glow is at its ceiling). The new desaturated
-> base colors are chosen so Path A's wide halo + concentrated halo +
-> crisp shape layers will compose into ambient light rather than
-> washing out to neon.
+> **Why these colors:** Three iterations today led here.
+> (1) The May 23 Quick Wins Material pair (`#1976D2` / `#00C853`)
+> read as consumer-app / Android. (2) The May 26 atmospheric pair
+> (`#3D5A80` / `#5F8B95`) over-corrected: both colors landed in the
+> same low-saturation cool-blue family and read as cold, dead, and
+> insufficiently distinct from each other in side-by-side decks. The
+> "atmospheric depth" goal was deferred to Path A glow rendering and
+> these were the WRONG flat-fill defaults to wait on it with —
+> waveforms felt lifeless even with the deck cards otherwise intact.
+> (3) The high-contrast cool pair fixes both failure modes: saturated
+> enough to feel alive immediately (no waiting on Path A) AND
+> distinct enough that A vs B is unambiguous from across the screen.
+
+> **Why no warm deck colors:** Long DJ sessions are stare-tasks —
+> the eye locks onto waveforms for minutes at a time. Warm hues
+> (orange, coral, amber, red) at the saturation needed for deck
+> identity cause cumulative eye fatigue under those conditions.
+> Pro DJ tools historically optimize for stareable colors: cool
+> family for waveforms, warm reserved for tiny accents (cue points,
+> phrase markers, recording dot — milliseconds of attention, not
+> minutes). The high-contrast cool pair stays inside this rule —
+> A vs B distinction comes from hue family (blue vs purple), not
+> temperature. The 16-bar phrase marker red (`#FF3B30`) remains
+> the only warm hue in the working surface, and only at marker
+> scale, not as a fill.
 
 ### Banned colors
 
 - **`#1976D2`** — Material Design blue 700. Reads as Android / consumer
-  app. Retired May 26.
+  app. Retired May 26 morning.
 - **`#00C853`** — Material Design green A700. Reads as bright
-  party-DJ / Maschine. Retired May 26.
+  party-DJ / Maschine. Retired May 26 morning.
+- **`#3D5A80`** — Twilight Blue (atmospheric). Too desaturated as a
+  flat-fill default; reads cold, dead, lifeless against pure black
+  without the Path A glow rendering it was waiting on. Retired
+  May 26 evening.
+- **`#5F8B95`** — Atmospheric Teal. Same failure mode as `#3D5A80`,
+  compounded by being in the same cool-blue hue family — A vs B
+  decks were nearly indistinguishable. Retired May 26 evening.
 - **Any Material Design primary** at full saturation. The full
   Material palette is calibrated for consumer Android UI density and
   signals the wrong product category for a pro DJ tool.
-- **Bright neon greens, cyans, magentas** in deck identity slots —
+- **Warm deck colors at fill saturation** — orange, coral, amber,
+  red as deck identity. Eye-fatigue concern for long sessions where
+  the waveform is a stare-task. Warm reserved for marker-scale uses
+  only (cue points, phrase markers, recording dot).
+- **Bright neon greens at fill saturation** in deck identity slots —
   party / DJ-software aesthetic, the opposite of "Quiet Pro Tool."
-- **Warm accents (amber, oak, sepia)** — tried at v5–v5.10 and May 21,
-  retired May 24. Even one warm hue against the cool/black surfaces
-  breaks the Beatport / Anjunadeep register the rest of the palette
-  reaches for.
+  (Note: `#22c55e` retained at the smaller scale as `STATUS_OK`
+  semantic green — online/ready/recording. Smaller surface, shorter
+  attention, different role.)
+- **Pale warm accents (amber `#D4A06A`, oak `#C9B79C`, sepia)** —
+  tried at v5–v5.10 and May 21, retired May 24. Even one warm hue
+  against the cool/black surfaces broke the Beatport / Spotify
+  register the rest of the palette was reaching for.
+
+> ### Colors (SUPERSEDED — May 26 morning atmospheric Anjunadeep pair)
+> Earlier direction same day used pure black `#000000` background
+> with deck identity `#3D5A80` (Twilight Blue, desaturated atmospheric
+> blue) and `#5F8B95` (Atmospheric Teal, deep ocean teal). Retired
+> May 26 evening because side-by-side decks failed two ways: (a) both
+> colors in the same low-saturation cool-blue family read as cold /
+> dead / not-quite-different-enough, and (b) the "atmospheric depth"
+> goal that justified the desaturation was contingent on Path A
+> multi-layer canvas glow shipping later — these were the wrong
+> flat-fill defaults to wait on it with. Replaced by the high-contrast
+> cool pair above (`#2E86DE` / `#A855F7`). See commit `f9f0bf9` for
+> historical record.
 
 > ### Colors (SUPERSEDED — May 24 cool near-black + electric pair)
 > Earlier direction used cool near-black `#0A0B0E` background, deck
@@ -275,6 +319,39 @@ Reactions to 8 reference apps during taste-mapping session:
 This is a working draft. We will refine and add as we see mockups and react. Decisions will get more specific over time. What's here is direction, not final commitment.
 
 ## Status log
+
+### May 26, 2026 evening — high-contrast cool deck pair (atmospheric pair retired same day)
+- **Deck A `#3D5A80` → `#2E86DE`** (Vivid Ocean Blue). Saturated,
+  alive, distinct. The morning's `#3D5A80` Twilight Blue tested as
+  cold / dead in the side-by-side deck view — desaturated colors
+  needed Path A glow rendering to come alive, and that's not shipping
+  today. Reverting to a saturated cool that works as a flat fill
+  immediately.
+- **Deck B `#5F8B95` → `#A855F7`** (Electric Royal Purple). Same
+  failure on `#5F8B95` — both atmospheric colors landed in the
+  cool-blue hue family and read as "same color, slightly different
+  shade" rather than two distinct decks. New pair contrasts through
+  hue family (blue vs purple), not temperature — strong distinction
+  while staying inside the cool-color stare-task rule.
+- **Iteration narrative captured in the philosophy doc.** Three
+  palettes in one day: Material `#1976D2 / #00C853` (consumer-app
+  feel) → atmospheric `#3D5A80 / #5F8B95` (cold / dead / too
+  similar) → high-contrast `#2E86DE / #A855F7` (current). The doc
+  now records all three failure modes in the Banned colors section
+  + supersession blockquotes so future iterations don't repeat them.
+- **"Why no warm deck colors" rule documented.** Pro-DJ stare-task
+  ergonomics: warm fills cause cumulative eye fatigue under long
+  sessions. Warm reserved for marker-scale uses only (cue points,
+  phrase markers, recording dot). A vs B distinction comes from hue
+  family within cool, not from cool-vs-warm temperature contrast.
+- **Pre-existing landing-page detail noted.** The radial-glow at the
+  hero bottom-center already used `#a855f706` at 2.4% alpha (pre-
+  existing, unrelated to this work). The new Deck B color matches
+  it — landing-page brand gradient + deck mockup will now share a
+  purple base with the existing glow tint, accidentally coherent.
+- **`STATUS_OK = "#22c55e"` and beatgrid red `#FF3B30` preserved.**
+  Both confirmed in bundle byte scan post-migration (24 and 1
+  occurrences respectively, unchanged from pre-edit).
 
 ### May 26, 2026 — atmospheric Anjunadeep deck pair (Material Design retired)
 - **Deck A `#1976D2` → `#3D5A80`** (Twilight Blue). Desaturated

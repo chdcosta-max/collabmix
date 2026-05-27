@@ -110,8 +110,8 @@ const TOK = {
   accent:  "rgba(255,255,255,0.9)",  // primary: active states, primary indicators
   accent2: "rgba(255,255,255,0.6)",  // secondary: hover states, secondary info
   accent3: "rgba(255,255,255,0.3)",  // tertiary: borders, dividers
-  deckA:  "#3D5A80", // your deck — Twilight Blue (atmospheric, Anjunadeep-aligned)
-  deckB:  "#5F8B95", // partner deck — Atmospheric Teal (deep ocean, Anjunadeep-aligned)
+  deckA:  "#2E86DE", // your deck — Vivid Ocean Blue (high-contrast cool pair)
+  deckB:  "#A855F7", // partner deck — Electric Royal Purple (high-contrast cool pair)
   bg:     "#0A0B0E", // primary background — cool near-black
   bg2:    "#15171A", // panels / cards (cool dark, one step lifted)
   bg3:    "#1F2126", // elevated panels / modals (~two steps lifted)
@@ -1318,7 +1318,7 @@ function LibraryPanelV2({ lib, onLoad, playingTrack, deckATrackId:deckATrackIdPr
   const TEXT = "#F5F5F7";
   const SUBTLE = "#9CA3AF";
   const MUTED = "#5A5E66";
-  const PARTNER = "#5F8B95";
+  const PARTNER = "#A855F7";
 
   // ── Mock data for empty library (prototype — replaced by real data on first import). ──
   const MOCK_TRACKS = [
@@ -1353,8 +1353,8 @@ function LibraryPanelV2({ lib, onLoad, playingTrack, deckATrackId:deckATrackIdPr
   // deck-track state.
   const deckATrackId = useMock ? "m2"  : (deckATrackIdProp || null);
   const deckBTrackId = useMock ? "m5"  : (deckBTrackIdProp || null);
-  const DECK_A_CLR = "#3D5A80"; // deep navy / teal-blue
-  const DECK_B_CLR = "#5F8B95"; // deep slate / gray-blue
+  const DECK_A_CLR = "#2E86DE"; // deep navy / teal-blue
+  const DECK_B_CLR = "#A855F7"; // deep slate / gray-blue
 
   // Suggestion source: prefer deck A, else deck B. Panel is disabled when neither loaded.
   const suggestionSourceId = deckATrackId || deckBTrackId || null;
@@ -2903,7 +2903,7 @@ function AnimatedZoomedWF({ bands, dur, progRef, onSeek, h=96, windowSec=8, beat
       // maxH keeps top (center-envH ≥ ampTop) and bottom (center+1+envH ≤ ampBottom).
       const maxH=Math.max(0,Math.min(center-ampTop,ampBottom-1-center));
       if(!dimsLoggedRef.current){
-        const deckId=deckColorRef.current==='#3D5A80'?'A':deckColorRef.current==='#5F8B95'?'B':'?';
+        const deckId=deckColorRef.current==='#2E86DE'?'A':deckColorRef.current==='#A855F7'?'B':'?';
         console.log(`[WF-DIMS ${deckId}] canvasCss=${canvas.clientWidth}x${canvas.clientHeight} physCanvas=${physW}x${physH} dpr=${dpr} ampPad=${(ampPad/dpr).toFixed(0)}css/${ampPad}phys maxH=${(maxH/dpr).toFixed(1)}css/${maxH}phys`);
         dimsLoggedRef.current=true;
       }
@@ -4461,7 +4461,7 @@ function Landing({ onEnter }) {
 
       {/* NAV */}
       <nav style={{ position:"fixed", top:0, left:0, right:0, zIndex:100, padding:"14px 40px", display:"flex", justifyContent:"space-between", alignItems:"center", background:"linear-gradient(180deg,#06070Aee,transparent)", backdropFilter:"blur(8px)" }}>
-        <div style={{ fontFamily:"'Inter',sans-serif", fontWeight:900, fontSize:22, letterSpacing:3, background:"linear-gradient(90deg,#9CA3AF,#5F8B95)", WebkitBackgroundClip:"text", WebkitTextFillColor:"transparent" }}>MIX//SYNC</div>
+        <div style={{ fontFamily:"'Inter',sans-serif", fontWeight:900, fontSize:22, letterSpacing:3, background:"linear-gradient(90deg,#9CA3AF,#A855F7)", WebkitBackgroundClip:"text", WebkitTextFillColor:"transparent" }}>MIX//SYNC</div>
         <div style={{ display:"flex", gap:28, alignItems:"center" }}>
           {["Features","How It Works","Get Started"].map(l=>(
             <span key={l} className="nav-link" style={{ fontSize:11, fontFamily:"'Inter',sans-serif", color:"#9CA3AF", letterSpacing:1, cursor:"pointer" }}>{l.toUpperCase()}</span>
@@ -4477,7 +4477,7 @@ function Landing({ onEnter }) {
 
         {/* Background glow orbs */}
         <div style={{ position:"absolute", top:"20%", left:"15%", width:400, height:400, borderRadius:"50%", background:"radial-gradient(circle,#9CA3AF08,transparent 70%)", animation:"glow 4s ease-in-out infinite", pointerEvents:"none" }}/>
-        <div style={{ position:"absolute", top:"30%", right:"10%", width:300, height:300, borderRadius:"50%", background:"radial-gradient(circle,#5F8B9508,transparent 70%)", animation:"glow 5s ease-in-out 1s infinite", pointerEvents:"none" }}/>
+        <div style={{ position:"absolute", top:"30%", right:"10%", width:300, height:300, borderRadius:"50%", background:"radial-gradient(circle,#A855F708,transparent 70%)", animation:"glow 5s ease-in-out 1s infinite", pointerEvents:"none" }}/>
         <div style={{ position:"absolute", bottom:"20%", left:"40%", width:500, height:200, borderRadius:"50%", background:"radial-gradient(circle,#a855f706,transparent 70%)", animation:"glow 6s ease-in-out 2s infinite", pointerEvents:"none" }}/>
 
         {/* Animated grid lines */}
@@ -4516,7 +4516,7 @@ function Landing({ onEnter }) {
         {/* Floating mixer preview */}
         <div style={{ marginTop:60, width:"100%", maxWidth:860, animation:"float 6s ease-in-out infinite", position:"relative" }}>
           <div style={{ background:"linear-gradient(150deg,#0d0d22,#0A0B0E)", border:"1px solid #1a1a30", borderRadius:16, padding:"20px 24px", boxShadow:"0 40px 80px rgba(0,0,0,.6), 0 0 60px rgba(0,212,255,.06)", display:"grid", gridTemplateColumns:"1fr 80px 1fr", gap:16, alignItems:"center" }}>
-            {["#9CA3AF","#5F8B95"].map((c,i)=>(
+            {["#9CA3AF","#A855F7"].map((c,i)=>(
               <div key={i} style={{ background:"#06060f", borderRadius:10, padding:12, border:`1px solid ${c}22` }}>
                 <div style={{ display:"flex", justifyContent:"space-between", marginBottom:8 }}>
                   <span style={{ fontSize:9, fontFamily:"'Inter',sans-serif", color:c, letterSpacing:2 }}>DECK {i===0?"A":"B"}</span>
@@ -4532,7 +4532,7 @@ function Landing({ onEnter }) {
             ))}
             <div style={{ display:"flex", flexDirection:"column", alignItems:"center", gap:8 }}>
               <div style={{ fontSize:7, fontFamily:"'Inter',sans-serif", color:"#9CA3AF", letterSpacing:1 }}>XF</div>
-              <div style={{ width:"100%", height:4, background:"linear-gradient(90deg,#9CA3AF,#5F8B95)", borderRadius:2, position:"relative" }}>
+              <div style={{ width:"100%", height:4, background:"linear-gradient(90deg,#9CA3AF,#A855F7)", borderRadius:2, position:"relative" }}>
                 <div style={{ position:"absolute", left:"calc(50% - 8px)", top:-6, width:16, height:16, background:"#e8e8f0", borderRadius:3, boxShadow:"0 0 8px rgba(255,255,255,.3)" }}/>
               </div>
               <div style={{ fontSize:7, fontFamily:"'Inter',sans-serif", color:"#22c55e" }}>124.0 BPM</div>
@@ -4598,7 +4598,7 @@ function Landing({ onEnter }) {
 
       {/* FOOTER */}
       <footer style={{ borderTop:"1px solid #15171A", padding:"24px 40px", display:"flex", justifyContent:"space-between", alignItems:"center" }}>
-        <div style={{ fontFamily:"'Inter',sans-serif", fontWeight:800, fontSize:14, letterSpacing:3, background:"linear-gradient(90deg,#9CA3AF,#5F8B95)", WebkitBackgroundClip:"text", WebkitTextFillColor:"transparent" }}>MIX//SYNC</div>
+        <div style={{ fontFamily:"'Inter',sans-serif", fontWeight:800, fontSize:14, letterSpacing:3, background:"linear-gradient(90deg,#9CA3AF,#A855F7)", WebkitBackgroundClip:"text", WebkitTextFillColor:"transparent" }}>MIX//SYNC</div>
         <div style={{ fontSize:8, fontFamily:"'Inter',sans-serif", color:"#5A5E66" }}>Built for DJs who refuse to be in the same room.</div>
         <div style={{ fontSize:8, fontFamily:"'Inter',sans-serif", color:"#5A5E66" }}>Chrome & Edge · HTTPS required for MIDI + WebRTC</div>
       </footer>
@@ -6411,7 +6411,7 @@ export default function CollabMix({ initialPage = "landing", djName = null }) {
                   } catch {}
                 }}
                 style={{ minHeight:wfH, flexShrink:0 }}>
-                <AnimatedZoomedWF bands={wfA} dur={wfA?.dur||0} progRef={progRefA} onSeek={seekDeckA} h={wfH} windowSec={WF_WINDOWS[wfZoom]} beatPhaseFrac={bpm.results["A"]?.beatPhaseFrac??null} beatPeriodSec={bpm.results["A"]?.beatPeriodSec??null} gridOffsetMs={gridOffsetA} barOneOffsetSec={barOneA * (bpm.results["A"]?.beatPeriodSec || 0)} bpmNudge={bpmNudgeA*0.01} deckColor="#3D5A80" rate={rateA}/>
+                <AnimatedZoomedWF bands={wfA} dur={wfA?.dur||0} progRef={progRefA} onSeek={seekDeckA} h={wfH} windowSec={WF_WINDOWS[wfZoom]} beatPhaseFrac={bpm.results["A"]?.beatPhaseFrac??null} beatPeriodSec={bpm.results["A"]?.beatPeriodSec??null} gridOffsetMs={gridOffsetA} barOneOffsetSec={barOneA * (bpm.results["A"]?.beatPeriodSec || 0)} bpmNudge={bpmNudgeA*0.01} deckColor="#2E86DE" rate={rateA}/>
               </div>
             )}
             {hasB && (
@@ -6428,7 +6428,7 @@ export default function CollabMix({ initialPage = "landing", djName = null }) {
                   } catch {}
                 }}
                 style={{ minHeight:wfH, flexShrink:0 }}>
-                <AnimatedZoomedWF bands={wfB} dur={wfB?.dur||0} progRef={progRefB} onSeek={seekDeckB} h={wfH} windowSec={WF_WINDOWS[wfZoom]} beatPhaseFrac={bpm.results["B"]?.beatPhaseFrac??null} beatPeriodSec={bpm.results["B"]?.beatPeriodSec??null} gridOffsetMs={gridOffsetB} barOneOffsetSec={barOneB * (bpm.results["B"]?.beatPeriodSec || 0)} bpmNudge={bpmNudgeB*0.01} deckColor="#5F8B95" rate={rateB}/>
+                <AnimatedZoomedWF bands={wfB} dur={wfB?.dur||0} progRef={progRefB} onSeek={seekDeckB} h={wfH} windowSec={WF_WINDOWS[wfZoom]} beatPhaseFrac={bpm.results["B"]?.beatPhaseFrac??null} beatPeriodSec={bpm.results["B"]?.beatPeriodSec??null} gridOffsetMs={gridOffsetB} barOneOffsetSec={barOneB * (bpm.results["B"]?.beatPeriodSec || 0)} bpmNudge={bpmNudgeB*0.01} deckColor="#A855F7" rate={rateB}/>
               </div>
             )}
             {/* Zoom selector — floats in the top-right corner of the waveform
@@ -6460,11 +6460,11 @@ export default function CollabMix({ initialPage = "landing", djName = null }) {
 
         {/* ── DECK A (shared) — outer "Deck A · driver" header bar removed;
               new inner Deck header has the 3-part identity row at top. ── */}
-        <div style={{ display:"flex", flexDirection:"column", minWidth:0, minHeight:0, overflow:"hidden", background:"#15171A", border:`1px solid ${deckDrivers.A?"#3D5A8044":"rgba(255,255,255,0.06)"}`, borderRadius:10, transition:"border-color 150ms cubic-bezier(0.4, 0, 0.2, 1)" }}>
+        <div style={{ display:"flex", flexDirection:"column", minWidth:0, minHeight:0, overflow:"hidden", background:"#15171A", border:`1px solid ${deckDrivers.A?"#2E86DE44":"rgba(255,255,255,0.06)"}`, borderRadius:10, transition:"border-color 150ms cubic-bezier(0.4, 0, 0.2, 1)" }}>
           <div style={{ flex:1, display:"flex", alignItems:"flex-start", gap:10, padding:"10px 0 10px 10px", overflow:"hidden", minHeight:0 }}>
-            <DeckArt artwork={libLoadA?.track?.artwork} fallback="A" color="#3D5A80"/>
+            <DeckArt artwork={libLoadA?.track?.artwork} fallback="A" color="#2E86DE"/>
             <div style={{ flex:1, overflow:"hidden", minHeight:0 }}>
-            <Deck id="A" ch={eng.current?.A} ctx={eng.current?.ctx} color="#3D5A80" local remote={pA} onChange={dh("A")} midi={midiEvt} bpmResult={bpm.results["A"]} bpmAnalyze={bpm.analyze} eqHi={eqA.hi} eqMid={eqA.mid} eqLo={eqA.lo} chanVol={eqA.vol} loadFromLibrary={libLoadA} onTrackInfo={handleTrackInfo} onSync={()=>handleSyncToggle("A")} syncReady={!!(bpm.results["B"]?.bpm || pB?.bpm)} syncRole={syncLocked ? (lastSlaveDeck === "A" ? "slave" : "master") : null} isMaster={masterDeck === "A"} onMasterToggle={handleMasterToggle} onLibraryTrackDrop={(trackId)=>{const t=lib.library.find(x=>x.id===trackId);if(t)handleLibLoad(t,"A");}} onProgUpdate={handleProgA} onWaveform={setWfA} onSeekReady={onDeckASeekReady} onToggleReady={onDeckAToggleReady} onCueReady={onDeckACueReady} onNudgeReady={onDeckANudgeReady} onTransportFire={handleTransportFire} isDriver={!deckDrivers.A || deckDrivers.A === session.name} acNowRef={acNowRef} onBufferReady={onDeckABufferReady} barOneOffsetSec={barOneA * (bpm.results["A"]?.beatPeriodSec || 0)} onGridEdit={(fields) => libLoadA?.track?.id && lib.setGridEdit?.(libLoadA.track.id, fields)}/>
+            <Deck id="A" ch={eng.current?.A} ctx={eng.current?.ctx} color="#2E86DE" local remote={pA} onChange={dh("A")} midi={midiEvt} bpmResult={bpm.results["A"]} bpmAnalyze={bpm.analyze} eqHi={eqA.hi} eqMid={eqA.mid} eqLo={eqA.lo} chanVol={eqA.vol} loadFromLibrary={libLoadA} onTrackInfo={handleTrackInfo} onSync={()=>handleSyncToggle("A")} syncReady={!!(bpm.results["B"]?.bpm || pB?.bpm)} syncRole={syncLocked ? (lastSlaveDeck === "A" ? "slave" : "master") : null} isMaster={masterDeck === "A"} onMasterToggle={handleMasterToggle} onLibraryTrackDrop={(trackId)=>{const t=lib.library.find(x=>x.id===trackId);if(t)handleLibLoad(t,"A");}} onProgUpdate={handleProgA} onWaveform={setWfA} onSeekReady={onDeckASeekReady} onToggleReady={onDeckAToggleReady} onCueReady={onDeckACueReady} onNudgeReady={onDeckANudgeReady} onTransportFire={handleTransportFire} isDriver={!deckDrivers.A || deckDrivers.A === session.name} acNowRef={acNowRef} onBufferReady={onDeckABufferReady} barOneOffsetSec={barOneA * (bpm.results["A"]?.beatPeriodSec || 0)} onGridEdit={(fields) => libLoadA?.track?.id && lib.setGridEdit?.(libLoadA.track.id, fields)}/>
             </div>
           </div>
         </div>
@@ -6485,23 +6485,23 @@ export default function CollabMix({ initialPage = "landing", djName = null }) {
             <div style={{ display:"flex", flexDirection:"column", borderRight:"1px solid rgba(255,255,255,0.06)", overflow:"hidden" }}>
               {/* Header: label + VU inline */}
               <div style={{ padding:"3px 6px", background:"#0D0F12", borderBottom:"1px solid rgba(255,255,255,0.06)", display:"flex", justifyContent:"space-between", alignItems:"center", flexShrink:0 }}>
-                <span style={{ fontFamily:"'Inter',sans-serif", fontSize:11, color:"#3D5A80", fontWeight:600, letterSpacing:1 }}>A</span>
-                <VU an={eng.current?.A?.an} color="#3D5A80" w={50}/>
+                <span style={{ fontFamily:"'Inter',sans-serif", fontSize:11, color:"#2E86DE", fontWeight:600, letterSpacing:1 }}>A</span>
+                <VU an={eng.current?.A?.an} color="#2E86DE" w={50}/>
               </div>
               {/* Channel fader LEFT, EQ knobs RIGHT — outer edge layout */}
               <div style={{ flex:1, display:"flex", flexDirection:"row", minHeight:0, overflow:"hidden" }}>
                 {/* Channel volume fader — far left (outer edge) */}
                 <div style={{ flexShrink:0, display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"center", padding:"5px 4px", borderRight:"1px solid rgba(255,255,255,0.06)", gap:2 }}>
-                  <div style={{ fontSize:6, fontFamily:"'Inter',sans-serif", color:"#3D5A8055", letterSpacing:1 }}>Vol</div>
-                  <VerticalFader val={eqA.vol} set={v=>updateEqA("vol",v)} color="#3D5A80" h={130}/>
-                  <div style={{ fontSize:7, fontFamily:"'Inter',sans-serif", color:"#3D5A8088" }}>{(eqA.vol/1.5*100).toFixed(0)}%</div>
+                  <div style={{ fontSize:6, fontFamily:"'Inter',sans-serif", color:"#2E86DE55", letterSpacing:1 }}>Vol</div>
+                  <VerticalFader val={eqA.vol} set={v=>updateEqA("vol",v)} color="#2E86DE" h={130}/>
+                  <div style={{ fontSize:7, fontFamily:"'Inter',sans-serif", color:"#2E86DE88" }}>{(eqA.vol/1.5*100).toFixed(0)}%</div>
                 </div>
                 {/* Knobs column — inner side */}
                 <div style={{ flex:1, display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"space-evenly", padding:"5px 2px" }}>
-                  <Knob v={eqA.vol} set={v=>updateEqA("vol",v)} min={0} max={1.5} ctr={1} label="Gain" color="#3D5A80" size={16}/>
-                  <Knob v={eqA.hi}  set={v=>updateEqA("hi",v)}  min={-12} max={12} ctr={0} label="Hi"   color="#3D5A80" size={16}/>
-                  <Knob v={eqA.mid} set={v=>updateEqA("mid",v)} min={-12} max={12} ctr={0} label="Mid"  color="#3D5A80" size={16}/>
-                  <Knob v={eqA.lo}  set={v=>updateEqA("lo",v)}  min={-12} max={12} ctr={0} label="Lo"   color="#3D5A80" size={16}/>
+                  <Knob v={eqA.vol} set={v=>updateEqA("vol",v)} min={0} max={1.5} ctr={1} label="Gain" color="#2E86DE" size={16}/>
+                  <Knob v={eqA.hi}  set={v=>updateEqA("hi",v)}  min={-12} max={12} ctr={0} label="Hi"   color="#2E86DE" size={16}/>
+                  <Knob v={eqA.mid} set={v=>updateEqA("mid",v)} min={-12} max={12} ctr={0} label="Mid"  color="#2E86DE" size={16}/>
+                  <Knob v={eqA.lo}  set={v=>updateEqA("lo",v)}  min={-12} max={12} ctr={0} label="Lo"   color="#2E86DE" size={16}/>
                 </div>
               </div>
             </div>
@@ -6521,23 +6521,23 @@ export default function CollabMix({ initialPage = "landing", djName = null }) {
             <div style={{ display:"flex", flexDirection:"column", borderLeft:"1px solid rgba(255,255,255,0.06)", overflow:"hidden" }}>
               {/* Header: label + VU inline */}
               <div style={{ padding:"3px 6px", background:"#0D0F12", borderBottom:"1px solid rgba(255,255,255,0.06)", display:"flex", justifyContent:"space-between", alignItems:"center", flexShrink:0 }}>
-                <span style={{ fontFamily:"'Inter',sans-serif", fontSize:11, color:"#5F8B95", fontWeight:600, letterSpacing:1 }}>B</span>
-                <VU an={eng.current?.B?.an} color="#5F8B95" w={50}/>
+                <span style={{ fontFamily:"'Inter',sans-serif", fontSize:11, color:"#A855F7", fontWeight:600, letterSpacing:1 }}>B</span>
+                <VU an={eng.current?.B?.an} color="#A855F7" w={50}/>
               </div>
               {/* EQ knobs LEFT, channel fader RIGHT — outer edge layout */}
               <div style={{ flex:1, display:"flex", flexDirection:"row", minHeight:0, overflow:"hidden" }}>
                 {/* Knobs column — inner side */}
                 <div style={{ flex:1, display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"space-evenly", padding:"5px 2px" }}>
-                  <Knob v={eqB.vol} set={v=>updateEqB("vol",v)} min={0} max={1.5} ctr={1} label="Gain" color="#5F8B95" size={16}/>
-                  <Knob v={eqB.hi}  set={v=>updateEqB("hi",v)}  min={-12} max={12} ctr={0} label="Hi"   color="#5F8B95" size={16}/>
-                  <Knob v={eqB.mid} set={v=>updateEqB("mid",v)} min={-12} max={12} ctr={0} label="Mid"  color="#5F8B95" size={16}/>
-                  <Knob v={eqB.lo}  set={v=>updateEqB("lo",v)}  min={-12} max={12} ctr={0} label="Lo"   color="#5F8B95" size={16}/>
+                  <Knob v={eqB.vol} set={v=>updateEqB("vol",v)} min={0} max={1.5} ctr={1} label="Gain" color="#A855F7" size={16}/>
+                  <Knob v={eqB.hi}  set={v=>updateEqB("hi",v)}  min={-12} max={12} ctr={0} label="Hi"   color="#A855F7" size={16}/>
+                  <Knob v={eqB.mid} set={v=>updateEqB("mid",v)} min={-12} max={12} ctr={0} label="Mid"  color="#A855F7" size={16}/>
+                  <Knob v={eqB.lo}  set={v=>updateEqB("lo",v)}  min={-12} max={12} ctr={0} label="Lo"   color="#A855F7" size={16}/>
                 </div>
                 {/* Channel volume fader — far right (outer edge) */}
                 <div style={{ flexShrink:0, display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"center", padding:"5px 4px", borderLeft:"1px solid rgba(255,255,255,0.06)", gap:2 }}>
-                  <div style={{ fontSize:6, fontFamily:"'Inter',sans-serif", color:"#5F8B9555", letterSpacing:1 }}>Vol</div>
-                  <VerticalFader val={eqB.vol} set={v=>updateEqB("vol",v)} color="#5F8B95" h={130}/>
-                  <div style={{ fontSize:7, fontFamily:"'Inter',sans-serif", color:"#5F8B9588" }}>{(eqB.vol/1.5*100).toFixed(0)}%</div>
+                  <div style={{ fontSize:6, fontFamily:"'Inter',sans-serif", color:"#A855F755", letterSpacing:1 }}>Vol</div>
+                  <VerticalFader val={eqB.vol} set={v=>updateEqB("vol",v)} color="#A855F7" h={130}/>
+                  <div style={{ fontSize:7, fontFamily:"'Inter',sans-serif", color:"#A855F788" }}>{(eqB.vol/1.5*100).toFixed(0)}%</div>
                 </div>
               </div>
             </div>
@@ -6548,7 +6548,7 @@ export default function CollabMix({ initialPage = "landing", djName = null }) {
                 decks-and-library so the library can reclaim that vertical
                 strip. A label · slider · B label · CTR reset. ── */}
           <div style={{ flexShrink:0, display:"flex", alignItems:"center", gap:6, padding:"6px 8px", borderTop:"1px solid rgba(255,255,255,0.06)", background:"#0A0B0E" }}>
-            <span style={{ fontSize:9, fontFamily:"'Inter',sans-serif", color:"#3D5A80aa", fontWeight:700, lineHeight:1, letterSpacing:.5, flexShrink:0 }}>A</span>
+            <span style={{ fontSize:9, fontFamily:"'Inter',sans-serif", color:"#2E86DEaa", fontWeight:700, lineHeight:1, letterSpacing:.5, flexShrink:0 }}>A</span>
             <div style={{ flex:1, position:"relative", height:20, display:"flex", alignItems:"center" }}>
               <div style={{ width:"100%", height:5, borderRadius:3, background:"#06070A", border:"1px solid rgba(255,255,255,0.06)", boxShadow:"inset 0 1px 2px rgba(0,0,0,.7)" }}>
                 <div style={{ height:"100%", width:`${xf*100}%`, background:"linear-gradient(90deg, rgba(15,79,160,0.50), rgba(31,201,122,0.45))", borderRadius:3 }}/>
@@ -6556,17 +6556,17 @@ export default function CollabMix({ initialPage = "landing", djName = null }) {
               <input type="range" min={0} max={1} step={.005} value={xf} onChange={e=>setXfLocal(Number(e.target.value))} style={{ position:"absolute", width:"100%", opacity:0, cursor:"pointer", height:20 }}/>
               <div style={{ position:"absolute", left:`calc(${xf*100}% - 9px)`, width:18, height:16, background:"#232529", border:"1px solid #3A3D44", borderRadius:3, boxShadow:"0 1px 4px rgba(0,0,0,.7)", pointerEvents:"none" }}/>
             </div>
-            <span style={{ fontSize:9, fontFamily:"'Inter',sans-serif", color:"#5F8B95aa", fontWeight:700, lineHeight:1, letterSpacing:.5, flexShrink:0 }}>B</span>
+            <span style={{ fontSize:9, fontFamily:"'Inter',sans-serif", color:"#A855F7aa", fontWeight:700, lineHeight:1, letterSpacing:.5, flexShrink:0 }}>B</span>
             <button onClick={()=>setXfLocal(.5)} title="Center crossfader" style={{ fontSize:7, height:16, padding:"0 6px", background:"transparent", border:"1px solid rgba(255,255,255,0.08)", color:"#5A5E66", borderRadius:3, cursor:"pointer", fontFamily:"'Inter',sans-serif", letterSpacing:.5, flexShrink:0 }}>CTR</button>
           </div>
         </div>
 
         {/* ── DECK B (shared) — outer header bar removed (see Deck A note). ── */}
-        <div style={{ display:"flex", flexDirection:"column", minWidth:0, minHeight:0, overflow:"hidden", background:"#15171A", border:`1px solid ${deckDrivers.B?"#5F8B9544":"rgba(255,255,255,0.06)"}`, borderRadius:10, transition:"border-color 150ms cubic-bezier(0.4, 0, 0.2, 1)" }}>
+        <div style={{ display:"flex", flexDirection:"column", minWidth:0, minHeight:0, overflow:"hidden", background:"#15171A", border:`1px solid ${deckDrivers.B?"#A855F744":"rgba(255,255,255,0.06)"}`, borderRadius:10, transition:"border-color 150ms cubic-bezier(0.4, 0, 0.2, 1)" }}>
           <div style={{ flex:1, display:"flex", alignItems:"flex-start", gap:10, padding:"10px 0 10px 10px", overflow:"hidden", minHeight:0 }}>
-            <DeckArt artwork={libLoadB?.track?.artwork} fallback="B" color="#5F8B95"/>
+            <DeckArt artwork={libLoadB?.track?.artwork} fallback="B" color="#A855F7"/>
             <div style={{ flex:1, overflow:"hidden", minHeight:0 }}>
-            <Deck id="B" ch={eng.current?.B} ctx={eng.current?.ctx} color="#5F8B95" local remote={pB} onChange={dh("B")} midi={midiEvt} bpmResult={bpm.results["B"]} bpmAnalyze={bpm.analyze} eqHi={eqB.hi} eqMid={eqB.mid} eqLo={eqB.lo} chanVol={eqB.vol} loadFromLibrary={libLoadB} onTrackInfo={handleTrackInfo} onSync={()=>handleSyncToggle("B")} syncReady={!!(bpm.results["A"]?.bpm || pA?.bpm)} syncRole={syncLocked ? (lastSlaveDeck === "B" ? "slave" : "master") : null} isMaster={masterDeck === "B"} onMasterToggle={handleMasterToggle} onLibraryTrackDrop={(trackId)=>{const t=lib.library.find(x=>x.id===trackId);if(t)handleLibLoad(t,"B");}} onProgUpdate={handleProgB} onWaveform={setWfB} onSeekReady={onDeckBSeekReady} onToggleReady={onDeckBToggleReady} onCueReady={onDeckBCueReady} onNudgeReady={onDeckBNudgeReady} onTransportFire={handleTransportFire} isDriver={!deckDrivers.B || deckDrivers.B === session.name} acNowRef={acNowRef} onBufferReady={onDeckBBufferReady} barOneOffsetSec={barOneB * (bpm.results["B"]?.beatPeriodSec || 0)} onGridEdit={(fields) => libLoadB?.track?.id && lib.setGridEdit?.(libLoadB.track.id, fields)}/>
+            <Deck id="B" ch={eng.current?.B} ctx={eng.current?.ctx} color="#A855F7" local remote={pB} onChange={dh("B")} midi={midiEvt} bpmResult={bpm.results["B"]} bpmAnalyze={bpm.analyze} eqHi={eqB.hi} eqMid={eqB.mid} eqLo={eqB.lo} chanVol={eqB.vol} loadFromLibrary={libLoadB} onTrackInfo={handleTrackInfo} onSync={()=>handleSyncToggle("B")} syncReady={!!(bpm.results["A"]?.bpm || pA?.bpm)} syncRole={syncLocked ? (lastSlaveDeck === "B" ? "slave" : "master") : null} isMaster={masterDeck === "B"} onMasterToggle={handleMasterToggle} onLibraryTrackDrop={(trackId)=>{const t=lib.library.find(x=>x.id===trackId);if(t)handleLibLoad(t,"B");}} onProgUpdate={handleProgB} onWaveform={setWfB} onSeekReady={onDeckBSeekReady} onToggleReady={onDeckBToggleReady} onCueReady={onDeckBCueReady} onNudgeReady={onDeckBNudgeReady} onTransportFire={handleTransportFire} isDriver={!deckDrivers.B || deckDrivers.B === session.name} acNowRef={acNowRef} onBufferReady={onDeckBBufferReady} barOneOffsetSec={barOneB * (bpm.results["B"]?.beatPeriodSec || 0)} onGridEdit={(fields) => libLoadB?.track?.id && lib.setGridEdit?.(libLoadB.track.id, fields)}/>
             </div>
           </div>
         </div>

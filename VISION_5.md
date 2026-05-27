@@ -2707,3 +2707,158 @@ Path A waveform glow rendering remains the next major visual lever.
 The new atmospheric palette is deliberately a "down-payment" on
 Path A — flat fills change today; waveform compositing depth
 changes when Path A ships.
+
+## May 26, 2026 evening — High-contrast cool deck pair (atmospheric retired same day)
+
+Second color migration of the day. The morning's atmospheric
+Anjunadeep palette (`#3D5A80` Twilight Blue / `#5F8B95` Atmospheric
+Teal) shipped at commit `f9f0bf9` but tested poorly in side-by-side
+deck review: both colors read as cold / dead / nearly-indistinguishable
+(same cool-blue hue family at low saturation). The "atmospheric depth"
+justification was contingent on Path A multi-layer canvas glow
+rendering shipping later — these were the wrong flat-fill defaults to
+wait on it with. Waveforms felt lifeless even when surrounding deck
+chrome was otherwise intact.
+
+### Palette change
+- **Deck A: `#3D5A80` → `#2E86DE`** (Vivid Ocean Blue) — saturated
+  cool blue. Alive as a flat fill; doesn't need Path A glow to feel
+  energetic.
+- **Deck B: `#5F8B95` → `#A855F7`** (Electric Royal Purple) — saturated
+  cool violet. A vs B now reads through strong hue contrast (blue
+  vs purple) rather than the cold-and-similar pair the morning's
+  palette landed on.
+- Pure black `#000000` background preserved.
+- `STATUS_OK = "#22c55e"` (semantic green) preserved.
+- Beatgrid marker red `#FF3B30` preserved.
+
+### "Why no warm deck colors" documented in DESIGN_PHILOSOPHY.md
+User considered warm coral / orange for visual energy but rejected:
+warm hues at deck-identity saturation cause cumulative eye fatigue
+under long stare-tasks (DJs lock onto waveforms for minutes). Pro DJ
+tools optimize for stareable cool waveforms; warm is reserved for
+marker-scale uses (cue points, phrase markers, recording dot —
+milliseconds of attention, not minutes). The new pair stays inside
+this rule: A vs B distinction is hue family (blue vs purple), not
+temperature.
+
+### Iteration sequence (documented in the philosophy doc)
+Three palettes in one day:
+1. **Material Design `#1976D2 / #00C853`** — read as consumer-app /
+   Android. Retired May 26 morning at commit `f9f0bf9`.
+2. **Atmospheric `#3D5A80 / #5F8B95`** — cold / dead / too similar.
+   Retired May 26 evening (this commit).
+3. **High-contrast `#2E86DE / #A855F7`** — current. Saturated enough
+   to feel alive, distinct enough to read across the screen, stays
+   inside the no-warm-fills rule.
+
+All three failure modes are now recorded in the philosophy doc's
+Banned colors section + supersession blockquotes so future
+iterations don't repeat them.
+
+### Verification per CLAUDE.md
+- **Build clean**: `vite build` → `dist/assets/main-By5X8XjF.js`
+  at 548.33 kB / gzip 176.69 kB (no size regression vs `main-C75qnnc1.js`
+  from the morning commit). 364 modules transformed in 970 ms.
+- **Bundle byte scan (precise counts via `grep -oE`)**:
+  - `2E86DE`: **16** occurrences ✓
+  - `A855F7`: **23** occurrences ✓ (22 from this migration + 1 pre-
+    existing `#a855f706` hero glow at `collabmix-production.jsx:4481`,
+    case-insensitive grep counts both — coincidence, not collision)
+  - `22c55e` (STATUS_OK): **24** occurrences ✓ (unchanged)
+  - `FF3B30` (beatgrid marker red): **1** occurrence ✓ (preserved)
+  - `3D5A80`: **0** ✓
+  - `5F8B95`: **0** ✓
+  - `1976D2`: **0** ✓ (still gone from morning commit)
+  - `00C853`: **0** ✓
+  - All alpha variants of all four retired hex values: **0** in source.
+  - Equality check at deck-id logger: bundle contains
+    `ne.current==="#2E86DE"?"A":ne.current==="#A855F7"?"B":"?"` —
+    string literals updated cleanly on both sides of the ternary.
+- **Lint**: still pre-broken (ESLint v9 migration outstanding) —
+  flagged unchanged from prior sessions.
+- **Live verification pending** — requires a browser load.
+
+### What's verified vs assumed
+- **Verified** by build artifact + grep: every old hex gone from
+  source, every new hex present, equality-check site compiled clean,
+  STATUS_OK + beatgrid red preserved, alpha variants migrated
+  correctly through the bare-6-char bulk replace.
+- **Assumed**: Canvas2D `shadowColor` calls with the new saturated
+  hex render correctly (no parsing risk — standard CSS hex);
+  driver-highlight borders at `#2E86DE44` / `#A855F744` read as
+  intended; landing-page brand gradient composites cleanly with
+  the new purple endpoint; the saturated colors don't blow out
+  against pure black at high brightness (architectural — both
+  values are mid-luminance, no full-white channel).
+- **Not yet verified**: visual character in the actual UI. The user
+  rejected the morning palette specifically on visual feel — this
+  same-day iteration needs visual confirmation before committing
+  to it as the canonical pair.
+
+### Known limitations
+- **Pre-existing inconsistency in landing-page glow casing.** The
+  hero radial glow at line 4481 uses lowercase `#a855f706`; the
+  newly-migrated landing-page brand gradient sites use uppercase
+  `#A855F7`. Functionally identical; cosmetic-only inconsistency.
+  Not normalized this commit (scope discipline — user didn't ask).
+- **`src/App.jsx` not touched.** Confirmed dead code (not imported
+  from `main.jsx`, no consumer references). The file has its own
+  `#a855f706` glow but no deck-color sites to migrate.
+- **Two palette migrations stacked in one day.** Vercel may queue
+  both commits (`f9f0bf9` and the new one); typically Vercel skips
+  to the latest tip and only deploys this one. If they BOTH deploy
+  sequentially, expect one brief window where the atmospheric
+  palette is live before being replaced.
+- **No browser verification.** Same caveat as the morning commit.
+
+### Recommended user verification
+1. Deploy: `git push origin master`. Vercel auto-deploys (when it
+   catches up — the morning commit was still queued at last check).
+2. Hard refresh `collabmix.vercel.app` (Cmd-Shift-R) once Vercel
+   shows the deploy as Ready.
+3. **Deck A**: should read as **Vivid Ocean Blue** — saturated,
+   alive, immediately distinct. Check the deck letter, waveform,
+   VU meter, knob rings, vertical fader.
+4. **Deck B**: should read as **Electric Royal Purple** — saturated
+   cool violet. Same surfaces as Deck A.
+5. **Side-by-side distinction**: A vs B should be instantly
+   distinguishable from across the screen. If they still feel "too
+   similar" or "muddy," that's a regression of the goal and we
+   iterate again.
+6. **CRITICAL — Pass-B-equivalent regression check**: the partner
+   online dot in P2P AUDIO must STILL be green (`STATUS_OK`).
+   Rekordbox "ready" badge must STILL be green.
+7. **Beatgrid marker red `#FF3B30`** — must STILL be red.
+8. **Eye comfort check**: stare at a Deck A waveform for 30+
+   seconds. Should not cause discomfort. Repeat with Deck B. If
+   the purple causes any strain, flag immediately — purple is the
+   highest-risk saturated cool because it has both red and blue
+   wavelength content.
+9. **Subjective "alive" check**: app should feel energetic compared
+   to the morning's atmospheric palette. If it still feels dead,
+   the saturated cool pair is also wrong and we go back to the
+   palette-iteration table.
+
+### Files changed
+- `src/collabmix-production.jsx` — bulk-replaced `3D5A80 → 2E86DE`
+  (16 source sites) and `5F8B95 → A855F7` (22 source sites);
+  updated `TOK.deckA` / `TOK.deckB` inline comments.
+- `tools/docs/DESIGN_PHILOSOPHY.md` — rewrote "Colors (current)"
+  block (now "high-contrast cool pair, May 26 evening"); added
+  `#3D5A80` and `#5F8B95` to "Banned colors" with failure-mode
+  notes; appended "Why no warm deck colors" rationale; added a
+  SUPERSEDED blockquote for the May 26 morning atmospheric block;
+  added a new status-log entry above the morning entry.
+- `VISION_5.md` — this entry appended (per CLAUDE.md append-only
+  rule).
+- `src/index.css` — untouched (CSS-variable block was already
+  deleted in the morning commit).
+
+### Deferred (unchanged)
+Path A multi-layer canvas glow rendering remains the next major
+visual lever. The new high-contrast pair is chosen to work as flat
+fills without Path A — but Path A will still amplify the saturated
+colors into atmospheric light when it ships. The morning palette
+was deferred-in-advance; this one is forward-compatible without
+being dependent.
