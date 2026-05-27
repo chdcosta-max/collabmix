@@ -3210,6 +3210,9 @@ are also placeholders pending final tuning with the glow live.
   behavior / sidebar were untouched in the May 23 Quick Wins.
 - **Metronome audio for beatgrid editor** — visual pulse v1
   shipped May 25; audio click deferred.
+- **Library auto-import system** — see "Open roadmap discussion —
+  Library auto-import system" section below for full discussion
+  (deferred pending brand/UX strategy session).
 - **Bigger feature backlog**: scan computer for music, Rekordbox
   XML import, iTunes XML import, USB drive handling, AcoustID
   metadata fix for tracks without good ID3 data, library UI
