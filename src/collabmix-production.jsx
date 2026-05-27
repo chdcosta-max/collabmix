@@ -2796,6 +2796,106 @@ function WF({ bands, peaks, freq, prog, onSeek, h=80, hotCues=[], loopStart=null
 //
 // 60fps RAF. ResizeObserver watches the canvas — the draw loop never reads
 // clientWidth.
+
+// Build the silhouette Path2D for a column-height envelope. Pure geometry,
+// no rendering side effects. Top sweep left→right at center-h, bottom sweep
+// right→left at center+h. Selective quadratic curves smooth three-column
+// monotonic runs; columns with delta > STEEP_THRESH force lineTo so kick/
+// snare onsets keep their near-vertical attack edge. Top + bottom sweeps
+// share the same check (based on |heights[]|) for symmetric kicks.
+//
+// Extracted from the AnimatedZoomedWF draw loop as Path A commit 1: pure-
+// geometry helper that commit 2 will reuse to render the glow onto a
+// stacked layer canvas separate from the crisp-detail canvas.
+function buildSilhouettePath(heights,center,physW,maxH){
+  const STEEP_THRESH=maxH*0.15;
+  const path=new Path2D();
+  path.moveTo(0,center);
+  // Top sweep.
+  if(physW>0) path.lineTo(0.5,center-heights[0]);
+  for(let dx=1;dx<physW-1;dx++){
+    const hPrev=heights[dx-1], hCur=heights[dx], hNext=heights[dx+1];
+    const yPrev=center-hPrev, yCur=center-hCur, yNext=center-hNext;
+    const dF=hNext>hCur?hNext-hCur:hCur-hNext;
+    const dB=hCur>hPrev?hCur-hPrev:hPrev-hCur;
+    const steep=dF>STEEP_THRESH||dB>STEEP_THRESH;
+    const monotonic=!steep&&((yPrev<yCur&&yCur<yNext)||(yPrev>yCur&&yCur>yNext));
+    if(monotonic){
+      const midX=dx+1, midY=(yCur+yNext)*0.5;
+      path.quadraticCurveTo(dx+0.5,yCur,midX,midY);
+    } else {
+      path.lineTo(dx+0.5,yCur);
+    }
+  }
+  if(physW>1) path.lineTo(physW-0.5,center-heights[physW-1]);
+  path.lineTo(physW,center);
+  // Bottom sweep (mirror).
+  if(physW>0) path.lineTo(physW-0.5,center+heights[physW-1]);
+  for(let dx=physW-2;dx>0;dx--){
+    const hPrev=heights[dx+1], hCur=heights[dx], hNext=heights[dx-1];
+    const yPrev=center+hPrev, yCur=center+hCur, yNext=center+hNext;
+    const dF=hNext>hCur?hNext-hCur:hCur-hNext;
+    const dB=hCur>hPrev?hCur-hPrev:hPrev-hCur;
+    const steep=dF>STEEP_THRESH||dB>STEEP_THRESH;
+    const monotonic=!steep&&((yPrev<yCur&&yCur<yNext)||(yPrev>yCur&&yCur>yNext));
+    if(monotonic){
+      const midX=dx, midY=(yCur+yNext)*0.5;
+      path.quadraticCurveTo(dx+0.5,yCur,midX,midY);
+    } else {
+      path.lineTo(dx+0.5,yCur);
+    }
+  }
+  if(physW>1) path.lineTo(0.5,center+heights[0]);
+  path.closePath();
+  return path;
+}
+
+// v5.8 multi-pass additive glow. Three passes on the same Path2D using
+// 'lighter' composite (additive — colors add where they overlap, same
+// physics as real light): wide atmospheric halo + concentrated halo +
+// uniform deep-color silhouette body accumulate to a glowing core with
+// bleed extending past the waveform shape (Reflect-style).
+//
+// Postcondition: leaves ctx in source-over composite mode so callers can
+// stroke or draw downstream passes without additive interference. Treats
+// shadowColor, shadowBlur, fillStyle, globalCompositeOperation as scratch
+// state on ctx — they should be considered clobbered after this call.
+//
+// Extracted from the AnimatedZoomedWF draw loop as Path A commit 1; the
+// ctx parameter currently always points at the visible canvas. Commit 2
+// will retarget it to a lower-layer canvas behind a CSS-blurred element.
+function renderSilhouetteGlow(ctx,path,dr,dg,db,dpr){
+  ctx.globalCompositeOperation='lighter';
+
+  // Pass A — wide atmospheric spread. Massive blur, low fill alpha so
+  // the shadow does most of the work and the spread reaches well past
+  // the silhouette edges.
+  ctx.shadowColor=`rgba(${dr},${dg},${db},1.0)`;
+  ctx.shadowBlur=Math.round(70*dpr);
+  ctx.fillStyle=`rgba(${dr},${dg},${db},0.18)`;
+  ctx.fill(path);
+
+  // Pass B — concentrated halo. Moderate blur, higher fill alpha so
+  // the bright core area starts to take shape.
+  ctx.shadowBlur=Math.round(28*dpr);
+  ctx.fillStyle=`rgba(${dr},${dg},${db},0.30)`;
+  ctx.fill(path);
+
+  // Pass C — silhouette baseline fill. v5.10: uniform deep base color
+  // (was peaks-bright gradient). The peaks-bright gradient was leaving
+  // the centerline as the only spot reading the deep pigment, while
+  // the edges read near-white from the +alpha bump. The body should
+  // be the deep saturated color everywhere, with brightness only at
+  // the very peak tips (handled by Pass 2b's per-column gradient).
+  ctx.shadowBlur=0;
+  ctx.fillStyle=`rgba(${dr},${dg},${db},0.45)`;
+  ctx.fill(path);
+
+  // Restore source-over for the AA stroke + downstream passes.
+  // Additive on stroke would over-brighten the edge into pure white.
+  ctx.globalCompositeOperation='source-over';
+}
+
 function AnimatedZoomedWF({ bands, dur, progRef, onSeek, h=96, windowSec=8, beatPhaseFrac=null, beatPeriodSec=null, gridOffsetMs=0, barOneOffsetSec=0, bpmNudge=0, deckColor="#FFFFFF", rate=1 }) {
   const ref=useRef(null);
   const raf=useRef(null);
@@ -3020,87 +3120,15 @@ function AnimatedZoomedWF({ bands, dur, progRef, onSeek, h=96, windowSec=8, beat
         ctx.fillStyle='rgba(255,255,255,0.06)';
         ctx.fillRect(0,center,physW,1);
 
-        // ── Silhouette path geometry (Path2D so it can be re-filled by the
-        // multi-pass glow without recomputing). Selective quadratic curves —
-        // three monotonic columns get smoothed via quadraticCurveTo; columns
-        // with delta > STEEP_THRESH force lineTo so kick/snare onsets keep
-        // their near-vertical attack edge. Top + bottom sweeps share the
-        // same check (based on |heights[]|) for symmetric kicks.
-        const STEEP_THRESH=maxH*0.15;
-        const silhouettePath=new Path2D();
-        silhouettePath.moveTo(0,center);
-        // Top sweep.
-        if(physW>0) silhouettePath.lineTo(0.5,center-heights[0]);
-        for(let dx=1;dx<physW-1;dx++){
-          const hPrev=heights[dx-1], hCur=heights[dx], hNext=heights[dx+1];
-          const yPrev=center-hPrev, yCur=center-hCur, yNext=center-hNext;
-          const dF=hNext>hCur?hNext-hCur:hCur-hNext;
-          const dB=hCur>hPrev?hCur-hPrev:hPrev-hCur;
-          const steep=dF>STEEP_THRESH||dB>STEEP_THRESH;
-          const monotonic=!steep&&((yPrev<yCur&&yCur<yNext)||(yPrev>yCur&&yCur>yNext));
-          if(monotonic){
-            const midX=dx+1, midY=(yCur+yNext)*0.5;
-            silhouettePath.quadraticCurveTo(dx+0.5,yCur,midX,midY);
-          } else {
-            silhouettePath.lineTo(dx+0.5,yCur);
-          }
-        }
-        if(physW>1) silhouettePath.lineTo(physW-0.5,center-heights[physW-1]);
-        silhouettePath.lineTo(physW,center);
-        // Bottom sweep (mirror).
-        if(physW>0) silhouettePath.lineTo(physW-0.5,center+heights[physW-1]);
-        for(let dx=physW-2;dx>0;dx--){
-          const hPrev=heights[dx+1], hCur=heights[dx], hNext=heights[dx-1];
-          const yPrev=center+hPrev, yCur=center+hCur, yNext=center+hNext;
-          const dF=hNext>hCur?hNext-hCur:hCur-hNext;
-          const dB=hCur>hPrev?hCur-hPrev:hPrev-hCur;
-          const steep=dF>STEEP_THRESH||dB>STEEP_THRESH;
-          const monotonic=!steep&&((yPrev<yCur&&yCur<yNext)||(yPrev>yCur&&yCur>yNext));
-          if(monotonic){
-            const midX=dx, midY=(yCur+yNext)*0.5;
-            silhouettePath.quadraticCurveTo(dx+0.5,yCur,midX,midY);
-          } else {
-            silhouettePath.lineTo(dx+0.5,yCur);
-          }
-        }
-        if(physW>1) silhouettePath.lineTo(0.5,center+heights[0]);
-        silhouettePath.closePath();
-
-        // ── v5.8 NEON GLOW — three additive passes on the same Path2D.
-        // 'lighter' composite mode means colors ADD where they overlap, the
-        // same physics as real light. Wide halo + concentrated halo + base
-        // silhouette accumulate to a real glowing core with atmospheric
-        // bleed extending well past the waveform shape (Reflect-style).
-        ctx.globalCompositeOperation='lighter';
-
-        // Pass A — wide atmospheric spread. Massive blur, low fill alpha so
-        // the shadow does most of the work and the spread reaches well past
-        // the silhouette edges.
-        ctx.shadowColor=`rgba(${dr},${dg},${db},1.0)`;
-        ctx.shadowBlur=Math.round(70*dpr);
-        ctx.fillStyle=`rgba(${dr},${dg},${db},0.18)`;
-        ctx.fill(silhouettePath);
-
-        // Pass B — concentrated halo. Moderate blur, higher fill alpha so
-        // the bright core area starts to take shape.
-        ctx.shadowBlur=Math.round(28*dpr);
-        ctx.fillStyle=`rgba(${dr},${dg},${db},0.30)`;
-        ctx.fill(silhouettePath);
-
-        // Pass C — silhouette baseline fill. v5.10: uniform deep base color
-        // (was peaks-bright gradient). The peaks-bright gradient was leaving
-        // the centerline as the only spot reading the deep pigment, while
-        // the edges read near-white from the +alpha bump. The body should
-        // be the deep saturated color everywhere, with brightness only at
-        // the very peak tips (handled by Pass 2b's per-column gradient).
-        ctx.shadowBlur=0;
-        ctx.fillStyle=`rgba(${dr},${dg},${db},0.45)`;
-        ctx.fill(silhouettePath);
-
-        // Restore source-over for the AA stroke + downstream passes.
-        // Stroke etc. should be regular composited — additive on stroke
-        // would over-brighten the edge into pure white.
-        ctx.globalCompositeOperation='source-over';
+        // Silhouette geometry + v5.8 multi-pass additive glow. Both lifted
+        // to module-level helpers (buildSilhouettePath, renderSilhouetteGlow)
+        // as Path A commit 1 prep. Pixel output is identical to the prior
+        // inline implementation; commit 2 will retarget renderSilhouetteGlow
+        // to a lower-layer canvas while the crisp draws below stay on the
+        // main canvas. renderSilhouetteGlow leaves ctx in source-over mode
+        // so the AA stroke below renders normally.
+        const silhouettePath=buildSilhouettePath(heights,center,physW,maxH);
+        renderSilhouetteGlow(ctx,silhouettePath,dr,dg,db,dpr);
 
         // Thin AA stroke softens the silhouette edge without obscuring
         // transient peaks. Renders on top of the additive accumulation.
