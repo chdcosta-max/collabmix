@@ -3543,3 +3543,192 @@ touched. This section exists to preserve the strategic context
 so a future session can pick it up without re-deriving the
 problem from scratch. The next concrete action is the
 brand / UX strategy session, not Phase 1 implementation.
+
+## Library strategy session — May 27 morning (continuation of May 26 auto-import discussion)
+
+The brand / UX strategy session that was tabled across multiple
+prior sessions finally happened this morning, continuing
+directly from the May 26 evening auto-import discussion above.
+This section captures **what we locked in** and **what's still
+open** before the session ended at ~90% context to preserve
+clean state for next session.
+
+This document is now the authoritative summary. A fresh Claude
+session reading `VISION_5.md` gets full state without needing
+to recreate any prior discussion. The strategy is **settled
+except for the three PENDING questions** at the bottom of this
+section.
+
+### Locked principles (do not relitigate)
+
+These are decided. Future sessions should treat them as
+inputs, not open questions.
+
+**1. Target user (confirmed, was already locked).**
+- Pro / working DJs
+- Melodic and progressive house aesthetic
+- Anjunadeep, Lane 8, Ben Böhmer adjacent crowd
+- NOT festival EDM, NOT casual hobbyists
+- Power users with thousands of tracks
+- Often migrating from Rekordbox / Traktor / Serato
+- Multiple acquisition sources (Beatport, Bandcamp, promos,
+  DJ pools)
+
+**2. Library modes (locked May 26).** Auto-Finder + Manager +
+Hybrid all supported. Resolved via the "BOTH" answer to the
+philosophical question of "DJ track manager vs smart
+auto-finder." Documented in commit `8539e53` and detailed in
+the section immediately above this one.
+
+**3. Collaboration modes (locked May 27 — this session).**
+**ALL** modes supported in library collaboration:
+- **Personal libraries** — yours is yours
+- **Read-only visibility** — partner sees your tracks during
+  sessions
+- **Mid-session sharing** — send tracks to partner during a
+  session
+- **Shared collections** — build playlists together
+- **Session-based pools** — per-session track contributions
+
+User decision: **"all"** — Mix//Sync library supports every
+collaboration mode because that's the differentiator vs
+single-user tools (Rekordbox / Traktor / Serato). This is the
+collaboration analogue of the May 26 "BOTH" resolution for
+library modes — the same instinct (refuse to pick a single
+workflow) applied to a different surface.
+
+**4. Brand principle (locked May 26).** **"Mix//Sync respects
+how YOU work, not how WE think you should work."** Applies to
+library modes, applies to collaboration modes, and likely
+extends to other features. The pattern emerging is: where
+competitors impose a workflow, Mix//Sync supports all of them
+and lets the user pick.
+
+**5. Brand aesthetic (locked across multiple sessions).**
+Anti-Material Design, atmospheric, sophisticated, premium but
+alive, pure black background, cool deck colors, Path A glow
+rendering. Established in DESIGN_PHILOSOPHY.md and refined
+across the May 22 → May 26 visual iteration cycle.
+
+### Strategic insight from today
+
+The biggest framing shift to come out of this morning's
+session:
+
+> **The library is NOT just "where music lives" for the target
+> user. Pro DJs come to Mix//Sync with existing libraries (in
+> Rekordbox, in folders, in iTunes). Mix//Sync's library is
+> "where you bring your existing music to USE it" — a
+> performance interface, not just a storage interface.**
+
+This shifts the framing of the entire product:
+
+- Mix//Sync is **less** "music library app"
+- Mix//Sync is **more** "collaborative performance interface
+  for your existing music"
+
+The library is a **means to an end** (the collaboration +
+performance), not the end itself. This reframing has downstream
+implications for nearly every UI decision around library — it
+should optimize for "find a track fast and load it into a deck
+with a partner watching," not for "browse and organize a
+collection." The collection-management work happens in
+Rekordbox; Mix//Sync inherits the result and makes it
+playable-together.
+
+This is also why auto-import matters so much (May 26 section
+above): the friction of re-uploading manually doesn't just
+slow users down — it breaks the entire framing. If users have
+to maintain Mix//Sync as a separate library, it becomes another
+storage app to manage. If music just appears, Mix//Sync becomes
+the performance layer on top of the music they already own.
+
+### Open questions — STILL NEED TO RESOLVE BEFORE PHASE 1 BUILD
+
+These three questions were posed in this morning's session but
+not answered before stopping for context budget. They must be
+resolved in the next session before any code is written.
+
+#### Q1. Existing 135 tracks — what happens when auto-import finds duplicates of already-uploaded tracks?
+
+The current Mix//Sync library has 135 manually-uploaded tracks
+(per the May 7 dogfood-ready milestone — see top of
+`VISION_5.md`). When auto-import is built and runs against the
+user's file system, many of those same tracks will exist on
+disk as well. What's the merge behavior?
+
+- **A.** Auto-detect duplicates, merge into one library entry
+  (file-system version becomes canonical).
+- **B.** Keep uploaded ones as-is, auto-import only NEW files
+  (the 135 stay separate).
+- **C.** Migration prompt: "We found these tracks on your
+  computer. Replace your uploaded versions with file-system
+  versions?"
+- **D.** Start fresh — wipe the 135, scan computer, build from
+  scratch.
+
+**USER ANSWER: [PENDING]**
+
+#### Q2. New user first experience — what's step 1 when someone signs up and lands in Mix//Sync for the first time?
+
+The onboarding moment is the most consequential UX decision in
+the product. It defines what users believe Mix//Sync is.
+
+- **A.** "Connect your music folders" wizard immediately.
+- **B.** Empty app with a clear "Add music to get started"
+  prompt.
+- **C.** Upload a single track to try it out, then prompt for
+  folder access.
+- **D.** Demo mode — play with sample tracks first, then add
+  your own.
+
+**USER ANSWER: [PENDING]**
+
+#### Q3. Default mode for new users — Auto-Finder, Manager, or Hybrid?
+
+All three modes are supported (locked May 26), but the
+default for a brand-new user has to be picked. It is the
+single biggest factor in what "Mix//Sync first feels like."
+
+- **A.** Auto-Finder (aggressive) — scan everything, user
+  cleans up later.
+- **B.** Manager (conservative) — user explicitly adds each
+  folder, full control.
+- **C.** Hybrid (middle ground) — smart defaults with
+  notification, user approves new tracks.
+
+**USER ANSWER: [PENDING]**
+
+### Next session plan
+
+1. **Open fresh Claude Code session.**
+2. **Read `VISION_5.md`** to load full context (today's
+   session included — this entry is the load-bearing summary).
+3. **User answers Q1, Q2, Q3 above.**
+4. **Update `VISION_5.md`** with answers (append a follow-up
+   section with the resolutions).
+5. **Then: write Phase 1 build prompt** with all decisions
+   locked.
+6. **Phase 1 implementation begins** (Multi-folder watched
+   setup, ~8-12 hours, per the phased scope in the May 26
+   section above).
+
+### Context-efficient recovery
+
+This document is the authoritative summary. A fresh Claude
+session reading `VISION_5.md` from the top gets:
+- The full project history through May 7 dogfood milestone
+- All design / palette / glow iteration context through
+  May 26
+- The May 26 evening auto-import strategic context (full
+  section above)
+- This May 27 morning strategy session (locked principles +
+  strategic reframe + three open questions)
+
+No prior conversation needs to be reconstructed. The strategy
+is **settled except for Q1, Q2, Q3** — those are the only
+gates between today's state and Phase 1 implementation.
+
+Session ended at ~90% context usage to preserve clean state
+for the next session, rather than continuing into degraded
+context where decisions become unreliable.
