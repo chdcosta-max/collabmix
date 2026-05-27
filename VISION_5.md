@@ -2575,3 +2575,135 @@ beatgrid editor v1, and a 1,070-line dead-code purge. Final commit
 - Empty state design.
 - Metronome audio for the beatgrid editor (visual pulse v1
   shipped; audio click deferred).
+
+## May 26, 2026 — Atmospheric Anjunadeep deck palette
+
+Foundational brand-color shift. The May 23 "Quick Wins" Material
+Design deck pair (`#1976D2` Dusk Blue / `#00C853` Deep Emerald Glow)
+shipped to production but on review read as "consumer software /
+Android" rather than "pro DJ tool." Replaced with an atmospheric,
+desaturated palette aligned to the Anjunadeep / Above & Beyond /
+Universal Audio aesthetic register.
+
+### Palette change
+- **Deck A: `#1976D2` → `#3D5A80`** (Twilight Blue) — desaturated
+  atmospheric blue, deeper and more set than Material primary 700.
+- **Deck B: `#00C853` → `#5F8B95`** (Atmospheric Teal) — deep ocean
+  teal / sophisticated gray-blue. A vs B now reads through hue
+  family (blue vs teal) rather than the bright blue-vs-green
+  contrast.
+- Pure black `#000000` background (May 25 evening) preserved.
+- Text `#F5F5F7`, beatgrid marker red `#FF3B30`, white-accent tier
+  system all preserved.
+
+### Semantic green decoupled
+The old Deck B `#00C853` was doing double duty as both deck identity
+and "green = online / ready" status color. A naive bulk replace
+would have broken the Rekordbox ready badge, the partner online dot,
+and adjacent landing-page brand cues. Introduced a module-level
+constant `STATUS_OK = "#22c55e"` (consolidating with the existing
+inline `#22c55e` usage at partner-volume / START-STREAM / BPM
+sites). Re-routed two semantic-green sites (Rekordbox ready badge,
+partner online dot) to `STATUS_OK` before the bulk Deck B replace.
+The five landing-page brand-decoration sites (MIX//SYNC logo
+gradients ×2, hero radial glow, deck mockup color array, crossfader
+preview) followed the bulk replace into the new Deck B teal — those
+are brand decoration, not status semantics, and should track the
+deck identity.
+
+### CSS variables cleaned
+The `:root { --deck-a / --deck-b }` declarations and the
+`@supports (color: color(display-p3 ...))` wide-gamut override block
+in `src/index.css` were confirmed dead code — no `var(--deck-a)`
+consumers anywhere; every JSX site inlined the hex literal. The
+"keep the two in sync" comment was aspirational, not enforced.
+Both blocks deleted. For atmospheric desaturated colors P3 also
+gives zero visible benefit (both new colors well within sRGB gamut).
+
+### Verification per CLAUDE.md
+- **Build clean**: `vite build` produces `dist/assets/main-C75qnnc1.js`
+  at 548.33 kB gzip 176.69 kB (no size regression vs prior 540ish kB).
+  All four chunks build, ✓ 364 modules transformed.
+- **Bundle byte scan (precise occurrence counts via `grep -oE`)**:
+  - `3D5A80`: **16** occurrences in main bundle ✓
+  - `5F8B95`: **22** occurrences in main bundle ✓
+  - `22c55e` (STATUS_OK): **24** occurrences ✓
+  - `1976D2` (case-insensitive): **0** ✓
+  - `00C853` (case-insensitive): **0** ✓
+  - Alpha-variant sweep (`#1976D2[22|44|55|88|aa]`, `#00C853[22|44|55|88|aa]`
+    — eight known variants from the investigation) all zero in source.
+  - Equality-check site preserved: bundle contains
+    `ne.current==="#3D5A80"?"A":ne.current==="#5F8B95"?"B":"?"` —
+    deck-id derivation in the debug logger still works under the
+    new strings.
+- **Lint**: not runnable (`npm run lint` still errors with the
+  pre-existing "ESLint couldn't find eslint.config.js" — ESLint v9
+  migration outstanding from Session 2). Flagged unchanged.
+- **Runtime check**: build artifact verified, but full live load
+  in a browser is the user-side verification step below.
+
+### What's verified vs assumed
+- **Verified** by direct bundle inspection: every old hex is gone,
+  every new hex is present, the equality-check site at line 2901
+  (now renumbered after edits) compiled correctly with both sides
+  of the ternary changed, the semantic-green re-route compiled into
+  `STATUS_OK` references.
+- **Assumed** (architecturally sound but not visually verified by
+  me): waveform Canvas2D `shadowColor` calls now using the new
+  atmospheric hex render correctly; deck-color border alpha
+  variants (`#3D5A8044` etc.) still produce the intended subtle
+  driver-highlight borders; landing-page MIX//SYNC logo gradients
+  composite cleanly with the new teal as the gradient endpoint.
+- **Live verification pending** — requires a browser.
+
+### Known limitations
+- The new desaturated palette will not show its full atmospheric
+  character until **Path A multi-layer offscreen canvas glow
+  compositing** ships. Current canvas-2D multi-pass additive glow
+  is at its ceiling; the new hues are deliberately chosen to compose
+  well under Path A's wide-halo + concentrated-halo + crisp-shape
+  layering, which means flat-fill UI elements (knob rings, VU bars,
+  small chips) will look "deeper" but the waveforms themselves will
+  feel atmospheric only after the next major rendering pass.
+- Landing-page MIX//SYNC logo gradient now goes gray → teal rather
+  than gray → green. Visually less vibrant than the prior Material
+  green endpoint; consistent with the new restrained brand register.
+  If the landing page later gets a dedicated brand-color pass, this
+  is a candidate site for re-evaluation.
+
+### Recommended user verification
+1. Hard refresh (Cmd+Shift+R) on `collabmix.vercel.app` after deploy.
+2. Look at Deck A — should read as deeper, atmospheric Twilight Blue
+   (NOT bright Material blue). Check the deck letter, the VU meter,
+   the waveform color, the knob rings, the volume fader.
+3. Look at Deck B — should read as atmospheric teal-blue (NOT bright
+   green). Check the same elements as Deck A.
+4. **Partner online dot in P2P AUDIO panel should STILL BE GREEN**
+   when a partner is connected — proves the semantic-green re-route
+   worked. (If it's teal-blue, the Pass-B re-route failed.)
+5. **Rekordbox "ready" badge** (after connecting a Rekordbox library)
+   **should STILL BE GREEN** — same proof.
+6. Landing page hero — MIX//SYNC logo text gradient now ends in teal
+   instead of green. Confirm this reads as intentional / brand-aligned.
+7. Pure black `#000000` background still in place (no regression
+   from the May 25 evening session).
+8. No other regressions: load a track on each deck, hit Sync, hit
+   Set-Beat-1, verify chat / library / waveform all render normally.
+
+### Files changed
+- `src/index.css` — deleted dead `:root` block + `@supports` P3 block.
+- `src/collabmix-production.jsx` — added `STATUS_OK` constant; re-
+  routed Rekordbox ready badge (3 hex sites) + partner online dot
+  to `STATUS_OK`; bulk-replaced `1976D2` → `3D5A80` (18 sites) and
+  `00C853` → `5F8B95` (remaining 23 sites after Pass B); updated
+  `TOK.deckA` / `TOK.deckB` inline comments to new color names.
+- `tools/docs/DESIGN_PHILOSOPHY.md` — rewrote "Colors (current)"
+  block at the top, added "Banned colors" subsection, added May 26
+  entry to the status log, blockquoted the May 24 block as
+  SUPERSEDED.
+
+### Deferred (unchanged from May 25 evening)
+Path A waveform glow rendering remains the next major visual lever.
+The new atmospheric palette is deliberately a "down-payment" on
+Path A — flat fills change today; waveform compositing depth
+changes when Path A ships.

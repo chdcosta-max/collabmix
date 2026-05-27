@@ -36,9 +36,11 @@ A perfectly considered control, a beautiful waveform, an animation that feels ex
 
 ## What This Means Visually
 
-### Colors (current — cool dark + single white accent, May 24, 2026)
-- Background: **cool near-black** `#0A0B0E` — no brown/warm cast, reads
-  like Beatport / Spotify dark mode (NOT warm sepia, NOT pure black)
+### Colors (current — pure black + atmospheric Anjunadeep deck pair, May 26, 2026)
+- Background: **pure black** `#000000` — OLED-optimized, maximum
+  contrast for atmospheric waveform glow rendering (shipped May 25
+  evening). Reads like the Anjunadeep / Universal Audio aesthetic
+  register (NOT warm sepia, NOT cool near-black).
 - Panels / surfaces: cool dark greys, slightly lifted (`#15171A`,
   `#1F2126`)
 - Text: **clean white** `#F5F5F7` (NOT warm white)
@@ -52,23 +54,64 @@ A perfectly considered control, a beautiful waveform, an animation that feels ex
     info (minor-key Camelot text, secondary metadata)
   - **Tertiary** `rgba(255,255,255,0.3)` — borders, dividers, inactive
     pill outlines
-  Amber `#D4A06A` retired May 24 — the surgical-warm-accent direction
-  was tried at v5–v5.10 (Camelot chip, active sidebar border) and
-  dropped: even one warm hue against the cool dark surfaces broke the
-  Beatport / Spotify register the rest of the palette was reaching for.
 - **Active state on buttons: clean white** — NO green. Sync engaged,
   M (master) engaged both get a white glow / brightness lift matching
   the white play button when playing. Green removed from active-state
-  palette entirely; only retained for semantic indicators (recording
-  in progress, partner online dot).
-- Deck identity colors — **"club lighting" cool pair**, both with
-  "their own light source" / glowing-in-a-dark-room character. A vs
-  B reads through hue (blue vs purple), not temperature:
-  - Deck A: `#0F4FA0` — deep electric night blue (full saturation,
-    brightness pushed down so the v5.8 additive glow reads as deep
-    blue light not cyan)
-  - Deck B: `#1FC97A` — vivid electric cyan-green (LED neon / club
-    stage light; NOT lime, NOT fluorescent, NOT Matrix)
+  palette entirely; retained only for semantic indicators (recording
+  in progress, partner online dot, Rekordbox "ready" badge) — held in
+  the `STATUS_OK = "#22c55e"` constant, decoupled from any deck color.
+- Deck identity colors — **atmospheric Anjunadeep-aligned pair**,
+  desaturated for premium dark UI. A vs B reads through hue family
+  (blue vs teal) at low saturation, not through brightness or
+  temperature contrast:
+  - Deck A: `#3D5A80` — **Twilight Blue**. Desaturated atmospheric
+    blue; reads like a deep-set / Anjunadeep / Above & Beyond
+    aesthetic. NOT Material `#1976D2`, NOT Pioneer cyan, NOT bright
+    consumer-app blue.
+  - Deck B: `#5F8B95` — **Atmospheric Teal**. Deep ocean teal /
+    sophisticated gray-blue. NOT Material green `#00C853`, NOT
+    party-neon green, NOT Matrix-style fluorescent.
+
+> **Why these colors:** Material-Design primaries (`#1976D2` / `#00C853`)
+> shipped in the May 23 Quick Wins block read as "consumer software"
+> rather than "pro DJ tool" — too bright, too saturated, too generic.
+> The atmospheric Anjunadeep palette signals depth and restraint, which
+> is what the rest of the design language has been reaching for since
+> the warm palette was retired in May. Full atmospheric glow effect
+> will be visible once **Path A multi-layer offscreen canvas
+> compositing** ships (deferred from May 24 — the current canvas-2D
+> additive multi-pass glow is at its ceiling). The new desaturated
+> base colors are chosen so Path A's wide halo + concentrated halo +
+> crisp shape layers will compose into ambient light rather than
+> washing out to neon.
+
+### Banned colors
+
+- **`#1976D2`** — Material Design blue 700. Reads as Android / consumer
+  app. Retired May 26.
+- **`#00C853`** — Material Design green A700. Reads as bright
+  party-DJ / Maschine. Retired May 26.
+- **Any Material Design primary** at full saturation. The full
+  Material palette is calibrated for consumer Android UI density and
+  signals the wrong product category for a pro DJ tool.
+- **Bright neon greens, cyans, magentas** in deck identity slots —
+  party / DJ-software aesthetic, the opposite of "Quiet Pro Tool."
+- **Warm accents (amber, oak, sepia)** — tried at v5–v5.10 and May 21,
+  retired May 24. Even one warm hue against the cool/black surfaces
+  breaks the Beatport / Anjunadeep register the rest of the palette
+  reaches for.
+
+> ### Colors (SUPERSEDED — May 24 cool near-black + electric pair)
+> Earlier direction used cool near-black `#0A0B0E` background, deck
+> identity `#0F4FA0` (deep electric night blue) and `#1FC97A` (electric
+> cyan-green). Background flipped to pure black `#000000` May 25
+> evening for OLED + atmospheric glow contrast. Deck pair retired
+> May 26 for the atmospheric Anjunadeep palette above — the electric
+> pair was right for v5.8 multi-pass additive glow rendering but
+> read too saturated as flat fills before Path A glow ships.
+> (Between May 24 and May 26 the production deck pair was the
+> Material Design `#1976D2` / `#00C853` Quick Wins variant, now
+> banned — see above.)
 - **Beat grid lines render in WHITE** (functional reference, must
   contrast against any deck color). Off-beat ticks at low alpha,
   downbeat ticks bright + through-line. **Canvas `shadowColor`
@@ -232,6 +275,44 @@ Reactions to 8 reference apps during taste-mapping session:
 This is a working draft. We will refine and add as we see mockups and react. Decisions will get more specific over time. What's here is direction, not final commitment.
 
 ## Status log
+
+### May 26, 2026 — atmospheric Anjunadeep deck pair (Material Design retired)
+- **Deck A `#1976D2` → `#3D5A80`** (Twilight Blue). Desaturated
+  atmospheric blue. The May 23 Quick Wins Material-Design pair read
+  as "consumer software" / Android primary at full saturation. New
+  hue is closer to the Anjunadeep / Above & Beyond / Universal Audio
+  register — depth and restraint rather than brightness.
+- **Deck B `#00C853` → `#5F8B95`** (Atmospheric Teal). Deep ocean teal /
+  sophisticated gray-blue. Replaces the Material green that read as
+  consumer / party-DJ aesthetic. New hue is a desaturated cousin of
+  Deck A in the same Anjunadeep register — A vs B reads through hue
+  family (blue vs teal), not saturation or temperature.
+- **Semantic green decoupled.** Introduced module-level constant
+  `STATUS_OK = "#22c55e"` for status / online / ready indicators
+  (Rekordbox "ready" badge, partner online dot, partner chat colour
+  / volume indicators, START STREAM button). Previously these reused
+  the Deck B green hex, so any deck-B palette change silently broke
+  the "green = online" convention. Decoupled now — future deck-pair
+  tunings can move without touching status semantics.
+- **`src/index.css` cleaned.** The unused `:root { --deck-a / --deck-b }`
+  CSS variables and the `@supports (color: color(display-p3 ...))`
+  P3 wide-gamut override block were both deleted — confirmed dead
+  code (no `var(--deck-a)` consumers anywhere; every site inlined
+  the hex literal). For atmospheric desaturated colors P3 gives zero
+  visible benefit anyway (both new colors well within sRGB gamut, no
+  channel above ~0.58).
+- **Banned-colors policy added** to the philosophy doc (above) — `#1976D2`,
+  `#00C853`, any Material primary at full saturation, bright neon
+  deck colors, and warm accents (amber / oak / sepia) are all on the
+  retired list now.
+- **What this doesn't include yet:** full atmospheric glow visibility.
+  The current canvas-2D multi-pass additive glow is at its ceiling;
+  the new desaturated base colors are chosen so **Path A multi-layer
+  offscreen canvas compositing** (deferred — next major lever) will
+  compose wide-halo + concentrated-halo + crisp-shape layers into
+  ambient light rather than over-saturated neon. Expect the
+  atmospheric character of the new palette to come through fully
+  once Path A ships.
 
 ### May 22 deep night — design v5.10 (invert peak brightness gradient — deep BODY, peak tips only)
 - **Per-column gradient inverted.** v5.8 introduced the peaks-bright
