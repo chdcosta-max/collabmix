@@ -2850,54 +2850,36 @@ function buildSilhouettePath(heights,center,physW,maxH){
   return path;
 }
 
-// v5.8 multi-pass additive glow. Three passes on the same Path2D using
-// 'lighter' composite (additive — colors add where they overlap, same
-// physics as real light): wide atmospheric halo + concentrated halo +
-// uniform deep-color silhouette body accumulate to a glowing core with
-// bleed extending past the waveform shape (Reflect-style).
+// Path A commit 2: silhouette glow source. Renders a single solid-color
+// fill of the silhouette path onto the supplied context. The caller is
+// expected to point ctx at the LOWER canvas (a separate <canvas> stacked
+// behind the crisp-detail upper canvas, with CSS filter:blur applied via
+// inline style). The browser's GPU compositor blurs the lower canvas as
+// part of paint — no per-frame JS-side blur work, no shadowBlur cost.
 //
-// Postcondition: leaves ctx in source-over composite mode so callers can
-// stroke or draw downstream passes without additive interference. Treats
-// shadowColor, shadowBlur, fillStyle, globalCompositeOperation as scratch
-// state on ctx — they should be considered clobbered after this call.
+// Supersedes the v5.8 multi-pass additive shadowBlur approach (three
+// 'lighter'-composited fills at radii 70*dpr / 28*dpr / 0). That worked
+// but capped out atmospherically and was the heaviest cost in the draw
+// loop. CSS gaussian blur produces a more uniform halo for free.
 //
-// Extracted from the AnimatedZoomedWF draw loop as Path A commit 1; the
-// ctx parameter currently always points at the visible canvas. Commit 2
-// will retarget it to a lower-layer canvas behind a CSS-blurred element.
-function renderSilhouetteGlow(ctx,path,dr,dg,db,dpr){
-  ctx.globalCompositeOperation='lighter';
-
-  // Pass A — wide atmospheric spread. Massive blur, low fill alpha so
-  // the shadow does most of the work and the spread reaches well past
-  // the silhouette edges.
-  ctx.shadowColor=`rgba(${dr},${dg},${db},1.0)`;
-  ctx.shadowBlur=Math.round(70*dpr);
-  ctx.fillStyle=`rgba(${dr},${dg},${db},0.18)`;
+// alpha is exposed as a tuning parameter (SILHOUETTE_FILL_ALPHA constant
+// at the call site). 1.0 = full pigment; lower values yield a more
+// translucent core after the CSS blur spreads it out.
+function renderSilhouetteGlow(ctx,path,dr,dg,db,alpha){
+  ctx.fillStyle=`rgba(${dr},${dg},${db},${alpha})`;
   ctx.fill(path);
-
-  // Pass B — concentrated halo. Moderate blur, higher fill alpha so
-  // the bright core area starts to take shape.
-  ctx.shadowBlur=Math.round(28*dpr);
-  ctx.fillStyle=`rgba(${dr},${dg},${db},0.30)`;
-  ctx.fill(path);
-
-  // Pass C — silhouette baseline fill. v5.10: uniform deep base color
-  // (was peaks-bright gradient). The peaks-bright gradient was leaving
-  // the centerline as the only spot reading the deep pigment, while
-  // the edges read near-white from the +alpha bump. The body should
-  // be the deep saturated color everywhere, with brightness only at
-  // the very peak tips (handled by Pass 2b's per-column gradient).
-  ctx.shadowBlur=0;
-  ctx.fillStyle=`rgba(${dr},${dg},${db},0.45)`;
-  ctx.fill(path);
-
-  // Restore source-over for the AA stroke + downstream passes.
-  // Additive on stroke would over-brighten the edge into pure white.
-  ctx.globalCompositeOperation='source-over';
 }
 
 function AnimatedZoomedWF({ bands, dur, progRef, onSeek, h=96, windowSec=8, beatPhaseFrac=null, beatPeriodSec=null, gridOffsetMs=0, barOneOffsetSec=0, bpmNudge=0, deckColor="#FFFFFF", rate=1 }) {
-  const ref=useRef(null);
+  // Path A glow tuning. Lower canvas renders a single solid-fill silhouette
+  // and gets CSS filter:blur applied via inline style; the browser composites
+  // the blur on the GPU. Tune visually by adjusting these three values.
+  const LOWER_CANVAS_BLUR_PX = 20;     // CSS blur radius on the lower canvas
+  const LOWER_CANVAS_OPACITY = 0.85;   // opacity multiplier on the lower canvas
+  const SILHOUETTE_FILL_ALPHA = 1.0;   // alpha of the silhouette fill (pre-blur)
+
+  const ref=useRef(null);       // upper canvas — crisp draws + drag target
+  const lowerRef=useRef(null);  // lower canvas — silhouette fill, CSS-blurred
   const raf=useRef(null);
   const colBufRef=useRef(null); // {bv, mv, hv, heights: Float32Array, len} — per-column scratch
   const sizeRef=useRef({physW:0,physH:0,dirty:true});
@@ -2951,17 +2933,22 @@ function AnimatedZoomedWF({ bands, dur, progRef, onSeek, h=96, windowSec=8, beat
   useEffect(()=>{deckColorRef.current=deckColor;},[deckColor]);
 
   useEffect(()=>{
-    const canvas=ref.current; if(!canvas) return;
-    let physW=0,physH=0,ctx=null;
+    const upper=ref.current;
+    const lower=lowerRef.current;
+    if(!upper||!lower) return;
+    let physW=0,physH=0,ctx=null,lctx=null;
     const dpr=window.devicePixelRatio||1;
 
+    // ResizeObserver watches the upper canvas; the lower canvas always fills
+    // the same container at 100%/100% so they have identical CSS dimensions.
+    // The dirty-check inside draw() sizes BOTH canvases in lock-step.
     const ro=new ResizeObserver(entries=>{
       const e=entries[0]; if(!e) return;
       const pw=Math.round(e.contentRect.width*dpr);
       const ph=Math.round(e.contentRect.height*dpr);
       sizeRef.current={physW:pw,physH:ph,dirty:true};
     });
-    ro.observe(canvas);
+    ro.observe(upper);
 
     const draw=()=>{
       raf.current=requestAnimationFrame(draw);
@@ -2969,16 +2956,18 @@ function AnimatedZoomedWF({ bands, dur, progRef, onSeek, h=96, windowSec=8, beat
       const sz=sizeRef.current;
       if(sz.dirty||physW===0){
         sz.dirty=false;
-        const newPW=sz.physW||Math.round((canvas.offsetWidth||1200)*dpr);
+        const newPW=sz.physW||Math.round((upper.offsetWidth||1200)*dpr);
         const newPH=sz.physH||Math.round(h*dpr);
         if(newPW!==physW||newPH!==physH){
           physW=newPW; physH=newPH;
-          canvas.width=physW; canvas.height=physH;
-          ctx=canvas.getContext('2d');
+          upper.width=physW; upper.height=physH;
+          lower.width=physW; lower.height=physH;
+          ctx=upper.getContext('2d');
+          lctx=lower.getContext('2d');
           colBufRef.current=null; // force realloc on next frame
         }
       }
-      if(!ctx) return;
+      if(!ctx||!lctx) return;
 
       const dur2=durRef.current;
       // Drag overlay takes precedence — see dragProgRef declaration above.
@@ -3009,10 +2998,12 @@ function AnimatedZoomedWF({ bands, dur, progRef, onSeek, h=96, windowSec=8, beat
       }
       const bands=bandsRef.current;
 
-      // v5.8: pure black canvas clear so the additive 'lighter'-composited
-      // glow passes have maximum contrast to bleed into.
-      ctx.fillStyle='#000000';
-      ctx.fillRect(0,0,physW,physH);
+      // Path A commit 2: both canvases clear to TRANSPARENT each frame.
+      // The container element behind them carries the #000000 background.
+      // Lower canvas paints the silhouette glow source (CSS-blurred via
+      // inline style); upper canvas paints the crisp detail layer.
+      lctx.clearRect(0,0,physW,physH);
+      ctx.clearRect(0,0,physW,physH);
 
       // Rate-aware visible-buffer-time span. windowSec is treated as WALL
       // seconds (the user-selected zoom level). At the current playback
@@ -3120,15 +3111,12 @@ function AnimatedZoomedWF({ bands, dur, progRef, onSeek, h=96, windowSec=8, beat
         ctx.fillStyle='rgba(255,255,255,0.06)';
         ctx.fillRect(0,center,physW,1);
 
-        // Silhouette geometry + v5.8 multi-pass additive glow. Both lifted
-        // to module-level helpers (buildSilhouettePath, renderSilhouetteGlow)
-        // as Path A commit 1 prep. Pixel output is identical to the prior
-        // inline implementation; commit 2 will retarget renderSilhouetteGlow
-        // to a lower-layer canvas while the crisp draws below stay on the
-        // main canvas. renderSilhouetteGlow leaves ctx in source-over mode
-        // so the AA stroke below renders normally.
+        // Silhouette → lower canvas (single solid fill); CSS filter:blur on
+        // the lower canvas inline style does the atmospheric spread on the
+        // GPU compositor. Path2D is shared with the AA stroke below so the
+        // crisp edge traces the exact silhouette pre-blur.
         const silhouettePath=buildSilhouettePath(heights,center,physW,maxH);
-        renderSilhouetteGlow(ctx,silhouettePath,dr,dg,db,dpr);
+        renderSilhouetteGlow(lctx,silhouettePath,dr,dg,db,SILHOUETTE_FILL_ALPHA);
 
         // Thin AA stroke softens the silhouette edge without obscuring
         // transient peaks. Renders on top of the additive accumulation.
@@ -3380,7 +3368,18 @@ function AnimatedZoomedWF({ bands, dur, progRef, onSeek, h=96, windowSec=8, beat
       window.removeEventListener('mouseup',onUp);
     };
   },[windowSec,progRef]);
-  return <canvas ref={ref} style={{width:'100%',height:h,background:'#06070A',cursor:'ew-resize',display:'block',userSelect:'none'}}/>;
+  // Path A commit 2: two stacked canvases inside a container. The lower
+  // canvas paints the silhouette and is CSS-blurred by the browser's GPU
+  // compositor (filter:blur on its inline style). pointer-events:none on
+  // the lower lets mouse events fall through to the upper canvas, which
+  // is what the drag handler binds to (via `ref`). Container background
+  // is #000000; both canvases clear to transparent each frame.
+  return (
+    <div style={{position:'relative',width:'100%',height:h,background:'#000000',cursor:'ew-resize',display:'block',userSelect:'none'}}>
+      <canvas ref={lowerRef} style={{position:'absolute',top:0,left:0,width:'100%',height:'100%',filter:`blur(${LOWER_CANVAS_BLUR_PX}px)`,opacity:LOWER_CANVAS_OPACITY,pointerEvents:'none'}}/>
+      <canvas ref={ref}      style={{position:'absolute',top:0,left:0,width:'100%',height:'100%'}}/>
+    </div>
+  );
 }
 
 function Knob({ v, set, min=-12, max=12, ctr=0, label, color="#9CA3AF", size=38, off }) {
