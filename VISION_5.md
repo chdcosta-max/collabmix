@@ -2862,3 +2862,355 @@ fills without Path A — but Path A will still amplify the saturated
 colors into atmospheric light when it ships. The morning palette
 was deferred-in-advance; this one is forward-compatible without
 being dependent.
+
+## May 26, 2026 evening through night — Color identity locked + Path A glow rendering shipped
+
+Major session. Eight commits to master spanning two interleaved
+work streams:
+
+1. **Final color iteration** through three palette generations to
+   land on a vivid cool pair (`#2E86DE` Vivid Ocean Blue +
+   `#A855F7` Electric Royal Purple).
+2. **Path A waveform glow rendering** — the deferred multi-layer
+   canvas compositing work — shipped via a two-canvas + CSS blur
+   architecture.
+
+Both streams iterated multiple times against visual review on real
+waveforms. Final state is "dogfood quality" — usable, will iterate
+further based on real-session feedback.
+
+### Phase 1 — Color iteration cycle (three palettes in one day)
+
+Pre-session state had Material Design colors (`#1976D2` /
+`#00C853`) that read as "consumer software / Android" rather than
+"pro DJ tool" — addressed first.
+
+**Palette 1 (commit `f9f0bf9`): Atmospheric Anjunadeep pair.**
+Material → desaturated `#3D5A80` Twilight Blue + `#5F8B95`
+Atmospheric Teal. Rationale: deep, set, restrained — aligned to
+Anjunadeep / Above & Beyond visual register. Side-effect:
+introduced `STATUS_OK = "#22c55e"` module-level constant to
+decouple semantic green (online / ready / recording indicators)
+from Deck B identity, so future palette iterations wouldn't break
+"green = online" convention. Also cleaned `src/index.css`: deleted
+dead `:root { --deck-a / --deck-b }` CSS variable block and the
+`@supports` P3 wide-gamut override (no consumers anywhere — every
+JSX site inlined the hex literal). Pushed but **never deployed** —
+superseded by Palette 2 before Vercel finished building.
+
+**Palette 2 (commit `a9d3093`): Vivid high-contrast cool pair —
+LIVE.** Atmospheric pair tested visually as "cold / dead / too
+similar" in the side-by-side deck view. Both colors landed in the
+same low-saturation cool-blue family — A vs B nearly
+indistinguishable. The "atmospheric depth" justification was
+contingent on Path A shipping later — the wrong flat-fill defaults
+to wait on it with.
+
+New palette:
+- **Deck A: `#2E86DE`** — Vivid Ocean Blue (saturated, alive)
+- **Deck B: `#A855F7`** — Electric Royal Purple (saturated,
+  distinct hue from blue)
+
+Both stay in the cool family (no warm waveforms — pro DJ
+stare-task eye-fatigue rule applies). A vs B distinction now comes
+from hue family (blue vs purple) rather than temperature
+contrast. Saturated enough to feel alive against pure black as
+flat fills, without needing Path A.
+
+Pre-existing landing-page hero glow at `#a855f706` (2.4% alpha
+purple radial decoration) coincidentally matches the new Deck B
+color — happy outcome; the landing page now has unintentional
+brand cohesion with the deck identity.
+
+### Phase 2 — Path A investigation
+
+Asked for investigation-only pass before touching any rendering
+code. Findings:
+
+- **The codebase already had a working multi-pass additive glow**
+  at `AnimatedZoomedWF` lines 3074-3103 (the "v5.8 NEON GLOW" in
+  DESIGN_PHILOSOPHY.md status log was active, not aspirational).
+  Three `ctx.fill(silhouettePath)` calls with
+  `globalCompositeOperation='lighter'` at shadow radii `70*dpr` /
+  `28*dpr` / `0`. Heavy main-thread CPU cost — at the ceiling of
+  canvas-2D compositing.
+- `AnimatedZoomedWF` uses naked `requestAnimationFrame` at 60 Hz
+  per deck — full pipeline runs every frame.
+- `WF` (small overview) uses `useEffect` deps (re-renders on prop
+  change), no RAF.
+- **No hot cues on `AnimatedZoomedWF`** — hot cues live only on
+  `WF`. Path A doesn't have to worry about hot-cue blur on the
+  zoomed view.
+- **Set-Beat-1 marker is a DOM element**, not on the canvas —
+  unaffected by anything in Path A scope.
+
+Three approach options proposed:
+- **A**: OffscreenCanvas + `ctx.filter='blur()'` (single DOM
+  canvas, JS-side blur on GPU via canvas filter).
+- **B**: Two stacked `<canvas>` elements with CSS `filter:blur()`
+  on the lower (browser GPU compositor handles blur free).
+- **C**: Cache silhouette to offscreen + keep existing shadowBlur
+  (smallest change, no visual improvement).
+
+User chose **Option B** — best visual quality + best perf +
+universal browser support (Safari 17+ in scope by construction).
+Three-commit implementation plan: helper extraction → two-canvas
+split → tuning.
+
+### Phase 3 — Path A Commit 1 (silhouette helper extraction, commit `23e75bb`)
+
+Pure refactor, zero visual change. Extracted from
+`AnimatedZoomedWF.draw` into two module-level helpers:
+- `buildSilhouettePath(heights, center, physW, maxH) → Path2D` —
+  pure geometry, no rendering side effects
+- `renderSilhouetteGlow(ctx, path, dr, dg, db, dpr) → void` —
+  encapsulates the three-pass additive glow
+
+Establishes the architectural seam Commit 2 needs to retarget the
+glow render to a separate canvas. Pixel-identical: same
+`shadowBlur` radii, same alphas, same composite-mode transitions,
+same Path2D construction with same conditional branches (steep
+transients vs monotonic smoothing). AA stroke at the original
+site still binds the returned `silhouettePath` variable.
+
+Bundle audit confirmed all rendering primitives preserved at
+expected counts.
+
+### Phase 4 — Path A Commit 2 (two-canvas architecture, commit `a1b4e9d`)
+
+Real architectural change. Replaced the single
+`<canvas ref={ref}/>` JSX with a container div + two stacked
+absolute-positioned canvases:
+
+```
+<div container (position:relative, background:#000000, cursor:ew-resize)>
+  <canvas ref={lowerRef} (filter:blur(...), opacity:..., pointer-events:none)/>
+  <canvas ref={ref} (upper — drag target, crisp content layer)/>
+</div>
+```
+
+Code changes inside `AnimatedZoomedWF`:
+- Added four tuning constants at top of component body (final
+  count after Phase 6; Phase 4 initially added three)
+- Added `lowerRef`
+- Draw `useEffect` now initializes both contexts (`ctx` upper +
+  `lctx` lower) in lock-step; both canvases sized identically on
+  resize via the same dirty-check block
+- Frame clear changed from `fillRect('#000000', ...)` to
+  `clearRect(0,0,physW,physH)` on both contexts — container's
+  black background shows through transparent canvases
+- Silhouette renders to `lctx` (lower canvas) only; everything
+  else stays on `ctx` (upper canvas)
+- `renderSilhouetteGlow` body simplified to a single solid fill —
+  no `shadowBlur`, no `globalCompositeOperation`. Signature changed
+  from `(ctx, path, dr, dg, db, dpr)` to `(ctx, path, dr, dg, db,
+  alpha)`.
+- Drag handler `useEffect` untouched — still binds to `ref.current`
+  (upper canvas, the topmost interactive element)
+
+Verified by build + bundle audit: all expected drops
+(`'lighter'` / `'source-over'` / `globalCompositeOperation` /
+`Math.round(70*` / `Math.round(28*` all → 0; `shadowBlur` 13 →
+10), all expected additions (`blur(20px)` × 1), all preserved
+invariants present.
+
+**Shipped broken.** See next phase.
+
+### Phase 5 — Critical bug + fix (commit `5fe1dc7`)
+
+User reported `Uncaught ReferenceError: canvas is not defined`
+firing every frame, breaking track loading.
+
+Investigation showed **exactly one stale reference**: the
+`[WF-DIMS]` debug log inside the draw loop referenced a local
+named `canvas` that had been renamed to `upper` during Commit 2's
+draw-`useEffect` refactor. The RAF re-schedules at the top of the
+draw function (`raf.current = requestAnimationFrame(draw)` before
+any body work), so the throw fired every frame in an infinite
+loop. The `dimsLoggedRef.current` one-shot guard never flipped
+because the throw happened before the flag-set.
+
+Drag handler had its own scope-local `canvas` declared
+independently (line 3328: `const canvas = ref.current`) — that
+one was correct and untouched.
+
+User approved deleting the entire debug log (labeled "Temporary
+one-shot verification log" in its own declaration comment) rather
+than patching the variable name. Aligns with the May 25 evening
+1,070-line dead-code-removal pattern. Removed:
+- `dimsLoggedRef = useRef(false)` declaration + its `// Temporary…`
+  comment (2 lines)
+- The full `if(!dimsLoggedRef.current){…}` block including
+  `deckId` derivation + `console.log` + flag-set (5 lines)
+
+Side-effect: the equality-check string literals `'#2E86DE'` and
+`'#A855F7'` (used by the deleted `deckId` derivation) went with
+the deletion. **New production rendering baselines**: 15
+occurrences of Deck A hex and 22 of Deck B in the bundle, down 1
+each from the pre-cleanup audits. All other invariants preserved.
+
+#### Lesson — Debug-code fragility under refactor
+
+Temporary diagnostic code that captures local variable references
+is fragile under any refactor that renames those locals. The
+"Temporary" comment label was honored by deletion **only after**
+the renamed variable broke at runtime — the label alone didn't
+prevent the bug. Better patterns for future diagnostic code:
+
+- Delete diagnostic logs immediately after the diagnostic question
+  is answered, rather than leaving them indefinitely behind a
+  one-shot guard.
+- If a diagnostic must persist temporarily, write it against
+  stable refs (`ref.current`) rather than draw-loop local aliases
+  — refs are part of the component's surface and less likely to
+  be silently renamed.
+- The verification protocol's bundle byte audit catches
+  architectural drift but not runtime variable binding — when a
+  refactor renames a local, all in-scope references must be
+  re-checked manually before declaring complete.
+
+### Phase 6 — Path A Commit 2 followup (commit `e953879`)
+
+User reported the waveforms read as "blurry" not "glowing" after
+the debug-log fix.
+
+Investigation: Commit 2 had moved the silhouette fill to the
+lower (CSS-blurred) canvas only. There was no crisp body fill on
+the upper canvas — only the AA stroke (thin outline at 0.55
+alpha), per-column overlay, centerline weight band, grid, and
+playhead. The user was seeing the blurred lower canvas through
+the gap with no defining shape on top.
+
+The v5.8 multi-pass architecture had **Pass C as a crisp
+0.45-alpha body fill** drawn last in the additive stack — that
+body was the visual definition. The Commit 2 refactor dropped it
+by accident.
+
+Fix: add a second `renderSilhouetteGlow(ctx, silhouettePath, dr,
+dg, db, UPPER_CANVAS_SILHOUETTE_ALPHA)` call between the
+lower-canvas call and the AA stroke. **Same Path2D reused** — no
+extra geometry work. Added the fourth tuning constant
+`UPPER_CANVAS_SILHOUETTE_ALPHA = 0.9` (initial value).
+
+#### Lesson — Enumerate per-surface responsibility on render-pipeline refactors
+
+When a refactor moves rendering between surfaces, the
+verification report should explicitly enumerate which surface is
+responsible for which visual component, before and after. The
+Commit 2 verification correctly identified that the silhouette
+glow source moved to the lower canvas — but didn't enumerate that
+the "crisp body" responsibility was now homeless. A
+"what's-on-each-canvas" table in the verification report would
+have caught this without needing a browser to see it.
+
+Bundle audits are good at architecture-level drift detection
+(`'lighter'` → 0, `blur(20px)` → 1, etc.) but not at
+"completeness of visual output." That gap is filled by
+explicit per-surface enumeration in the verification report —
+treat each canvas as a checklist of "must render the following
+components" and verify each one before declaring done.
+
+### Phase 7 — Tuning pass (commit `838787d`)
+
+After the body addition, user reported "foggy / misty" — halo too
+prominent vs the body. Two one-line constant changes:
+
+- `UPPER_CANVAS_SILHOUETTE_ALPHA`: 0.9 → 1.0 (body fully opaque,
+  cleaner deck color)
+- `LOWER_CANVAS_OPACITY`: 0.85 → 0.55 (halo more subtle, supports
+  rather than dominates)
+
+Result: dogfood-quality glow rendering. Crisp body in saturated
+deck color, atmospheric halo extending past edges but not
+dominating, all crisp content (grid, playhead, AA stroke)
+razor-sharp on top.
+
+### Final state at end of session
+
+**Eight commits today, all on master and live** (except `f9f0bf9`
+which was superseded before deploy):
+
+| Commit | Description |
+|---|---|
+| `f9f0bf9` | Atmospheric color migration (superseded before deploy) |
+| `a9d3093` | Vivid Ocean Blue + Electric Royal Purple — LIVE |
+| `23e75bb` | Path A Commit 1 (helper extraction) |
+| `a1b4e9d` | Path A Commit 2 (two-canvas split — shipped broken) |
+| `5fe1dc7` | Commit 2 fix (debug log removal, ReferenceError gone) |
+| `e953879` | Commit 2 followup (upper-canvas crisp body restored) |
+| `838787d` | Tuning pass (less fog, more definition) |
+
+**Tuning constants** in `src/collabmix-production.jsx` near lines
+2877-2880:
+
+```js
+const LOWER_CANVAS_BLUR_PX = 20;             // CSS blur radius on the lower canvas
+const LOWER_CANVAS_OPACITY = 0.55;           // opacity multiplier on the lower canvas
+const SILHOUETTE_FILL_ALPHA = 1.0;           // alpha of the silhouette fill (pre-blur)
+const UPPER_CANVAS_SILHOUETTE_ALPHA = 1.0;   // alpha of the crisp body on the upper canvas
+```
+
+**Architecture summary**:
+- Lower canvas: silhouette solid fill at `SILHOUETTE_FILL_ALPHA`
+  → CSS `filter:blur(20px)` + `opacity:0.55` = atmospheric halo
+- Upper canvas: silhouette solid fill at
+  `UPPER_CANVAS_SILHOUETTE_ALPHA` = crisp body, plus AA stroke +
+  per-column gradient overlay + centerline weight band + beat
+  grid (with its own `shadowBlur=4` deck-color halo) + phrase
+  markers (red) + playhead (white `shadowBlur=16`)
+- Container `<div>`: `position:relative`, `background:#000000`,
+  `cursor:'ew-resize'`. Both canvases fill 100%/100% absolute.
+- Path2D built once per frame via `buildSilhouettePath`, reused
+  for both canvas fills — no duplicate geometry cost.
+- Drag handler binds to upper canvas (`ref.current`); lower has
+  `pointer-events:none` so events fall through.
+
+**Performance**: GPU compositor handles the blur for free per
+frame. Replaced 3 `shadowBlur` passes (70*dpr + 28*dpr + 0 with
+`'lighter'` composite) on the CPU shadow path with one CSS blur
+on the lower canvas + one extra solid fill on the upper. Net main
+thread should be cleaner.
+
+**Browser support**: CSS `filter:blur` and `pointer-events:none`
+are universal in modern browsers. Safari 17+ supported by
+construction. (Landing page copy still says "Works in Chrome &
+Edge" — that predates this commit and is captured in open items
+below.)
+
+**Subjective evaluation**: dogfood quality. The waveforms have a
+real glow now — saturated cool body with soft colored halo. Will
+iterate constants based on real-session feedback. The deck colors
+are also placeholders pending final tuning with the glow live.
+
+### Open items for future sessions
+
+- **Final color iteration with full glow live** — re-evaluate
+  `#2E86DE` / `#A855F7` now that they sit inside the new
+  rendering. May want to pull them back slightly if they read as
+  too neon under the glow, or push them further if they read as
+  flat.
+- **Glow constant tuning** — `LOWER_CANVAS_BLUR_PX` and
+  `LOWER_CANVAS_OPACITY` may need iteration once the user spends
+  real time looking at waveforms during sessions.
+- **Dotted white border around library** — intermittent
+  regression, appears dynamically (during drag interactions?).
+  Needs reproducible repro before investigation.
+- **Landing page copy update** — "Works in Chrome & Edge"
+  predates Safari 17+ support; should include Safari now that
+  Path A is universally compatible.
+- **Brand / UX design principles conversation** — tabled multiple
+  sessions. High-leverage strategy work: target user definition,
+  tone of voice, "the one thing Mix//Sync stands for,"
+  differentiators vs Pioneer / Traktor / Serato / Beatport.
+- **Status indicators redesign** — strings like "CONNECTED 39ms"
+  feel developer-y; pro DJ tools surface this kind of thing more
+  sparingly.
+- **Empty state design polish.**
+- **Library row hierarchy tuning** — smart filters / search
+  behavior / sidebar were untouched in the May 23 Quick Wins.
+- **Metronome audio for beatgrid editor** — visual pulse v1
+  shipped May 25; audio click deferred.
+- **Bigger feature backlog**: scan computer for music, Rekordbox
+  XML import, iTunes XML import, USB drive handling, AcoustID
+  metadata fix for tracks without good ID3 data, library UI
+  deeper redesign.

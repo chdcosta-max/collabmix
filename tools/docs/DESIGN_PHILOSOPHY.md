@@ -132,6 +132,60 @@ A perfectly considered control, a beautiful waveform, an animation that feels ex
   against the cool/black surfaces broke the Beatport / Spotify
   register the rest of the palette was reaching for.
 
+### Glow rendering architecture (Path A — shipped May 26 night)
+
+Two-canvas stacking with browser-GPU blur. Replaces the v5.8
+multi-pass additive `shadowBlur` approach (three
+`'lighter'`-composited fills at radii 70*dpr / 28*dpr / 0 — at
+canvas-2D's perf ceiling).
+
+**Per `AnimatedZoomedWF` instance**:
+- Container `<div>`: `position:relative`, `background:#000000`,
+  `cursor:'ew-resize'`. Both canvases fill 100%/100% absolute.
+- **Lower canvas**: solid-fill silhouette → CSS
+  `filter:blur(LOWER_CANVAS_BLUR_PX)` + `opacity:LOWER_CANVAS_OPACITY`
+  + `pointer-events:none`. The browser's GPU compositor blurs it
+  as part of paint — no per-frame JS-side blur cost. Produces the
+  atmospheric halo bleeding past the silhouette edges.
+- **Upper canvas**: solid-fill silhouette at
+  `UPPER_CANVAS_SILHOUETTE_ALPHA` (the crisp body) + thin AA stroke
+  at 0.55 alpha + per-column gradient overlay + centerline weight
+  band + beat-grid ticks (with their own `shadowBlur=4` deck-color
+  halo, unchanged) + 16-bar phrase markers (red `#FF3B30`) +
+  playhead (white `shadowBlur=16`, unchanged).
+- Path2D built once per frame via `buildSilhouettePath`, reused
+  for both canvas fills (no duplicate geometry cost).
+- Drag handler binds to upper canvas (`ref.current`); lower canvas
+  has `pointer-events:none` so mouse events fall through.
+
+**Tuning constants** in `src/collabmix-production.jsx`, near
+lines 2877-2880 (named module-level constants — edit and rebuild
+to retune visually):
+
+| Constant | Current value | Role |
+|---|---|---|
+| `LOWER_CANVAS_BLUR_PX` | `20` | CSS blur radius on lower canvas. Higher = wider atmospheric spread. |
+| `LOWER_CANVAS_OPACITY` | `0.55` | Opacity multiplier on lower canvas. Lower = halo more subtle. |
+| `SILHOUETTE_FILL_ALPHA` | `1.0` | Alpha of silhouette fill on lower canvas (pre-blur). |
+| `UPPER_CANVAS_SILHOUETTE_ALPHA` | `1.0` | Alpha of crisp body fill on upper canvas. Lower = body more translucent against blur underneath. |
+
+**Browser support**: CSS `filter:blur()` and `pointer-events:none`
+are universal in modern browsers. Safari 17+ supported by
+construction. (Landing page copy still says "Works in Chrome &
+Edge" — predates this work; needs updating in a future session.)
+
+**Iteration story** — the constants reached their current values
+through three rounds of visual review the same night Path A
+shipped:
+1. Initial constants (`UPPER_CANVAS_SILHOUETTE_ALPHA = 0.9`,
+   `LOWER_CANVAS_OPACITY = 0.85`) read as "foggy / misty" — halo
+   too prominent, body too translucent.
+2. Tuning pass landed the current values.
+3. Final state: dogfood quality. Will iterate further based on
+   real-session feedback. The deck colors `#2E86DE` / `#A855F7`
+   are also still placeholders pending final tuning against the
+   live glow.
+
 > ### Colors (SUPERSEDED — May 26 morning atmospheric Anjunadeep pair)
 > Earlier direction same day used pure black `#000000` background
 > with deck identity `#3D5A80` (Twilight Blue, desaturated atmospheric
@@ -319,6 +373,44 @@ Reactions to 8 reference apps during taste-mapping session:
 This is a working draft. We will refine and add as we see mockups and react. Decisions will get more specific over time. What's here is direction, not final commitment.
 
 ## Status log
+
+### May 26, 2026 night — Path A waveform glow rendering shipped (two-canvas + CSS blur)
+- **Architecture change.** `AnimatedZoomedWF` now wraps two
+  stacked absolute-positioned canvases in a `position:relative`
+  container. Lower canvas paints the silhouette as a single solid
+  fill; CSS `filter:blur(20px)` on its inline style produces the
+  atmospheric halo on the GPU compositor (zero per-frame JS-side
+  blur cost). Upper canvas paints the crisp body silhouette + AA
+  stroke + per-column gradient overlay + centerline weight band +
+  beat-grid ticks + phrase markers + playhead.
+- **`renderSilhouetteGlow` simplified.** Was the v5.8 three-pass
+  additive `shadowBlur` block (radii 70*dpr / 28*dpr / 0,
+  `globalCompositeOperation='lighter'`). Now a single-line solid
+  fill — the CSS blur on the lower canvas replaces the blur work.
+- **Single Path2D shared across both canvas fills.** `buildSilhouettePath`
+  runs once per frame; the returned `Path2D` is used by both the
+  lower-canvas glow fill and the upper-canvas crisp body fill,
+  plus the AA stroke that comes after. No duplicate geometry cost.
+- **Four named tuning constants** at top of `AnimatedZoomedWF`
+  body — see "Glow rendering architecture" section above for the
+  table.
+- **Browser support**: Safari 17+ in scope by construction (CSS
+  `filter:blur` and `pointer-events:none` are universal).
+- **Shipped over four commits** (`23e75bb` helper extraction →
+  `a1b4e9d` two-canvas split → `5fe1dc7` debug-log removal that
+  fixed a ReferenceError loop from a renamed local variable →
+  `e953879` followup that restored the crisp body on the upper
+  canvas, which the original Commit 2 had inadvertently dropped),
+  plus `838787d` tuning pass adjusting `LOWER_CANVAS_OPACITY` 0.85
+  → 0.55 and `UPPER_CANVAS_SILHOUETTE_ALPHA` 0.9 → 1.0 to fix a
+  "foggy / misty" appearance.
+- **Pre-existing `shadowBlur` uses preserved**: beat-grid tick
+  deck-color halo at `shadowBlur=4` (lines 3236-3284), phrase
+  marker red halo at `shadowBlur=4` (line 3259), playhead white
+  halo at `shadowBlur=16` (line 3322), small WF playhead at
+  `shadowBlur=8` (line 2754), small WF hot cues at `shadowBlur=6`
+  (line 2771). None of these are part of the silhouette glow
+  stack; Path A doesn't touch them.
 
 ### May 26, 2026 evening — high-contrast cool deck pair (atmospheric pair retired same day)
 - **Deck A `#3D5A80` → `#2E86DE`** (Vivid Ocean Blue). Saturated,
