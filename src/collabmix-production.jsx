@@ -14,7 +14,17 @@ import {
   resolveHandleRecord,
   hasMigrationRun, markMigrationRun,
   runHandleMigration,
+  getLibraryMode, setLibraryMode,
+  LIBRARY_MODE_DEFAULT,
 } from "./utils/storage.js";
+import {
+  isFSASupported,
+  requestFolder as fsaRequestFolder,
+  restoreHandles as fsaRestoreHandles,
+  requestPermissionFor as fsaRequestPermission,
+  removeFolderById as fsaRemoveFolderById,
+  setFolderEnabled as fsaSetFolderEnabled,
+} from "./utils/fsa.js";
 
 // ═══════════════════════════════════════════════════════════════
 //  MIX//SYNC  — PRODUCTION READY
@@ -427,6 +437,11 @@ function useLibrary(){
   // Fingerprints to skip setState when nothing actually changed (avoids RAF stutter)
   const libFingerprintRef=useRef('');
   const queueFingerprintRef=useRef('');
+  // Phase 1 library auto-import — watched folders + selected mode. Populated
+  // mount-time via the FSA restoreHandles() helper. No scanning in Phase 1;
+  // this is plumbing-only state that the settings UI reads/writes.
+  const [watchedFolders,setWatchedFolders]=useState([]);
+  const [libraryMode,setLibraryModeState]=useState(LIBRARY_MODE_DEFAULT);
   const cratesFingerprintRef=useRef('');
 
   // Load tracks + crates from shared IDB and poll for updates from the library app
@@ -1237,7 +1252,87 @@ function useLibrary(){
     return ()=>{}; // satisfy React deps lint without cancelling the timer
   },[library,scanArtwork,analyzeAll]);
 
-  return{library,queue,crates,importing,importFiles,importFromPicker,previewImport,commitImport,queueAnalysis,reanalyze,reExtractArtwork,setGridEdit,getFile,clear,reload,setLibrary,fileMap,setFile,removeFile,analyzing,progress,analyzeAll,extractArtworkForTrack,artworkCache,reconnectFromFolder,scanArtwork,exportLibrary,importLibraryJson};
+  // ── Phase 1 library auto-import — plumbing only (no scanning) ───────────
+  // Mount-time: restore any previously granted folder handles + load the
+  // user's selected library mode. Both are non-blocking; failures are
+  // logged and the UI continues with empty state. No prompts on mount per
+  // P1-Q2 — silent queryPermission only; the user re-grants deliberately
+  // from the settings UI when they choose to.
+  useEffect(()=>{
+    let cancelled=false;
+    (async()=>{
+      try{
+        const folders=await fsaRestoreHandles();
+        if(!cancelled)setWatchedFolders(folders);
+      }catch(err){
+        console.warn('[LIB-PHASE1] restoreHandles unexpectedly threw',err);
+      }
+      try{
+        const mode=await getLibraryMode();
+        if(!cancelled)setLibraryModeState(mode);
+        console.log('[LIB-PHASE1] libraryMode →',mode);
+      }catch(err){
+        console.warn('[LIB-PHASE1] getLibraryMode failed, falling back to default',err);
+      }
+    })();
+    return()=>{cancelled=true;};
+  },[]);
+
+  // Add a new watched folder via the system picker. `startIn` biases the
+  // picker ("downloads", "music", etc.) but the user still has to confirm.
+  // Returns the added record or null on user cancel; throws on spike failure
+  // so the UI can surface it.
+  const addWatchedFolder=useCallback(async({startIn}={})=>{
+    const rec=await fsaRequestFolder({startIn});
+    if(!rec)return null;
+    // Newly added folders always have permission "granted" (the picker just
+    // gave it). Avoid round-tripping queryPermission for nothing.
+    const enriched={...rec,permission:"granted"};
+    setWatchedFolders(prev=>[...prev,enriched]);
+    return enriched;
+  },[]);
+
+  const removeWatchedFolder=useCallback(async(id)=>{
+    const ok=await fsaRemoveFolderById(id);
+    if(ok)setWatchedFolders(prev=>prev.filter(f=>f.id!==id));
+    return ok;
+  },[]);
+
+  const setWatchedFolderEnabled=useCallback(async(id,enabled)=>{
+    const next=await fsaSetFolderEnabled(id,enabled);
+    if(next)setWatchedFolders(prev=>prev.map(f=>f.id===id?{...f,enabled:next.enabled}:f));
+    return next;
+  },[]);
+
+  // Re-grant a folder that's currently "prompt" or "denied". Must be invoked
+  // from a user gesture (Chrome enforces). Updates local state with the new
+  // permission so the UI re-renders the row.
+  const requestPermissionForFolder=useCallback(async(id)=>{
+    const folder=watchedFolders.find(f=>f.id===id);
+    if(!folder||!folder.handle){
+      console.warn('[LIB-PHASE1] requestPermissionForFolder: no folder or no handle',id);
+      return "denied";
+    }
+    const state=await fsaRequestPermission(folder.handle);
+    setWatchedFolders(prev=>prev.map(f=>f.id===id?{...f,permission:state}:f));
+    return state;
+  },[watchedFolders]);
+
+  const changeLibraryMode=useCallback(async(mode)=>{
+    try{
+      await setLibraryMode(mode);
+      setLibraryModeState(mode);
+      console.log('[LIB-PHASE1] libraryMode changed →',mode);
+      return true;
+    }catch(err){
+      console.warn('[LIB-PHASE1] setLibraryMode failed',err);
+      return false;
+    }
+  },[]);
+
+  const fsaSupported=isFSASupported();
+
+  return{library,queue,crates,importing,importFiles,importFromPicker,previewImport,commitImport,queueAnalysis,reanalyze,reExtractArtwork,setGridEdit,getFile,clear,reload,setLibrary,fileMap,setFile,removeFile,analyzing,progress,analyzeAll,extractArtworkForTrack,artworkCache,reconnectFromFolder,scanArtwork,exportLibrary,importLibraryJson,watchedFolders,libraryMode,addWatchedFolder,removeWatchedFolder,setWatchedFolderEnabled,requestPermissionForFolder,changeLibraryMode,fsaSupported};
 }
 
 // ── Library Panel UI ──────────────────────────────────────────
