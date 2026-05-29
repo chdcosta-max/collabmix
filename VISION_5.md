@@ -3684,7 +3684,21 @@ disk as well. What's the merge behavior?
 - **D.** Start fresh — wipe the 135, scan computer, build from
   scratch.
 
-**USER ANSWER: [PENDING]**
+**USER ANSWER: [RESOLVED — May 27 afternoon — NONE of A-D as stated; new behavior.]**
+Smart duplicate detection (SHA-256 hash, filename+size fallback)
++ user choice + **never destructive merging**. When duplicates are
+found, surface a notification ("Found N tracks on your computer
+that are already in your library") and offer per-duplicate
+**Skip** (default — keep existing entry untouched) or **Import as
+separate copy** (explicit user opt-in). Existing tracks with cue
+points, beat grids, hot cues, energy ratings, tags, notes are
+**NEVER** touched without explicit user action. Reasoning: a
+track in Mix//Sync has accumulated user work — silently
+overwriting with a file-system version would destroy it, which
+is unacceptable UX and erodes trust. See the appended
+"May 27, 2026 — Q1 / Q2 / Q3 resolved" section below for the
+full operational expression as the new protect-user-work
+principle.
 
 #### Q2. New user first experience — what's step 1 when someone signs up and lands in Mix//Sync for the first time?
 
@@ -3699,7 +3713,13 @@ the product. It defines what users believe Mix//Sync is.
 - **D.** Demo mode — play with sample tracks first, then add
   your own.
 
-**USER ANSWER: [PENDING]**
+**USER ANSWER: [RESOLVED — May 27 afternoon — Option B.]**
+Empty app with a clear "Add music to get started" prompt in the
+library area. Full interface visible but empty library. No
+wizard, no hand-holding, no demo mode. Pro DJs get the tool and
+figure it out — consistent with the "talented friend who trusts
+you" brand personality and the target user profile (pro /
+working DJs, often migrating from Rekordbox / Traktor / Serato).
 
 #### Q3. Default mode for new users — Auto-Finder, Manager, or Hybrid?
 
@@ -3714,7 +3734,13 @@ single biggest factor in what "Mix//Sync first feels like."
 - **C.** Hybrid (middle ground) — smart defaults with
   notification, user approves new tracks.
 
-**USER ANSWER: [PENDING]**
+**USER ANSWER: [RESOLVED — May 27 afternoon — Option C, Hybrid.]**
+Smart defaults watching common folders (Downloads + Music) with
+notification when new tracks are found; user approves before
+they're added to library. Best balance of convenience and
+control. Power users can switch to Manager (B) for full control;
+convenience-first users can switch to Auto-Finder (A). Mode is
+changeable from settings anytime.
 
 ### Next session plan
 
@@ -3749,3 +3775,221 @@ gates between today's state and Phase 1 implementation.
 Session ended at ~90% context usage to preserve clean state
 for the next session, rather than continuing into degraded
 context where decisions become unreliable.
+
+## May 27, 2026 afternoon — Q1 / Q2 / Q3 resolved, protect-user-work principle added
+
+The three PENDING gating questions from the May 27 morning
+strategy session were answered this afternoon in a follow-up
+session. Phase 1 (Multi-folder watched setup, ~8-12 hours) is
+now unblocked. The build prompt itself has not yet been written
+— next concrete step is the user reviewing a scope draft before
+any code investigation begins.
+
+This section consolidates the three resolutions and adds the
+new operational principle that emerged from Q1.
+
+### Q1 resolution — Smart duplicate detection with user choice, never destructive merging
+
+Duplicate handling at auto-import time:
+
+- **Detect** via SHA-256 hash (primary) with filename + size as a
+  fallback fingerprint. Approach 2 from the May 26 scan-logic
+  section, promoted from "only if dedup becomes a complaint" to
+  the default for the duplicate-against-existing-library check.
+  (Approach 1 — `lastScannedAt` modification time comparison —
+  is still the right primary mechanism for "what's new in this
+  folder since last scan." Approach 2 is specifically the
+  "is this new file the same as something already in the
+  library" check.)
+- **Surface** a notification: "Found N tracks on your computer
+  that are already in your library."
+- **Per-duplicate user choice**, two options:
+  - **Skip** *(default)* — keep the existing library entry
+    completely as-is, do nothing, the new file-system instance
+    is ignored.
+  - **Import as separate copy** — add a new library entry
+    alongside the existing one. Explicit user opt-in, never the
+    default.
+- **Existing tracks are NEVER touched without explicit user
+  action.** Cue points, beat grids (including manual beatgrid-
+  editor adjustments), hot cues, energy ratings, tags, notes,
+  and any other accumulated user work are preserved exactly.
+
+#### The reasoning — why "never destructive merging"
+
+When a track is in Mix//Sync, it has accumulated user work
+attached:
+
+- Beat grid (potentially manually adjusted via the beatgrid
+  editor)
+- Cue points and hot cues (set during practice / dogfood
+  sessions)
+- Energy ratings, tags, notes (when those features ship)
+
+Silently replacing a library entry with a file-system version
+would destroy that work. This is unacceptable UX and would
+erode the exact trust we need to build for users to commit
+to Mix//Sync as their primary tool. The protect-user-work rule
+is therefore the *operational* default for every auto-import
+edge case, not just deduplication.
+
+### Q1 corollary — New operational principle: "Protect user work — never destructive merging without explicit user action"
+
+This is now a locked principle on the same tier as the May 27
+morning "Mix//Sync respects how YOU work, not how WE think you
+should work" brand principle. The protect-user-work rule is how
+the brand principle operationally manifests in the library
+auto-import surface — and likely beyond.
+
+The principle extends across every edge case where the file
+system and the library can diverge:
+
+- **File moved on disk** → keep the library entry, update the
+  file path under the hood, preserve metadata (cue points,
+  beat grid, hot cues, tags). User work survives the move.
+- **File deleted from disk** → mark the library entry as
+  "missing" (visible in UI), do NOT delete the library entry
+  itself. User can re-link a relocated file later without
+  losing accumulated work. (Eventual hard-delete only via
+  explicit user action on the library entry.)
+- **File renamed** → detect the same file via hash, update the
+  display name, preserve all metadata. No new library entry
+  created.
+- **Metadata conflicts** (file ID3 disagrees with library
+  metadata) → user's library version wins over file metadata.
+  The library is the source of truth for anything the user has
+  explicitly set or edited; the file is the source of bytes only.
+- **Duplicate found across watched folders** → one library
+  entry, multiple file-system locations recorded under the hood.
+  (Smart dedup, fourth tier of the May 26 architecture.)
+
+#### Why this principle matters at strategy scale
+
+The May 27 morning session locked the brand principle
+**"Mix//Sync respects how YOU work, not how WE think you should
+work."** That principle is abstract until it gets operational
+defaults. Protect-user-work is the first concrete default that
+expresses it.
+
+Without protect-user-work, the brand principle is just copy.
+With it, every file-system-vs-library edge case has a defined
+answer that aligns with the brand. The principle should be the
+default tiebreaker for all future auto-import design questions
+not explicitly answered elsewhere in this document.
+
+It should also be a key reference for future strategic
+discussions about other surfaces where Mix//Sync touches user
+work — collaboration history, recorded mixes, session state,
+cloud sync (if/when it ships). The same logic applies: where
+Mix//Sync could either preserve the user's accumulated work or
+override it with a "cleaner" system view, protect the work by
+default.
+
+### Q2 resolution — Option B, empty app with prompt
+
+New user onboarding flow:
+
+- New user signs up and lands in Mix//Sync
+- Full interface is visible — decks, mixer, library panel,
+  transport — but the library is empty
+- A clear "Add music to get started" prompt occupies the
+  library area
+- **No wizard, no hand-holding, no demo mode, no sample
+  tracks**
+
+This matches the target user profile (pro / working DJs,
+melodic / progressive house, Anjunadeep crowd, often migrating
+from Rekordbox / Traktor / Serato) and the brand personality
+("the talented friend who's been DJing for 10 years, helps you
+sound good without being a snob about it"). Pro DJs do not
+want hand-holding wizards — they want the tool, and they will
+figure it out. Demo mode would also conflict with the strategic
+reframe from this morning's session: Mix//Sync is **less**
+"music library app" and **more** "collaborative performance
+interface for your existing music" — sample tracks would
+frame Mix//Sync as a music-discovery app, not a performance
+interface for music the user already owns.
+
+The "Add music to get started" prompt is the *first interaction*
+that introduces auto-import. The Hybrid-mode default (Q3) means
+the prompt likely surfaces both **"Connect Downloads / Music
+folders (recommended)"** and **"Add music manually"** as two
+clear options at first hit — but the *interface around the
+prompt* is the same full Mix//Sync UI, not a stripped-down
+onboarding shell.
+
+### Q3 resolution — Option C, Hybrid default
+
+Default library mode for new users is **Hybrid**:
+
+- Smart defaults watching common folders — **Downloads** +
+  **Music** at first hit (the two highest-traffic locations from
+  the May 26 distribution analysis)
+- Notification surfaces when new tracks are found in watched
+  folders
+- User approves new tracks before they're added to the library
+  (no silent magical imports — see protect-user-work principle,
+  the same "no surprises" instinct)
+
+Mode is changeable from settings anytime. Power users who want
+full Manager-style control can switch to B (no auto-watching,
+explicit folder adds). Convenience-first users who want
+aggressive scanning can switch to A (Auto-Finder, scan
+everything, no per-track approval). All three modes share the
+same infrastructure per the May 26 architecture — the difference
+is UX presets, not a code-path fork.
+
+#### Why Hybrid as the default
+
+Three considerations:
+
+1. **Trust must be earned before automation is trusted.** A
+   brand-new user has no reason to believe Mix//Sync's
+   auto-import won't fill their library with garbage from
+   `~/Downloads`. Auto-Finder as the default would feel
+   presumptuous on first hit. Manager as the default would feel
+   tedious and bury the auto-import value. Hybrid demonstrates
+   the auto-detection (notifications surface) while still
+   letting the user approve before commitment.
+2. **Two folders is enough to demonstrate the magic.**
+   Downloads + Music covers the high-probability locations for
+   ~95% of DJs (per the May 26 distribution analysis). A new
+   user sees value immediately without granting access to their
+   whole file system on first interaction.
+3. **Mode-switching from settings is the safety valve.**
+   Anyone unhappy with Hybrid can move to A or B at any time.
+   The default just has to be the *least surprising* starting
+   point — Hybrid is that.
+
+### What this resolves
+
+- Phase 1 (Multi-folder watched setup, ~8-12 hours) is fully
+  unblocked. All three gating questions from the May 27 morning
+  session are answered.
+- The protect-user-work principle is now a locked design
+  default and should be referenced by every subsequent
+  auto-import design choice.
+- The brand principle "Mix//Sync respects how YOU work" has its
+  first operational expression. Future strategic discussions
+  about other surfaces can reference this pattern (brand
+  principle → operational principle → defined defaults for
+  every edge case).
+
+### What's next
+
+1. **User reviews the Phase 1 build prompt scope** (next concrete
+   step — not yet written, drafted in the next assistant
+   response after this commit confirms).
+2. **After scope approval: Phase 1 build prompt is written
+   fully.**
+3. **After build prompt approval: code investigation begins**
+   (Investigation-First Protocol per CLAUDE.md — find the
+   relevant code, read it, report findings, propose fix
+   architecture, get approval, then implement).
+4. **Phase 1 implementation across one or more sessions** (~8-12
+   hours estimated).
+
+No code touched in this session. This entry exists to lock the
+resolved strategy and the new principle so the build can
+proceed without re-deriving the answers.
+
