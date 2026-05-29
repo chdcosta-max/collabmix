@@ -4182,4 +4182,255 @@ the user sees.
 4. If clean: tonight's work concludes. Phase 2 (scanning + new
    tracks notification) is a future session.
 
+## Phase 1 — SHIPPED (May 29 evening, post-redesign verification)
+
+Phase 1 of the library auto-import system shipped end-to-end
+this evening across six commits and was verified working in
+production via fresh Chrome incognito testing on
+https://collabmix.vercel.app. The plumbing layer is live, the
+user-facing surface is the redesigned "Connect your music" CTA,
+and the [LIB-PHASE1-SPIKE] roundtrip confirmed that
+`FileSystemDirectoryHandle` persistence works end-to-end in
+real Chrome.
+
+This section closes Phase 1 and hands off cleanly to Phase 2.
+
+### Phase 1 scope delivered
+
+- **Schema** — IndexedDB v6 with new `watchedFolders` store
+  (keyPath `id`). `libraryMode` value persisted in the existing
+  `settings` store; default `"hybrid"` per the May 27 Q3
+  resolution. Additive migration; no existing data touched.
+- **Track fields** — `sourcePath` and `hash` added as `null`
+  defaults on all new manually-imported tracks. Reserved for
+  Phase 2 dedup and Phase 5 file-move handling. Existing 136
+  tracks not backfilled per P1-Q1.
+- **FSA helpers** — `src/utils/fsa.js` exports
+  `isFSASupported`, `requestFolder`, `restoreHandles`,
+  `checkPermission`, `requestPermissionFor`, `removeFolderById`,
+  `setFolderEnabled`, `addFolder`. All `[LIB-PHASE1]` tagged.
+- **UI** — `LibraryEmptyState` component with three branches:
+  not-yet-connected (Connect-your-music CTA + drag-drop hint +
+  format caption), connected (transitional "Auto-scanning
+  launches soon" state listing all connected folders), Safari
+  fallback (manual import via drag-drop and "+ Add music").
+- **Sidebar** — "+ Add another location" button appears in
+  the existing footer cluster (next to "+ Add music" and
+  "+ New folder") once `watchedFolders.length > 0`. Quiet text
+  button matching the existing styling, no `startIn` bias.
+- **Telemetry** — `[LIB-PHASE1]` tags on mount-time restore,
+  folder grant/deny, queryPermission results, settings
+  actions. `[LIB-PHASE1-SPIKE]` wraps the first put-then-read
+  per session with explicit step-by-step logging (put →
+  read-back → queryPermission) plus rollback on failure.
+- **Downloads bias** — the primary "Connect your music" CTA
+  calls `addWatchedFolder({ startIn: "downloads" })`. Chrome's
+  picker opens at `~/Downloads` (the highest-traffic location
+  for newly acquired DJ music per the May 26 distribution
+  analysis). The "+ Add another location" button omits
+  `startIn` so users adding additional folders can navigate
+  freely.
+
+### Phase 1 NOT in scope — deferred to Phase 2+
+
+- ❌ Actual folder scanning (recursive directory traversal +
+  audio file filtering)
+- ❌ Dedup against existing library (the SHA-256 hash field is
+  reserved; the matching logic itself is Phase 2)
+- ❌ "X new tracks found" notification + Import/Skip
+  confirmation flow
+- ❌ `libraryMode` behavioral differences — Auto-Finder
+  aggressive scan, Manager wait-for-explicit-add, Hybrid
+  notify-and-confirm. Phase 1 stores the mode but exposes no
+  UI to change it and no behavioral fork to honor it.
+- ❌ File move / delete / rename handling per the protect-
+  user-work principle (Phase 5)
+- ❌ Rekordbox / Traktor / Serato library imports — separate
+  feature surface, not part of the auto-import scope. Likely
+  shipped via the future desktop companion app, not the
+  browser app.
+
+### Verification results — May 29 evening incognito test
+
+Chad ran the verification path in a fresh Chrome incognito
+window (empty IndexedDB → empty library) on
+https://collabmix.vercel.app. Results:
+
+- **Empty state renders correctly** — prominent
+  "Connect your music" CTA, "or drag tracks here" copy,
+  expectation-setting "Mix//Sync will scan your chosen folder
+  and import all music it finds", and the new format hint
+  "Supports MP3, WAV, FLAC, AAC, OGG, M4A".
+- **Downloads bias works** — Chrome's folder picker opened at
+  `~/Downloads` directly when the user clicked
+  "Connect your music".
+- **macOS picker UX friction noted** — selecting Downloads
+  itself requires navigating into it and clicking Open. This
+  is **standard macOS folder picker behavior**, not a
+  Mix//Sync bug. Worth surfacing as a Phase 4 onboarding-
+  guidance item for the public beta if it becomes a recurring
+  complaint.
+- **[LIB-PHASE1-SPIKE] roundtrip PASSED** in real Chrome —
+  console logged in order:
+  - `[LIB-PHASE1-SPIKE] starting roundtrip`
+  - `[LIB-PHASE1-SPIKE] put ok`
+  - `[LIB-PHASE1-SPIKE] read-back ok`
+  - `[LIB-PHASE1-SPIKE] queryPermission → granted`
+  - `[LIB-PHASE1-SPIKE] passed — DirectoryHandle persistence
+    verified in this browser`
+  This confirms the FSA spec's "structured-cloneable" claim
+  holds end-to-end in production Chrome. Phase 2 inherits this
+  guarantee — no further spike needed.
+- **Cancel flow clean** — when the user dismissed the picker,
+  no orphan record was left in the `watchedFolders` IDB store.
+  The `requestFolder` helper's AbortError handling worked as
+  designed.
+- **Post-connect transitional state correct** — after granting
+  a folder, the empty state transitioned to
+  `● Connected: beatport_tracks_2026-05-2` (the actual folder
+  name Chad picked) + "Auto-scanning launches soon." + the
+  manual-import nudge.
+- **"+ Add another location" surfaced** — after the first
+  folder was connected, the sidebar footer gained the
+  "+ Add another location" button as designed. No UI before
+  first connect, naturally appears after.
+- **Existing-library tab unaffected** — the 136-track real
+  library tab loaded normally in a parallel non-incognito
+  window. No UI changes, no console errors, no missing
+  metadata, no broken transport / decks / sync / chat. The
+  LIBRARY pill is gone from the top header (per the
+  redesign); only the original AUDIO / REC / MIDI pills
+  remain.
+
+### Commits in Phase 1
+
+| Commit | Purpose |
+|---|---|
+| `ccf38bf` | Phase 1 Commit 1 — IDB v5→v6 schema + Track sourcePath/hash fields |
+| `66bbb09` | Phase 1 Commit 2 — FSA helpers + handle persistence + embedded spike |
+| `f9f3ab1` | Phase 1 Commit 3 — Original UI (LIBRARY pill + strip + modal + mode toggles). **Superseded by the redesign** |
+| `b5e15b3` | VISION_5.md — Library architecture strategic pivot (post-Commit-3 UX review) |
+| `3dcc7ee` | Phase 1 UI redesign — empty-state CTA replaces strip + modal + mode toggle |
+| `8cd328d` | Phase 1 redesign fix — remove duplicate OLD "Add your music" hero + add format caption |
+
+Net code delta: roughly +500 / -300 lines (~200 net added
+across the FSA helpers module, the LibraryEmptyState
+component, the schema migration, and useLibrary hook
+plumbing). The Commit 3 → redesign cycle was net negative on
+its own (the redesign deleted ~280 lines of strip/modal UI
+and added ~80 lines of empty-state UI), but the prior commits
+brought the foundation.
+
+### Principles validated in Phase 1
+
+- **"Mix//Sync respects how YOU work, not how WE think you
+  should work."** — UX shifted from technical-concept
+  exposure (watched folders, modes, granted/enabled) to
+  user-intent exposure (Connect your music, scan launches
+  soon). The pivot mid-session was driven by direct user
+  feedback during real testing, not by spec review. Brand
+  principle's first concrete operational pass: the
+  redesigned surface uses zero "watched folders" or
+  "mode toggle" terminology.
+- **"Protect user work — never destructive merging without
+  explicit user action."** — Phase 1 doesn't auto-import on
+  connect. The user grants a folder; nothing is added to the
+  library until Phase 2's explicit "found N tracks, import?"
+  confirmation lands. The cancel flow rolls back cleanly so a
+  half-granted folder doesn't leave orphan state.
+- **Investigation-First Protocol per CLAUDE.md** — the
+  redesign was driven by real user testing feedback, not by
+  assumed UX patterns. The Investigation step before any code
+  ran proved its value (the FSA spike, the data-model
+  validation, the settings-UI options question), AND its
+  limits (missing the OLD "Add your music" hero during
+  redesign investigation surfaced as a same-session bug).
+
+### Lessons learned
+
+- **Always investigate ALL existing UI patterns before adding
+  new ones.** The duplicate empty-state bug surfaced from
+  missing the OLD hero block (lines 1981–2005) during the
+  redesign investigation. The Investigation step found the
+  secondary text fallback at line 2017 and stopped looking.
+  Next time: grep for every variation of "empty" / "no tracks"
+  / "library is empty" / "drop tracks" / etc. inside any
+  panel being redesigned, not just the first match.
+- **User testing in actual UI catches what spec reviews
+  miss.** The "watched folders / granted / enabled"
+  terminology only felt wrong when seen in context. The
+  Commit 3 spec review with strip + modal sketches read as
+  reasonable; the deployed product read as plumbing.
+  Future strategic decisions involving terminology should
+  test the surface, not the words.
+- **macOS folder picker UX is a real friction point for
+  browser apps using FSA.** Selecting a folder requires
+  navigating into it and clicking Open, which is non-obvious.
+  Affects every browser app using `showDirectoryPicker`.
+  Consider future onboarding guidance to mitigate (Phase 4
+  onboarding flow, or a one-time hint on first Connect).
+- **Bundle byte audit catches presence, not co-render.** The
+  pre-deploy audit on Commit 3dcc7ee confirmed the new
+  empty-state strings were in the bundle, but it didn't
+  detect that the OLD hero strings were ALSO still in the
+  bundle. Future audits on UI changes should also grep for
+  the *replaced* strings and confirm they're at 0
+  occurrences, not just that the new strings are present.
+  Both directions of the audit are needed.
+
+### Next session — Phase 2 scope
+
+- Recursive folder scanner in `fsa.js` — walk every directory
+  entry of granted handles, return audio files only
+- Audio-extension filter — `.mp3`, `.wav`, `.flac`, `.m4a`,
+  `.aac`, `.ogg` (mp4 audio is `.m4a` in practice; reconsider
+  scope if `.mp4` audio container is needed)
+- Dedup against existing tracks — first pass uses existing
+  `tracksMatch` (normalized artist+title), second pass adds
+  SHA-256 hash check using the `hash` field reserved in
+  Phase 1
+- "X new tracks found in `<folder name>`. Import them?"
+  notification — Import / Skip buttons, in-app toast or
+  modal. Honors the protect-user-work principle (never auto-
+  import).
+- Update the LibraryEmptyState transitional copy when
+  scanning becomes active — "Auto-scanning launches soon"
+  becomes "Scanning..." then "Found N tracks" + actionable
+  buttons.
+- Auto-rescan on app mount + post-grant — silent
+  queryPermission per folder, then scan, then notify if new
+  tracks found.
+
+Estimated time: 4-6 hours. Phase 2 inherits a clean
+foundation — no spike re-run needed, no schema migration,
+no UI surface to redesign mid-flight.
+
+### Companion desktop app — remains roadmapped
+
+Per the May 29 evening strategic pivot, a separate desktop
+library companion app remains on the long-term roadmap.
+Phase 1 through Phase 6 of the browser-only auto-import
+system provides "good enough" library management for dogfood
+and public beta. The desktop companion build begins after the
+browser-only validation phase completes — estimated as a
+6-9 month future scope item, **Series A scope, not
+validation-stage scope**.
+
+The framing from the pivot section above stands: Mix//Sync
+(browser) is the performance interface; Mix//Sync Library
+(future desktop) is the full library manager that syncs to
+the browser app. Browser-only is sufficient for the next
+6-9 months. Real dogfood feedback will inform desktop
+priorities when the time comes.
+
+### Phase 1 closed
+
+This is the close of Phase 1. The next concrete action is
+either (a) Phase 2 implementation (scanning + notification)
+in a future session, or (b) gathering user feedback on the
+deployed Phase 1 surface during dogfood and letting that
+inform Phase 2 scope refinements. No code touched in the
+final documentation commit — this entry exists to mark Phase
+1 done and hand state to the next session cleanly.
+
 
