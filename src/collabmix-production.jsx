@@ -1841,6 +1841,23 @@ function LibraryPanelV2({ lib, onLoad, playingTrack, deckATrackId:deckATrackIdPr
             onMouseEnter={e => e.currentTarget.style.color = TEXT}
             onMouseLeave={e => e.currentTarget.style.color = SUBTLE}
           >+ New folder</button>
+          {/* Phase 1 — only shows once the user has connected at least one
+              folder. First-time path goes through the LibraryEmptyState CTA
+              in the main panel; this sibling button covers "I want to add
+              another music source" without surfacing folder-management UI. */}
+          {lib.fsaSupported && lib.watchedFolders.length > 0 && (
+            <button
+              onClick={() => lib.addWatchedFolder({}).catch(() => {})}
+              style={{
+                width: "100%", height: 26, background: "transparent", border: "none",
+                color: SUBTLE, fontSize: 11, letterSpacing: 0.2, fontFamily: "'Inter',sans-serif",
+                borderRadius: 3, cursor: "pointer", textAlign: "left", padding: "0 4px",
+                transition: "color .12s",
+              }}
+              onMouseEnter={e => e.currentTarget.style.color = TEXT}
+              onMouseLeave={e => e.currentTarget.style.color = SUBTLE}
+            >+ Add another location</button>
+          )}
         </div>
       </div>
 
@@ -2015,9 +2032,9 @@ function LibraryPanelV2({ lib, onLoad, playingTrack, deckATrackId:deckATrackIdPr
             </>
           )}
           {!showGroups && tracks.length === 0 && (
-            <div style={{ padding: 48, textAlign: "center", color: MUTED, fontSize: 12 }}>
-              {allTracks.length === 0 ? "Your library is empty. Drop some tracks in." : "No tracks match these filters."}
-            </div>
+            allTracks.length === 0
+              ? <LibraryEmptyState lib={lib}/>
+              : <div style={{ padding: 48, textAlign: "center", color: MUTED, fontSize: 12 }}>No tracks match these filters.</div>
           )}
           {tracks.map(t => {
             const played = playedIds.has(t.id);
@@ -4555,289 +4572,95 @@ function MidiPanel({ midi }) {
   );
 }
 
-// ── Library auto-import — strip + settings modal (Phase 1) ───────────────
-// Renders inside the existing 120-px panel detail strip when the "🎵 LIBRARY"
-// pill is active in the top header. Holds the three-mode pill toggle and the
-// "Manage library" trigger that opens LibrarySettingsModal. All actions
-// flow through callbacks the parent gives us via the `lib` hook return.
-function LibraryControlStrip({ lib, onOpenManage }) {
-  const MODES = [
-    { id: "auto-finder", label: "Auto-Finder" },
-    { id: "manager",     label: "Manager"     },
-    { id: "hybrid",      label: "Hybrid"      },
-  ];
-  const folderCount = lib.watchedFolders.length;
-  const needsAttn = lib.watchedFolders.some(f => f.permission !== "granted");
-  return (
-    <div style={{ padding:"12px 18px", display:"flex", alignItems:"center", justifyContent:"space-between", gap:16, height:"100%" }}>
-      <div style={{ display:"flex", alignItems:"center", gap:14 }}>
-        <span style={{ fontSize:9, color:"#5A5E66", fontFamily:"'Inter',sans-serif", letterSpacing:1.5, textTransform:"uppercase" }}>Mode</span>
-        <div style={{ display:"flex", alignItems:"center", border:"1px solid rgba(255,255,255,0.08)", borderRadius:6, overflow:"hidden" }}>
-          {MODES.map((m, i) => {
-            const active = lib.libraryMode === m.id;
-            return (
-              <button key={m.id}
-                onClick={() => { if (!active) lib.changeLibraryMode(m.id); }}
-                title={active ? `${m.label} mode active` : `Switch to ${m.label} mode`}
-                style={{
-                  padding:"6px 14px", fontSize:11, fontFamily:"'Inter',sans-serif",
-                  background: active ? "rgba(255,255,255,0.08)" : "transparent",
-                  color: active ? "#F5F5F7" : "#5A5E66",
-                  border:"none",
-                  borderLeft: i === 0 ? "none" : "1px solid rgba(255,255,255,0.06)",
-                  cursor: active ? "default" : "pointer",
-                  outline:"none",
-                  letterSpacing:0.2,
-                  transition:"color 150ms cubic-bezier(0.4, 0, 0.2, 1), background 150ms cubic-bezier(0.4, 0, 0.2, 1)",
-                }}
-                onMouseEnter={e => { if (!active) e.currentTarget.style.color = "#9CA3AF"; }}
-                onMouseLeave={e => { if (!active) e.currentTarget.style.color = "#5A5E66"; }}
-              >{m.label}</button>
-            );
-          })}
-        </div>
-        <span style={{ fontSize:10, color:"#5A5E66", fontFamily:"'Inter',sans-serif", letterSpacing:0.3 }}>
-          {folderCount === 0 ? "No folders connected" : `${folderCount} folder${folderCount === 1 ? "" : "s"} connected`}
-          {needsAttn && <span style={{ color:"#f59e0b", marginLeft:8 }}>· needs attention</span>}
-        </span>
-      </div>
-      <button onClick={onOpenManage}
-        style={{
-          padding:"6px 12px", background:"transparent", border:"1px solid rgba(255,255,255,0.12)",
-          color:"rgba(255,255,255,0.6)", fontSize:11, fontFamily:"'Inter',sans-serif",
-          borderRadius:5, cursor:"pointer", outline:"none", letterSpacing:0.2,
-          transition:"color 150ms cubic-bezier(0.4, 0, 0.2, 1), border-color 150ms cubic-bezier(0.4, 0, 0.2, 1)",
-        }}
-        onMouseEnter={e => { e.currentTarget.style.color = "#F5F5F7"; e.currentTarget.style.borderColor = "rgba(255,255,255,0.25)"; }}
-        onMouseLeave={e => { e.currentTarget.style.color = "rgba(255,255,255,0.6)"; e.currentTarget.style.borderColor = "rgba(255,255,255,0.12)"; }}
-      >Manage library</button>
-    </div>
-  );
-}
-
-// Centered overlay modal opened from the strip's "Manage library" button.
-// Three render branches:
-//   1. Safari (no FSA) — plain-text fallback message; manual import still
-//      works via the existing drag-drop + Add music paths.
-//   2. Empty list, no folders yet — first-interaction suggestions (Downloads
-//      + Music) + custom add. Smart defaults per Q3 Hybrid resolution.
-//   3. Non-empty list — folder rows with permission state, enable toggle,
-//      remove button; "Add folder" CTA at the bottom.
-function LibrarySettingsModal({ lib, onClose }) {
-  const [busy, setBusy] = useState(null); // "downloads" | "music" | "custom" | folder id, or null
+// ── Library empty-state CTA (Phase 1 redesign — May 29 evening pivot) ────
+// Replaces the original Commit-3 strip + modal + mode-toggle surface. Per
+// the strategic pivot in VISION_5.md: pro DJs think in "where's my music,"
+// not in "watched folders" or "Auto-Finder / Manager / Hybrid modes." This
+// component is the single user-facing surface for Phase 1 — one CTA, one
+// folder pick, honest expectation-setting about Phase 2 scanning.
+//
+// Rendered inside LibraryPanelV2's main content area when allTracks is
+// empty. Two states:
+//   - No folders connected → "No tracks yet — Connect your music"
+//   - At least one folder connected → "Connected: <names>" + the honest
+//     "scanning will be enabled in a future update" expectation-setter
+function LibraryEmptyState({ lib }) {
+  const [busy, setBusy] = useState(false);
   const [error, setError] = useState(null);
-
-  // Escape to close. Click outside the panel also closes (handled below).
-  useEffect(() => {
-    const onKey = (e) => { if (e.key === "Escape") onClose(); };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [onClose]);
-
-  const tryAdd = async (startIn, busyKey) => {
-    setError(null);
-    setBusy(busyKey);
-    try {
-      await lib.addWatchedFolder({ startIn });
-    } catch (err) {
-      setError(err?.message || String(err));
-    } finally {
-      setBusy(null);
-    }
-  };
-
-  const isEmpty = lib.watchedFolders.length === 0;
   const supported = lib.fsaSupported;
-
+  const folders = lib.watchedFolders;
+  const connected = folders.length > 0;
+  // Bias the picker toward ~/Downloads — the highest-traffic location for
+  // newly acquired DJ music across Beatport / Bandcamp / DJ pools / AirDrop /
+  // promo emails. Chrome's startIn parameter only positions the picker; the
+  // user still has to confirm. For the 5% of users with music elsewhere
+  // they navigate from the picker just as before.
+  const onConnect = async () => {
+    if (busy) return;
+    setError(null);
+    setBusy(true);
+    try { await lib.addWatchedFolder({ startIn: "downloads" }); }
+    catch (err) { setError(err?.message || String(err)); }
+    finally { setBusy(false); }
+  };
   return (
-    <div
-      onClick={onClose}
-      style={{
-        position:"fixed", inset:0, background:"rgba(0,0,0,0.55)",
-        zIndex:10000, display:"flex", alignItems:"center", justifyContent:"center",
-        animation:"cmToastIn 150ms cubic-bezier(0.4, 0, 0.2, 1)",
-      }}>
-      <div
-        onClick={e => e.stopPropagation()}
-        style={{
-          width:520, maxWidth:"90vw", maxHeight:"70vh",
-          background:"#0D0F12", border:"1px solid rgba(255,255,255,0.08)",
-          borderRadius:8, display:"flex", flexDirection:"column",
-          boxShadow:"0 20px 60px rgba(0,0,0,0.7)",
-          fontFamily:"'Inter',sans-serif", color:"#F5F5F7",
-        }}>
-        {/* Header */}
-        <div style={{ padding:"14px 18px", display:"flex", alignItems:"center", justifyContent:"space-between", borderBottom:"1px solid rgba(255,255,255,0.06)", flexShrink:0 }}>
-          <div style={{ fontSize:14, letterSpacing:0.3, color:"#F5F5F7" }}>Library</div>
-          <button onClick={onClose} title="Close"
-            style={{ background:"transparent", border:"none", color:"rgba(255,255,255,0.4)", fontSize:16, cursor:"pointer", padding:"2px 6px", lineHeight:1, transition:"color 150ms cubic-bezier(0.4, 0, 0.2, 1)" }}
-            onMouseEnter={e => e.currentTarget.style.color = "#F5F5F7"}
-            onMouseLeave={e => e.currentTarget.style.color = "rgba(255,255,255,0.4)"}>×</button>
-        </div>
-
-        {/* Body */}
-        <div style={{ padding:"18px", overflowY:"auto", flex:1 }}>
-          {!supported && (
-            <div style={{ fontSize:13, color:"rgba(255,255,255,0.7)", lineHeight:1.55, letterSpacing:0.2 }}>
-              Folder watching requires Chrome or Edge. Manual import via &ldquo;Add music&rdquo; or drag-drop still works in Safari.
+    <div style={{ display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"center", padding:"96px 32px", fontFamily:"'Inter',sans-serif", textAlign:"center", color:"#F5F5F7" }}>
+      {!connected && (
+        <>
+          <div style={{ fontSize:18, letterSpacing:0.3, color:"#F5F5F7", marginBottom:24 }}>No tracks yet</div>
+          {supported ? (
+            <button onClick={onConnect} disabled={busy}
+              style={{
+                padding:"10px 22px", fontSize:13, fontFamily:"'Inter',sans-serif",
+                background: busy ? "rgba(255,255,255,0.04)" : "rgba(255,255,255,0.06)",
+                border:`1px solid ${busy ? "rgba(255,255,255,0.10)" : "rgba(255,255,255,0.18)"}`,
+                color: busy ? "rgba(255,255,255,0.5)" : "#F5F5F7",
+                borderRadius:6, cursor: busy ? "default" : "pointer", outline:"none",
+                letterSpacing:0.3,
+                transition:"all 150ms cubic-bezier(0.4, 0, 0.2, 1)",
+              }}
+              onMouseEnter={e => { if (!busy) { e.currentTarget.style.background = "rgba(255,255,255,0.10)"; e.currentTarget.style.borderColor = "rgba(255,255,255,0.30)"; } }}
+              onMouseLeave={e => { if (!busy) { e.currentTarget.style.background = "rgba(255,255,255,0.06)"; e.currentTarget.style.borderColor = "rgba(255,255,255,0.18)"; } }}
+            >{busy ? "Connecting…" : "Connect your music"}</button>
+          ) : (
+            <div style={{ fontSize:13, color:"rgba(255,255,255,0.7)", lineHeight:1.55, letterSpacing:0.2, maxWidth:380 }}>
+              Folder connect requires Chrome or Edge. Drag tracks here or use &ldquo;+ Add music&rdquo; to import manually.
             </div>
           )}
-
-          {supported && isEmpty && (
-            <>
-              <div style={{ fontSize:9, color:"#5A5E66", letterSpacing:1.5, textTransform:"uppercase", marginBottom:12 }}>Suggestions</div>
-              <SuggestionRow
-                title="Connect Downloads"
-                hint="Your highest-traffic folder for new music"
-                onClick={() => tryAdd("downloads", "downloads")}
-                busy={busy === "downloads"}
-                disabled={!!busy}
-              />
-              <SuggestionRow
-                title="Connect Music"
-                hint="Standard macOS music location"
-                onClick={() => tryAdd("music", "music")}
-                busy={busy === "music"}
-                disabled={!!busy}
-              />
-              <div style={{ marginTop:18, paddingTop:14, borderTop:"1px solid rgba(255,255,255,0.06)" }}>
-                <button onClick={() => tryAdd(undefined, "custom")} disabled={!!busy}
-                  style={{
-                    background:"transparent", border:"none",
-                    color: busy ? "rgba(255,255,255,0.3)" : "rgba(255,255,255,0.6)",
-                    fontSize:12, fontFamily:"'Inter',sans-serif", letterSpacing:0.2,
-                    cursor: busy ? "default" : "pointer", outline:"none", padding:"4px 0",
-                    transition:"color 150ms cubic-bezier(0.4, 0, 0.2, 1)",
-                  }}
-                  onMouseEnter={e => { if (!busy) e.currentTarget.style.color = "#F5F5F7"; }}
-                  onMouseLeave={e => { if (!busy) e.currentTarget.style.color = "rgba(255,255,255,0.6)"; }}
-                >+ Add custom folder</button>
-              </div>
-            </>
-          )}
-
-          {supported && !isEmpty && (
-            <>
-              <div style={{ fontSize:9, color:"#5A5E66", letterSpacing:1.5, textTransform:"uppercase", marginBottom:10 }}>Watched folders</div>
-              <div style={{ display:"flex", flexDirection:"column" }}>
-                {lib.watchedFolders.map(f => (
-                  <FolderRow key={f.id} folder={f} lib={lib} busy={busy} setBusy={setBusy} setError={setError}/>
-                ))}
-              </div>
-              <div style={{ marginTop:16, paddingTop:14, borderTop:"1px solid rgba(255,255,255,0.06)" }}>
-                <button onClick={() => tryAdd(undefined, "custom")} disabled={!!busy}
-                  style={{
-                    background:"transparent", border:"none",
-                    color: busy ? "rgba(255,255,255,0.3)" : "rgba(255,255,255,0.6)",
-                    fontSize:12, fontFamily:"'Inter',sans-serif", letterSpacing:0.2,
-                    cursor: busy ? "default" : "pointer", outline:"none", padding:"4px 0",
-                    transition:"color 150ms cubic-bezier(0.4, 0, 0.2, 1)",
-                  }}
-                  onMouseEnter={e => { if (!busy) e.currentTarget.style.color = "#F5F5F7"; }}
-                  onMouseLeave={e => { if (!busy) e.currentTarget.style.color = "rgba(255,255,255,0.6)"; }}
-                >+ Add folder</button>
-              </div>
-            </>
-          )}
-
-          {error && (
-            <div style={{ marginTop:14, padding:"8px 12px", background:"rgba(239,68,68,0.08)", border:"1px solid rgba(239,68,68,0.2)", borderRadius:5, fontSize:11, color:"#ef4444", letterSpacing:0.2 }}>
-              {error}
-            </div>
-          )}
-        </div>
-      </div>
-    </div>
-  );
-}
-
-function SuggestionRow({ title, hint, onClick, busy, disabled }) {
-  return (
-    <button onClick={onClick} disabled={disabled}
-      style={{
-        width:"100%", textAlign:"left", padding:"12px 14px",
-        background:"rgba(255,255,255,0.02)", border:"1px solid rgba(255,255,255,0.06)",
-        borderRadius:6, cursor: disabled ? "default" : "pointer", outline:"none",
-        marginBottom:8, fontFamily:"'Inter',sans-serif",
-        transition:"background 150ms cubic-bezier(0.4, 0, 0.2, 1), border-color 150ms cubic-bezier(0.4, 0, 0.2, 1)",
-      }}
-      onMouseEnter={e => { if (!disabled) { e.currentTarget.style.background = "rgba(255,255,255,0.05)"; e.currentTarget.style.borderColor = "rgba(255,255,255,0.12)"; } }}
-      onMouseLeave={e => { e.currentTarget.style.background = "rgba(255,255,255,0.02)"; e.currentTarget.style.borderColor = "rgba(255,255,255,0.06)"; }}>
-      <div style={{ fontSize:13, color:"#F5F5F7", letterSpacing:0.2 }}>{busy ? "Granting…" : title}</div>
-      <div style={{ fontSize:11, color:"#5A5E66", marginTop:3, letterSpacing:0.2 }}>{hint}</div>
-    </button>
-  );
-}
-
-function FolderRow({ folder, lib, busy, setBusy, setError }) {
-  const granted = folder.permission === "granted";
-  const dotColor = granted ? "#22c55e" : folder.permission === "denied" ? "#ef4444" : "#f59e0b";
-  const stateLabel = granted ? "Granted" : folder.permission === "denied" ? "Denied" : "Needs permission";
-
-  const onToggleEnabled = async () => {
-    setError(null);
-    setBusy(folder.id);
-    try { await lib.setWatchedFolderEnabled(folder.id, !folder.enabled); }
-    catch (err) { setError(err?.message || String(err)); }
-    finally { setBusy(null); }
-  };
-  const onRequestPerm = async () => {
-    setError(null);
-    setBusy(folder.id);
-    try { await lib.requestPermissionForFolder(folder.id); }
-    catch (err) { setError(err?.message || String(err)); }
-    finally { setBusy(null); }
-  };
-  const onRemove = async () => {
-    setError(null);
-    setBusy(folder.id);
-    try { await lib.removeWatchedFolder(folder.id); }
-    catch (err) { setError(err?.message || String(err)); }
-    finally { setBusy(null); }
-  };
-
-  const rowBusy = busy === folder.id;
-  return (
-    <div style={{ display:"flex", alignItems:"center", gap:10, padding:"10px 4px", borderBottom:"1px solid rgba(255,255,255,0.04)" }}>
-      <div style={{ flex:1, minWidth:0 }}>
-        <div style={{ fontSize:13, color: folder.enabled ? "#F5F5F7" : "#5A5E66", letterSpacing:0.2, whiteSpace:"nowrap", overflow:"hidden", textOverflow:"ellipsis" }}>{folder.name}</div>
-        <div style={{ fontSize:10, color:"#5A5E66", marginTop:3, display:"flex", alignItems:"center", gap:5, letterSpacing:0.2 }}>
-          <span style={{ display:"inline-block", width:5, height:5, borderRadius:"50%", background:dotColor }}/>
-          {stateLabel}
-        </div>
-      </div>
-      {!granted && (
-        <button onClick={onRequestPerm} disabled={rowBusy}
-          style={{
-            padding:"4px 10px", fontSize:10, background:"transparent",
-            border:"1px solid rgba(245,158,11,0.4)", color:"#f59e0b",
-            borderRadius:4, cursor: rowBusy ? "default" : "pointer", outline:"none",
-            letterSpacing:0.2, fontFamily:"'Inter',sans-serif",
-            transition:"all 150ms cubic-bezier(0.4, 0, 0.2, 1)",
-          }}>Grant</button>
+          {supported && <div style={{ fontSize:11, color:"#5A5E66", marginTop:14, letterSpacing:0.2 }}>or drag tracks here</div>}
+          {supported && <div style={{ fontSize:11, color:"#5A5E66", marginTop:40, maxWidth:340, lineHeight:1.55, letterSpacing:0.2 }}>Mix//Sync will scan your chosen folder and import all music it finds.</div>}
+        </>
       )}
-      <button onClick={onToggleEnabled} disabled={rowBusy}
-        title={folder.enabled ? "Pause scanning this folder" : "Resume scanning this folder"}
-        style={{
-          padding:"4px 10px", fontSize:10, fontFamily:"'Inter',sans-serif",
-          background: folder.enabled ? "rgba(255,255,255,0.06)" : "transparent",
-          border:`1px solid ${folder.enabled ? "rgba(255,255,255,0.15)" : "rgba(255,255,255,0.08)"}`,
-          color: folder.enabled ? "#F5F5F7" : "#5A5E66",
-          borderRadius:4, cursor: rowBusy ? "default" : "pointer", outline:"none",
-          letterSpacing:0.2, transition:"all 150ms cubic-bezier(0.4, 0, 0.2, 1)",
-        }}>{folder.enabled ? "Enabled" : "Paused"}</button>
-      <button onClick={onRemove} disabled={rowBusy} title="Remove from watched folders"
-        style={{
-          padding:"4px 8px", fontSize:13, background:"transparent",
-          border:"none", color:"rgba(255,255,255,0.3)",
-          cursor: rowBusy ? "default" : "pointer", outline:"none",
-          transition:"color 150ms cubic-bezier(0.4, 0, 0.2, 1)",
-        }}
-        onMouseEnter={e => { if (!rowBusy) e.currentTarget.style.color = "#ef4444"; }}
-        onMouseLeave={e => e.currentTarget.style.color = "rgba(255,255,255,0.3)"}>×</button>
+      {connected && (
+        <>
+          <div style={{ display:"flex", alignItems:"center", gap:8, fontSize:13, color:"#F5F5F7", letterSpacing:0.3, marginBottom:18 }}>
+            <span style={{ display:"inline-block", width:6, height:6, borderRadius:"50%", background:"#22c55e", boxShadow:"0 0 8px rgba(34,197,94,0.4)" }}/>
+            Connected: {folders.map(f => f.name).join(", ")}
+          </div>
+          <div style={{ fontSize:12, color:"rgba(255,255,255,0.7)", maxWidth:380, lineHeight:1.55, letterSpacing:0.2, marginBottom:14 }}>
+            Auto-scanning launches soon.
+          </div>
+          <div style={{ fontSize:11, color:"#5A5E66", maxWidth:380, lineHeight:1.55, letterSpacing:0.2 }}>
+            For now, drag tracks here or use &ldquo;+ Add music&rdquo; to import manually.
+          </div>
+        </>
+      )}
+      {error && (
+        <div style={{ marginTop:22, padding:"8px 12px", background:"rgba(239,68,68,0.08)", border:"1px solid rgba(239,68,68,0.2)", borderRadius:5, fontSize:11, color:"#ef4444", letterSpacing:0.2, maxWidth:380 }}>
+          {error}
+        </div>
+      )}
     </div>
   );
 }
+
+// ── (removed May 29 evening — see VISION_5.md "Library architecture
+//     strategic pivot") The LibraryControlStrip, LibrarySettingsModal,
+//     SuggestionRow, and FolderRow components shipped in commit f9f3ab1
+//     were removed in the same-session pivot. The underlying FSA helpers
+//     in src/utils/fsa.js and useLibrary plumbing remain — only the UI
+//     surface was redesigned, replaced by LibraryEmptyState above and the
+//     "+ Add another location" sidebar button.
 
 // ── LANDING PAGE ──────────────────────────────────────────────
 function Landing({ onEnter }) {
@@ -5311,10 +5134,6 @@ export default function CollabMix({ initialPage = "landing", djName = null }) {
   const [pB, setPB]             = useState(null);
   const [midiEvt, setMidiEvt]   = useState(null);
   const [panel, setPanel]       = useState(null);
-  // Phase 1 — library settings modal. Opens from the LibraryControlStrip's
-  // "Manage library" button. Independent of the panel toggle so closing the
-  // strip doesn't close the modal mid-edit.
-  const [librarySettingsOpen, setLibrarySettingsOpen] = useState(false);
   // FIX: track actual playback rates so BPM sync display is correct
   const [rateA, setRateA]       = useState(1);
   const [rateB, setRateB]       = useState(1);
@@ -6669,7 +6488,7 @@ export default function CollabMix({ initialPage = "landing", djName = null }) {
   }, [lib.library, session]);
 
   const SC = { connected:"#22c55e", connecting:"#f59e0b", disconnected:"#5A5E66", error:"#ef4444" };
-  const PANELS = [["rtc","⚡ AUDIO"],["rec","⏺ REC"],["midi","⎍ MIDI"],["lib","🎵 LIBRARY"]];
+  const PANELS = [["rtc","⚡ AUDIO"],["rec","⏺ REC"],["midi","⎍ MIDI"]];
 
   if (page==="landing") return <Landing onEnter={()=>setPage("lobby")}/>;
   if (page==="lobby")   return <Lobby onJoin={join} djName={djName}/>;
@@ -6986,19 +6805,16 @@ export default function CollabMix({ initialPage = "landing", djName = null }) {
 
       </div>
 
-      {/* ── PANEL DETAIL (rtc / rec / midi / lib) — opens when the toggle in
-            the top header is active. Wrapper collapses fully when no panel
-            open, so the library gets the full vertical strip back. ── */}
+      {/* ── PANEL DETAIL (rtc / rec / midi) — opens when the toggle in the
+            top header is active. Wrapper collapses fully when no panel open,
+            so the library gets the full vertical strip back. The Phase 1
+            library auto-import UI is NOT here — see LibraryEmptyState in
+            LibraryPanelV2's main content area. ── */}
       {panel && <div style={{ flexShrink:0, borderTop:"1px solid rgba(255,255,255,0.06)", background:"#0D0F12", maxHeight:120, overflow:"auto" }}>
         {panel==="rtc"  && <RTCPanel rtc={rtc} partner={sync.partner} syncOk={sync.status==="connected"}/>}
         {panel==="rec"  && <RecPanel rec={rec} ready={ready}/>}
         {panel==="midi" && <MidiPanel midi={midi}/>}
-        {panel==="lib"  && <LibraryControlStrip lib={lib} onOpenManage={() => setLibrarySettingsOpen(true)}/>}
       </div>}
-
-      {/* Phase 1 — library settings modal. Renders at top level so it
-          overlays everything (header included) when open. */}
-      {librarySettingsOpen && <LibrarySettingsModal lib={lib} onClose={() => setLibrarySettingsOpen(false)}/>}
 
       {/* ── EMBEDDED LIBRARY — fills remaining space below decks ── */}
       <div style={{ flex:1, overflow:"hidden", borderTop:"1px solid rgba(255,255,255,0.06)", background:"#0D0F12", minHeight:0 }}>
