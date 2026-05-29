@@ -693,7 +693,11 @@ function useLibrary(){
       if(isDupe){skippedCount++;continue;}
       // Store artwork in both memory cache and track record so it survives page reloads
       if(tags.artwork){artworkCache.current[id]=tags.artwork;}
-      const track={id,filename:file.name.replace(/\.[^.]+$/,""),title,artist,album:tags.album||"",genre:tags.genre||"",label:tags.label||"",bpm:tags.bpm?parseFloat(tags.bpm):null,key:tags.key||null,duration:null,energy:null,analyzed:false,error:false,addedAt:Date.now(),artwork:tags.artwork||null,artworkVersion:tags.artwork?ARTWORK_PARSER_VERSION:undefined};
+      // sourcePath / hash reserved for Phase 2 (auto-import dedup) + Phase 5
+      // (file-move handling). Always null on manually-imported tracks; the
+      // FSA auto-import path populates them in later phases. Existing 135
+      // tracks remain untouched per P1-Q1 (no backfill).
+      const track={id,filename:file.name.replace(/\.[^.]+$/,""),title,artist,album:tags.album||"",genre:tags.genre||"",label:tags.label||"",bpm:tags.bpm?parseFloat(tags.bpm):null,key:tags.key||null,duration:null,energy:null,analyzed:false,error:false,addedAt:Date.now(),artwork:tags.artwork||null,artworkVersion:tags.artwork?ARTWORK_PARSER_VERSION:undefined,sourcePath:null,hash:null};
       // Don't pin File in fileMap or queue for analysis — both retained the File
       // reference for the whole session, and 300+ pinned blobs caused OOM. getFile
       // will hit OPFS first; analysis is deferred to handleLibLoad → queueAnalysis.

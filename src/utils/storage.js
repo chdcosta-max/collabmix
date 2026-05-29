@@ -18,8 +18,12 @@
 // v5: settings store rebuilt with keyPath "key" (unifies both apps), new
 //     `migrations` store for one-shot upgrade markers, normalized handle
 //     record shape, OPFS used by both apps.
+// v6: `watchedFolders` store added for the Phase 1 library auto-import
+//     plumbing (FileSystemDirectoryHandle persistence). Additive only;
+//     no existing data touched. Records: { id, name, handle, enabled,
+//     addedAt, lastScannedAt }.
 export const CM_DB_NAME = "cm_music_library";
-export const CM_DB_VER  = 5;
+export const CM_DB_VER  = 6;
 const OPFS_DIR = "cm_audio";
 
 // ── Open + upgrade ────────────────────────────────────────────────────────
@@ -78,6 +82,15 @@ export function openCmDB() {
           };
         } else {
           db.createObjectStore("settings", { keyPath: "key" });
+        }
+      }
+
+      // v5 → v6: `watchedFolders` store for the Phase 1 library auto-import
+      // plumbing. Holds FileSystemDirectoryHandle records persisted across
+      // page loads. Additive only — no existing store touched.
+      if (e.oldVersion < 6) {
+        if (!db.objectStoreNames.contains("watchedFolders")) {
+          db.createObjectStore("watchedFolders", { keyPath: "id" });
         }
       }
     };
@@ -243,6 +256,27 @@ export async function ensurePersistentStorage() {
   } catch {
     return "denied";
   }
+}
+
+// ── Library mode (Phase 1) ────────────────────────────────────────────────
+// Persists which library mode the user has selected: "auto-finder" |
+// "manager" | "hybrid". Default is "hybrid" (per the May 27 Q3 resolution).
+// Stored in the existing `settings` store (keyPath "key") to avoid a new
+// store for a single scalar value.
+export const LIBRARY_MODE_KEY = "libraryMode";
+export const LIBRARY_MODE_DEFAULT = "hybrid";
+export const LIBRARY_MODES = ["auto-finder", "manager", "hybrid"];
+
+export async function getLibraryMode() {
+  const rec = await dbGet("settings", LIBRARY_MODE_KEY);
+  const val = rec && typeof rec === "object" ? rec.value : null;
+  return LIBRARY_MODES.includes(val) ? val : LIBRARY_MODE_DEFAULT;
+}
+export async function setLibraryMode(mode) {
+  if (!LIBRARY_MODES.includes(mode)) {
+    throw new Error(`[storage] setLibraryMode: invalid mode "${mode}"`);
+  }
+  return dbPut("settings", { key: LIBRARY_MODE_KEY, value: mode });
 }
 
 // ── Migration markers ─────────────────────────────────────────────────────
