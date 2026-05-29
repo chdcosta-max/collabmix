@@ -1978,31 +1978,14 @@ function LibraryPanelV2({ lib, onLoad, playingTrack, deckATrackId:deckATrackIdPr
 
         {/* Track list or group list depending on view */}
         <div style={{ flex: 1, overflowY: "auto", padding: "4px 6px" }}>
-          {!showGroups && allTracks.length === 0 && (
-            <div
-              onClick={handleAddMusic}
-              style={{
-                margin: 24, padding: "60px 40px", textAlign: "center",
-                border: `2px dashed ${G}33`, borderRadius: 12, cursor: "pointer",
-                display: "flex", flexDirection: "column", alignItems: "center", gap: 10,
-                transition: "all .2s",
-              }}
-              onMouseEnter={e => { e.currentTarget.style.borderColor = `${G}66`; e.currentTarget.style.background = `${G}06`; }}
-              onMouseLeave={e => { e.currentTarget.style.borderColor = `${G}33`; e.currentTarget.style.background = "transparent"; }}
-            >
-              <div style={{ fontSize: 32, opacity: 0.35 }}>🎵</div>
-              <div style={{ fontSize: 14, fontFamily: "'Inter',sans-serif", color: G, letterSpacing: 1.5, fontWeight: 600 }}>Add your music</div>
-              <div style={{ fontSize: 11, fontFamily: "'Inter',sans-serif", color: SUBTLE, lineHeight: 1.6, fontWeight: 300 }}>
-                Drop tracks here or click to add
-              </div>
-              <div style={{ fontSize: 10, fontFamily: "'Inter',sans-serif", color: MUTED, lineHeight: 1.6, fontWeight: 300, marginTop: -4 }}>
-                Drag a folder for bulk import
-              </div>
-              <div style={{ fontSize: 9, fontFamily: "'Inter',sans-serif", color: MUTED, letterSpacing: 1, marginTop: 4 }}>
-                MP3 · WAV · FLAC · AAC · OGG · M4A
-              </div>
-            </div>
-          )}
+          {/* Phase 1 redesign (May 29 evening pivot) — the previous
+              "Add your music" dashed-border hero with onClick handleAddMusic
+              was removed in favor of LibraryEmptyState (rendered below),
+              which provides the Connect-your-music CTA plus drag-drop and
+              "+ Add music" sidebar paths. The root <div> of LibraryPanelV2
+              (line ~1787) owns the global drag-drop handler — drop anywhere
+              in the library panel still routes through handleDroppedItems
+              → _importFileObjects, unchanged. */}
           {showGroups && (
             <>
               {groups.length === 0 && (
@@ -4629,6 +4612,7 @@ function LibraryEmptyState({ lib }) {
           )}
           {supported && <div style={{ fontSize:11, color:"#5A5E66", marginTop:14, letterSpacing:0.2 }}>or drag tracks here</div>}
           {supported && <div style={{ fontSize:11, color:"#5A5E66", marginTop:40, maxWidth:340, lineHeight:1.55, letterSpacing:0.2 }}>Mix//Sync will scan your chosen folder and import all music it finds.</div>}
+          {supported && <div style={{ fontSize:10, color:"rgba(255,255,255,0.25)", marginTop:14, letterSpacing:0.4 }}>Supports MP3, WAV, FLAC, AAC, OGG, M4A</div>}
         </>
       )}
       {connected && (
