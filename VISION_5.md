@@ -3993,3 +3993,193 @@ No code touched in this session. This entry exists to lock the
 resolved strategy and the new principle so the build can
 proceed without re-deriving the answers.
 
+## Library architecture strategic pivot — May 29 evening (post-Commit-3 UX review)
+
+Phase 1 shipped end-to-end across three commits today (`ccf38bf`
+schema, `66bbb09` FSA helpers + embedded spike, `f9f3ab1` settings
+UI with strip + modal). User visual review of the deployed
+Commit 3 surfaced a fundamental UX problem that warrants a
+strategic pivot before continuing into Phase 2.
+
+This section records the pivot, the reasoning behind it, and the
+new direction. The underlying engineering from Phase 1 is
+preserved; only the user-facing surface is being redesigned.
+
+### The UX problem identified
+
+The Phase 1 design (Watched Folders + Modes + Manage modal)
+exposed too much technical complexity. Pro DJs don't think in
+terms of "watched folders," "granted permissions," "enabled
+toggles," or "Auto-Finder / Manager / Hybrid modes." They think
+in terms of "where's my music" and "show me my new tracks."
+
+Direct user feedback during testing: **"I am not sure what I am
+supposed to do or what watched folder means or granted/enabled."**
+This is direct evidence the UI exposed plumbing instead of
+intent — the exact failure mode the May 26 strategic
+"Mix//Sync respects how YOU work, not how WE think you should
+work" brand principle is meant to guard against.
+
+The Quiet Pro Tool design philosophy says "functionality is the
+aesthetic" and "restraint as a virtue." The Commit 3 surface
+violated both — by exposing a configuration panel for a feature
+the user shouldn't need to configure to use.
+
+### The browser limitation (reconfirmed)
+
+Browser apps cannot scan the entire file system. File System
+Access API requires explicit per-folder user permission. This is
+a hard browser security boundary — not a bug, not something
+Mix//Sync can opt around, not something that will improve in
+future browser releases. Any browser-only library auto-import
+system must work within this constraint.
+
+This is unchanged from the May 26 architecture session; restating
+here because the redesign is downstream of accepting it.
+
+### The scope-appropriate browser UX
+
+The redesigned Phase 1 surface:
+
+- User clicks ONE "Connect your music" button
+- User picks ONE folder via Chrome's folder picker (usually
+  Downloads — but Mix//Sync doesn't dictate which one)
+- Mix//Sync recursively scans the chosen folder, filters audio
+  files, imports everything
+- Every subsequent app launch: silent re-scan, surfaces a
+  notification "X new tracks found, import them?"
+- Power users can add additional locations via a quiet
+  "Add another location" affordance — NOT a "watched folders
+  panel"
+- **Zero "watched folders" or "modes" terminology exposed to the
+  user**
+
+The infrastructure built in Commits 1-3 supports this entirely;
+only the UI words and screens change. The user's mental model is
+"my music folder" — singular, intuitive — not "watched folders
+list with permission states." Even when the user adds a second
+folder, the framing remains "another music location," not "a new
+entry in your watched-folders set."
+
+### Companion desktop app — new roadmap item
+
+**User decision: Build a separate desktop library companion app
+LATER (not now).**
+
+Concept:
+
+- **Mix//Sync (browser app)** = performance interface — decks,
+  mixer, real-time collaboration. What exists today and what the
+  next 6-9 months will continue to focus on.
+- **Mix//Sync Library (desktop app, future)** = full library
+  manager with native file system access. Syncs to the browser
+  app so the user's library is consistent in both surfaces.
+
+Why this matters: browser apps cannot fully replicate pro DJ
+tools' library management capabilities — there's no way to parse
+Rekordbox / Traktor / Serato database files at scale in the
+browser, no background scanning when the tab is closed, no full
+system search. Native apps can do all of this. The companion-app
+pattern matches existing pro DJ workflows (Rekordbox itself is a
+desktop app that pushes to CDJ hardware; Mix//Sync's browser app
+is the equivalent of "the performance surface" in that pattern).
+
+**Decision: build LATER, not now.** Reasoning:
+
+- Mix//Sync's core thesis (remote real-time DJ collaboration) is
+  unvalidated. Validate it before expanding scope.
+- A desktop companion app is 6-9 months of focused work
+  (architecture, build, distribution, code signing, auto-update,
+  database parsers).
+- The browser-only experience is sufficient for dogfood and
+  public beta. The redesigned Phase 1 (single-folder connect +
+  smart scanning + new-track notifications) covers ~95% of the
+  ongoing-import friction without leaving the browser.
+- Real user feedback during dogfood will tell us which desktop
+  capabilities matter most. Building the desktop app before
+  having that feedback would be guessing.
+- This is **Series A scope**, not validation-stage scope.
+
+Future phasing for the companion app (rough, not committed):
+
+- Phase 1 (current focus): validate browser app with real DJs
+- Phase 2: architecture work for desktop (2-4 weeks)
+- Phase 3: desktop MVP build (2-3 months) — Electron or Tauri TBD
+- Phase 4: distribution + beta — code signing, auto-update
+- Phase 5: Rekordbox / Traktor / Serato library imports as v1.1
+  features once the desktop shell exists
+
+Sync architecture options for future evaluation:
+
+- Cloud sync via Mix//Sync servers
+- Local sync via local HTTP / WebSocket between browser and
+  desktop app on the same machine
+- Hybrid (recommended) — local when possible, cloud as fallback
+
+None of this is locked. It's documented here so a future session
+picking up the desktop app discussion has a starting point and
+doesn't re-derive the framing.
+
+### What current Phase 1 gets right (salvageable)
+
+Despite the UX miss in Commit 3's settings panel, the underlying
+engineering from the three Phase 1 commits is correct and stays:
+
+- **Schema additions** — `watchedFolders` IDB store (v6),
+  `sourcePath` / `hash` fields on Track. Phase 2 dedup and
+  Phase 5 file-move handling both need these.
+- **FSA permission helpers** in `src/utils/fsa.js` —
+  `isFSASupported`, `requestFolder`, `restoreHandles`,
+  `checkPermission`, `requestPermissionFor`, `removeFolderById`,
+  `setFolderEnabled`, `addFolder`. Reusable as-is.
+- **The `[LIB-PHASE1-SPIKE]` embedded roundtrip** — proved
+  `FileSystemDirectoryHandle` persistence works end-to-end in
+  real Chrome via IndexedDB. The spec's "structured-cloneable"
+  claim is verified in this environment. Phase 2 inherits this
+  guarantee.
+- **IndexedDB integration** — additive v5→v6 migration ran
+  cleanly in production, 136 existing tracks untouched, store
+  reads/writes verified.
+- **`useLibrary` state plumbing** — `watchedFolders`,
+  `libraryMode`, mount-time restore effect, action callbacks
+  (`addWatchedFolder`, `removeWatchedFolder`,
+  `setWatchedFolderEnabled`, `requestPermissionForFolder`,
+  `changeLibraryMode`). The hook surface is correct; only its
+  UI consumers need to change.
+
+**What needs redesign: only the user-facing UI layer.** The
+three components added in Commit 3 (`LibraryControlStrip`,
+`LibrarySettingsModal`, helper rows) are being removed and
+replaced with a single "Connect your music" empty-state CTA plus
+a quiet "Add another location" affordance in the populated
+state. The `🎵 LIBRARY` PANELS pill is being removed. No mode
+toggles in the UI. No "watched folders" terminology anywhere
+the user sees.
+
+### What this resolves
+
+- Phase 1 ships in user-visible form once the redesign lands —
+  the engineering is already in production.
+- Phase 2 (scanning + new-track notifications) inherits a clean
+  surface to build on top of, instead of a settings panel
+  contradiction.
+- The desktop companion app is on the roadmap with explicit
+  "later, not now" framing — future sessions know the option
+  exists without feeling pressure to ship it.
+- The "Mix//Sync respects how YOU work" brand principle now has
+  a second concrete operational test alongside protect-user-work:
+  **don't expose plumbing the user shouldn't need to think
+  about.** This is a candidate companion principle worth naming
+  explicitly in the next strategy pass.
+
+### What's next this session
+
+1. This documentation lands as its own commit + push (the entry
+   you're reading now).
+2. UI redesign plan goes back to the user for plan-only review.
+3. Plan approval → implementation commit → push → browser
+   verification.
+4. If clean: tonight's work concludes. Phase 2 (scanning + new
+   tracks notification) is a future session.
+
+
