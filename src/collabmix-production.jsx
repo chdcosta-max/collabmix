@@ -24,6 +24,8 @@ import {
   requestPermissionFor as fsaRequestPermission,
   removeFolderById as fsaRemoveFolderById,
   setFolderEnabled as fsaSetFolderEnabled,
+  scanWatchedFolders,
+  setFolderLastScanned as fsaSetFolderLastScanned,
 } from "./utils/fsa.js";
 
 // ═══════════════════════════════════════════════════════════════
@@ -442,6 +444,15 @@ function useLibrary(){
   // this is plumbing-only state that the settings UI reads/writes.
   const [watchedFolders,setWatchedFolders]=useState([]);
   const [libraryMode,setLibraryModeState]=useState(LIBRARY_MODE_DEFAULT);
+  // Phase 2 — scan-driven import pipeline. pendingNewTracks holds the
+  // dedup-filtered scanner output between scan completion and user decision
+  // (Import / Skip / Review-first). scanning gates re-entry while a scan is
+  // in flight. scanAbortRef holds the AbortController for cancellation.
+  // No scan triggers in Commit 2 — runLibraryScan exists as a callable but
+  // nothing calls it until Commit 4 wires mount / post-grant / manual button.
+  const [pendingNewTracks,setPendingNewTracks]=useState([]);
+  const [scanning,setScanning]=useState(false);
+  const scanAbortRef=useRef(null);
   const cratesFingerprintRef=useRef('');
 
   // Load tracks + crates from shared IDB and poll for updates from the library app
@@ -650,12 +661,43 @@ function useLibrary(){
   useEffect(()=>{ processQRef.current=processQ; },[processQ]);
 
   // Core import logic — works with File objects or FileSystemFileHandle arrays.
-  // opts.skipDedup: when true, bypass internal artist+title dedup. Set this when
-  // the caller (e.g. commitImport after the preview modal) has already made the
-  // dedup decision and explicitly asked for the dupes to be imported anyway.
+  // opts.skipDedup:   when true, bypass internal artist+title dedup. Set this
+  //                   when the caller (e.g. commitImport after the preview
+  //                   modal, or Phase 2's commitPendingNewTracks after the
+  //                   scanner already vetted dedup) has explicitly asked for
+  //                   import-as-is.
+  // opts.phase2Meta:  Array<{folderId, sourcePath}> aligned with `files`.
+  //                   Set by the Phase 2 scan-driven import path so the new
+  //                   track records carry their watched-folder identity.
+  //                   Looked up via a Map<file, meta> built once to stay
+  //                   robust against the internal audio filter dropping any
+  //                   entry (shouldn't happen with the expanded regex below,
+  //                   but the Map is the defensive path).
   const _importFileObjects=useCallback(async(files,handles=[],opts={})=>{
-    const audio=[...files].filter(f=>f.type.startsWith("audio/")||f.name.match(/\.(mp3|wav|flac|aac|ogg|m4a)$/i));
+    // Phase 2 expanded the regex to cover the full scanner-audible extension
+    // set (.aiff/.aif/.opus/.alac added; .mp4 still excluded — see fsa.js
+    // AUDIO_EXTENSIONS comment). Manual-import UI paths (drag-drop /
+    // showOpenFilePicker) still restrict upstream to the original six, so no
+    // manual-import behavior change. The expansion only matters when the
+    // Phase 2 scanner is the caller, in which case the upstream filter at
+    // scanWatchedFolder already enforces the same set so this is a no-op.
+    const audio=[...files].filter(f=>f.type.startsWith("audio/")||f.name.match(/\.(mp3|wav|flac|aiff?|m4a|aac|ogg|opus|alac)$/i));
     if(!audio.length)return;
+    // Build a per-file metadata lookup for the Phase 2 import path so the
+    // track record can be stamped with folderId + sourcePath. Map keyed by
+    // the File reference — robust against the audio filter dropping any
+    // entry (in which case its phase2Meta entry simply never gets read).
+    let phase2ByFile=null;
+    if(opts.phase2Meta){
+      if(opts.phase2Meta.length!==files.length){
+        console.warn('[IMPORT-PHASE2] phase2Meta length mismatch with files; ignoring metadata',{
+          metaLen:opts.phase2Meta.length,filesLen:files.length,
+        });
+      }else{
+        phase2ByFile=new Map();
+        for(let k=0;k<files.length;k++)phase2ByFile.set(files[k],opts.phase2Meta[k]);
+      }
+    }
     // Request persistent storage from Chrome on first import. Without this,
     // Chrome treats our storage as "best effort" and may evict between sessions.
     if (navigator.storage && navigator.storage.persist) {
@@ -708,11 +750,13 @@ function useLibrary(){
       if(isDupe){skippedCount++;continue;}
       // Store artwork in both memory cache and track record so it survives page reloads
       if(tags.artwork){artworkCache.current[id]=tags.artwork;}
-      // sourcePath / hash reserved for Phase 2 (auto-import dedup) + Phase 5
-      // (file-move handling). Always null on manually-imported tracks; the
-      // FSA auto-import path populates them in later phases. Existing 135
-      // tracks remain untouched per P1-Q1 (no backfill).
-      const track={id,filename:file.name.replace(/\.[^.]+$/,""),title,artist,album:tags.album||"",genre:tags.genre||"",label:tags.label||"",bpm:tags.bpm?parseFloat(tags.bpm):null,key:tags.key||null,duration:null,energy:null,analyzed:false,error:false,addedAt:Date.now(),artwork:tags.artwork||null,artworkVersion:tags.artwork?ARTWORK_PARSER_VERSION:undefined,sourcePath:null,hash:null};
+      // folderId + sourcePath populated from opts.phase2Meta when the Phase 2
+      // scanner is the caller; null otherwise (manual import paths). hash
+      // stays null in Phase 2 — file content hash is reserved for Phase 2.5
+      // SHA-256 work, not in scope here. Existing 136 tracks remain untouched
+      // per P1-Q1 (no backfill — only NEW track records get the new fields).
+      const p2=phase2ByFile?.get(file)||null;
+      const track={id,filename:file.name.replace(/\.[^.]+$/,""),title,artist,album:tags.album||"",genre:tags.genre||"",label:tags.label||"",bpm:tags.bpm?parseFloat(tags.bpm):null,key:tags.key||null,duration:null,energy:null,analyzed:false,error:false,addedAt:Date.now(),artwork:tags.artwork||null,artworkVersion:tags.artwork?ARTWORK_PARSER_VERSION:undefined,folderId:p2?.folderId||null,sourcePath:p2?.sourcePath||null,hash:null};
       // Don't pin File in fileMap or queue for analysis — both retained the File
       // reference for the whole session, and 300+ pinned blobs caused OOM. getFile
       // will hit OPFS first; analysis is deferred to handleLibLoad → queueAnalysis.
@@ -1330,9 +1374,145 @@ function useLibrary(){
     }
   },[]);
 
+  // ── Phase 2 library auto-import — scan + dedup + commit ─────────────────
+  // runLibraryScan walks every enabled+granted watched folder via the
+  // scanWatchedFolders orchestrator, then filters scan results down to
+  // "new" tracks using a two-tier dedup:
+  //   PRIMARY  — tracksMatch(artist, title) against the existing library
+  //              (artist/title derived from filename via cleanFilename +
+  //              parseArtistTitle; full ID3 isn't parsed at scan time
+  //              because doing so would require reading every file's bytes,
+  //              defeating the streaming-handle design)
+  //   FALLBACK — (folderId, sourcePath) composite match against existing
+  //              library tracks. Only matches Phase 2-imported tracks, since
+  //              pre-Phase-2 records have folderId=null. Catches the case
+  //              where a re-scan finds the same file but its filename-
+  //              derived artist/title differs from what was parsed at the
+  //              first import (e.g. due to filename cleanup changes).
+  // A scan result is "new" only if BOTH checks miss.
+  //
+  // commitPendingNewTracks routes pendingNewTracks through the existing
+  // _importFileObjects path with { skipDedup: true } since the scanner has
+  // already vetted dedup. Internal pre-confirmed pattern: the existing
+  // opts.skipDedup flag (used by manual commitImport after preview-modal
+  // user choice) covers Phase 2 cleanly — no new flag added.
+  //
+  // Handles are batched in chunks of 100 before per-batch h.getFile() so
+  // peak File-blob retention stays bounded even for 5000-track libraries.
+
+  // Default chunk size for the post-scan import. 100 is well above any
+  // realistic batch where peak File-blob retention matters (each File is
+  // a thin wrapper around an internal blob ref; 100 of them is bounded
+  // in main-thread memory) and small enough that even pathological 5000-
+  // track imports drain through the streaming analyzer at a steady pace.
+  const PHASE2_IMPORT_CHUNK=100;
+
+  const runLibraryScan=useCallback(async()=>{
+    if(scanning){
+      console.warn('[LIB-PHASE2] runLibraryScan: scan already in progress — ignoring re-entry');
+      return null;
+    }
+    setScanning(true);
+    const controller=new AbortController();
+    scanAbortRef.current=controller;
+    const t0=performance.now();
+    let summary=null;
+    try{
+      console.log('[LIB-PHASE2] scan start',{folders:watchedFolders.length});
+      const agg=await scanWatchedFolders(watchedFolders,{signal:controller.signal});
+      // Two-tier dedup against current library state. Filename-derived
+      // artist/title for the primary tracksMatch, (folderId, sourcePath)
+      // composite for the fallback. A scan result is "new" only if BOTH
+      // miss.
+      const newTracks=agg.results.filter(item=>{
+        // Fallback check: same folder + same relative path already imported
+        const sameLocation=library.some(t=>
+          t.folderId===item.folderId && t.sourcePath===item.relativePath
+        );
+        if(sameLocation)return false;
+        // Primary check: artist+title (filename-derived) match against library
+        const cleaned=cleanFilename(item.name);
+        const parsed=parseArtistTitle(cleaned);
+        const candidate={
+          artist:parsed.artist||"Unknown Artist",
+          title:parsed.title,
+        };
+        return !library.some(existing=>tracksMatch(existing,candidate));
+      });
+      setPendingNewTracks(newTracks);
+      // Persist lastScannedAt on every successfully-scanned folder. UI state
+      // refresh mirrors what IDB now holds so the "last checked" copy stays
+      // truthful even before the next mount-time restoreHandles.
+      const now=Date.now();
+      for(const folderId of agg.scannedFolderIds){
+        try{await fsaSetFolderLastScanned(folderId,now);}
+        catch(err){console.warn('[LIB-PHASE2] setFolderLastScanned failed',{folderId,error:err?.message||String(err)});}
+      }
+      const scannedSet=new Set(agg.scannedFolderIds);
+      setWatchedFolders(prev=>prev.map(f=>scannedSet.has(f.id)?{...f,lastScannedAt:now}:f));
+      summary={
+        scanned:agg.scannedFolderIds.length,
+        found:agg.results.length,
+        new:newTracks.length,
+        skippedFolders:agg.skippedFolders,
+        ms:Math.round(performance.now()-t0),
+      };
+      console.log('[LIB-PHASE2] scan complete',summary);
+    }catch(err){
+      if(err?.name==="AbortError"){
+        console.log('[LIB-PHASE2] scan cancelled');
+      }else{
+        console.warn('[LIB-PHASE2] scan failed',{error:err?.message||String(err)});
+      }
+    }finally{
+      setScanning(false);
+      scanAbortRef.current=null;
+    }
+    return summary;
+  },[scanning,watchedFolders,library]);
+
+  const dismissPendingNewTracks=useCallback(()=>{
+    setPendingNewTracks([]);
+    console.log('[LIB-PHASE2] pendingNewTracks dismissed');
+  },[]);
+
+  // commitPendingNewTracks imports the pending tracks via the existing
+  // _importFileObjects path with skipDedup:true. selectedKeys (optional Set
+  // of "folderId:relativePath" composite strings) lets the Phase 3
+  // Review-first UI pass a user-chosen subset; omitted = import everything.
+  const commitPendingNewTracks=useCallback(async(selectedKeys=null)=>{
+    const toImport=selectedKeys
+      ?pendingNewTracks.filter(t=>selectedKeys.has(`${t.folderId}:${t.relativePath}`))
+      :pendingNewTracks;
+    if(toImport.length===0){
+      console.log('[LIB-PHASE2] commitPendingNewTracks: nothing to import');
+      setPendingNewTracks([]);
+      return{imported:0,batches:0};
+    }
+    console.log('[LIB-PHASE2] commitPendingNewTracks start',{tracks:toImport.length,chunkSize:PHASE2_IMPORT_CHUNK});
+    let imported=0,batches=0;
+    for(let i=0;i<toImport.length;i+=PHASE2_IMPORT_CHUNK){
+      const batch=toImport.slice(i,i+PHASE2_IMPORT_CHUNK);
+      let files;
+      try{files=await Promise.all(batch.map(item=>item.handle.getFile()));}
+      catch(err){
+        console.warn('[LIB-PHASE2] batch getFile failed; skipping batch',{batchStart:i,error:err?.message||String(err)});
+        continue;
+      }
+      const batchHandles=batch.map(item=>item.handle);
+      const phase2Meta=batch.map(item=>({folderId:item.folderId,sourcePath:item.relativePath}));
+      await _importFileObjects(files,batchHandles,{skipDedup:true,phase2Meta});
+      imported+=batch.length;
+      batches++;
+    }
+    setPendingNewTracks([]);
+    console.log('[LIB-PHASE2] commitPendingNewTracks done',{imported,batches});
+    return{imported,batches};
+  },[pendingNewTracks,_importFileObjects]);
+
   const fsaSupported=isFSASupported();
 
-  return{library,queue,crates,importing,importFiles,importFromPicker,previewImport,commitImport,queueAnalysis,reanalyze,reExtractArtwork,setGridEdit,getFile,clear,reload,setLibrary,fileMap,setFile,removeFile,analyzing,progress,analyzeAll,extractArtworkForTrack,artworkCache,reconnectFromFolder,scanArtwork,exportLibrary,importLibraryJson,watchedFolders,libraryMode,addWatchedFolder,removeWatchedFolder,setWatchedFolderEnabled,requestPermissionForFolder,changeLibraryMode,fsaSupported};
+  return{library,queue,crates,importing,importFiles,importFromPicker,previewImport,commitImport,queueAnalysis,reanalyze,reExtractArtwork,setGridEdit,getFile,clear,reload,setLibrary,fileMap,setFile,removeFile,analyzing,progress,analyzeAll,extractArtworkForTrack,artworkCache,reconnectFromFolder,scanArtwork,exportLibrary,importLibraryJson,watchedFolders,libraryMode,addWatchedFolder,removeWatchedFolder,setWatchedFolderEnabled,requestPermissionForFolder,changeLibraryMode,fsaSupported,pendingNewTracks,scanning,runLibraryScan,dismissPendingNewTracks,commitPendingNewTracks};
 }
 
 // ── Library Panel UI ──────────────────────────────────────────

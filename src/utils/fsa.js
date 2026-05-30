@@ -205,6 +205,20 @@ export async function removeFolderById(id) {
   return true;
 }
 
+// Phase 2 — stamp lastScannedAt after a successful scan. Caller passes the
+// completion timestamp (or omits to use now). Returns the updated record or
+// null if the folder is missing from IDB (e.g. removed mid-scan).
+export async function setFolderLastScanned(id, when = Date.now()) {
+  const rec = await dbGet(STORE, id);
+  if (!rec) {
+    console.warn(`${TAG} setFolderLastScanned: no record for id`, id);
+    return null;
+  }
+  const next = { ...rec, lastScannedAt: when };
+  await dbPut(STORE, next);
+  return next;
+}
+
 // ── Read-side ────────────────────────────────────────────────────────────
 // Called on app mount. Reads every watched folder, runs a non-prompting
 // queryPermission per handle, returns an array shaped:
