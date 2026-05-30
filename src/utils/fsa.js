@@ -256,3 +256,199 @@ export async function restoreHandles() {
   console.log(`${TAG} restored ${restored.length} handles from IDB`);
   return restored;
 }
+
+// ── Phase 2 — Recursive folder scanner ───────────────────────────────────
+// Walks a granted FileSystemDirectoryHandle tree and yields one record per
+// audio file found. Async-generator pattern so callers can interleave
+// dedup, state updates, and cancellation without buffering the whole result
+// set. Yields FileSystemFileHandle references only — File bytes are never
+// resolved here, so memory cost is constant in the number of tracks
+// (decisive when the user has 5000+ files under the chosen folder).
+//
+// Yielded record (from scanWatchedFolder):
+//   { name, handle, relativePath }
+//     - name          string — filename (e.g. "track.mp3")
+//     - handle        FileSystemFileHandle — caller resolves .getFile() lazily
+//     - relativePath  string — slash-joined path relative to the scan root,
+//                              INCLUDING the filename. For a file at the
+//                              root of the scanned folder this equals `name`;
+//                              for nested files it looks like
+//                              "subdir/Strobe.mp3" or "a/b/c/Strobe.mp3".
+//
+// scanWatchedFolders is the orchestrator across multiple watched folders;
+// each result is additionally stamped with:
+//     - folderId      string — id of the watchedFolder this file lives in
+//     - folderName    string — folder display name at scan time (UI only)
+// The composite key (folderId, relativePath) is what Phase 2 dedup uses
+// to populate the `sourcePath` field on imported tracks; folderName is
+// purely for UI display and may change if the user renames the folder
+// without losing track identity.
+//
+// Telemetry tag: [LIB-PHASE2-SCAN].
+
+const SCAN_TAG = "[LIB-PHASE2-SCAN]";
+
+// Audio extensions worth surfacing as "new tracks." .mp4 is intentionally
+// excluded — the container can hold video as well as audio, and surfacing
+// video files as DJ tracks would be wrong. The audio-only variant (.m4a)
+// IS included. Future Phase 2.5 work can re-introduce .mp4 with magic-byte
+// / mp4-box codec verification.
+const AUDIO_EXTENSIONS = new Set([
+  "mp3", "wav", "flac", "aiff", "aif", "m4a", "aac", "ogg", "opus", "alac",
+]);
+
+// Directory names skipped regardless of contents. Saves traversing into
+// macOS system locations, dev artifact dirs, and browser cache dirs that
+// almost never contain real music. Hidden directories (name starts with
+// ".") are ALSO skipped via a separate rule below, so .git / .Trash /
+// .Spotlight-V100 / .DocumentRevisions-V100 are caught even though they're
+// not enumerated here.
+const SKIP_DIR_NAMES = new Set([
+  // macOS system locations at user-home level
+  "Library", "Applications",
+  // dev artifact directories
+  "node_modules", "dist", "build", "__pycache__", "venv",
+  // browser / OS cache directories
+  "Cache", "Caches",
+]);
+
+function _hasAudioExtension(name) {
+  // Skip macOS metadata files like "._foo.mp3" — they share the extension
+  // but contain resource-fork garbage, not real audio.
+  if (!name || name.startsWith(".")) return false;
+  const dot = name.lastIndexOf(".");
+  if (dot < 0) return false;
+  return AUDIO_EXTENSIONS.has(name.slice(dot + 1).toLowerCase());
+}
+
+function _shouldSkipDir(name) {
+  if (!name) return true;
+  // Catches .git, .Trash, .Trashes, .Spotlight-V100, .DocumentRevisions-V100,
+  // .cache, .next, .nuxt, .venv, and anything else starting with a dot.
+  if (name.startsWith(".")) return true;
+  return SKIP_DIR_NAMES.has(name);
+}
+
+// scanWatchedFolder(rootHandle, { signal, onProgress })
+//   async generator yielding { name, handle, relativePath } per audio file
+//   found. Paths are relative to rootHandle and INCLUDE the filename.
+//   - signal:     optional AbortSignal — checked at every directory and file
+//                  entry; throws DOMException("aborted", "AbortError") if set.
+//   - onProgress: optional callback ({ found, relativePath }) fired each
+//                  time a new audio file is yielded; safe to ignore.
+//
+// Caller drives pacing via `for await (const item of scanWatchedFolder(...))`.
+// Yielding between entries gives the UI thread room to update progress copy
+// without the scanner needing its own throttle.
+export async function* scanWatchedFolder(rootHandle, { signal, onProgress } = {}) {
+  if (!rootHandle || rootHandle.kind !== "directory") {
+    throw new Error("scanWatchedFolder requires a FileSystemDirectoryHandle");
+  }
+  let found = 0;
+  async function* walk(dirHandle, prefix) {
+    if (signal?.aborted) {
+      throw new DOMException("scan aborted", "AbortError");
+    }
+    for await (const [name, handle] of dirHandle.entries()) {
+      if (signal?.aborted) {
+        throw new DOMException("scan aborted", "AbortError");
+      }
+      const relativePath = prefix ? `${prefix}/${name}` : name;
+      if (handle.kind === "file") {
+        if (_hasAudioExtension(name)) {
+          found++;
+          try { onProgress?.({ found, relativePath }); } catch {}
+          yield { name, handle, relativePath };
+        }
+      } else if (handle.kind === "directory") {
+        if (_shouldSkipDir(name)) continue;
+        yield* walk(handle, relativePath);
+      }
+    }
+  }
+  yield* walk(rootHandle, "");
+}
+
+// scanWatchedFolders(folders, { signal, onProgress })
+//   Aggregates scans across every enabled+granted watched folder. Returns
+//   {
+//     results:          [{name, handle, relativePath, folderId, folderName}],
+//     scannedFolderIds: [folderId, ...],     // folders successfully walked
+//     skippedFolders:   [{folderId, folderName, reason}], // disabled / no perm / threw
+//   }
+//
+// Composite identity (folderId, relativePath) on each result is the key
+// Phase 2 dedup uses to populate `sourcePath` on imported tracks — stable
+// across folder renames and resilient to multiple watched folders that
+// happen to contain identically-named files at their roots.
+//
+// Honors the per-folder `enabled` flag (skips disabled) and `permission`
+// field (skips non-granted — re-grant happens via the existing UI before
+// the next scan). Errors on individual folders are caught and recorded in
+// skippedFolders so one bad handle doesn't abort the whole pass; AbortError
+// IS propagated so the caller's cancellation request takes effect immediately.
+export async function scanWatchedFolders(folders, { signal, onProgress } = {}) {
+  if (!Array.isArray(folders)) {
+    throw new Error("scanWatchedFolders requires an array of folder records");
+  }
+  const results = [];
+  const scannedFolderIds = [];
+  const skippedFolders = [];
+  for (const folder of folders) {
+    if (signal?.aborted) {
+      throw new DOMException("scan aborted", "AbortError");
+    }
+    if (!folder || !folder.handle) {
+      skippedFolders.push({ folderId: folder?.id, folderName: folder?.name, reason: "no-handle" });
+      continue;
+    }
+    if (folder.enabled === false) {
+      skippedFolders.push({ folderId: folder.id, folderName: folder.name, reason: "disabled" });
+      console.log(`${SCAN_TAG} skip ${folder.name} — disabled`);
+      continue;
+    }
+    if (folder.permission && folder.permission !== "granted") {
+      skippedFolders.push({ folderId: folder.id, folderName: folder.name, reason: `permission:${folder.permission}` });
+      console.log(`${SCAN_TAG} skip ${folder.name} — permission=${folder.permission}`);
+      continue;
+    }
+    try {
+      console.log(`${SCAN_TAG} scan start ${folder.name}`);
+      const t0 = performance.now();
+      let folderFound = 0;
+      const innerProgress = (info) => {
+        folderFound = info.found;
+        try {
+          onProgress?.({
+            ...info,
+            folderId: folder.id,
+            folderName: folder.name,
+          });
+        } catch {}
+      };
+      for await (const item of scanWatchedFolder(folder.handle, { signal, onProgress: innerProgress })) {
+        results.push({ ...item, folderId: folder.id, folderName: folder.name });
+      }
+      scannedFolderIds.push(folder.id);
+      console.log(`${SCAN_TAG} scan done ${folder.name}`, {
+        files: folderFound,
+        ms: Math.round(performance.now() - t0),
+      });
+    } catch (err) {
+      if (err?.name === "AbortError") throw err;
+      console.warn(`${SCAN_TAG} scan failed ${folder.name}`, { error: err?.message || String(err) });
+      skippedFolders.push({
+        folderId: folder.id,
+        folderName: folder.name,
+        reason: `error:${err?.message || String(err)}`,
+      });
+    }
+  }
+  console.log(`${SCAN_TAG} scanWatchedFolders summary`, {
+    folders: folders.length,
+    scanned: scannedFolderIds.length,
+    skipped: skippedFolders.length,
+    files: results.length,
+  });
+  return { results, scannedFolderIds, skippedFolders };
+}
