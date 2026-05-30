@@ -1,17 +1,13 @@
 > # ⚠ NEXT SESSION STARTS HERE ⚠
 >
-> **See section: "Library strategy session — May 27 morning
-> (continuation of May 26 auto-import discussion)"** (near the
-> bottom of this file).
+> **Phase 1 SHIPPED on May 29 evening.** Library auto-import
+> infrastructure live, "Connect your music" UX verified working
+> in production Chrome.
 >
-> **Three PENDING questions need answers before Phase 1 build:**
-> - **Q1:** Existing 135 tracks handling on auto-import
-> - **Q2:** New user first-experience flow
-> - **Q3:** Default mode for new users
->
-> Once Q1 / Q2 / Q3 are answered and appended to `VISION_5.md`,
-> Phase 1 (Multi-folder watched setup, ~8-12 hours) can begin.
-> Grep this file for `PENDING` to find the open gates.
+> **Next: Phase 2 — Actual folder scanning + dedup + new-tracks
+> notification.** See "Phase 1 — SHIPPED" section at the bottom
+> of this file for full context and Phase 2 scope. Estimated
+> 4-6 hours.
 
 ---
 
