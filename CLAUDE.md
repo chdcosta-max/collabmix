@@ -194,3 +194,67 @@ dated section documenting:
 
 This is how state is preserved across sessions. The next session's
 Claude Code reads VISION_5.md and inherits context.
+
+## Session Start Protocol
+
+Required before proposing new features, designs, architecture, or
+any new work direction. Tonight's session (May 31, 2026) planned
+Phase 3 from scratch without discovering tools/sota-eval/ (47
+files of completed analyzer survey work) or tools/bpm-test-harness/
+(272-track Rekordbox ground-truth harness). The miss was
+expensive — half a session was spent designing a diagnostic that
+overlapped with shipped tooling. This protocol prevents the
+repeat.
+
+STEP 1 — READ in this order:
+1. VISION.md (product vision, if it exists)
+2. CLAUDE.md (this file)
+3. VISION_5.md — specifically the LAST 2–3 "Session end"
+   sections, which carry the most recent state
+4. journal.txt if it exists
+
+STEP 2 — INVESTIGATE the repo for prior work on the topic at
+hand BEFORE drafting any plan:
+- List the tools/ directory
+- For each tools/ subdirectory relevant to the topic, read the
+  README or status doc (or skim the top-level files)
+- Grep for related code patterns in src/
+
+STEP 3 — SEARCH PAST CONVERSATIONS when a search tool is
+available:
+- The chat-side Claude has a conversation_search tool and should
+  use it BEFORE drafting build prompts
+- Search for the topic keyword ("analyzer", "beat grid", "library
+  import", etc.) before assuming the work is fresh
+- When the user says "we've done this before" OR "we've never
+  done this," ALWAYS verify against artifacts (repo + past
+  chats). Don't take either claim at face value.
+
+STEP 4 — REPORT what was found BEFORE proposing anything:
+- "I read X, Y, Z. I found A, B, C in tools/. The relevant prior
+  work is..."
+- Only THEN propose next steps.
+
+STEP 5 — NEVER propose a build plan that duplicates existing
+tools/ work without explicitly addressing why a new path is
+better than extending the existing one.
+
+## Visual Verification Protocol
+
+When the session touches UI behavior, audio analysis, waveform
+inspection, beat-grid alignment, deck behavior, library
+interactions, or anything visual:
+
+- Use Claude Desktop (the Chrome extension) for verification
+  rather than relying on the user to eyeball and report in text.
+- Claude Desktop produces structured visual evidence
+  (screenshots, console capture, DOM inspection) that pure
+  text-based feedback loops miss.
+- The May 17–21 analyzer sessions ran without this loop and
+  missed per-track visual data that was easy to capture once
+  the May 31 session used Claude Desktop properly.
+
+If the chat-side Claude finds itself asking the user to paste
+JavaScript into console, take screenshots manually, or report
+on visual states in text, STOP — that work should be driven by
+Claude Desktop instead.
