@@ -453,6 +453,12 @@ function useLibrary(){
   const [pendingNewTracks,setPendingNewTracks]=useState([]);
   const [scanning,setScanning]=useState(false);
   const scanAbortRef=useRef(null);
+  // Phase 2 — { current, total } | null. Populated while commitPendingNewTracks
+  // is in flight so the banner can render "Importing N of M…" with per-file
+  // granularity (each import iteration inside _importFileObjects calls back
+  // via opts.onProgress; commitPendingNewTracks translates batch-local index
+  // into the global current count).
+  const [importProgress,setImportProgress]=useState(null);
   const cratesFingerprintRef=useRef('');
 
   // Load tracks + crates from shared IDB and poll for updates from the library app
@@ -795,6 +801,11 @@ function useLibrary(){
         }
       }
       importedCount++;
+      // Per-iteration progress hook — Phase 2 banner subscribes via
+      // commitPendingNewTracks so the "Importing N of M…" copy updates per
+      // file instead of per chunked batch. opts.onProgress is undefined for
+      // the manual import paths, so they pay zero cost.
+      try{opts.onProgress?.({filename:file.name,index:i,total:audio.length});}catch{}
     }
     console.log('[IMPORT-DONE]',{importedCount,skippedCount,totalCandidates:audio.length,ms:Math.round(performance.now()-tImport0)});
     if(skippedCount>0){
@@ -1490,29 +1501,47 @@ function useLibrary(){
       return{imported:0,batches:0};
     }
     console.log('[LIB-PHASE2] commitPendingNewTracks start',{tracks:toImport.length,chunkSize:PHASE2_IMPORT_CHUNK});
+    const totalCount=toImport.length;
+    // Seed progress so the banner immediately switches into the importing
+    // state even for tiny libraries (sub-100-track batches would otherwise
+    // see no progress update before the entire import finished).
+    setImportProgress({current:0,total:totalCount});
     let imported=0,batches=0;
-    for(let i=0;i<toImport.length;i+=PHASE2_IMPORT_CHUNK){
-      const batch=toImport.slice(i,i+PHASE2_IMPORT_CHUNK);
-      let files;
-      try{files=await Promise.all(batch.map(item=>item.handle.getFile()));}
-      catch(err){
-        console.warn('[LIB-PHASE2] batch getFile failed; skipping batch',{batchStart:i,error:err?.message||String(err)});
-        continue;
+    try{
+      for(let i=0;i<toImport.length;i+=PHASE2_IMPORT_CHUNK){
+        const batch=toImport.slice(i,i+PHASE2_IMPORT_CHUNK);
+        let files;
+        try{files=await Promise.all(batch.map(item=>item.handle.getFile()));}
+        catch(err){
+          console.warn('[LIB-PHASE2] batch getFile failed; skipping batch',{batchStart:i,error:err?.message||String(err)});
+          continue;
+        }
+        const batchHandles=batch.map(item=>item.handle);
+        const phase2Meta=batch.map(item=>({folderId:item.folderId,sourcePath:item.relativePath}));
+        await _importFileObjects(files,batchHandles,{
+          skipDedup:true,
+          phase2Meta,
+          onProgress:({index})=>{
+            // index is 0-based within the current batch; offset by i for the
+            // global count. +1 because we report "imported so far" (after this
+            // file completes), not "currently working on file N".
+            setImportProgress({current:i+index+1,total:totalCount});
+          },
+        });
+        imported+=batch.length;
+        batches++;
       }
-      const batchHandles=batch.map(item=>item.handle);
-      const phase2Meta=batch.map(item=>({folderId:item.folderId,sourcePath:item.relativePath}));
-      await _importFileObjects(files,batchHandles,{skipDedup:true,phase2Meta});
-      imported+=batch.length;
-      batches++;
+    }finally{
+      setImportProgress(null);
+      setPendingNewTracks([]);
     }
-    setPendingNewTracks([]);
     console.log('[LIB-PHASE2] commitPendingNewTracks done',{imported,batches});
     return{imported,batches};
   },[pendingNewTracks,_importFileObjects]);
 
   const fsaSupported=isFSASupported();
 
-  return{library,queue,crates,importing,importFiles,importFromPicker,previewImport,commitImport,queueAnalysis,reanalyze,reExtractArtwork,setGridEdit,getFile,clear,reload,setLibrary,fileMap,setFile,removeFile,analyzing,progress,analyzeAll,extractArtworkForTrack,artworkCache,reconnectFromFolder,scanArtwork,exportLibrary,importLibraryJson,watchedFolders,libraryMode,addWatchedFolder,removeWatchedFolder,setWatchedFolderEnabled,requestPermissionForFolder,changeLibraryMode,fsaSupported,pendingNewTracks,scanning,runLibraryScan,dismissPendingNewTracks,commitPendingNewTracks};
+  return{library,queue,crates,importing,importFiles,importFromPicker,previewImport,commitImport,queueAnalysis,reanalyze,reExtractArtwork,setGridEdit,getFile,clear,reload,setLibrary,fileMap,setFile,removeFile,analyzing,progress,analyzeAll,extractArtworkForTrack,artworkCache,reconnectFromFolder,scanArtwork,exportLibrary,importLibraryJson,watchedFolders,libraryMode,addWatchedFolder,removeWatchedFolder,setWatchedFolderEnabled,requestPermissionForFolder,changeLibraryMode,fsaSupported,pendingNewTracks,scanning,importProgress,runLibraryScan,dismissPendingNewTracks,commitPendingNewTracks};
 }
 
 // ── Library Panel UI ──────────────────────────────────────────
@@ -1735,6 +1764,9 @@ function LibraryPanelV2({ lib, onLoad, playingTrack, deckATrackId:deckATrackIdPr
     };
   }, []);
   const [importPreview, setImportPreview] = useState(null); // { items, dupeCount, newCount } | null
+  // Phase 2 — "Review first" modal open/close. State owned by LibraryPanelV2
+  // so the modal renders alongside the banner (modal is a fixed overlay).
+  const [reviewOpen, setReviewOpen] = useState(false);
   const fileInputRef = useRef(null);
   const chatEndRef = useRef(null);
 
@@ -2155,6 +2187,21 @@ function LibraryPanelV2({ lib, onLoad, playingTrack, deckATrackId:deckATrackIdPr
             )}
           </div>
         </div>
+
+        {/* Phase 2 — NewTracksBanner. Returns null when there's nothing to
+            announce (no pending tracks AND not importing), so this slot is
+            visually empty in the steady state. When pending tracks exist
+            or commitPendingNewTracks is running, the banner takes over with
+            either the action buttons or the live "Importing M of N…" copy. */}
+        <NewTracksBanner lib={lib} onReview={() => setReviewOpen(true)} />
+
+        {/* Phase 2 — "Review first" selection modal. Fixed overlay; only
+            renders when reviewOpen is true AND pending tracks exist (the
+            modal handles its own selection state and closes itself on
+            Cancel / Escape / backdrop click / Import). */}
+        {reviewOpen && (lib.pendingNewTracks?.length > 0) && (
+          <ReviewTracksModal lib={lib} onClose={() => setReviewOpen(false)} />
+        )}
 
         {/* Track list or group list depending on view */}
         <div style={{ flex: 1, overflowY: "auto", padding: "4px 6px" }}>
@@ -4735,6 +4782,242 @@ function MidiPanel({ midi }) {
   );
 }
 
+// ── NewTracksBanner — Phase 2 in-context surface ─────────────────────────
+// Renders above the library track list (or inline inside LibraryEmptyState's
+// connected state when the library is empty) whenever the most recent scan
+// has produced unimported candidates OR an import is in progress. Three
+// visual states, switched purely on hook state:
+//
+//   1. Default              — "N new tracks found in <folder>." + buttons
+//   2. Importing in flight  — "Importing M of N…" + thin progress rail
+//   3. Empty                — returns null (no banner)
+//
+// Aesthetic per Phase 2 plan: Quiet Pro Tool — sentence case, white at
+// varying opacity, no glassmorphism, 150ms cubic-bezier transitions.
+function NewTracksBanner({ lib, onReview }) {
+  const tracks = lib.pendingNewTracks || [];
+  const progress = lib.importProgress;
+  // Shared shell so the importing/default variants visually agree.
+  // Background is bumped one opacity tier above the row-hover tone
+  // (rgba 0.04) and border is in the third white-at-opacity tier
+  // (0.14 — between divider 0.10 and primary 0.18) so the banner
+  // reads as a discrete action surface against the panel background
+  // without resorting to glassmorphism, shadow, or gradient.
+  const shell = {
+    padding: "16px 18px",
+    margin: "12px 14px",
+    background: "rgba(255,255,255,0.05)",
+    border: "1px solid rgba(255,255,255,0.14)",
+    borderRadius: 6,
+    fontFamily: "'Inter',sans-serif",
+  };
+  if (progress) {
+    const pct = progress.total
+      ? Math.min(100, Math.round((progress.current / progress.total) * 100))
+      : 0;
+    return (
+      <div style={shell}>
+        <div style={{ fontSize: 13, color: "#F5F5F7", letterSpacing: 0.2, marginBottom: 10 }}>
+          Importing {progress.current} of {progress.total}…
+        </div>
+        <div style={{ height: 3, background: "rgba(255,255,255,0.06)", borderRadius: 2, overflow: "hidden" }}>
+          <div style={{
+            height: "100%",
+            width: pct + "%",
+            background: "rgba(255,255,255,0.6)",
+            transition: "width 150ms cubic-bezier(0.4, 0, 0.2, 1)",
+          }}/>
+        </div>
+      </div>
+    );
+  }
+  if (tracks.length === 0) return null;
+  const folderNames = Array.from(new Set(tracks.map(t => t.folderName).filter(Boolean)));
+  const folderLabel = folderNames.length === 0
+    ? ""
+    : folderNames.length === 1
+      ? " in " + folderNames[0]
+      : " across " + folderNames.length + " folders";
+  const btn = {
+    padding: "7px 14px",
+    fontSize: 12,
+    fontFamily: "'Inter',sans-serif",
+    background: "rgba(255,255,255,0.06)",
+    border: "1px solid rgba(255,255,255,0.18)",
+    color: "#F5F5F7",
+    borderRadius: 5,
+    cursor: "pointer",
+    letterSpacing: 0.2,
+    transition: "all 150ms cubic-bezier(0.4, 0, 0.2, 1)",
+    outline: "none",
+  };
+  const btnSubtle = { ...btn, background: "transparent", color: "rgba(255,255,255,0.6)" };
+  const hoverOn = (e, primary = true) => {
+    e.currentTarget.style.background = primary ? "rgba(255,255,255,0.10)" : "rgba(255,255,255,0.04)";
+    e.currentTarget.style.borderColor = "rgba(255,255,255,0.30)";
+    if (!primary) e.currentTarget.style.color = "#F5F5F7";
+  };
+  const hoverOff = (e, primary = true) => {
+    e.currentTarget.style.background = primary ? "rgba(255,255,255,0.06)" : "transparent";
+    e.currentTarget.style.borderColor = "rgba(255,255,255,0.18)";
+    if (!primary) e.currentTarget.style.color = "rgba(255,255,255,0.6)";
+  };
+  return (
+    <div style={{ ...shell, display: "flex", alignItems: "center", justifyContent: "space-between", gap: 16, flexWrap: "wrap" }}>
+      <div style={{ fontSize: 13, color: "#F5F5F7", letterSpacing: 0.2 }}>
+        {tracks.length} new track{tracks.length === 1 ? "" : "s"} found{folderLabel}.
+      </div>
+      <div style={{ display: "flex", gap: 8 }}>
+        <button onClick={() => lib.commitPendingNewTracks()}
+          onMouseEnter={e => hoverOn(e, true)} onMouseLeave={e => hoverOff(e, true)}
+          style={btn}>Import them</button>
+        <button onClick={onReview}
+          onMouseEnter={e => hoverOn(e, true)} onMouseLeave={e => hoverOff(e, true)}
+          style={btn}>Review first</button>
+        <button onClick={() => lib.dismissPendingNewTracks()}
+          onMouseEnter={e => hoverOn(e, false)} onMouseLeave={e => hoverOff(e, false)}
+          style={btnSubtle}>Skip</button>
+      </div>
+    </div>
+  );
+}
+
+// ── ReviewTracksModal — Phase 2 "Review first" selection surface ─────────
+// Centered overlay; lets the user uncheck individual scan results before
+// committing. Composite key (folderId:relativePath) per track — same key
+// commitPendingNewTracks expects. Closes on Cancel / Escape / backdrop
+// click. Reuses module-level cleanFilename + parseArtistTitle so the
+// modal shows a parsed Title / Artist where the filename gives one.
+function ReviewTracksModal({ lib, onClose }) {
+  const tracks = lib.pendingNewTracks || [];
+  const keyOf = (t) => t.folderId + ":" + t.relativePath;
+  const [selected, setSelected] = useState(() => new Set(tracks.map(keyOf)));
+  // Escape-key close — registered once, cleaned up on unmount.
+  useEffect(() => {
+    const onKey = (e) => { if (e.key === "Escape") onClose(); };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [onClose]);
+  const allSelected = tracks.length > 0 && selected.size === tracks.length;
+  const noneSelected = selected.size === 0;
+  const toggleOne = (k) => setSelected(prev => {
+    const next = new Set(prev);
+    if (next.has(k)) next.delete(k); else next.add(k);
+    return next;
+  });
+  const toggleAll = () => setSelected(allSelected ? new Set() : new Set(tracks.map(keyOf)));
+  const onImport = async () => {
+    const snapshot = new Set(selected);
+    onClose();
+    await lib.commitPendingNewTracks(snapshot);
+  };
+  // Filename-derived display name. parseArtistTitle returns {artist, title}
+  // when the filename matches "Artist - Title" — otherwise title falls back
+  // to the cleaned filename and artist is empty.
+  const display = (t) => {
+    const cleaned = cleanFilename(t.name);
+    const parsed = parseArtistTitle(cleaned);
+    return { title: parsed.title || cleaned, artist: parsed.artist || "" };
+  };
+  return (
+    <div onClick={onClose}
+      style={{
+        position: "fixed", inset: 0, background: "rgba(0,0,0,0.6)",
+        display: "flex", alignItems: "center", justifyContent: "center",
+        zIndex: 10000, fontFamily: "'Inter',sans-serif",
+      }}>
+      <div onClick={e => e.stopPropagation()}
+        style={{
+          width: "min(520px, 92vw)", maxHeight: "70vh",
+          background: "#0D0F12", border: "1px solid rgba(255,255,255,0.10)",
+          borderRadius: 8, display: "flex", flexDirection: "column",
+          boxShadow: "0 12px 48px rgba(0,0,0,0.5)",
+        }}>
+        {/* Header */}
+        <div style={{ padding: "16px 18px", borderBottom: "1px solid rgba(255,255,255,0.06)", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+          <div>
+            <div style={{ fontSize: 14, color: "#F5F5F7", letterSpacing: 0.3, marginBottom: 2 }}>Review new tracks</div>
+            <div style={{ fontSize: 11, color: "rgba(255,255,255,0.6)", letterSpacing: 0.2 }}>
+              {selected.size} of {tracks.length} selected
+            </div>
+          </div>
+          <button onClick={onClose} aria-label="Close"
+            style={{
+              background: "transparent", border: "none", color: "rgba(255,255,255,0.6)",
+              fontSize: 18, cursor: "pointer", padding: "4px 10px", lineHeight: 1,
+              transition: "color 150ms cubic-bezier(0.4, 0, 0.2, 1)",
+            }}
+            onMouseEnter={e => e.currentTarget.style.color = "#F5F5F7"}
+            onMouseLeave={e => e.currentTarget.style.color = "rgba(255,255,255,0.6)"}>×</button>
+        </div>
+        {/* Select-all row */}
+        <div style={{ padding: "10px 18px", borderBottom: "1px solid rgba(255,255,255,0.06)", display: "flex", alignItems: "center", gap: 10 }}>
+          <input type="checkbox" checked={allSelected}
+            ref={el => { if (el) el.indeterminate = !allSelected && !noneSelected; }}
+            onChange={toggleAll}
+            style={{ width: 14, height: 14, accentColor: "rgba(255,255,255,0.85)", cursor: "pointer" }}/>
+          <span style={{ fontSize: 12, color: "rgba(255,255,255,0.7)", letterSpacing: 0.2, cursor: "pointer" }} onClick={toggleAll}>
+            {allSelected ? "Deselect all" : "Select all"}
+          </span>
+        </div>
+        {/* Scrollable list */}
+        <div style={{ overflow: "auto", flex: 1 }}>
+          {tracks.map(t => {
+            const k = keyOf(t);
+            const checked = selected.has(k);
+            const { title, artist } = display(t);
+            return (
+              <label key={k}
+                style={{
+                  display: "flex", alignItems: "center", gap: 12,
+                  padding: "10px 18px", cursor: "pointer",
+                  borderBottom: "1px solid rgba(255,255,255,0.04)",
+                  transition: "background 150ms cubic-bezier(0.4, 0, 0.2, 1)",
+                }}
+                onMouseEnter={e => e.currentTarget.style.background = "rgba(255,255,255,0.025)"}
+                onMouseLeave={e => e.currentTarget.style.background = "transparent"}>
+                <input type="checkbox" checked={checked} onChange={() => toggleOne(k)}
+                  style={{ width: 14, height: 14, accentColor: "rgba(255,255,255,0.85)", cursor: "pointer", flexShrink: 0 }}/>
+                <div style={{ minWidth: 0, flex: 1 }}>
+                  <div style={{ fontSize: 12, color: "#F5F5F7", letterSpacing: 0.15, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{title}</div>
+                  <div style={{ fontSize: 10, color: "rgba(255,255,255,0.55)", marginTop: 2, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", letterSpacing: 0.2 }}>
+                    {artist ? artist + " · " : ""}{t.folderName}/{t.relativePath}
+                  </div>
+                </div>
+              </label>
+            );
+          })}
+        </div>
+        {/* Footer */}
+        <div style={{ padding: "12px 18px", borderTop: "1px solid rgba(255,255,255,0.06)", display: "flex", justifyContent: "flex-end", gap: 8 }}>
+          <button onClick={onClose}
+            style={{
+              padding: "7px 14px", fontSize: 12, fontFamily: "'Inter',sans-serif",
+              background: "transparent", border: "1px solid rgba(255,255,255,0.18)",
+              color: "rgba(255,255,255,0.7)", borderRadius: 5, cursor: "pointer", letterSpacing: 0.2,
+              transition: "all 150ms cubic-bezier(0.4, 0, 0.2, 1)",
+            }}
+            onMouseEnter={e => { e.currentTarget.style.borderColor = "rgba(255,255,255,0.30)"; e.currentTarget.style.color = "#F5F5F7"; }}
+            onMouseLeave={e => { e.currentTarget.style.borderColor = "rgba(255,255,255,0.18)"; e.currentTarget.style.color = "rgba(255,255,255,0.7)"; }}>Cancel</button>
+          <button onClick={onImport} disabled={noneSelected}
+            style={{
+              padding: "7px 14px", fontSize: 12, fontFamily: "'Inter',sans-serif",
+              background: noneSelected ? "rgba(255,255,255,0.04)" : "rgba(255,255,255,0.10)",
+              border: "1px solid " + (noneSelected ? "rgba(255,255,255,0.10)" : "rgba(255,255,255,0.30)"),
+              color: noneSelected ? "rgba(255,255,255,0.4)" : "#F5F5F7",
+              borderRadius: 5, cursor: noneSelected ? "default" : "pointer", letterSpacing: 0.2,
+              transition: "all 150ms cubic-bezier(0.4, 0, 0.2, 1)",
+            }}
+            onMouseEnter={e => { if (!noneSelected) { e.currentTarget.style.background = "rgba(255,255,255,0.14)"; } }}
+            onMouseLeave={e => { if (!noneSelected) { e.currentTarget.style.background = "rgba(255,255,255,0.10)"; } }}>
+            Import {selected.size} selected
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ── Library empty-state CTA (Phase 1 redesign — May 29 evening pivot) ────
 // Replaces the original Commit-3 strip + modal + mode-toggle surface. Per
 // the strategic pivot in VISION_5.md: pro DJs think in "where's my music,"
@@ -4742,11 +5025,14 @@ function MidiPanel({ midi }) {
 // component is the single user-facing surface for Phase 1 — one CTA, one
 // folder pick, honest expectation-setting about Phase 2 scanning.
 //
-// Rendered inside LibraryPanelV2's main content area when allTracks is
-// empty. Two states:
-//   - No folders connected → "No tracks yet — Connect your music"
-//   - At least one folder connected → "Connected: <names>" + the honest
-//     "scanning will be enabled in a future update" expectation-setter
+// Phase 2 update: the connected-state branch is now state-aware. When a
+// scan is in flight, when scan-found pending tracks exist, or when the
+// library has been scanned recently with no new tracks, the copy reflects
+// the actual state instead of the Phase 1 "Auto-scanning launches soon"
+// placeholder. The actionable "N new tracks found" surface is rendered by
+// NewTracksBanner above the empty-state in LibraryPanelV2's CENTER, so
+// when hasPending is true this component intentionally stays quiet to
+// avoid duplicating the announcement.
 function LibraryEmptyState({ lib }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState(null);
@@ -4795,20 +5081,58 @@ function LibraryEmptyState({ lib }) {
           {supported && <div style={{ fontSize:10, color:"rgba(255,255,255,0.25)", marginTop:14, letterSpacing:0.4 }}>Supports MP3, WAV, FLAC, AAC, OGG, M4A</div>}
         </>
       )}
-      {connected && (
-        <>
-          <div style={{ display:"flex", alignItems:"center", gap:8, fontSize:13, color:"#F5F5F7", letterSpacing:0.3, marginBottom:18 }}>
-            <span style={{ display:"inline-block", width:6, height:6, borderRadius:"50%", background:"#22c55e", boxShadow:"0 0 8px rgba(34,197,94,0.4)" }}/>
-            Connected: {folders.map(f => f.name).join(", ")}
-          </div>
-          <div style={{ fontSize:12, color:"rgba(255,255,255,0.7)", maxWidth:380, lineHeight:1.55, letterSpacing:0.2, marginBottom:14 }}>
-            Auto-scanning launches soon.
-          </div>
-          <div style={{ fontSize:11, color:"#5A5E66", maxWidth:380, lineHeight:1.55, letterSpacing:0.2 }}>
-            For now, drag tracks here or use &ldquo;+ Add music&rdquo; to import manually.
-          </div>
-        </>
-      )}
+      {connected && (() => {
+        // Phase 2 — copy reflects ACTUAL state instead of the Phase 1
+        // "Auto-scanning launches soon" placeholder. Banner above the empty
+        // state (in LibraryPanelV2) carries the actionable "X new tracks
+        // found" surface, so the empty-state copy here only needs to
+        // disambiguate the no-banner cases.
+        const hasPending = (lib.pendingNewTracks || []).length > 0;
+        const lastScannedAt = folders.reduce((acc, f) => Math.max(acc, f.lastScannedAt || 0), 0);
+        const since = lastScannedAt ? Date.now() - lastScannedAt : 0;
+        // Inline relative-time. Beyond a few hours we just say "earlier"
+        // so the copy doesn't claim more precision than is useful.
+        let lastChecked = "";
+        if (lastScannedAt) {
+          if (since < 60_000) lastChecked = "just now";
+          else if (since < 60 * 60_000) lastChecked = Math.floor(since / 60_000) + "m ago";
+          else if (since < 24 * 60 * 60_000) lastChecked = Math.floor(since / (60 * 60_000)) + "h ago";
+          else lastChecked = "earlier";
+        }
+        let primaryLine, secondaryLine;
+        if (lib.scanning) {
+          primaryLine = "Scanning…";
+          secondaryLine = null;
+        } else if (hasPending) {
+          // Banner above renders the actionable surface. Empty state stays quiet.
+          primaryLine = null;
+          secondaryLine = null;
+        } else if (lastScannedAt) {
+          primaryLine = "Library up to date.";
+          secondaryLine = "Last checked " + lastChecked + ".";
+        } else {
+          primaryLine = null;
+          secondaryLine = "Drop tracks here or use “+ Add music” to import manually.";
+        }
+        return (
+          <>
+            <div style={{ display:"flex", alignItems:"center", gap:8, fontSize:13, color:"#F5F5F7", letterSpacing:0.3, marginBottom:18 }}>
+              <span style={{ display:"inline-block", width:6, height:6, borderRadius:"50%", background:"#22c55e", boxShadow:"0 0 8px rgba(34,197,94,0.4)" }}/>
+              Connected: {folders.map(f => f.name).join(", ")}
+            </div>
+            {primaryLine && (
+              <div style={{ fontSize:12, color:"rgba(255,255,255,0.7)", maxWidth:380, lineHeight:1.55, letterSpacing:0.2, marginBottom:secondaryLine ? 14 : 0 }}>
+                {primaryLine}
+              </div>
+            )}
+            {secondaryLine && (
+              <div style={{ fontSize:11, color:"#5A5E66", maxWidth:380, lineHeight:1.55, letterSpacing:0.2 }}>
+                {secondaryLine}
+              </div>
+            )}
+          </>
+        );
+      })()}
       {error && (
         <div style={{ marginTop:22, padding:"8px 12px", background:"rgba(239,68,68,0.08)", border:"1px solid rgba(239,68,68,0.2)", borderRadius:5, fontSize:11, color:"#ef4444", letterSpacing:0.2, maxWidth:380 }}>
           {error}
