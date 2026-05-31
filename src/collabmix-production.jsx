@@ -459,6 +459,20 @@ function useLibrary(){
   // via opts.onProgress; commitPendingNewTracks translates batch-local index
   // into the global current count).
   const [importProgress,setImportProgress]=useState(null);
+  // Phase 2 Commit 4 — running counter during scanWatchedFolders so the
+  // empty-state copy can say "Scanning… found N tracks so far." rather than
+  // a static spinner. Cleared back to null on scan completion.
+  const [scanProgress,setScanProgress]=useState(null); // { found, folderName? } | null
+  // Forward ref to runLibraryScan so addWatchedFolder's post-grant auto-scan
+  // can fire without creating a circular useCallback dependency (addWatched
+  // Folder is declared before runLibraryScan in this body, and depending
+  // on runLibraryScan in its useCallback deps would hit the TDZ at component-
+  // body evaluation time).
+  const runLibraryScanRef=useRef(null);
+  // Mount-time auto-scan guard. Ensures the scan only fires once per mount
+  // even though the watching effect's dep array includes watchedFolders,
+  // which can change later when the user adds a folder.
+  const mountScanStartedRef=useRef(false);
   const cratesFingerprintRef=useRef('');
 
   // Load tracks + crates from shared IDB and poll for updates from the library app
@@ -1344,6 +1358,18 @@ function useLibrary(){
     // gave it). Avoid round-tripping queryPermission for nothing.
     const enriched={...rec,permission:"granted"};
     setWatchedFolders(prev=>[...prev,enriched]);
+    // Phase 2 Commit 4 — post-grant auto-scan, scoped to just this folder.
+    // Mount-scan's one-shot guard does not (re-)fire when the user adds a
+    // folder later in the session, so the trigger lives here. setTimeout(0)
+    // defers a tick so setWatchedFolders has committed before runLibraryScan
+    // captures the watchedFolders snapshot via its closure. Fire-and-forget;
+    // failures are logged inside runLibraryScan.
+    setTimeout(()=>{
+      console.log('[LIB-PHASE2] post-grant auto-scan trigger',{folderId:enriched.id,folderName:enriched.name});
+      runLibraryScanRef.current?.({folderIds:[enriched.id]}).catch(err=>{
+        console.warn('[LIB-PHASE2] post-grant auto-scan threw',{error:err?.message||String(err)});
+      });
+    },0);
     return enriched;
   },[]);
 
@@ -1418,19 +1444,36 @@ function useLibrary(){
   // track imports drain through the streaming analyzer at a steady pace.
   const PHASE2_IMPORT_CHUNK=100;
 
-  const runLibraryScan=useCallback(async()=>{
+  // opts.folderIds — optional array of watchedFolder ids to restrict the
+  // scan to. Used by the post-grant auto-scan to scope work to the just-
+  // added folder. Mount-time auto-scan and the manual "Check for new
+  // music" button both omit it (scan everything).
+  const runLibraryScan=useCallback(async(opts={})=>{
     if(scanning){
       console.warn('[LIB-PHASE2] runLibraryScan: scan already in progress — ignoring re-entry');
       return null;
     }
+    const targetFolders=opts.folderIds && opts.folderIds.length
+      ?watchedFolders.filter(f=>opts.folderIds.includes(f.id))
+      :watchedFolders;
     setScanning(true);
+    setScanProgress({found:0,folderName:targetFolders[0]?.name||null});
     const controller=new AbortController();
     scanAbortRef.current=controller;
     const t0=performance.now();
     let summary=null;
     try{
-      console.log('[LIB-PHASE2] scan start',{folders:watchedFolders.length});
-      const agg=await scanWatchedFolders(watchedFolders,{signal:controller.signal});
+      console.log('[LIB-PHASE2] scan start',{folders:targetFolders.length,scope:opts.folderIds?'subset':'all'});
+      const agg=await scanWatchedFolders(targetFolders,{
+        signal:controller.signal,
+        onProgress:({found,folderName})=>{
+          // Aggregator-level callback fires per audio file across every
+          // folder being scanned, so `found` already counts across folders.
+          // folderName follows the current folder for the UI's
+          // "Scanning… in beatport_tracks_2026-05-2" hint when desired.
+          setScanProgress({found,folderName});
+        },
+      });
       // Two-tier dedup against current library state. Filename-derived
       // artist/title for the primary tracksMatch, (folderId, sourcePath)
       // composite for the fallback. A scan result is "new" only if BOTH
@@ -1477,10 +1520,41 @@ function useLibrary(){
       }
     }finally{
       setScanning(false);
+      setScanProgress(null);
       scanAbortRef.current=null;
     }
     return summary;
   },[scanning,watchedFolders,library]);
+
+  // Mirror runLibraryScan into a ref so callbacks that need to trigger it
+  // (e.g. addWatchedFolder's post-grant auto-scan) can call through the ref
+  // without listing runLibraryScan in their useCallback deps — avoids the
+  // TDZ that would otherwise apply since addWatchedFolder is declared
+  // earlier in this hook body than runLibraryScan.
+  useEffect(()=>{runLibraryScanRef.current=runLibraryScan;},[runLibraryScan]);
+
+  // Phase 2 Commit 4 — mount-time auto-scan. Fires once per mount when the
+  // first batch of restored watchedFolders includes at least one enabled
+  // + granted folder. The mountScanStartedRef guard makes this a strict
+  // one-shot even though the effect's deps include watchedFolders (which
+  // changes later when the user adds folders — those go through the
+  // post-grant trigger inside addWatchedFolder instead). setTimeout(0)
+  // defers to the next event-loop tick so the initial render commits
+  // before the scan starts pulling on the FSA bridge.
+  useEffect(()=>{
+    if(mountScanStartedRef.current)return;
+    if(!watchedFolders.length)return;
+    const eligible=watchedFolders.some(f=>f.enabled!==false&&f.permission==="granted");
+    if(!eligible)return;
+    mountScanStartedRef.current=true;
+    const t=setTimeout(()=>{
+      console.log('[LIB-PHASE2] mount-time auto-scan trigger');
+      runLibraryScanRef.current?.().catch(err=>{
+        console.warn('[LIB-PHASE2] mount auto-scan threw',{error:err?.message||String(err)});
+      });
+    },0);
+    return()=>clearTimeout(t);
+  },[watchedFolders]);
 
   const dismissPendingNewTracks=useCallback(()=>{
     setPendingNewTracks([]);
@@ -1541,7 +1615,7 @@ function useLibrary(){
 
   const fsaSupported=isFSASupported();
 
-  return{library,queue,crates,importing,importFiles,importFromPicker,previewImport,commitImport,queueAnalysis,reanalyze,reExtractArtwork,setGridEdit,getFile,clear,reload,setLibrary,fileMap,setFile,removeFile,analyzing,progress,analyzeAll,extractArtworkForTrack,artworkCache,reconnectFromFolder,scanArtwork,exportLibrary,importLibraryJson,watchedFolders,libraryMode,addWatchedFolder,removeWatchedFolder,setWatchedFolderEnabled,requestPermissionForFolder,changeLibraryMode,fsaSupported,pendingNewTracks,scanning,importProgress,runLibraryScan,dismissPendingNewTracks,commitPendingNewTracks};
+  return{library,queue,crates,importing,importFiles,importFromPicker,previewImport,commitImport,queueAnalysis,reanalyze,reExtractArtwork,setGridEdit,getFile,clear,reload,setLibrary,fileMap,setFile,removeFile,analyzing,progress,analyzeAll,extractArtworkForTrack,artworkCache,reconnectFromFolder,scanArtwork,exportLibrary,importLibraryJson,watchedFolders,libraryMode,addWatchedFolder,removeWatchedFolder,setWatchedFolderEnabled,requestPermissionForFolder,changeLibraryMode,fsaSupported,pendingNewTracks,scanning,scanProgress,importProgress,runLibraryScan,dismissPendingNewTracks,commitPendingNewTracks};
 }
 
 // ── Library Panel UI ──────────────────────────────────────────
@@ -2069,6 +2143,28 @@ function LibraryPanelV2({ lib, onLoad, playingTrack, deckATrackId:deckATrackIdPr
               onMouseEnter={e => e.currentTarget.style.color = TEXT}
               onMouseLeave={e => e.currentTarget.style.color = SUBTLE}
             >+ Add another location</button>
+          )}
+          {/* Phase 2 Commit 4 — manual scan trigger. Same gate as "+ Add
+              another location" (visible only once at least one folder is
+              connected). Disables itself + shows "Scanning…" while a scan
+              is in flight; the existing runLibraryScan re-entry guard makes
+              this a strict no-op even if the click happens during the disabled
+              state. */}
+          {lib.fsaSupported && lib.watchedFolders.length > 0 && (
+            <button
+              onClick={() => { if (!lib.scanning) lib.runLibraryScan?.().catch(() => {}); }}
+              disabled={lib.scanning}
+              style={{
+                width: "100%", height: 26, background: "transparent", border: "none",
+                color: lib.scanning ? MUTED : SUBTLE, fontSize: 11, letterSpacing: 0.2,
+                fontFamily: "'Inter',sans-serif",
+                borderRadius: 3, cursor: lib.scanning ? "default" : "pointer",
+                textAlign: "left", padding: "0 4px",
+                transition: "color .12s",
+              }}
+              onMouseEnter={e => { if (!lib.scanning) e.currentTarget.style.color = TEXT; }}
+              onMouseLeave={e => { if (!lib.scanning) e.currentTarget.style.color = SUBTLE; }}
+            >{lib.scanning ? "Scanning…" : "Check for new music"}</button>
           )}
         </div>
       </div>
@@ -5101,7 +5197,10 @@ function LibraryEmptyState({ lib }) {
         }
         let primaryLine, secondaryLine;
         if (lib.scanning) {
-          primaryLine = "Scanning…";
+          const found = lib.scanProgress?.found || 0;
+          primaryLine = found > 0
+            ? "Scanning… found " + found + " track" + (found === 1 ? "" : "s") + " so far."
+            : "Scanning…";
           secondaryLine = null;
         } else if (hasPending) {
           // Banner above renders the actionable surface. Empty state stays quiet.
