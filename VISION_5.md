@@ -4970,5 +4970,221 @@ Same as Phase 2 SHIPPED:
 - Worktrees `../collabmix-booth`, `../collabmix-decks`
 - Worker source file — diagnostic re-uses, never edits
 
+## Session end — May 31 night — Reconciliation: prior analyzer work + Phase 3 Commit 1 reframed
+
+This session's Phase 3 planning was done without context on the
+extensive May 17-21 analyzer accuracy work that already sits in
+`tools/bpm-test-harness/`, `tools/sota-eval/`, and
+`tools/rekordbox-eval/`. A late-evening read-only investigation
+surfaced ~80 files of prior work, completed analyzer surveys,
+shipped sub-cause fixes, and an explicit "this is the last
+algorithmic round" decision that pre-dated tonight's planning
+by ten days. This section captures what was found so future
+sessions can pick the right next move without re-discovering
+the state of the world from scratch.
+
+### Prior analyzer work state (was invisible to this session at planning time)
+
+- **Analyzer is at 80.9% PASS** on the 272-track Rekordbox-truth
+  harness (84.3% excluding 11 long DJ mixes that fundamentally
+  cannot be single-tempo gridded).
+- **`tools/bpm-test-harness/`** — built, functional, 33 files.
+  272-track ground truth (`library-truth.json`, derived from
+  Rekordbox `.DB` extraction). Parallel runner (5.4× faster than
+  sequential, full library runs in ~3 minutes). README documents
+  `npm test`, `--save baseline`, `--compare baseline`, PASS/FAIL
+  tolerances (Δbpm ≤ 0.5 AND Δfirstdownbeat ≤ 20 ms). Idle since
+  May 21 but production-grade and ready to resume.
+- **`tools/sota-eval/`** — 47 files. State-of-the-art analyzer
+  survey work. Includes `MADMOM_DIAGNOSTIC.md`,
+  `BEAT_THIS_DIAGNOSTIC.md`, `ANCHOR_HYPOTHESIS_RESULT.md`,
+  `CLUSTER_OFFSET_RESULT.md`, `LATE_CLUSTER_FIX.md`,
+  `ROCKET_JAM_FIX.md`, `SYNC_CORRECTNESS_RESULT.md`,
+  `REAL_ACCURACY_SUMMARY.md`. The survey is **complete**, not
+  queued.
+- **`tools/rekordbox-eval/`** — Rekordbox `.DB` / ANLZ binary
+  parsing work. SQLCipher decryption walkthrough, waveform
+  extraction, beat-grid extraction. Underpins the harness ground
+  truth pipeline.
+
+### SOTA survey conclusion (was thought to be queued, was actually done)
+
+| Candidate | Verdict | Reason |
+|---|---|---|
+| **madmom** | REJECTED | (1) CC BY-NC-SA model license — non-commercial blocker. (2) Breaks 10 of 15 currently-PASSING tracks (8 by entire bars). (3) Same ~22 ms early drift on Sub-cause B class. (4) Perf ~37 s/track. |
+| **beat_this** | REJECTED | (1) Model license ambiguous (no explicit declaration in repo). (2) Would lose 7-9 of 15 PASS controls. (3) Same ~22-27 ms early drift on the same Sub-cause B tracks. (4) Faster than madmom (~3.9 s/track) but still net-negative on accuracy. |
+| **Essentia.js** | Not investigated | Survey stopped after both madmom + beat_this failed. |
+| **Custom multi-pass** | THIS IS THE PATH TAKEN | Sub-causes A through G are the multi-pass result. |
+
+**Three independent detectors (our analyzer, madmom, beat_this)
+converge on the same ~20-35 ms early drift versus Rekordbox
+truth on the Sub-cause B cluster.** That convergence is the
+evidence that the residual error is not an audio-detection
+problem — it's a perceptual anchor convention that Rekordbox
+applies which no audio-only system can recover without modeling
+per-track perceptual offsets.
+
+### Shipped analyzer fixes (currently in `src/bpm-worker-source.js`)
+
+| Sub-cause | What it does | Gain on harness | Commit |
+|---|---|---|---|
+| **A** (Step 3) | Beat-0 earliest-peak ≥75% of argmax | baseline | `d306514` |
+| **B** (Step 5 Phase 1) | Beat-0-only attack refinement | baseline | `5f9ce8d` |
+| **C** (Step 4) | Sampler / one-shot snap-to-0 | small | `d024f2a` |
+| **D** | Drop-detection grid validation | +1 (72.4 → 73.2%) | `9ba92fe` |
+| **F** | No-kick-beat-0 advance to first real kick | +2 (73.2 → 73.9%) | `4f57d9b` |
+| **G** | Walkback to earliest transient ≥30%, ≥20 ms gate | **+19 (73.9 → 80.9%)** — largest single gain | `38af43b` |
+| Kick-exclusive phSc scoring (`onK − onP` not `onK` alone) | | | `1c8549a` |
+| Phrase voting (`phSc16` / `phSc32`) | | | `edde4ee` |
+| Manual bar-1 anchor override UI | | | `edde4ee` |
+| Sample-level transient refinement infrastructure | (powers Sub-causes A, B, F, G) | | (multiple) |
+
+All shipped. All currently in the production worker. The worker
+was last functionally touched May 21 — the past ten days were
+storage / library / Phase 1+2 / Phase 3 Commit 1 / design v5
+work, not analyzer work.
+
+### Explicit May 20 recommendation (never acted on)
+
+From `tools/sota-eval/LATE_CLUSTER_FIX.md`:
+
+> "All algorithmic rounds planned for this phase are complete.
+> Per the user's note: 'if Sub-cause G ships, that's the last
+> algorithmic round we plan to do. After this, focus shifts to
+> manual UI adjust + nudge telemetry + dogfood.'"
+
+From `tools/sota-eval/REAL_ACCURACY_SUMMARY.md`:
+
+> "1. Per-track anchor offset slider/nudge in ±10 ms increments
+>  2. Nudge telemetry capture so real user corrections become a
+>     dataset
+>  3. Ship at 76-80% and use the telemetry to either model
+>     per-track offsets or build training data"
+
+The project pivoted to library Phase 1 + Phase 2 work instead.
+The May 20 recommendation is still the on-the-shelf next step
+for analyzer accuracy.
+
+### Known un-fixable failure modes
+
+- **Sub-cause B cluster — 14 tracks, irreducible.** All at
+  20-27 ms EARLY of Rekordbox truth. Confirmed not fixable from
+  audio alone via 3-detector convergence. The tracks:
+  - Body Stars
+  - Hymn Of The Fern
+  - Scarlet Sails
+  - Aurora
+  - Coaster
+  - Leave The World Behind
+  - Serenità
+  - Fly Fox
+  - Great Attractor
+  - Astronauts Nightmares
+  - Finding Estrella
+  - Swans
+  - Sparky
+  - Track II
+- **Long DJ mixes — 11 tracks, all > 10 min.** Fundamentally
+  un-griddable by a single-BPM analyzer. Counting them as
+  failures inflates the denominator unfairly; the "honest"
+  accuracy number is the 84.3% with long mixes excluded.
+- **The Palindrome 90 → 120 BPM class** — **NOT in any
+  sota-eval doc.** Root cause is the library-side
+  `skipBPM:!!track.bpm` flag at lines 814 / 916 / 1155 of
+  `useLibrary` in `src/collabmix-production.jsx`, which trusts
+  ID3 tags and never re-runs full detection when a tag exists.
+  The per-deck path always runs full detection. So the library
+  row and deck disagree on BPM for any track with a tag that
+  the analyzer would have detected differently. Addressed in
+  the followup commit landing tonight (see "1-line skipBPM fix"
+  section below).
+
+### Phase 3 Commit 1 (`/diagnose.html`, commit `903e4ef`) — reframed
+
+- Built without prior context on `tools/bpm-test-harness/` or
+  `tools/sota-eval/`.
+- **Orthogonal to the harness, not duplicate work:**
+  - Harness audience: developer comparing analyzer changes vs
+    Rekordbox ground truth (272-track curated set).
+  - `/diagnose` audience: founder inspecting the real production
+    library (~136 tracks, no ground truth available).
+  - Different questions, different datasets, different
+    actionability. Not in conflict.
+- Currently does library metadata dump only (Commit 1 scope).
+- **Commits 2-5 of the original Phase 3 plan are NOT the
+  highest-priority next step.** They are defensible only if the
+  stated problem is "see analyzer divergence at scale on real
+  library." For other problems (Palindrome class fix, accuracy
+  improvement, user-facing nudge UI) different work would lead.
+
+### Next-session decision point — 5 options
+
+Ranked by what the evidence supports, not by what would be
+quickest to start writing:
+
+- **Option A — Per-track ±10 ms anchor nudge UI + nudge
+  telemetry.** The explicit May 20 deferred plan. Slider 4-8 hrs,
+  telemetry plumbing 2-3 hrs. Doesn't change the analyzer;
+  gives users a way to fix the remaining ~20% per-track and
+  feeds a real-world dataset for future modeling.
+- **Option B — Continue `/diagnose` Commit 2, scoped tighter.**
+  Worker invocation + re-detect with `skipBPM:false` on every
+  track + surface tracks where stored vs re-detected differ by
+  >2 BPM. 4-6 hrs. Measures library divergence. Doesn't fix the
+  analyzer.
+- **Option C — 1-line `skipBPM` fix.** Applied tonight (see
+  below). Fixes the Palindrome class at import time and on
+  re-analyze. Smallest possible production change.
+- **Option D — Approach A from `STEP5_INVESTIGATION.md`.**
+  Beat-0-only forward walk to envelope peak for the Sub-cause B
+  cluster. 5-7 hrs. Predicted +8-12 PASS (80.9% → ~83-84% raw,
+  ~87% excluding long mixes). Breaks the explicit "G is the
+  last round" decision — re-litigates that call.
+- **Option E — Dogfood Phase 1+2 first, decide based on real
+  feedback.** Don't pick an analyzer direction until DJs have
+  actually used the library auto-import in a real session.
+  Lowest-cost option; highest-information option.
+
+### Recommended framing for tomorrow
+
+**Pick which problem you're solving before picking what to
+build.** The 5 options above each serve a different problem.
+None are wrong; choosing without naming the problem leads to
+work that doesn't connect to user outcomes — which is how
+Phase 3 Commit 1 got built tonight without first asking whether
+the diagnostic was the right next investment.
+
+| If the problem is… | The right next move is… |
+|---|---|
+| "Palindrome shows wrong BPM in library" | **Option C** (landed tonight). |
+| "See analyzer divergence at scale on real library" | **Option B** (Phase 3 Commit 2, scoped tighter). |
+| "Analyzer 80.9% isn't good enough, push to 85%+" | **Option D** (Approach A from STEP5). |
+| "Users will fix per-track grids themselves; give them the tool" | **Option A** (deferred May 20 plan). |
+| "Don't know if analyzer accuracy actually matters yet" | **Option E** (dogfood first). |
+
+### 1-line `skipBPM` fix (separate commit landing tonight)
+
+Per Option C above and the Palindrome root-cause finding, the
+followup commit tonight changes `skipBPM:!!track.bpm` to
+`skipBPM:false` at the three `useLibrary` queue-push sites
+(lines 814, 916, 1155 of `src/collabmix-production.jsx`). See
+that commit's message for trade-offs and verification report.
+Existing tracks with tag-based BPM are not re-analyzed by the
+fix; they keep their current stored values. New imports and
+re-analyze actions will use the corrected logic.
+
+### Don't-touch list (unchanged)
+
+- `src/bpm-worker-source.js` — analyzer DSP, untouched since
+  May 21
+- `tools/bpm-test-harness/`, `tools/sota-eval/`,
+  `tools/rekordbox-eval/` — preserved as reference artifacts;
+  re-runnable but not modified
+- Worktrees `../collabmix-booth`, `../collabmix-decks` —
+  REFERENCE ONLY
+- Memory pipeline (`processQ`, `fileMap` LRU, AudioContext
+  recycle)
+
+
 
 
