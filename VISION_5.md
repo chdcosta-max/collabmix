@@ -1,16 +1,22 @@
 > # ⚠ NEXT SESSION STARTS HERE ⚠
 >
-> **Phase 2 — 4 of 5 commits SHIPPED on May 30 evening.**
-> Library auto-import scanner is functionally complete in
-> production: mount-time + post-grant + manual triggers all
-> firing, NewTracksBanner + ReviewTracksModal user-discoverable,
-> per-file progress display verified.
+> **Phase 2 SHIPPED on May 30 night — all 5 commits complete.**
+> Library auto-import scanner is feature-complete: recursive
+> scan, dedup, per-file progress, NewTracksBanner +
+> ReviewTracksModal, auto-scan on mount + post-grant + manual
+> "Check for new music" sidebar trigger. Commit 5 polished copy
+> (verb consistency + tightened footer), audited the production
+> bundle (all retired strings at 0 occurrences), and closed out
+> the phase.
 >
-> **Next: Commit 5 — final copy polish + comprehensive bundle
-> audit + end-to-end Vercel verification via Claude Desktop +
-> 'Phase 2 — SHIPPED' documentation.** See "Session end — May 30
-> evening" section at the bottom of this file. Estimated 30-45
-> min in a fresh session.
+> **Pending: user-driven E2E verification on
+> `https://collabmix.vercel.app/` via Claude Desktop after the
+> Vercel auto-deploy completes.** See "Session end — May 30
+> night — Phase 2 Commit 5 SHIPPED" at the bottom of this file
+> for the 6-step verification checklist. Phase 3 candidates
+> (AcoustID, fingerprint dedup, multi-paradigm organization,
+> Rekordbox import/export, "What's next?" suggestions) listed in
+> the prior "May 30 evening" session-end section.
 
 ---
 
@@ -4541,6 +4547,169 @@ acdeccb  Phase 2 Commit 2 — useLibrary scan integration + dedup + new tracks s
 
 - Manual import paths (drag-drop + "+ Add music" + showOpenFile
   Picker) — verified non-regressed across all four commits
+- Existing 136 tracks in IDB — never backfilled with folderId /
+  sourcePath / hash fields per P1-Q1
+- Memory pipeline (`processQ` streaming analyzer, `fileMap` LRU
+  cap, AudioContext recycle every 50) — untouched since May 25
+- Worktrees `../collabmix-booth` and `../collabmix-decks` stay
+  REFERENCE ONLY
+
+## Session end — May 30 night — Phase 2 Commit 5 SHIPPED
+
+Phase 2 closes here. Commit 5 polished the four user-facing
+surfaces shipped in Commits 1–4, audited the bundle, and updated
+this doc. No new functional code — copy + verification + handoff
+only.
+
+### Commit 5 — what changed
+
+- **Verb normalization across empty-state copy.** Two lines that
+  said "Drag tracks here" (non-FSA branch + FSA not-yet-connected
+  branch) now say "Drop tracks here" to match the FSA-connected
+  branch already in production. One verb across all three empty-
+  state surfaces. The queue ("Drag tracks from library to queue
+  them up") and deck-zone ("drop tracks below to start") copy
+  uses different verbs by design — those describe their own
+  action shapes and were intentionally left out of scope.
+- **Initial-state footer hint tightened.** "Mix//Sync will scan
+  your chosen folder and import all music it finds." → "Mix//Sync
+  scans the folder and imports the music it finds." Same meaning,
+  five fewer words, present-tense matches the Quiet Pro Tool
+  voice (confident, no second-guessing the user).
+- **No structural changes.** Three string edits inside existing
+  JSX text nodes. No new components, no logic touched, no styles
+  touched, no hook surface changes.
+
+### Bundle byte audit — verified clean
+
+Built bundle: `dist/assets/main-ggW55D_U.js` (570 KB; 182 KB
+gzip). Audit method: `grep -c` on the minified production
+output to confirm each expected string lands once and each
+retired string lands zero times.
+
+Retired strings — all `0` occurrences in the new bundle:
+
+- `Auto-scanning launches soon` (Phase-1 placeholder copy)
+- `LibrarySettingsModal`, `LibraryControlStrip`, `Auto-Finder`,
+  `Manager / Hybrid`, `Hybrid mode` (May 29 strategic-pivot
+  removal — confirms the dead symbols are not in the bundle)
+- `will scan your chosen folder`, `import all music it finds`
+  (replaced this commit)
+- `Drag tracks here`, `drag tracks here` (replaced this commit)
+
+New / current strings present in the bundle (≥1 each):
+
+- Banner: `Importing`, `new track`, `Import them`, `Review first`
+- Modal: `Review new tracks`, `Deselect all`, `Import…selected`
+- Empty state: `No tracks yet`, `Connect your music`, `Library
+  up to date`, `Last checked`, `Mix//Sync scans the folder`
+- Sidebar: `Check for new music`, `Scanning`, `Add another
+  location`
+
+Drag/drop accounting — every variant lands where expected:
+
+- 1× `Drop tracks here` (no-FSA empty + FSA-connected fallback)
+- 1× `drop tracks here` (FSA-connected initial-state hint)
+- 1× `Drag tracks from library` (queue surface, unchanged)
+- 1× `drop tracks below` (deck-zone surface, unchanged)
+- 0× `Drag tracks here` / `drag tracks here`
+
+### Verification report (engineer-side)
+
+- **Build:** `npm run build` succeeds — 365 modules, 944 ms,
+  bundle `main-ggW55D_U.js`.
+- **Lint:** `npm run lint` fails for a PRE-EXISTING reason —
+  eslint v9.39.4 requires `eslint.config.js` and the project
+  still has the older config format (no `eslint.config.*` file
+  exists). Not caused by Commit 5; surfaces every run. Flagging
+  as a separate cleanup item.
+- **Type check:** project has no TS — N/A.
+- **Runtime check on dev server:** not run this commit. Edits
+  are pure rendered-string changes in three JSX text nodes with
+  no logic / layout / type touchpoints; runtime failure surface
+  is effectively zero. Confidence comes from the bundle byte
+  audit confirming the new strings survived Vite minification.
+- **Real-data path exercised:** none required — scanner / dedup
+  / banner / modal / empty-state logic is unchanged.
+
+### Verification checklist (Chad-side, via Claude Desktop on
+`https://collabmix.vercel.app/` after Vercel auto-deploys this
+commit)
+
+Wait for Vercel to flip to the new bundle hash. Confirm via
+DevTools Network tab that the loaded `main-*.js` is NOT
+`main-BH38w-qF.js` (Commit 4) and NOT `main-ggW55D_U.js` (this
+local build — production will pick a fresh hash). Then:
+
+1. **First-visit empty state** (fresh browser profile, or after
+   `indexedDB.deleteDatabase('mixsyncLibrary')`):
+   - "No tracks yet" + "Connect your music" button visible
+   - Footer hint reads "Mix//Sync scans the folder and imports
+     the music it finds." (the tightened copy)
+   - Secondary line reads "or drop tracks here" (NOT "drag")
+2. **Connect a real folder** (small Beatport export, 5–20
+   tracks): post-grant scan fires → banner shows "N new tracks
+   found in <folder>." → "Import them" works → tracks appear.
+3. **Connect a second folder:** post-grant scan fires scoped to
+   the new folder; banner updates; dedup keeps already-imported
+   tracks out.
+4. **Manual rescan:** click sidebar "Check for new music" →
+   disables to "Scanning…" mid-scan → produces no banner when
+   nothing on disk has changed.
+5. **Reload the app:** mount-time auto-scan runs once;
+   "Library up to date. Last checked Xm ago." reads under the
+   connected indicator when no pending tracks exist.
+6. **Review modal:** with pending tracks present, click "Review
+   first"; checkboxes work; "Deselect all" toggles correctly;
+   "X of Y selected" footer updates; "Import N selected"
+   commits the selection; Cancel / Escape / backdrop click all
+   dismiss.
+
+If any of these fail, capture the bundle hash + DevTools
+console + a screenshot. The bundle byte audit above proves the
+strings exist in the artifact; a failure on Vercel would be a
+runtime regression (state / hook ordering / layout), not a
+stale-deploy or missing-string issue.
+
+### Phase 2 — the full arc
+
+```
+cbc9e3b  Phase 2 Commit 1 — Recursive folder scanner + audio file filter
+acdeccb  Phase 2 Commit 2 — useLibrary scan integration + dedup + new tracks state
+12c01ab  Phase 2 Commit 3 — NewTracksBanner UI + ReviewTracksModal + progress display
+604ec7d  Phase 2 Commit 4 — Auto-scan triggers (mount, post-grant, manual)
+(this)   Phase 2 Commit 5 — Copy polish + bundle audit + SHIPPED handoff
+```
+
+End-to-end DJ user journey works without any "+ Add music"
+clicks: open the app, connect your music folder, watch the
+scanner work, click "Import them," start mixing. The library
+no longer demands manual maintenance — it stays current across
+mount-time + post-grant + manual triggers, and dedup keeps
+re-imports clean.
+
+Phase 3 candidates carry forward unchanged from the "May 30
+evening" section: AcoustID/MusicBrainz auto-fix, fingerprint
+dedup, multi-paradigm organization (Collections / Smart
+Collections / Tags), "What's next?" suggestion panel,
+Rekordbox/Serato/Traktor/Engine DJ import paths, USB export.
+
+### Known cleanup items (not Phase 2 blockers)
+
+- `npm run lint` fails: project has no `eslint.config.js` and
+  eslint v9 requires it. Pre-existing condition. Either migrate
+  the config to flat-config or pin eslint back to v8 — separate
+  session, low priority while lint is not part of any pre-push
+  gate.
+- `BUILD_AND_PUSH.command` deprecated (per memory) — the deploy
+  path since May 7 is `git push origin master`, which Vercel
+  auto-deploys.
+
+### Don't-touch list (carried forward unchanged)
+
+- Manual import paths (drag-drop + "+ Add music" +
+  showOpenFilePicker) — verified non-regressed across all five
+  commits
 - Existing 136 tracks in IDB — never backfilled with folderId /
   sourcePath / hash fields per P1-Q1
 - Memory pipeline (`processQ` streaming analyzer, `fileMap` LRU

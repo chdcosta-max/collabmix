@@ -5169,11 +5169,11 @@ function LibraryEmptyState({ lib }) {
             >{busy ? "Connecting…" : "Connect your music"}</button>
           ) : (
             <div style={{ fontSize:13, color:"rgba(255,255,255,0.7)", lineHeight:1.55, letterSpacing:0.2, maxWidth:380 }}>
-              Folder connect requires Chrome or Edge. Drag tracks here or use &ldquo;+ Add music&rdquo; to import manually.
+              Folder connect requires Chrome or Edge. Drop tracks here or use &ldquo;+ Add music&rdquo; to import manually.
             </div>
           )}
-          {supported && <div style={{ fontSize:11, color:"#5A5E66", marginTop:14, letterSpacing:0.2 }}>or drag tracks here</div>}
-          {supported && <div style={{ fontSize:11, color:"#5A5E66", marginTop:40, maxWidth:340, lineHeight:1.55, letterSpacing:0.2 }}>Mix//Sync will scan your chosen folder and import all music it finds.</div>}
+          {supported && <div style={{ fontSize:11, color:"#5A5E66", marginTop:14, letterSpacing:0.2 }}>or drop tracks here</div>}
+          {supported && <div style={{ fontSize:11, color:"#5A5E66", marginTop:40, maxWidth:340, lineHeight:1.55, letterSpacing:0.2 }}>Mix//Sync scans the folder and imports the music it finds.</div>}
           {supported && <div style={{ fontSize:10, color:"rgba(255,255,255,0.25)", marginTop:14, letterSpacing:0.4 }}>Supports MP3, WAV, FLAC, AAC, OGG, M4A</div>}
         </>
       )}
