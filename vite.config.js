@@ -21,8 +21,9 @@ export default defineConfig({
     sourcemap: true,
     rollupOptions: {
       input: {
-        main:    resolve(__dirname, 'index.html'),
-        library: resolve(__dirname, 'library.html'),
+        main:     resolve(__dirname, 'index.html'),
+        library:  resolve(__dirname, 'library.html'),
+        diagnose: resolve(__dirname, 'diagnose.html'),
       }
     }
   }

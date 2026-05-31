@@ -4717,4 +4717,258 @@ Rekordbox/Serato/Traktor/Engine DJ import paths, USB export.
 - Worktrees `../collabmix-booth` and `../collabmix-decks` stay
   REFERENCE ONLY
 
+## Session start — May 31 morning — Phase 3 begins
+
+Phase 3 = **analyzer diagnostic tool**. Goal: surface the gap
+between what the per-deck worker says about a track and what
+the library row stores, so harmonic errors (Palindrome reading
+90 in library but 120 on deck), grid-vs-kick offset drift, and
+drop-detection blind spots can be caught with data instead of
+ear-tested one track at a time.
+
+### Prior-investigation findings, verified
+
+The Claude Desktop source-map + live-IDB investigation that
+preceded this session was cross-checked against the actual repo
+at session start. All structural claims hold; one routing
+adjustment was made (see below).
+
+- ✅ `src/bpm-worker-source.js` (1368 lines) is the Web Worker
+  doing all DSP. `createBPMWorker()` at line 144 wraps the source
+  in a Blob URL.
+- ✅ `processQ` is the serial streaming analyzer in
+  `useLibrary` — defined at line 604, ref-wired at line 681.
+- ✅ Decode pipeline: main-thread `decodeAudioData` → downmix
+  mono → decimate to 11025 Hz with a 60 s cap → transferable
+  buffer to worker. ~2.6 MB peak PCM per track (line 629
+  `TARGET_SR=11025`, line 657 transferable post).
+- ✅ `exportLibrary` at line 1171 has the Blob → URL → click
+  pattern (reusable for the JSON / CSV downloads in later
+  Commits 2 and 5).
+- ✅ IDB is `cm_music_library` v6 per `src/utils/storage.js:25-26`.
+  v6 added the `watchedFolders` store; the rest of the schema
+  matches the prior summary.
+- ✅ `skipBPM:!!track.bpm` confirmed at three library sites
+  (lines 814, 916, 1155). Per-deck path at line 177 does not pass
+  `skipBPM` at all — worker defaults it to `undefined`/falsy, so
+  the deck runs full detection. **Two code paths disagreeing is
+  the root cause Phase 3 is built to surface.**
+- ✅ Onset infrastructure in the worker is richer than the prior
+  summary mentioned: kick-band (40-60 Hz) + punch (100-200 Hz)
+  with kick-EXCLUSIVE onset (`max(0, onK - onP)`); sub-bass
+  continuity 20-80 Hz; DP beat tracker; 4-phase bar-downbeat
+  scoring; ±15 ms windowed max around DP beats; sample-level
+  transient refinement with parabolic interp on dE/dt and
+  envelope-peak walk-forward for flat-top kicks.
+  → **Implication: the diagnostic's independent onset detection
+  (Commit 3) must make completely different algorithmic choices
+  (different band splits, different thresholds, different
+  smoothing) so its blind spots don't overlap with the worker's.**
+- ⚠️ **Routing adjustment.** The prior investigation suggested
+  adding a `window.location.pathname === '/diagnose'` check in
+  `src/main.jsx`'s `Root()`. Verification surfaced the existing
+  multi-entry Vite setup (`vite.config.js` rollupOptions.input
+  declares `main` + `library`) with `library.html` +
+  `src/library-app.jsx` as a standalone companion app. Phase 3
+  mirrors that precedent — `/diagnose.html` is a standalone
+  bundle, isolated from the 570 KB mixer chunk, zero risk to
+  the mixer's import / worker / memory paths.
+
+### Worker results — only PARTIALLY persisted to IDB
+
+Important nuance the prior investigation hinted at but the
+verification confirmed: the library-side worker callback
+(around lines 519-545) destructures only `{id, bpm, key,
+energy}` from worker output and writes them back via `cmDbPut`.
+The deck-side callback (lines 154-159) extracts the richer
+fields (`beatPeriodSec`, `firstBar1AnchorSec`, `beatPhaseFrac`,
+`snapped`, `candidates`, `_debug`) into in-memory `results`
+state — **never written to IDB**.
+
+So "Palindrome shows 90 in library row but 120 on deck" isn't
+a tag-vs-detection disagreement; it's the same DSP under two
+different orchestrators, with `skipBPM:!!track.bpm` causing
+the library path to never re-run detection on tagged tracks.
+The diagnostic needs to expose BOTH the stored value AND a
+fresh detection run on every track to make this visible
+across the 136-track library.
+
+### Two `createBPMWorker` / `createLibWorker` paths
+
+There are two distinct worker-factory functions: `createBPMWorker`
+(line 144, deck path) and `createLibWorker` (around line 519,
+library path). They may wrap the same source file or different
+ones — verification was time-boxed; Commit 2 will resolve which
+worker the diagnostic reuses and whether the two factories
+diverge in their setup.
+
+## Session start — May 31 morning — Phase 3 Commit 1 SHIPPED
+
+Bones of the diagnostic stand up. Standalone `/diagnose.html`
+entry mirroring the existing `/library.html` pattern; walks
+`cm_music_library`, dumps stored metadata, probes whether each
+track's underlying file is silently resolvable. No worker
+invocation, no measurement, no IDB writes.
+
+### Files added / modified
+
+- **`diagnose.html`** (new, 12 lines) — entry HTML mirroring
+  `library.html`. Loads `/src/diagnose-main.jsx`.
+- **`src/diagnose-main.jsx`** (new, 7 lines) — `createRoot` +
+  `StrictMode` mount of `DiagnoseApp`. Imports `./index.css`
+  for global resets only (no shared mixer styling).
+- **`src/diagnose-app.jsx`** (new, ~290 lines) — the diagnostic
+  itself. One React component, single `Walk library` button,
+  table of per-track stored metadata + resolution probe, summary
+  stats panel. Quiet Pro Tool styling: pure black background,
+  white at 0.9 / 0.6 / 0.3 opacity tiers, 150 ms cubic-bezier
+  row hover, no glassmorphism, sentence case throughout.
+  STATUS_OK / STATUS_WARN / STATUS_BAD colour roles for
+  resolvable / needs-grant / unresolvable badges.
+- **`vite.config.js`** (modified, +1 line) — added
+  `diagnose: resolve(__dirname, 'diagnose.html')` to
+  rollupOptions.input.
+
+### Silent-probe contract
+
+`probeResolution(track)` returns
+`{ state: 'yes'|'grant'|'no', source: <label>, detail? }`.
+Probe order:
+
+1. `opfsGet(id)` — silent, no permission required. Tracks with
+   bytes in OPFS resolve as `{state:'yes', source:'opfs'}`.
+2. `dbGet("handles", id)` → `resolveHandleRecord(rec)`.
+   Legacy `{id, file: File}` records resolve as
+   `{state:'yes', source:'legacy-file'}`.
+3. For handle-bearing records: `handle.queryPermission({mode:'read'})`
+   — silent in all modern browsers. Maps to `handle-granted` /
+   `handle-prompt` (state='grant') / `handle-denied`.
+4. Anything else: `state:'no'` with source label
+   (`no-record` / `orphan-handle` / `handle-error`).
+
+**No `requestPermission` call this commit.** Per-handle user
+gestures would break a 136-track batch walk. Tracks in `prompt`
+state are reported as needs-grant so Commit 2's measurement
+pass can decide how to handle them (probably: surface a "grant
+N folders to enable measurement" CTA).
+
+### Bundle byte audit — clean isolation
+
+Build artifacts after this commit:
+
+```
+dist/diagnose.html                   0.49 kB
+dist/assets/diagnose-COGvtNTa.js     9.25 kB  (gzip 3.34 kB)
+dist/assets/storage-C8ykY87b.js    148.05 kB  (shared with library)
+dist/assets/main-DADumd6-.js       570.60 kB  (unchanged size)
+dist/assets/library-BN2zwc87.js     91.07 kB  (unchanged)
+```
+
+Diagnose chunk is 9.25 KB — 60× smaller than the mixer chunk,
+confirming the standalone entry is properly isolated. Verified
+by grep on the minified `diagnose-COGvtNTa.js`:
+
+- 1× `Analyzer diagnostic`, 1× `Walk library`, 1× `queryPermission`,
+  1× `OPFS` — diagnostic-specific strings present.
+- 0× `createBPMWorker`, 0× `NewTracksBanner`, 0× `engineRef`,
+  0× `useRecorder`, 0× `useRTC`, 0× `showOpenFilePicker` —
+  no mixer code leaked in.
+- `cm_music_library` lives in the shared `storage-*.js` chunk,
+  imported by both `library-*.js` and `diagnose-*.js`. No code
+  duplication.
+
+Main bundle (`main-DADumd6-.js`) is byte-identical in size to
+the Phase 2 SHIPPED bundle, and still contains the Phase 2
+polish strings (`Library up to date`, `Drop tracks here`,
+`Mix//Sync scans the folder`). 0× `Analyzer diagnostic` in the
+main bundle — confirms diagnose code did not leak into mixer.
+
+### Verification report (engineer-side)
+
+- **Build:** `npm run build` succeeds — 368 modules (up from
+  365), 953 ms, new diagnose entry produces a 9.25 KB chunk.
+- **Lint:** still fails for the pre-existing eslint v9 config
+  reason — not caused by Phase 3 edits, surfaces every run.
+- **Runtime check in dev server:** NOT run by Claude this
+  commit. The diagnose code only reads from `cm_music_library`
+  via the same shared `src/utils/storage.js` helpers that
+  `library-app.jsx` already uses in production, plus
+  `handle.queryPermission` (a synchronous-ish standards API
+  call). Risk surface for a runtime failure is small but
+  non-zero — Chad should load `/diagnose.html` on the dev
+  server (or after deploy) and click `Walk library` once.
+- **Real-data path exercised:** none by Claude — diagnostic
+  exists to be run by Chad against the real 136-track library.
+
+### Verification checklist (Chad-side, run after deploy)
+
+After Vercel deploys this commit, visit
+`https://collabmix.vercel.app/diagnose.html` (or run locally
+on the dev server at `http://localhost:5173/diagnose.html`).
+
+1. Page loads, shows "Analyzer diagnostic" header, "Phase 3 ·
+   Commit 1" tag at top right, and a single "Walk library"
+   button. Background is pure black.
+2. Click "Walk library." Button changes to "Walking…" and
+   progress reads "0 / 136 tracks probed", incrementing every
+   ~10 tracks.
+3. When done, a summary panel appears with: total count,
+   analyzed / not analyzed, errored count, has-stored-BPM
+   count, has-stored-key count, gridAnchorSec count (expected:
+   2 per prior investigation), bpmOverride count (expected:
+   1), and a resolution breakdown.
+4. Table below shows every track with: #, Title, Artist, BPM,
+   Key, Duration, Analyzed flag, gridAnchorSec, bpmOverride,
+   File-resolvable badge (green ✓ / amber needs-grant / red
+   ✗), Source label.
+5. The "Resolvable" badges should be mostly green for the
+   working library; any amber rows are tracks whose handles
+   are in `prompt` state — Commit 2 will surface a per-folder
+   "grant" affordance to flip these to silently-resolvable.
+   Red rows are unresolvable (no OPFS, no handle) — flag these
+   to Claude; they may indicate the v4→v5 handle-shape
+   migration didn't run for those records.
+
+### Scope discipline maintained
+
+Zero modifications to: `src/collabmix-production.jsx`,
+`src/bpm-worker-source.js`, `src/utils/storage.js`,
+`src/library-app.jsx`, anything in the worker / import /
+memory / worktree surface. The diagnostic is purely additive
+new files plus a one-line vite config addition.
+
+### Remaining commits (refined plan)
+
+- **Commit 2** — Worker reuse harness + Dimension 3 (BPM /
+  anchor / harmonic-ratio re-detection on every track) +
+  per-track JSON dump download. Resolves which `createBPMWorker`
+  vs `createLibWorker` to reuse. Adds the `requestPermission`
+  flow gated behind a per-folder grant button so the walk can
+  run over the full library.
+- **Commit 3** — Dimension 1: independent onset detection (must
+  use different band splits / thresholds than the worker — see
+  prior section on the worker's richness). Reports grid-to-kick
+  offset mean / median / max / stddev / drift-slope per track.
+- **Commit 4** — Dimension 2: drop detection + downbeat-vs-drop
+  bar position.
+- **Commit 5** — Sortable / filterable table, visual indicators
+  for outliers (red badges on tracks where worker vs diagnostic
+  disagree by >5 BPM or >50 ms grid offset), summary stats
+  rollup, CSV download.
+
+### Don't-touch list (carried forward unchanged)
+
+Same as Phase 2 SHIPPED:
+
+- `src/collabmix-production.jsx` (mixer)
+- `src/bpm-worker-source.js` (DSP)
+- `src/utils/storage.js` (IDB / OPFS contract) — read-only
+  imports only
+- Manual import paths in the mixer
+- Memory pipeline (`processQ`, `fileMap` LRU, AudioContext
+  recycle)
+- Worktrees `../collabmix-booth`, `../collabmix-decks`
+- Worker source file — diagnostic re-uses, never edits
+
+
 
