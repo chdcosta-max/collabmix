@@ -811,7 +811,7 @@ function useLibrary(){
       // without the user clicking anything.
       if(!track.bpm||!track.key){
         if(!queueRef.current.some(q=>q.id===id)){
-          queueRef.current.push({id,skipBPM:!!track.bpm,skipKey:!!track.key});
+          queueRef.current.push({id,skipBPM:false,skipKey:!!track.key});
         }
       }
       importedCount++;
@@ -913,7 +913,7 @@ function useLibrary(){
     for(const track of toProcess){
       if(!track.analyzed||track.error){
         if(!queueRef.current.some(q=>q.id===track.id)){
-          queueRef.current.push({id:track.id,skipBPM:!!track.bpm,skipKey:!!track.key});
+          queueRef.current.push({id:track.id,skipBPM:false,skipKey:!!track.key});
         }
       }
     }
@@ -1152,7 +1152,7 @@ function useLibrary(){
     if(queueRef.current.some(q=>q.id===id))return; // already enqueued
     const t=library.find(x=>x.id===id);
     if(t?.analyzed)return; // already analyzed since handleLibLoad started
-    queueRef.current.push({id,file,skipBPM:!!t?.bpm,skipKey:!!t?.key});
+    queueRef.current.push({id,file,skipBPM:false,skipKey:!!t?.key});
     processQ();
   },[library,processQ]);
 
