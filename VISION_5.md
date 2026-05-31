@@ -1,13 +1,16 @@
 > # ⚠ NEXT SESSION STARTS HERE ⚠
 >
-> **Phase 1 SHIPPED on May 29 evening.** Library auto-import
-> infrastructure live, "Connect your music" UX verified working
-> in production Chrome.
+> **Phase 2 — 4 of 5 commits SHIPPED on May 30 evening.**
+> Library auto-import scanner is functionally complete in
+> production: mount-time + post-grant + manual triggers all
+> firing, NewTracksBanner + ReviewTracksModal user-discoverable,
+> per-file progress display verified.
 >
-> **Next: Phase 2 — Actual folder scanning + dedup + new-tracks
-> notification.** See "Phase 1 — SHIPPED" section at the bottom
-> of this file for full context and Phase 2 scope. Estimated
-> 4-6 hours.
+> **Next: Commit 5 — final copy polish + comprehensive bundle
+> audit + end-to-end Vercel verification via Claude Desktop +
+> 'Phase 2 — SHIPPED' documentation.** See "Session end — May 30
+> evening" section at the bottom of this file. Estimated 30-45
+> min in a fresh session.
 
 ---
 
@@ -4428,5 +4431,121 @@ deployed Phase 1 surface during dogfood and letting that
 inform Phase 2 scope refinements. No code touched in the
 final documentation commit — this entry exists to mark Phase
 1 done and hand state to the next session cleanly.
+
+## Session end — May 30 evening
+
+### Phase 2 status
+
+- **Commit 1 (`cbc9e3b`)** — `scanWatchedFolder` +
+  `scanWatchedFolders` recursive scanner in `src/utils/fsa.js`.
+  Audio extension filter, skip-list, dotfile filter, AbortSignal,
+  onProgress callback, `enabled` flag and `permission` state
+  honored. 21-assertion synthetic Node test + browser smoke test
+  pass.
+- **Commit 2 (`acdeccb`)** — useLibrary scan integration:
+  `pendingNewTracks` state, `runLibraryScan` / `dismissPending
+  NewTracks` / `commitPendingNewTracks` callbacks, dedup via
+  `tracksMatch(artist,title)` primary + `(folderId, relativePath)`
+  composite-key fallback, chunked-batch import wrapper (CHUNK 100),
+  `lastScannedAt` update on each scanned folder. All 10 smoke
+  test checks pass.
+- **Commit 3 (`12c01ab`)** — `NewTracksBanner` UI +
+  `ReviewTracksModal` + `importProgress` state with per-file
+  granularity + state-aware `LibraryEmptyState` copy. Banner
+  styling polished to discrete card (background 0.04 → 0.05,
+  border 0.10 → 0.14, padding 14 → 16px) after visual review.
+  20 of 22 smoke test checks pass; 2 unverified due to <1 s
+  import duration on small libraries (progress label + bar
+  visible mid-import — code correctness confirmed via per-file
+  [IMPORT-ITER] telemetry).
+- **Commit 4 (`604ec7d`)** — Auto-scan triggers: mount-time
+  (one-shot via `mountScanStartedRef`, deferred via
+  `setTimeout(0)`), post-grant (scope:'subset' via
+  `runLibraryScan({ folderIds: [newId] })`), manual
+  "Check for new music" sidebar button with `Scanning…`
+  disabled state. All 11 functional smoke test checks pass.
+  Production verified live at `main-BH38w-qF.js` on
+  `https://collabmix.vercel.app/`.
+
+### Phase 2 status at session end
+
+- 4 of 5 commits shipped to production
+- Feature is **FUNCTIONALLY COMPLETE** on production after the
+  Commit 4 Vercel deploy
+- Mount-time auto-scan, post-grant auto-scan (scoped to the
+  newly-added folder), and manual rescan all work end-to-end
+- Banner appears with new tracks count, Review modal selection
+  flow works, dedup prevents duplicate imports
+- Per-file import progress display works (verified via the
+  408-track ~/Music import which fired auto-banner immediately
+  after grant)
+
+### Remaining work (Commit 5)
+
+- Final copy polish pass — any rough strings, missing periods,
+  inconsistent sentence case
+- Comprehensive bundle byte audit (Phase-1-redesign lesson:
+  verify replaced strings sit at 0 occurrences, not just that
+  new strings are present)
+- End-to-end Vercel production verification via Claude Desktop
+  on `https://collabmix.vercel.app/`
+- Update VISION_5.md with final "Phase 2 — SHIPPED" summary
+  section
+- Estimated 30-45 min in a fresh session
+
+### Notable moments this session
+
+- Recovered May 24 deep research on library design and stored
+  outstanding items in VISION_5.md before starting work — pre-
+  reading paid off (Bug 1 "computer must never crash" memory
+  framing already addressed by the May 25 streaming-analyzer
+  commits; cleared as a non-blocker for Phase 2)
+- Caught the path-shape contract issue in Commit 1 review (bare
+  filename vs full identity tuple) — pivoted from `path` string
+  to `{folderId, folderName, relativePath}` shape before locking
+  in. Set up clean composite-key dedup in Commit 2.
+- Banner styling flagged as too subtle in Commit 3 visual
+  verification — refined to discrete card (one opacity tier lift
+  on background + border) before commit
+- Post-grant auto-scan on `~/Music` (408 tracks) confirmed the
+  real-world Phase 2 user journey works: connect → instant scan
+  → banner with track count → Import them path
+- `runLibraryScanRef` forward-ref pattern used to break a TDZ
+  cycle between `addWatchedFolder` (declared early in
+  `useLibrary` body) and `runLibraryScan` (declared later) —
+  worth remembering as a clean pattern for cross-callback
+  triggers inside the same hook
+
+### Anticipated Phase 3+ work (per May 24 research)
+
+- AcoustID + MusicBrainz integration for auto-fixing broken
+  metadata
+- Audio fingerprint duplicate detection (currently dedup is
+  artist+title normalized equality + folder-path fallback)
+- Multi-paradigm library organization — Collections + Smart
+  Collections + Tags + Folders + Sets
+- "What's next?" AI-suggested track panel during mixing
+- Rekordbox / Serato / Traktor / Engine DJ import paths
+- Rekordbox-compatible USB export
+
+### Commit chain reference
+
+```
+cbc9e3b  Phase 2 Commit 1 — Recursive folder scanner + audio file filter
+acdeccb  Phase 2 Commit 2 — useLibrary scan integration + dedup + new tracks state
+12c01ab  Phase 2 Commit 3 — NewTracksBanner UI + ReviewTracksModal + progress display
+604ec7d  Phase 2 Commit 4 — Auto-scan triggers (mount, post-grant, manual)
+```
+
+### Don't-touch list (carried into Commit 5)
+
+- Manual import paths (drag-drop + "+ Add music" + showOpenFile
+  Picker) — verified non-regressed across all four commits
+- Existing 136 tracks in IDB — never backfilled with folderId /
+  sourcePath / hash fields per P1-Q1
+- Memory pipeline (`processQ` streaming analyzer, `fileMap` LRU
+  cap, AudioContext recycle every 50) — untouched since May 25
+- Worktrees `../collabmix-booth` and `../collabmix-decks` stay
+  REFERENCE ONLY
 
 
