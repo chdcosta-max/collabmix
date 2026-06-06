@@ -3862,7 +3862,7 @@ function snapToTransient(buf, targetSec) {
   return { position: peakIdx / sr, snapped: true, peakAbs, meanAbs, ratio };
 }
 
-function Deck({ id, ch, ctx:ac, color, local, remote, onChange, midi:mt, bpmResult, bpmAnalyze, eqHi=0, eqMid=0, eqLo=0, chanVol=1, loadFromLibrary=null, onTrackInfo=null, onSync=null, syncReady=true, syncRole=null, isMaster=false, onMasterToggle=null, onLibraryTrackDrop=null, onProgUpdate=null, onWaveform=null, onSeekReady=null, remoteSeek=null, onToggleReady=null, onCueReady=null, remoteToggle=null, remoteCue=null, onTransportFire=null, isDriver=true, onNudgeReady=null, acNowRef=null, onBufferReady=null, barOneOffsetSec=0, onGridEdit=null }) {
+function Deck({ id, ch, ctx:ac, color, local, remote, onChange, midi:mt, bpmResult, bpmAnalyze, eqHi=0, eqMid=0, eqLo=0, chanVol=1, loadFromLibrary=null, onTrackInfo=null, onSync=null, syncReady=true, syncRole=null, isMaster=false, onMasterToggle=null, onLibraryTrackDrop=null, onProgUpdate=null, onWaveform=null, onSeekReady=null, remoteSeek=null, onToggleReady=null, onCueReady=null, remoteToggle=null, remoteCue=null, onTransportFire=null, isDriver=true, onNudgeReady=null, acNowRef=null, onBufferReady=null, barOneOffsetSec=0, onGridEdit=null, hasOverride=false }) {
   const [buf,setBuf]=useState(null),[name,setName]=useState(null),[play,setPlay]=useState(false);
   const [prog,setProg]=useState(0),[dur,setDur]=useState(0);
   const progRef=useRef(0); // mirror of prog for parent AnimatedZoomedWF without 60fps setState
@@ -3878,6 +3878,8 @@ function Deck({ id, ch, ctx:ac, color, local, remote, onChange, midi:mt, bpmResu
   const [loopActive,setLoopActive]=useState(false);
   const [loopStart,setLoopStart]=useState(null);
   const [loopEnd,setLoopEnd]=useState(null);
+  // Phase 3 Commit 1 — Beat Grid panel open/close state, per-deck.
+  const [gridPanelOpen,setGridPanelOpen]=useState(false);
   const loopRef=useRef({active:false,start:null,end:null});
   const src=useRef(null),st=useRef(0),off=useRef(0),raf=useRef(null),fr=useRef(null);
   // Pending nudge bookkeeping (see nudgeRate below).
@@ -3909,6 +3911,15 @@ function Deck({ id, ch, ctx:ac, color, local, remote, onChange, midi:mt, bpmResu
   // EQ is now passed as props: eqHi, eqMid, eqLo, chanVol
   const remProgRef=useRef(0),remTimeRef=useRef(0),remRateRef=useRef(0),remRaf=useRef(null);
   const lastProgBroadcastRef=useRef(0);
+
+  // Escape closes the Beat Grid panel when it is open. Scoped per-deck —
+  // each Deck attaches its own listener and only acts on its own state.
+  useEffect(()=>{
+    if(!gridPanelOpen)return;
+    const onKey=(e)=>{ if(e.key==="Escape")setGridPanelOpen(false); };
+    window.addEventListener("keydown",onKey);
+    return ()=>window.removeEventListener("keydown",onKey);
+  },[gridPanelOpen]);
 
   // Keep loop ref in sync with state
   useEffect(()=>{loopRef.current={active:loopActive,start:loopStart,end:loopEnd};},[loopActive,loopStart,loopEnd]);
@@ -4502,9 +4513,102 @@ function Deck({ id, ch, ctx:ac, color, local, remote, onChange, midi:mt, bpmResu
         <input ref={fr} type="file" accept="audio/*" style={{display:"none"}} onChange={e=>{ const f=e.target.files[0]; e.target.value=""; if(f) load(f); }}/>
       </div>
 
-      {/* ── OVERVIEW STRIP — full track structure ── */}
-      <div style={{borderTop:BD, borderBottom:BD, background:"#06070A"}}>
+      {/* ── OVERVIEW STRIP — full track structure ──
+           Collapses to zero height when the Beat Grid panel below opens,
+           freeing vertical space for the panel without growing the deck card.
+           The big zoomed waveform above the deck row remains the primary
+           grid-editing visual, so losing the small overview during editing
+           is acceptable. */}
+      <div style={{borderTop:BD, borderBottom: gridPanelOpen ? "none" : BD, background:"#06070A",
+                   maxHeight: gridPanelOpen ? 0 : 42, overflow: "hidden",
+                   transition: "max-height 200ms cubic-bezier(0.4, 0, 0.2, 1), border-bottom 200ms cubic-bezier(0.4, 0, 0.2, 1)"}}>
         <WF bands={wfBass?{bass:wfBass,mid:wfMid,high:wfHigh}:null} peaks={wfPeaks} freq={wfFreq} prog={prog} onSeek={local?seek:remoteSeek} h={40} hotCues={hotCues} loopStart={loopStart} loopEnd={loopEnd} loopActive={loopActive} bpm={bpmResult?.bpm?(bpmResult.bpm*rate):null} dur={dur} beatPhaseFrac={bpmResult?.beatPhaseFrac??null} color={color}/>
+      </div>
+
+      {/* ── BEAT GRID PANEL (Phase 3, Commit 1 — scaffolding) ──
+           Slides down into the space the overview strip vacates. Contains the
+           migrated Set-Beat-1 control (the same red/white vertical bar that
+           used to live in the transport row). Future commits will add ±10 ms
+           anchor nudge (Commit 2), BPM override stepper (Commit 3), and
+           Auto/Manual badges + Reset (Commit 4). */}
+      <div style={{borderBottom: gridPanelOpen ? BD : "none", background: "#15171A",
+                   maxHeight: gridPanelOpen ? 42 : 0, overflow: "hidden",
+                   transition: "max-height 200ms cubic-bezier(0.4, 0, 0.2, 1), border-bottom 200ms cubic-bezier(0.4, 0, 0.2, 1)"}}>
+        <div style={{padding: "10px 14px", display: "flex", alignItems: "center", gap: 14, height: 42, boxSizing: "border-box"}}>
+          {/* Section label — same uppercase-9px Inter pattern used for other
+              meta labels in the deck card (BPM label at line 4499). */}
+          <span style={{fontSize: 9, color: "rgba(255,255,255,0.6)", letterSpacing: 2, fontFamily: "'Inter',sans-serif"}}>BEAT 1</span>
+          {/* Migrated Set-Beat-1 vertical bar — same two-tone red/white
+              styling as the original transport-row button. Click writes the
+              current playhead to gridAnchorSec via onGridEdit (unchanged
+              behavior). Bumped 4×18 → 6×22 for the panel context where it is
+              the primary action rather than a small chip in a busy row. */}
+          {(()=>{
+            const canEdit = !!buf && !!onGridEdit;
+            return (
+              <button
+                onClick={() => {
+                  if (!canEdit) return;
+                  if (!(dur > 0)) return;
+                  const playhead = (progRef.current ?? prog ?? 0) * dur;
+                  const clamped = Math.max(0, Math.min(dur, playhead));
+                  const result = snapToTransient(buf, clamped);
+                  console.log('[GRID-SNAP]', {
+                    deck: id,
+                    path: result.snapped ? "snapped" : "raw",
+                    raw: clamped.toFixed(4),
+                    position: result.position.toFixed(4),
+                    delta_ms: Math.round((result.position - clamped) * 1000),
+                    peakAbs: result.peakAbs?.toFixed(4),
+                    meanAbs: result.meanAbs?.toFixed(4),
+                    ratio: result.ratio?.toFixed(2),
+                    reason: result.reason,
+                  });
+                  onGridEdit({ gridAnchorSec: result.position });
+                }}
+                disabled={!canEdit}
+                title={canEdit ? "Set beat 1 at playhead" : "Load a track to edit the grid"}
+                style={{
+                  width: 6, height: 22, padding: 0,
+                  background: "transparent", border: "none", outline: "none",
+                  cursor: canEdit ? "pointer" : "default",
+                  opacity: canEdit ? 1 : 0.3,
+                  display: "flex", flexDirection: "column",
+                  flexShrink: 0, alignSelf: "center",
+                  transition: "opacity 150ms cubic-bezier(0.4, 0, 0.2, 1), filter 150ms cubic-bezier(0.4, 0, 0.2, 1)",
+                }}
+                onMouseEnter={(e) => {
+                  if (!canEdit) return;
+                  e.currentTarget.style.filter = "drop-shadow(0 0 4px rgba(255,59,48,0.7))";
+                }}
+                onMouseLeave={(e) => {
+                  e.currentTarget.style.filter = "none";
+                }}>
+                <div style={{ flex: 1, background: "rgba(255,255,255,0.9)", cursor: "inherit" }}/>
+                <div style={{ flex: 5.5, background: "#FF3B30", cursor: "inherit" }}/>
+              </button>
+            );
+          })()}
+          <span style={{fontSize: 11, color: "rgba(255,255,255,0.6)", fontFamily: "'Inter',sans-serif", letterSpacing: 0.2}}>
+            Set beat 1 at playhead
+          </span>
+          {/* Spacer */}
+          <div style={{flex: 1}}/>
+          {/* Close affordance — also accessible via Escape and via the Grid
+              transport button itself (which toggles). */}
+          <button onClick={() => setGridPanelOpen(false)}
+            title="Close grid panel"
+            style={{
+              background: "transparent", border: "none", color: "rgba(255,255,255,0.6)",
+              cursor: "pointer", fontSize: 16, lineHeight: 1, padding: "2px 4px",
+              fontFamily: "'Inter',sans-serif", outline: "none",
+              transition: "color 150ms cubic-bezier(0.4, 0, 0.2, 1)",
+            }}
+            onMouseEnter={(e)=>{ e.currentTarget.style.color = "rgba(255,255,255,0.9)"; }}
+            onMouseLeave={(e)=>{ e.currentTarget.style.color = "rgba(255,255,255,0.6)"; }}>
+            ×
+          </button>
+        </div>
       </div>
 
       {/* ── A–D CUE CHIPS (inline) + COMPACT LOOP ROW ──
@@ -4569,68 +4673,37 @@ function Deck({ id, ch, ctx:ac, color, local, remote, onChange, midi:mt, bpmResu
           )}
       </div>
 
-      {/* ── TRANSPORT — Set-Beat-1 · Cue · Skip · Play · Skip · Sync · M.
+      {/* ── TRANSPORT — Grid · Cue · Skip · Play · Skip · Sync · M.
            Elapsed/Remain moved inline with the track title (v5) so this row
-           is now just transport actions, centered. ── */}
+           is now just transport actions, centered.
+           Phase 3 Commit 1: the standalone Set-Beat-1 vertical bar that
+           used to live at the leftmost position was migrated INTO the Beat
+           Grid panel (rendered above the cue chips row). The Grid button
+           here toggles that panel. ── */}
       <div style={{display:"flex", alignItems:"center", gap:8, padding:"8px 12px", borderBottom:BD, justifyContent:"center"}}>
-        {/* Set-Beat-1 marker — Rekordbox-style two-tone vertical bar (red top
-            half / white bottom half). Visual language pros recognise as "a
-            beat marker on the timeline". Click writes the current playhead
-            position to gridAnchorSec via onGridEdit; downstream merge in
-            effectiveBpmResults moves the beat grid immediately. Disabled
-            (opacity .3) when no track is loaded. */}
-        {(()=>{
-          const canEdit = !!buf && !!onGridEdit;
-          return (
-            <button
-              onClick={() => {
-                if (!canEdit) return;
-                if (!(dur > 0)) return;
-                const playhead = (progRef.current ?? prog ?? 0) * dur;
-                const clamped = Math.max(0, Math.min(dur, playhead));
-                const result = snapToTransient(buf, clamped);
-                console.log('[GRID-SNAP]', {
-                  deck: id,
-                  path: result.snapped ? "snapped" : "raw",
-                  raw: clamped.toFixed(4),
-                  position: result.position.toFixed(4),
-                  delta_ms: Math.round((result.position - clamped) * 1000),
-                  peakAbs: result.peakAbs?.toFixed(4),
-                  meanAbs: result.meanAbs?.toFixed(4),
-                  ratio: result.ratio?.toFixed(2),
-                  reason: result.reason,
-                });
-                onGridEdit({ gridAnchorSec: result.position });
-              }}
-              disabled={!canEdit}
-              title={canEdit ? "Set beat 1 at playhead" : "Load a track to edit the grid"}
-              style={{
-                width: 4, height: 18, padding: 0,
-                background: "transparent", border: "none", outline: "none",
-                cursor: canEdit ? "pointer" : "default",
-                opacity: canEdit ? 1 : 0.3,
-                display: "flex", flexDirection: "column",
-                flexShrink: 0, alignSelf: "center",
-                transition: "opacity 150ms cubic-bezier(0.4, 0, 0.2, 1), filter 150ms cubic-bezier(0.4, 0, 0.2, 1)",
-              }}
-              onMouseEnter={(e) => {
-                if (!canEdit) return;
-                e.currentTarget.style.filter = "drop-shadow(0 0 4px rgba(255,59,48,0.7))";
-              }}
-              onMouseLeave={(e) => {
-                e.currentTarget.style.filter = "none";
-              }}>
-              {/* White accent on top (~3 of 18 px), solid red below. The
-                  inner divs carry explicit cursor:inherit so the parent
-                  button's cursor:pointer applies no matter where in the
-                  4 × 18 area the cursor lands — needed because the icon is
-                  narrow and div elements don't always inherit cursor
-                  visibly under some Chrome render paths. */}
-              <div style={{ flex: 1, background: "rgba(255,255,255,0.9)", cursor: "inherit" }}/>
-              <div style={{ flex: 5.5, background: "#FF3B30", cursor: "inherit" }}/>
-            </button>
-          );
-        })()}
+        {/* Grid panel toggle. Carries a small white-at-0.9 dot when the
+            currently-loaded track has a user override (gridAnchorSec or
+            bpmOverride set), so users can see at a glance from the transport
+            row that this track is on manual values. The dot indicator is
+            scaffolded here in Commit 1; the inside-panel Auto/Manual badges
+            land in Commit 4. */}
+        <button onClick={() => setGridPanelOpen(o => !o)}
+          title={gridPanelOpen ? "Close grid panel" : "Open grid panel"}
+          style={{height:38, padding:"0 12px", minWidth: 56,
+            background: gridPanelOpen ? "rgba(255,255,255,0.10)" : "transparent",
+            border: `1px solid ${gridPanelOpen ? "rgba(255,255,255,0.30)" : "rgba(255,255,255,0.12)"}`,
+            color: gridPanelOpen ? "#F5F5F7" : (hasOverride ? "#F5F5F7" : "#9CA3AF"),
+            borderRadius:6,
+            fontFamily:"'Inter',sans-serif", fontSize:12, fontWeight:500, letterSpacing:.3,
+            cursor:"pointer", outline:"none", flexShrink:0,
+            transition:"all 150ms cubic-bezier(0.4, 0, 0.2, 1)",
+            display:"flex", alignItems:"center", gap:6, justifyContent:"center",
+          }}>
+          Grid
+          {hasOverride && (
+            <span style={{width:5, height:5, borderRadius:"50%", background:"rgba(255,255,255,0.9)", flexShrink:0}}/>
+          )}
+        </button>
         {/* CUE pill */}
         <button onClick={(e)=>{ if(local&&cue) cue(); else if(remoteCue) remoteCue(); }} disabled={!cueEnabled}
           style={{height:38, padding:"0 16px", minWidth:60,
@@ -7283,7 +7356,7 @@ export default function CollabMix({ initialPage = "landing", djName = null }) {
           <div style={{ flex:1, display:"flex", alignItems:"flex-start", gap:10, padding:"10px 0 10px 10px", overflow:"hidden", minHeight:0 }}>
             <DeckArt artwork={libLoadA?.track?.artwork} fallback="A" color="#2E86DE"/>
             <div style={{ flex:1, overflow:"hidden", minHeight:0 }}>
-            <Deck id="A" ch={eng.current?.A} ctx={eng.current?.ctx} color="#2E86DE" local remote={pA} onChange={dh("A")} midi={midiEvt} bpmResult={bpm.results["A"]} bpmAnalyze={bpm.analyze} eqHi={eqA.hi} eqMid={eqA.mid} eqLo={eqA.lo} chanVol={eqA.vol} loadFromLibrary={libLoadA} onTrackInfo={handleTrackInfo} onSync={()=>handleSyncToggle("A")} syncReady={!!(bpm.results["B"]?.bpm || pB?.bpm)} syncRole={syncLocked ? (lastSlaveDeck === "A" ? "slave" : "master") : null} isMaster={masterDeck === "A"} onMasterToggle={handleMasterToggle} onLibraryTrackDrop={(trackId)=>{const t=lib.library.find(x=>x.id===trackId);if(t)handleLibLoad(t,"A");}} onProgUpdate={handleProgA} onWaveform={setWfA} onSeekReady={onDeckASeekReady} onToggleReady={onDeckAToggleReady} onCueReady={onDeckACueReady} onNudgeReady={onDeckANudgeReady} onTransportFire={handleTransportFire} isDriver={!deckDrivers.A || deckDrivers.A === session.name} acNowRef={acNowRef} onBufferReady={onDeckABufferReady} barOneOffsetSec={barOneA * (bpm.results["A"]?.beatPeriodSec || 0)} onGridEdit={(fields) => libLoadA?.track?.id && lib.setGridEdit?.(libLoadA.track.id, fields)}/>
+            <Deck id="A" ch={eng.current?.A} ctx={eng.current?.ctx} color="#2E86DE" local remote={pA} onChange={dh("A")} midi={midiEvt} bpmResult={bpm.results["A"]} bpmAnalyze={bpm.analyze} eqHi={eqA.hi} eqMid={eqA.mid} eqLo={eqA.lo} chanVol={eqA.vol} loadFromLibrary={libLoadA} onTrackInfo={handleTrackInfo} onSync={()=>handleSyncToggle("A")} syncReady={!!(bpm.results["B"]?.bpm || pB?.bpm)} syncRole={syncLocked ? (lastSlaveDeck === "A" ? "slave" : "master") : null} isMaster={masterDeck === "A"} onMasterToggle={handleMasterToggle} onLibraryTrackDrop={(trackId)=>{const t=lib.library.find(x=>x.id===trackId);if(t)handleLibLoad(t,"A");}} onProgUpdate={handleProgA} onWaveform={setWfA} onSeekReady={onDeckASeekReady} onToggleReady={onDeckAToggleReady} onCueReady={onDeckACueReady} onNudgeReady={onDeckANudgeReady} onTransportFire={handleTransportFire} isDriver={!deckDrivers.A || deckDrivers.A === session.name} acNowRef={acNowRef} onBufferReady={onDeckABufferReady} barOneOffsetSec={barOneA * (bpm.results["A"]?.beatPeriodSec || 0)} onGridEdit={(fields) => libLoadA?.track?.id && lib.setGridEdit?.(libLoadA.track.id, fields)} hasOverride={!!userGridA}/>
             </div>
           </div>
         </div>
@@ -7385,7 +7458,7 @@ export default function CollabMix({ initialPage = "landing", djName = null }) {
           <div style={{ flex:1, display:"flex", alignItems:"flex-start", gap:10, padding:"10px 0 10px 10px", overflow:"hidden", minHeight:0 }}>
             <DeckArt artwork={libLoadB?.track?.artwork} fallback="B" color="#A855F7"/>
             <div style={{ flex:1, overflow:"hidden", minHeight:0 }}>
-            <Deck id="B" ch={eng.current?.B} ctx={eng.current?.ctx} color="#A855F7" local remote={pB} onChange={dh("B")} midi={midiEvt} bpmResult={bpm.results["B"]} bpmAnalyze={bpm.analyze} eqHi={eqB.hi} eqMid={eqB.mid} eqLo={eqB.lo} chanVol={eqB.vol} loadFromLibrary={libLoadB} onTrackInfo={handleTrackInfo} onSync={()=>handleSyncToggle("B")} syncReady={!!(bpm.results["A"]?.bpm || pA?.bpm)} syncRole={syncLocked ? (lastSlaveDeck === "B" ? "slave" : "master") : null} isMaster={masterDeck === "B"} onMasterToggle={handleMasterToggle} onLibraryTrackDrop={(trackId)=>{const t=lib.library.find(x=>x.id===trackId);if(t)handleLibLoad(t,"B");}} onProgUpdate={handleProgB} onWaveform={setWfB} onSeekReady={onDeckBSeekReady} onToggleReady={onDeckBToggleReady} onCueReady={onDeckBCueReady} onNudgeReady={onDeckBNudgeReady} onTransportFire={handleTransportFire} isDriver={!deckDrivers.B || deckDrivers.B === session.name} acNowRef={acNowRef} onBufferReady={onDeckBBufferReady} barOneOffsetSec={barOneB * (bpm.results["B"]?.beatPeriodSec || 0)} onGridEdit={(fields) => libLoadB?.track?.id && lib.setGridEdit?.(libLoadB.track.id, fields)}/>
+            <Deck id="B" ch={eng.current?.B} ctx={eng.current?.ctx} color="#A855F7" local remote={pB} onChange={dh("B")} midi={midiEvt} bpmResult={bpm.results["B"]} bpmAnalyze={bpm.analyze} eqHi={eqB.hi} eqMid={eqB.mid} eqLo={eqB.lo} chanVol={eqB.vol} loadFromLibrary={libLoadB} onTrackInfo={handleTrackInfo} onSync={()=>handleSyncToggle("B")} syncReady={!!(bpm.results["A"]?.bpm || pA?.bpm)} syncRole={syncLocked ? (lastSlaveDeck === "B" ? "slave" : "master") : null} isMaster={masterDeck === "B"} onMasterToggle={handleMasterToggle} onLibraryTrackDrop={(trackId)=>{const t=lib.library.find(x=>x.id===trackId);if(t)handleLibLoad(t,"B");}} onProgUpdate={handleProgB} onWaveform={setWfB} onSeekReady={onDeckBSeekReady} onToggleReady={onDeckBToggleReady} onCueReady={onDeckBCueReady} onNudgeReady={onDeckBNudgeReady} onTransportFire={handleTransportFire} isDriver={!deckDrivers.B || deckDrivers.B === session.name} acNowRef={acNowRef} onBufferReady={onDeckBBufferReady} barOneOffsetSec={barOneB * (bpm.results["B"]?.beatPeriodSec || 0)} onGridEdit={(fields) => libLoadB?.track?.id && lib.setGridEdit?.(libLoadB.track.id, fields)} hasOverride={!!userGridB}/>
             </div>
           </div>
         </div>
