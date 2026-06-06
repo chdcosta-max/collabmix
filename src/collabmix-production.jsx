@@ -4525,19 +4525,21 @@ function Deck({ id, ch, ctx:ac, color, local, remote, onChange, midi:mt, bpmResu
         <WF bands={wfBass?{bass:wfBass,mid:wfMid,high:wfHigh}:null} peaks={wfPeaks} freq={wfFreq} prog={prog} onSeek={local?seek:remoteSeek} h={40} hotCues={hotCues} loopStart={loopStart} loopEnd={loopEnd} loopActive={loopActive} bpm={bpmResult?.bpm?(bpmResult.bpm*rate):null} dur={dur} beatPhaseFrac={bpmResult?.beatPhaseFrac??null} color={color}/>
       </div>
 
-      {/* ── BEAT GRID PANEL (Phase 3, Commit 1 — scaffolding) ──
-           Slides down into the space the overview strip vacates. Contains the
-           migrated Set-Beat-1 control (the same red/white vertical bar that
-           used to live in the transport row). Future commits will add ±10 ms
-           anchor nudge (Commit 2), BPM override stepper (Commit 3), and
+      {/* ── BEAT GRID PANEL (Phase 3, Commits 1+2) ──
+           Slides down into the space the overview strip + cue chips row
+           vacate. Two rows:
+             Row 1 (BEAT 1) — migrated Set-Beat-1 control + close ×.
+             Row 2 (ANCHOR) — ±10 ms nudge stepper (Commit 2).
+           Future commits will add BPM override stepper (Commit 3) and
            Auto/Manual badges + Reset (Commit 4). */}
       <div style={{borderBottom: gridPanelOpen ? BD : "none", background: "#15171A",
-                   maxHeight: gridPanelOpen ? 42 : 0, overflow: "hidden",
+                   maxHeight: gridPanelOpen ? 84 : 0, overflow: "hidden",
                    transition: "max-height 200ms cubic-bezier(0.4, 0, 0.2, 1), border-bottom 200ms cubic-bezier(0.4, 0, 0.2, 1)"}}>
-        <div style={{padding: "10px 14px", display: "flex", alignItems: "center", gap: 14, height: 42, boxSizing: "border-box"}}>
+        {/* Row 1 — BEAT 1 */}
+        <div style={{padding: "10px 14px 8px", display: "flex", alignItems: "center", gap: 14, height: 42, boxSizing: "border-box"}}>
           {/* Section label — same uppercase-9px Inter pattern used for other
               meta labels in the deck card (BPM label at line 4499). */}
-          <span style={{fontSize: 9, color: "rgba(255,255,255,0.6)", letterSpacing: 2, fontFamily: "'Inter',sans-serif"}}>BEAT 1</span>
+          <span style={{fontSize: 9, color: "rgba(255,255,255,0.6)", letterSpacing: 2, fontFamily: "'Inter',sans-serif", minWidth: 46}}>BEAT 1</span>
           {/* Migrated Set-Beat-1 vertical bar — same two-tone red/white
               styling as the original transport-row button. Click writes the
               current playhead to gridAnchorSec via onGridEdit (unchanged
@@ -4609,11 +4611,74 @@ function Deck({ id, ch, ctx:ac, color, local, remote, onChange, midi:mt, bpmResu
             ×
           </button>
         </div>
+        {/* Row 2 — ANCHOR nudge (Phase 3, Commit 2).
+            Reads the current effective anchor from bpmResult.firstBar1AnchorSec
+            (which the parent already merges with any prior user override via
+            effectiveBpmResults). Writes a new gridAnchorSec via onGridEdit. The
+            override survives re-analysis by construction — setGridEdit's
+            gridEditedAt stamp + the parent's _buildUserGrid override layer
+            ensure the analyzer can never clobber it. */}
+        {(()=>{
+          const trackId = loadFromLibrary?.track?.id;
+          const effAnchor = bpmResult?.firstBar1AnchorSec;
+          const canNudge = !!buf && !!onGridEdit && !!trackId && effAnchor != null && dur > 0;
+          const nudge = (offsetSec) => {
+            if (!canNudge) return;
+            const newAnchor = Math.max(0, Math.min(dur, effAnchor + offsetSec));
+            const offsetMs = Math.round(offsetSec * 1000);
+            console.log('[GRID-NUDGE]', { deck: id, trackId, offsetMs,
+              prevAnchor: effAnchor.toFixed(4), newAnchor: newAnchor.toFixed(4),
+              fromOverride: hasOverride });
+            onGridEdit({ gridAnchorSec: newAnchor });
+            logEvent("grid", "anchor_nudge", {
+              deck: id, trackId,
+              offsetMs,
+              prevAnchorSec: Number(effAnchor.toFixed(4)),
+              newAnchorSec: Number(newAnchor.toFixed(4)),
+              fromOverride: hasOverride,
+            });
+          };
+          const nudgeBtn = (label, offsetSec, tip) => (
+            <button onClick={() => nudge(offsetSec)} disabled={!canNudge} title={tip}
+              style={{
+                height: 26, padding: "0 12px", minWidth: 64,
+                background: "transparent",
+                border: `1px solid ${canNudge ? "rgba(255,255,255,0.20)" : "rgba(255,255,255,0.06)"}`,
+                color: canNudge ? "rgba(255,255,255,0.85)" : "rgba(255,255,255,0.30)",
+                borderRadius: 5,
+                fontFamily: "'Inter',sans-serif", fontSize: 11, fontWeight: 500, letterSpacing: 0.2,
+                cursor: canNudge ? "pointer" : "default", outline: "none", flexShrink: 0,
+                transition: "all 150ms cubic-bezier(0.4, 0, 0.2, 1)",
+                fontVariantNumeric: "tabular-nums",
+                display: "flex", alignItems: "center", justifyContent: "center",
+              }}>
+              {label}
+            </button>
+          );
+          return (
+            <div style={{padding: "0 14px 10px", display: "flex", alignItems: "center", gap: 8, height: 42, boxSizing: "border-box"}}>
+              <span style={{fontSize: 9, color: "rgba(255,255,255,0.6)", letterSpacing: 2, fontFamily: "'Inter',sans-serif", minWidth: 46}}>ANCHOR</span>
+              {nudgeBtn("− 10 ms", -0.010, canNudge ? "Nudge anchor 10 ms earlier" : "Load a track with an analyzed grid to nudge")}
+              {nudgeBtn("+ 10 ms", +0.010, canNudge ? "Nudge anchor 10 ms later" : "Load a track with an analyzed grid to nudge")}
+            </div>
+          );
+        })()}
       </div>
 
       {/* ── A–D CUE CHIPS (inline) + COMPACT LOOP ROW ──
            Per design brief: 4 cue chips below transport, NOT a side column.
            Each chip: small color dot · cue letter · timestamp (or em-dash).
+           Phase 3 Commit 2: row collapses to zero height when the Beat Grid
+           panel above is open, freeing vertical room for the second-row
+           anchor nudge stepper without changing the deck card total height.
+           Cue/loop interactions while editing the grid are out of mental
+           scope — different mental modes, fine to hide one while the other
+           is in use. ──
+           Outer collapse wrapper:
+        */}
+      <div style={{maxHeight: gridPanelOpen ? 0 : 60, overflow: "hidden",
+                   transition: "max-height 200ms cubic-bezier(0.4, 0, 0.2, 1)"}}>
+      {/* Original styling preserved inside the collapse wrapper:
            Click to recall (or set if unset). Right-click to clear. */}
       <div style={{display:"flex",gap:5,padding:"6px 12px",background:"rgba(255,255,255,0.02)",borderBottom:BD,alignItems:"center"}}>
           {HOT_CUE_COLORS.slice(0,4).map((c,i)=>{
@@ -4671,6 +4736,7 @@ function Deck({ id, ch, ctx:ac, color, local, remote, onChange, midi:mt, bpmResu
               ✕
             </button>
           )}
+      </div>
       </div>
 
       {/* ── TRANSPORT — Grid · Cue · Skip · Play · Skip · Sync · M.
