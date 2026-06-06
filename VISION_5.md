@@ -1,22 +1,9 @@
 > # ⚠ NEXT SESSION STARTS HERE ⚠
 >
-> **Phase 2 SHIPPED on May 30 night — all 5 commits complete.**
-> Library auto-import scanner is feature-complete: recursive
-> scan, dedup, per-file progress, NewTracksBanner +
-> ReviewTracksModal, auto-scan on mount + post-grant + manual
-> "Check for new music" sidebar trigger. Commit 5 polished copy
-> (verb consistency + tightened footer), audited the production
-> bundle (all retired strings at 0 occurrences), and closed out
-> the phase.
->
-> **Pending: user-driven E2E verification on
-> `https://collabmix.vercel.app/` via Claude Desktop after the
-> Vercel auto-deploy completes.** See "Session end — May 30
-> night — Phase 2 Commit 5 SHIPPED" at the bottom of this file
-> for the 6-step verification checklist. Phase 3 candidates
-> (AcoustID, fingerprint dedup, multi-paradigm organization,
-> Rekordbox import/export, "What's next?" suggestions) listed in
-> the prior "May 30 evening" session-end section.
+> **Phase 3 Beat Grid Panel — DESIGN PIVOT PENDING. Tomorrow's
+> first action: revert bf2198a + b38c539, then build tab-based
+> design per Session end section below. 6 assumptions awaiting
+> approval before Commit A.**
 
 ---
 
@@ -5186,5 +5173,138 @@ re-analyze actions will use the corrected logic.
   recycle)
 
 
+## Session end — June 6, 2026 — Phase 3 Beat Grid Panel design pivot
 
+Tonight built two commits of a slide-down Beat Grid panel
+(scaffolding + Set-Beat-1 migration, then anchor nudge ±10 ms
+stepper + telemetry). Both pushed to master and verified working
+end-to-end via Claude Desktop. Then user shared Rekordbox
+screenshots showing the actual pro-DJ pattern for the same
+problem and we caught that the slide-down panel approach was
+the wrong design. Plan: revert both commits next session and
+rebuild as a tab-based design.
+
+### PUSHED COMMITS TO REVERT TOMORROW
+
+- **`bf2198a`** — Phase 3 Beat Grid Panel Commit 1 (scaffolding
+  + Set-Beat-1 migration)
+- **`b38c539`** — Phase 3 Beat Grid Panel Commit 2 (anchor
+  nudge ±10 ms stepper + telemetry)
+
+### REVERT COMMAND PLANNED (single combined revert, no force push)
+
+```
+git revert --no-commit b38c539 bf2198a
+git commit -m "Revert Phase 3 Beat Grid Panel (Commits 1 + 2) — pivoting to vertical tab design"
+git push origin master
+```
+
+After this, master is functionally back to `c174fd3` state.
+Reverted commits stay in history for porting the nudge math /
+telemetry payload / indicator dot logic.
+
+### DESIGN PIVOT REASON
+
+Rekordbox uses vertical tabs on the left side of each deck
+(user shared screenshots tonight, tooltip "Displays BPM/Grid
+adjustment buttons and Auto Gain adjustment knob"). Click a
+tab → lower control zone content swaps. Waveform / transport /
+mixer all stay unchanged. The slide-down panel approach in
+Commits 1+2 grew the deck card and stole vertical space —
+wrong pattern.
+
+### NEW DESIGN APPROVED
+
+- Vertical tab strip inside each deck card, leftmost edge,
+  ~24px wide
+- Tab strip spans full deck card height below title row
+  (~210px)
+- Two tabs initially: CUES (default, existing chips behavior)
+  and GRID (new content)
+- Vertical-rotated text labels (Inter 9px, letter-spacing 2)
+- Active tab: rgba(255,255,255,0.06) bg, 0.9 text, thin 0.30
+  left accent border
+- Inactive tab: transparent bg, 0.6 text, 0.9 on hover
+- 150ms cubic-bezier transitions
+- Per-deck state inside each Deck component (`activeTab:
+  "cues" | "grid"`, default `cues`)
+- Grid tab content can grow taller than Cues — parent grid
+  bumps 248px → 290px when any deck has Grid tab active,
+  200ms cubic-bezier transition. Library absorbs ~42px loss.
+- Set-Beat-1 lives INSIDE Grid tab (removed from transport
+  row — single source of truth)
+- Indicator dot moves to GRID tab label when track has any
+  override
+
+### GRID TAB CONTENT (~80px, two rows)
+
+Row 1 (BEAT 1 + ANCHOR): Set-Beat-1 button · ANCHOR label ·
+−10 ms · +10 ms · Auto/Manual badge for anchor
+
+Row 2 (BPM + RESET): BPM label · −1 button · 122.7 display
+(Inter 14px, tabular-nums, `.toFixed(1)`) · +1 button ·
+Auto/Manual badge for BPM · Reset text button
+
+BPM stepper behavior: first click writes
+`round(currentEffectiveBpm) ± 1` to `bpmOverride`. Snaps to
+integer on first click, then steps by 1.
+
+### TELEMETRY EVENTS
+
+- `[GRID-SNAP]` for Set-Beat-1
+- `[GRID-NUDGE]` + `logEvent('grid', 'anchor_nudge', ...)` for
+  nudges
+- `[GRID-BPM-OVERRIDE]` + `logEvent('grid', 'bpm_override_set',
+  ...)` for BPM
+- `[GRID-RESET]` + `logEvent('grid', 'override_cleared', ...)`
+  for reset
+
+### CORRECT LOGIC TO PORT FROM REVERTED COMMITS
+
+- Anchor nudge math (reads `bpmResult.firstBar1AnchorSec`,
+  writes clamped `gridAnchorSec`, compounds correctly)
+- Telemetry payload shape
+- Indicator dot logic (`hasOverride` from parent's
+  `_buildUserGrid`)
+- Set-Beat-1 `snapToTransient` behavior
+
+All correct — just need new host UI.
+
+### 6 ASSUMPTIONS AWAITING APPROVAL TOMORROW
+
+1. Single combined revert commit (not two separate, not force
+   push) — Claude recommends, awaiting confirmation
+2. Tab strip vertical extent: full deck card height below title
+   row (~210px), not scoped only to cue chips footprint
+3. Vertical-rotated CUES / GRID text labels (not icons, not
+   two-letter)
+4. Transport-row Set-Beat-1 stays REMOVED after revert — Grid
+   tab is single source of truth
+5. Indicator dot moves from transport-row Grid button onto GRID
+   tab label
+6. Parent grid height transitions 248 → 290 when any deck has
+   Grid tab active, library absorbs loss
+
+### REVISED COMMIT SLICING
+
+- **Tomorrow Commit A** — Single combined revert
+- **Tomorrow Commit B** — Build new tab system + Grid tab
+  content (heaviest commit — tab strip + Grid tab +
+  Set-Beat-1 migration + nudge + BPM + reset + indicators all
+  together; no good split point)
+- **Tomorrow Commit C** — Polish + Vercel verification +
+  Phase 3 SHIPPED handoff (also lands the polish items:
+  rename `prevAnchor`→`prevAnchorSec`, styled tooltips
+  replacing native `title`)
+
+Total estimate: 5-8 hours tomorrow.
+
+### Don't-touch list (unchanged from prior section)
+
+- `src/bpm-worker-source.js` — analyzer DSP
+- `tools/bpm-test-harness/`, `tools/sota-eval/`,
+  `tools/rekordbox-eval/`
+- Worktrees `../collabmix-booth`, `../collabmix-decks`
+- Memory pipeline (`processQ`, `fileMap` LRU, AudioContext
+  recycle)
 
