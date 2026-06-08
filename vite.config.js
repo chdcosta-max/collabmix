@@ -17,6 +17,17 @@ export default defineConfig({
       release: { name: process.env.VERCEL_GIT_COMMIT_SHA || "dev" },
     })] : []),
   ],
+  // Surfaces the deploy SHA into client code as
+  // import.meta.env.VITE_SENTRY_RELEASE. Vite only exposes VITE_-prefixed
+  // env vars to the client bundle, but Vercel's VERCEL_GIT_COMMIT_SHA
+  // lacks the prefix — so without this define block the client-side read
+  // falls through to "dev" even though the Sentry plugin above gets the
+  // real SHA. Same source value, two consumers, one truth.
+  define: {
+    'import.meta.env.VITE_SENTRY_RELEASE': JSON.stringify(
+      process.env.VERCEL_GIT_COMMIT_SHA || 'dev'
+    ),
+  },
   build: {
     sourcemap: true,
     rollupOptions: {
