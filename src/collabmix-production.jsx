@@ -5591,7 +5591,17 @@ function ShareButton({ room, mixName }) {
 // ── Session Lobby (after clicking Launch) ────────────────────
 function Lobby({ onJoin, djName = null }) {
   const [room] = useState(() => getOrCreateRoomId());
-  const [name, setName] = useState(djName || "DJ " + ["Apex","Nova","Flux","Orbit","Prism","Echo"][Math.floor(Math.random()*6)]);
+  // Default name combines a word from a small pool with a 4-char hex
+  // suffix. The pool alone collided at ~16.7% per pair (e.g. tonight's
+  // Jake/Chad both rolled "DJ Nova"). 6-pool × 65,536 suffix lowers that
+  // to ~1 in 400k — effectively zero for any realistic session size. The
+  // suffix is visible in the Lobby input so users can either keep it,
+  // overwrite it, or simply edit the word part.
+  const [name, setName] = useState(djName || (() => {
+    const word = ["Apex","Nova","Flux","Orbit","Prism","Echo"][Math.floor(Math.random()*6)];
+    const suffix = Math.floor(Math.random() * 0x10000).toString(16).padStart(4, "0");
+    return `DJ ${word} ${suffix}`;
+  })());
   const [mixName, setMixName] = useState(() => {
     const params = new URLSearchParams(window.location.search);
     return params.get("mix") || "";
