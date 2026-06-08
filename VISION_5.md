@@ -5308,3 +5308,209 @@ Total estimate: 5-8 hours tomorrow.
 - Memory pipeline (`processQ`, `fileMap` LRU, AudioContext
   recycle)
 
+
+## Session end — June 7 night — Jake dogfood failure + Bug #1 (room/peer) FIXED + Layer 1 telemetry SHIPPED
+
+Tonight ran the first real B2B dogfood with Jake. Shipped
+Layer 1 telemetry capture in advance so the session would
+generate inspectable artifacts instead of relying on memory.
+The dogfood itself failed on the room/peer layer — Jake and
+Chad never connected — but the failure was diagnosed cleanly
+from Jake's downloaded session log, the bug was fully fixed
+in five commits, and the production smoke test now passes
+8/8. Tonight's production release SHA is `665e7e4`.
+
+### Dogfood attempt (failed but valuable)
+
+First B2B session with Jake attempted ~9pm. Both users loaded
+the bare `https://collabmix.vercel.app/` URL. Symptoms:
+- Both users got the default name "DJ Nova" (random collision
+  from a 6-element pool).
+- Each user landed in their OWN randomly-generated room.
+- Zero `[RTC]` events in Jake's downloaded session JSON — his
+  client never even attempted to peer.
+- Jake's app worked SOLO (tracks loaded, BPM analyzed, decks
+  played) but they were never in the same room.
+
+The session ended without any B2B mixing actually happening.
+Salvaged via post-session async feedback from Jake — bugs
+were enumerated, root-caused, and the most critical one
+(room/peer) was fixed and verified on production tonight.
+
+### Layer 1 telemetry SHIPPED (5 commits)
+
+Built earlier in the evening so the dogfood would produce
+inspectable artifacts. Without this, "Jake's app never tried
+to peer" would have been a guess; with it, it was an
+evidence-based finding from the JSON Jake downloaded.
+
+- **`f491d45`** — Add `src/utils/sessionLog.js` module
+  (`initSession`, `pushEvent`, `mergeSessionMeta`,
+  `downloadSessionLog`). 5000-event cap, oldest dropped on
+  overflow. Exposes `window.__sessionLog` for console
+  inspection.
+- **`b8417c0`** — Mirror `logEvent` / `setSessionContext` /
+  `captureHandledError` into sessionLog from
+  `src/utils/telemetry.js`. **Architectural key:** `logEvent`
+  is already the chokepoint for every existing telemetry
+  category (ws, rtc, deck, grid, sync, session, error).
+  Mirroring there auto-captures every existing event without
+  touching dozens of call sites.
+- **`224ca72`** — Wire `main.jsx`: `initSession()` at boot,
+  global `window.error` + `unhandledrejection` listeners,
+  initial keyboard shortcut wiring.
+- **`6fc2ecd`** — Add two missing `logEvent` call sites in
+  `collabmix-production.jsx`: `logEvent("grid","snap",...)`
+  alongside the existing `[GRID-SNAP]` console.log at
+  Set-Beat-1, and `logEvent("deck","cue",...)` in the CUE
+  handler. Symmetric payload to GRID-NUDGE: `{deck, trackId,
+  prevAnchorSec, newAnchorSec, source: "snap_to_transient"}`.
+- **`87b10d0`** — Keybinding hardening. Initial Cmd+Shift+L
+  binding never fired in Chrome (likely captured by 1Password
+  or similar before the page saw keydown). Switched to
+  Cmd+Option+L (Ctrl+Alt+L on Win/Linux), used `e.code ===
+  "KeyL"` (layout-independent), strict exact-match modifiers,
+  `{capture: true}` registration, and a one-time init log
+  `"[sessionLog] download shortcut: ..."` so any future
+  smoke test can verify the listener mounted.
+
+End-to-end smoke verified by Claude Desktop on both localhost
+and production. JSON file lands on disk with valid `meta` +
+`events` shape and event count matching
+`window.__sessionLog.count()`.
+
+### Layer 1 deferred items
+
+- **`meta.release` reads `"dev"` not the git SHA** on
+  production. `VITE_SENTRY_RELEASE` env var is not being
+  injected into Vercel's build pipeline. Tonight's deploy
+  SHA was manually noted as `665e7e4` for any post-session
+  JSON review. Fix this week (Vercel project env settings).
+- **Code hygiene** noted by Claude Desktop: the keyboard
+  shortcut calls the private `downloadSessionLog` import
+  directly rather than `window.__sessionLog.download()`.
+  Functional today, refactor later for single-source-of-
+  truth symmetry.
+- **Possible duplicate `session.room_joined` events on
+  mount** in dev (likely React StrictMode double-mount —
+  StrictMode typically doesn't run in prod builds, so this
+  may be dev-only; verify when reviewing prod JSON).
+
+### Bug #1 (room/peer) — FIXED in 5 commits
+
+Five sub-causes were identified and addressed in one
+focused commit chain:
+
+| Sub-cause | What broke | Commit |
+|---|---|---|
+| A | Random default name from 6-element pool → 16.7% collision per pair | (covered by 2) |
+| B | **No "enter room code" UI anywhere** — base URL always generates a new room, no path to join an existing one without the full invite URL | (covered by 1) |
+| C | Sticky `cm_session` localStorage silently overrode invite link with prior room | (covered by 3) |
+| D | Auto-rejoin Path 1 stripped `?room=` from URL via `replaceState`, then RTC role tiebreaker re-read the now-empty URL and declared both peers initiator (latent SDP glare) | (covered by 4) |
+| E | Existing `ShareButton` in session header was 7px font / 7% gray opacity — invisible at the moment users needed it, and room code was never displayed for verbal sharing | (covered by 5) |
+
+- **`5bae11e`** — Lobby: "JOIN BY MIX CODE" input below
+  the primary join button (only in START A MIX mode).
+  Accepts free-form room code, trims + lowercases, calls
+  the same `onJoin` path with the typed room. Fixes the
+  receiver side of the discoverability gap.
+- **`b87b551`** — Default DJ name: append 4-char hex
+  suffix (e.g. "DJ Nova 7c2a"). 6-pool × 65,536 suffix →
+  ~1-in-393k collision rate. Visible in the input so users
+  can edit or delete the suffix freely.
+- **`b107b07`** — Auto-rejoin: URL `?room=` now wins over
+  `cm_session`. New Path 1b: if URL has `?room=` but no
+  `?name=`, skip the localStorage path entirely. The Lobby
+  is already rendered (main.jsx routes initialPage="lobby"
+  when `?room=` is present) and the user confirms via one
+  click. Path 2 only runs when there are no URL params.
+- **`728c5a9`** — RTC role tiebreaker: capture initial
+  isHost in `initialIsHostRef` (useRef lazy-init, runs
+  before any useEffect can strip the URL) and read that
+  ref instead of re-checking `window.location.search`.
+  Also replaces two other duplicate URL re-reads (`join`,
+  setSessionContext effect).
+- **`665e7e4`** — Session header: enhance existing
+  ShareButton (label "Invite partner" / "Link copied", 10px
+  Inter weight 500, slightly more visible bg, 150ms
+  transitions) AND add a `tabular-nums` room code display
+  between DJ name and Invite button. Header reading order
+  now: `[DJ name] [room code] [Invite partner] [Leave]`.
+
+Production smoke test (8/8 PASS via Claude Desktop on
+Vercel + Railway infrastructure, two Chrome profiles):
+unique names, JOIN BY MIX CODE, same-room peering, RTC
+bidirectional, invite link path, sticky session resilient,
+audio sharing both ways, sync engages and beatmatches
+across peers. Phase 2 library features + Layer 1 telemetry
+intact.
+
+### Jake feedback captured (separate items)
+
+- **Bug #2 — Sync release doesn't reset rate.** Code
+  comment at lines 6866-6872 says this is intentional
+  (matches Rekordbox / CDJ convention). DESIGN QUESTION
+  awaiting Jake's clarification on whether his expectation
+  reflects a real pain point or just unfamiliarity.
+- **Bug #10 — Scrub on master moves slave.** DESIGN
+  QUESTION awaiting Jake's clarification.
+- **Feature #8 — Manual BPM override UI.** Already on the
+  Phase 3 Beat Grid Tab plan saved in the prior session-end
+  section.
+- **Feature #9 — Drag-and-drop library → deck.** NEW.
+  Needs scoping (may already partially exist via existing
+  drag-over handlers at lines 4436-4438 / 7368-7387).
+
+### Palindrome fix — shipped earlier today
+
+- **`c728878`** — `Fix Palindrome BPM class — library
+  analyzer now always runs full BPM detection`. Library
+  side now passes `skipBPM:false` at all re-analyze sites,
+  so a track tagged with the wrong BPM (e.g. Palindrome at
+  90 vs detected 120) gets corrected on import / re-analyze.
+  Verified working in production. Resolves the
+  Palindrome-class root cause identified in the May 31
+  reconciliation section.
+
+### Don't-touch list (unchanged)
+
+- `src/bpm-worker-source.js` — analyzer DSP
+- `tools/bpm-test-harness/`, `tools/sota-eval/`,
+  `tools/rekordbox-eval/`
+- Worktrees `../collabmix-booth`, `../collabmix-decks`
+- Memory pipeline (`processQ`, `fileMap` LRU, AudioContext
+  recycle)
+- Phase 2 library code (works correctly, ships)
+- Layer 1 telemetry capture (working, do not regress)
+
+### Tomorrow's plan
+
+1. **Session Start Protocol first.** Read VISION_5.md last
+   2 sessions (this one + June 6 pivot), CLAUDE.md, journal
+   if present.
+2. **Get Jake's answers** on the two design questions (#2
+   sync release + #10 scrub-on-master).
+3. **Revert Phase 3 Beat Grid Panel commits** per the
+   saved plan in the June 6 section. Single combined
+   revert: `git revert --no-commit b38c539 bf2198a` then
+   one commit. Reverted commits stay in history for porting
+   the nudge math, telemetry payload, and indicator-dot
+   logic.
+4. **Build Phase 3 Beat Grid Tab system** per the design
+   approved in the June 6 section. Addresses #8 (manual
+   BPM override) and completes the anchor/BPM override
+   functionality in a Rekordbox-pattern vertical tab UI.
+5. **Possibly start drag-and-drop scoping (#9)** if time
+   permits.
+6. **Fix Vercel env var injection** so `meta.release` reads
+   the git SHA instead of `"dev"` in tonight's session log
+   format. Deferred item #4.
+7. **Schedule Jake round 2** once the Phase 3 Beat Grid
+   Tab system ships — second dogfood with the room/peer
+   bug fixed and the BPM/anchor UI live.
+
+### Deferred for later this week
+
+- **UX/design competitive review (#13).** Focus areas
+  include emotion / waveform / beat grid. Currently
+  deferred from tonight's tactical fix work.
