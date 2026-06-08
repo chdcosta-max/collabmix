@@ -5575,15 +5575,31 @@ function Landing({ onEnter }) {
 // ── Share Button (used in session top bar) ───────────────────
 function ShareButton({ room, mixName }) {
   const [copied, setCopied] = useState(false);
+  const [hover, setHover]   = useState(false);
   const copy = () => {
     navigator.clipboard.writeText(buildInviteLink(room, mixName)).then(() => {
       setCopied(true);
       setTimeout(() => setCopied(false), 2500);
     });
   };
+  const bg = copied
+    ? "rgba(34,197,94,0.10)"
+    : hover ? "rgba(255,255,255,0.10)" : "rgba(255,255,255,0.05)";
+  const color = copied ? "#22c55e" : hover ? "rgba(255,255,255,0.9)" : "rgba(255,255,255,0.7)";
+  const border = copied ? "1px solid rgba(34,197,94,0.35)" : "1px solid rgba(255,255,255,0.12)";
   return (
-    <button onClick={copy} style={{ background: copied ? "#22c55e22" : "#9CA3AF11", border: copied ? "1px solid #22c55e55" : "1px solid #9CA3AF44", color: copied ? "#22c55e" : "#9CA3AF", fontFamily:"'Inter',sans-serif", fontWeight:800, fontSize:7, letterSpacing:1, height:22, padding:"0 9px", borderRadius:5, cursor:"pointer", transition:"all .3s" }}>
-      {copied ? "✓ COPIED" : "⎘ INVITE"}
+    <button
+      onClick={copy}
+      onMouseEnter={() => setHover(true)}
+      onMouseLeave={() => setHover(false)}
+      style={{
+        background: bg, border, color,
+        fontFamily:"'Inter',sans-serif", fontWeight:500, fontSize:10, letterSpacing:.4,
+        height:22, padding:"0 12px", borderRadius:5,
+        cursor:"pointer", outline:"none",
+        transition:"background 150ms cubic-bezier(0.4, 0, 0.2, 1), color 150ms cubic-bezier(0.4, 0, 0.2, 1), border-color 150ms cubic-bezier(0.4, 0, 0.2, 1)",
+      }}>
+      {copied ? "Link copied" : "Invite partner"}
     </button>
   );
 }
@@ -7392,6 +7408,14 @@ export default function CollabMix({ initialPage = "landing", djName = null }) {
             })}
           </div>
           <span style={{ fontSize:9, fontFamily:"'Inter',sans-serif", color:"#9CA3AF", letterSpacing:.5 }}>{session.name}</span>
+          {/* Room code — readable at a glance so the host can say it out
+              loud to a partner who only has voice contact. tabular-nums
+              keeps the dash-separated digit groups aligned. */}
+          <span style={{
+            fontSize:10, fontFamily:"'Inter',sans-serif",
+            color:"rgba(255,255,255,0.6)", letterSpacing:.3,
+            fontVariantNumeric:"tabular-nums",
+          }}>{session.room}</span>
           <ShareButton room={session.room} mixName={session.mixName}/>
           <button onClick={leave} style={{ height:24, padding:"0 10px", background:"transparent", border:"1px solid #ef444433", color:"#ef4444", borderRadius:6, cursor:"pointer", fontFamily:"'Inter',sans-serif", fontSize:9, letterSpacing:.5 }}>Leave</button>
         </div>
