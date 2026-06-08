@@ -1,4 +1,5 @@
 import * as Sentry from "@sentry/react";
+import { pushEvent, mergeSessionMeta } from "./sessionLog.js";
 
 export function logEvent(category, message, data) {
   try {
@@ -10,6 +11,7 @@ export function logEvent(category, message, data) {
       timestamp: Date.now() / 1000,
     });
   } catch {}
+  try { pushEvent(category, message, data); } catch {}
 }
 
 export function setSessionContext({ djName, roomCode, ping, isHost, partnerName } = {}) {
@@ -25,6 +27,7 @@ export function setSessionContext({ djName, roomCode, ping, isHost, partnerName 
       partnerName: partnerName ?? null,
     });
   } catch {}
+  try { mergeSessionMeta({ djName, roomCode, ping, isHost, partnerName }); } catch {}
 }
 
 export function captureHandledError(error, context) {
@@ -36,6 +39,12 @@ export function captureHandledError(error, context) {
       }
       scope.setLevel("warning");
       Sentry.captureException(error);
+    });
+  } catch {}
+  try {
+    pushEvent("error", "handled_error", {
+      operation: context?.operation || null,
+      message: error?.message || String(error),
     });
   } catch {}
 }
