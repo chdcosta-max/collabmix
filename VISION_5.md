@@ -5514,3 +5514,361 @@ intact.
 - **UX/design competitive review (#13).** Focus areas
   include emotion / waveform / beat grid. Currently
   deferred from tonight's tactical fix work.
+
+
+## Session log — June 7 night (FULL) — Issue log + Critic review + tomorrow's plan
+
+Persistence capture written near the end of tonight's chat
+window so tomorrow's Claude can pick up complete context.
+Supplements (does not replace) the prior June 7 session-end
+section above. The earlier section is the official ship log
+of tonight's commits; THIS section is the broader state of
+the world — issue tracker, Claude Desktop's Critic Role
+design review, Jake status, and tomorrow's priorities.
+
+### Production state at this snapshot
+
+- Latest commit on master: `f93318e` (Vercel SHA injection
+  for `meta.release`).
+- **Plus uncommitted in working tree:** the #12 `isHost`
+  fix. Built clean locally, dev server up at
+  `localhost:5173` (PID 58314) for Claude Desktop multi-tab
+  verification, **not yet pushed**.
+- Production deploy SHA:
+  `f93318ed23461916ed6fcb43619bbf73c6c9c359`.
+- All Layer 1 telemetry verified working on prod.
+- All Bug #1 fixes verified working on prod (8/8 smoke
+  test).
+
+Tonight's commit chain (12 commits, oldest to newest):
+
+| Group | Commits |
+|---|---|
+| Layer 1 telemetry | `f491d45` → `b8417c0` → `224ca72` → `6fc2ecd` → `87b10d0` |
+| Bug #1 room/peer fix | `5bae11e` → `b87b551` → `b107b07` → `728c5a9` → `665e7e4` |
+| VISION_5 session end | `3d7fdd1` |
+| Vercel SHA injection | `f93318e` |
+| **Uncommitted** | #12 `isHost` fix pending verification + push |
+
+### Full issue log — 15 items
+
+#### Closed tonight
+
+- **#1 Room/peer connection bug.** Five sub-causes (name
+  collision; no JOIN-BY-CODE input; sticky `cm_session`
+  overriding invite link; URL-strip race in RTC tiebreaker;
+  invisible session-header invite affordance). Five commits.
+  8/8 production smoke test PASS via Claude Desktop on
+  Vercel + Railway.
+- **#4 `meta.release` shows "dev" not git SHA.** Root cause:
+  `VITE_SENTRY_RELEASE` was undefined in production because
+  Vite only exposes `VITE_`-prefixed env vars to client
+  code, and Vercel's `VERCEL_GIT_COMMIT_SHA` lacks that
+  prefix. Fixed via `define:` block in `vite.config.js`
+  (`f93318e`). Verified on prod — bundle now contains the
+  full 40-char SHA twice.
+- Plus Phase 2 library auto-import + Palindrome BPM class
+  fix from earlier today (`c728878`, already in VISION_5).
+
+#### In progress (verification pending)
+
+- **#12 `meta.isHost: true` on both tabs after JOIN BY MIX
+  CODE.** Root cause documented in this session's earlier
+  Task B report: the prior `initialIsHostRef` inferred
+  host-ness from URL `?room=` presence at mount, which
+  broke for the new JOIN-BY-CODE path (joiner at bare URL
+  looked identical to creator at bare URL) and for any
+  joiner who refreshed mid-session after the URL was
+  stripped. Fix: `isHost` becomes an explicit field passed
+  by every call site, stored in a new `iAmHostRef`,
+  persisted to `cm_session` for refresh resilience. **Fix
+  built and applied to working tree, NOT yet committed
+  or pushed** — pending Claude Desktop's 8-step multi-tab
+  smoke test on localhost. If 8/8 PASS, push as a single
+  commit; if anything regresses Bug #1 peering, revert
+  immediately.
+
+#### Pending decision — Jake's clarification needed
+
+- **#2 Sync release rate behavior.** Current code at
+  `collabmix-production.jsx:6866-6872` deliberately
+  preserves the synced rate on toggle-off per
+  Rekordbox/CDJ convention (commit message documents this
+  was a reverted overreach). Jake reported expected
+  reset. Ask Jake: (a) "Did you want the rate to snap back
+  to the slave's natural BPM?" vs (b) "Were you just
+  confused about what rate it ended up at because the
+  pitch fader didn't visibly move?" — option (a) means we
+  change behavior, option (b) means we add visual
+  feedback without changing behavior.
+- **#10 Scrub-master-moves-slave behavior.** Sync engine
+  re-aligns slave when master scrubs. Jake wants this
+  different. Need Jake's preferred behavior before
+  scoping a fix.
+
+#### Confirmed feature gaps from Jake's session
+
+- **#8 Manual BPM override UI.** Already on the Phase 3
+  Beat Grid Tab plan (June 6 design pivot section). Lands
+  with the tab-system rebuild.
+- **#9 Drag-and-drop library → deck.** NEW. Some drag
+  primitives already exist (`onDragOver`/`onDrop` handlers
+  at lines 4436-4438 and 7368-7387). Needs investigation
+  to scope: where library tracks render, how decks accept
+  loads, what protocol exists between them. Standalone
+  work, not on any prior plan.
+
+#### Deferred — tomorrow's work
+
+- **#3 Phase 3 Beat Grid Panel design pivot.** Revert
+  plan saved in June 6 section. Single combined revert:
+  ```
+  git revert --no-commit b38c539 bf2198a
+  git commit -m "Revert Phase 3 Beat Grid Panel (Commits 1+2) — pivoting to vertical tab design"
+  ```
+  Then build the vertical tab system per the approved
+  spec in the June 6 section (vertical tab strip inside
+  the deck card's left edge, two tabs CUES/GRID, GRID tab
+  contains Set Beat 1 + ±10 ms anchor + ±1 BPM + BPM
+  display + Reset + Auto/Manual indicators).
+- **#5 Code hygiene.** Cmd+Option+L shortcut handler
+  calls the private `downloadSessionLog` import directly
+  rather than `window.__sessionLog.download()`. Functional
+  today, refactor for single-source-of-truth symmetry.
+  Trivial, batch with any sessionLog touch.
+
+#### Deferred — later this week
+
+- **#13 Comprehensive UX/design competitive review.** The
+  full-scope version of tonight's #15 Critic review.
+  Schedule after Phase 3 tab system + drag-and-drop ship.
+- **#14 Process improvement — Claude Desktop's four
+  roles.** Critic / Competitive Intel / Execution Partner
+  / Validation. Habit 1 (passive design observation
+  embedded in every Claude Desktop test prompt) is now
+  automatic going forward. Other three roles are explicit
+  on-demand triggers.
+
+#### Open observations
+
+- **#11 Intermittent "Could not connect to server"
+  banner.** Seen only on localhost during tonight's
+  testing, NOT reproducible on prod. Likely a dev-mode
+  WebSocket reconnect quirk. Watch but don't chase.
+- **#6 Possible duplicate `session.room_joined` events on
+  mount.** Tonight's prod JSON inspection — confirmed
+  absent on production builds (was a React StrictMode
+  artifact in dev only).
+- **#7 Analyzer offset on Jake's tracks.** A few tracks
+  in Jake's session showed beat grid offsets consistent
+  with the known Sub-cause B cluster (irreducible from
+  audio alone per the May 20 three-detector convergence
+  finding documented in May 31 reconciliation section).
+  Not a new bug.
+
+### #15 — Critic Role design review (verbatim capture)
+
+Claude Desktop ran the Critic Role design review tonight
+against the production app. Capturing in full because the
+synthesis is more valuable than the individual notes and
+won't survive context truncation.
+
+#### Product identity read
+
+- Product: browser-based two-DJ remote B2B mixing platform.
+- Audience: **prosumer / serious-hobbyist DJs.** Not
+  casual. Not producers. The vocabulary alone — Camelot
+  keys, hot cues, Rekordbox import, CDJ name-drops —
+  signals this.
+- Price tier read: feels free or ~$10/mo. Ambition
+  justifies $15-20/mo. Visual finish doesn't yet project
+  that. Could plausibly trick into $50+ tier with polished
+  surface.
+
+#### Dimension ratings (1-10)
+
+| Dimension | Rating | Notes |
+|---|---:|---|
+| Visual polish | 6 | Workspace strong; landing weak |
+| Information density | 8 | Rekordbox-adjacent, dense in a good way for the audience |
+| Professionalism | 6.5 | Held back by surface details |
+| Differentiation | 5 | "Dark synthwave dev tool" — could sell a VPN |
+| Trust | 5.5 | P2P privacy copy is good; broken icons + AUDIO:OFFLINE on load + naming drift erode |
+
+#### Top 3 amateur/generic signals (highest-priority fixes)
+
+- **#15A — Mismatched icons in feature grid.** Yellow
+  emoji ⚡, red emoji 🎯, blue emoji 🔊, plus a plain
+  white circle (broken/missing icon for "Session
+  Recording"). Most amateur-looking single artifact on
+  the site. ~30-60 min fix.
+- **#15B — Two clashing typography systems.** Landing
+  uses all-caps geometric sans ("MIX TOGETHER."); lobby
+  + app use elegant serif ("Mix//Sync"). Reads like two
+  different products. ~1-2 hrs to unify.
+- **#15C — Generic hero section.** Dark + faint grid +
+  blue-to-purple gradient text + "THE FUTURE OF REMOTE
+  DJing" — could sell a VPN. No DJ specificity until you
+  scroll. ~2-4 hrs to redesign with real product
+  screenshot.
+
+#### Top 3 good signals
+
+- **The center mixer.** Channel-A blue / channel-B
+  purple, glowing knobs, real vertical faders, Master in
+  the middle, VU meters. Claude Desktop's verbatim:
+  "most credible, clearly-loved part of the UI."
+- **Domain-correct density.** Camelot, beat-jump, hot
+  cues, Rekordbox import, harmonic/BPM suggestions.
+  Verbatim: "speaks fluent DJ."
+- **Honest low-friction onboarding.** "No account
+  required," "Works in Chrome & Edge," P2P privacy claim.
+
+#### One screen to redesign
+
+The **landing / hero page**, not the app. Verbatim: "The
+product's real asset — the dense, credible mixer — is
+hidden until you launch." Lead with a real workspace
+screenshot or a short loop. Pick one typeface system. Fix
+the icon set.
+
+#### What's missing
+
+- Real product screenshot anywhere on landing (glaring
+  omission for a visual tool).
+- "Who's behind this" / social proof / demo video that
+  actually resolves.
+- Frequency-colored waveforms (every pro DJ tool has
+  them; conspicuous absence in our workspace).
+- Consistent naming ("Launch App" vs "Start a Mix",
+  "Room ID" vs "Mix code" — already partially fixed
+  tonight by adding the room code display in session
+  header).
+- Pricing/limits clarity (paradox: "free" feels less
+  trustworthy without details about what tier this is).
+
+#### Strategic synthesis (verbatim from Claude Desktop)
+
+> "Inside is stronger than outside. The mixing workspace
+> is dense, domain-literate, and clearly built by someone
+> who DJs. The marketing wrapper and unfinished details
+> make it read 1-2 notches more amateur than the actual
+> tool deserves. Fix the surface and perceived tier jumps
+> immediately."
+
+This is the **opposite of the usual problem** — most
+pre-launch tools have flashy marketing hiding a rough
+product. Mix//Sync has a serious tool hiding behind a
+generic wrapper.
+
+#### Derived actionable items
+
+| # | Item | Estimate | Bucket |
+|---|---|---|---|
+| 15A | Fix broken icons | 30-60 min | quick win |
+| 15B | Unify typography | 1-2 hrs | quick-medium |
+| 15C | Replace generic hero with real product screenshot | 2-4 hrs | medium |
+| 15D | Consistent naming/vocabulary across site + app | 30-45 min | quick win |
+| 15E | Add creator / social proof to landing | 2-3 hrs | medium |
+| 15F | Frequency-colored waveforms | 15-20 hrs | already in Phase 6 |
+| 15G | Pricing / limits clarity | depends on business decision | — |
+
+#### Strategic implications for the roadmap
+
+- **Phase 9 (marketing site polish), originally
+  scheduled "with launch," should happen BEFORE launch.**
+  The marketing wrapper is currently the weakest part of
+  the perceived tier.
+- **Phase 6 (frequency-colored waveforms) elevated
+  priority** — confirmed as the #1 visible amateur signal
+  inside the actual product.
+- Quick wins #15A + #15D could ship alongside Phase 3
+  Beat Grid Tab tomorrow if energy permits.
+
+### Tomorrow's priority order
+
+1. **Session Start Protocol.** Read VISION.md (if it
+   exists), CLAUDE.md, the prior session-end section
+   (`Session end — June 7 night — Jake dogfood…`), and
+   THIS section. Skim journal.txt if present.
+2. **Check status of #12 isHost fix.**
+   - If Claude Desktop already verified 8/8 PASS by the
+     time tomorrow's session starts → push the in-flight
+     commit to master, run prod smoke, close #12.
+   - If anything failed → debug and fix.
+   - If verification didn't happen → run it first before
+     anything else.
+3. **Check email/messages for Jake's answers** on #2 +
+   #10. If answers received, plan sync engine work. If
+   no answers yet, defer both.
+4. **Phase 3 Beat Grid Panel design pivot** (biggest
+   piece of tomorrow's work, 5-8 hrs):
+   - Confirm the 6 saved assumptions from the June 6
+     pivot section
+   - Execute the revert as a single combined commit
+     (Tomorrow's Commit A)
+   - Build the new vertical tab system per the saved
+     spec (Tomorrow's Commit B)
+   - Polish + Claude Desktop verification + push
+     (Tomorrow's Commit C)
+5. **Quick wins from #15 Critic review** (if energy
+   permits):
+   - #15A Fix broken icons (30-60 min)
+   - #15D Consistent naming (30-45 min)
+   - Could batch alongside Phase 3 push if time permits
+   - #15B + #15C are bigger, defer to dedicated session
+6. **Drag-and-drop scoping (#9):**
+   - Investigation only — Claude Code maps where library
+     renders, where decks accept loads, what handlers
+     already exist
+   - Produce implementation plan, do NOT build yet
+   - Schedule build for a separate session
+
+### Jake status
+
+Jake's session ended ~30 min after start due to Bug #1
+preventing peering. Sent Jake a message acknowledging the
+issue, asking for sync clarifications (#2 + #10), and
+committing to round 2 once Phase 3 Beat Grid Tab +
+drag-and-drop ship.
+
+Jake's session log JSON: Chad has both his own + Jake's
+JSON files saved from tonight's session (or will receive
+Jake's async). Useful for cross-referencing future bug
+reports.
+
+Round 2 dogfood with Jake: schedule after Phase 3 Beat
+Grid Tab ships + drag-and-drop is at least scoped (ideally
+shipped).
+
+### Process improvements made tonight
+
+CLAUDE.md additions from earlier today (`c174fd3`):
+- **Session Start Protocol** was exercised successfully
+  tonight during Bug #1 investigation — confirmed working
+  as designed.
+- **Visual Verification Protocol** was exercised — Claude
+  Desktop drove all visual verification across Layer 1
+  telemetry, Bug #1 fix, and tonight's #15 Critic design
+  review.
+
+Going forward:
+- **Every Claude Desktop test prompt** now includes a
+  passive design-observation request (Critic Role
+  micro-version). Standard practice from this point.
+- **Weekly structured design review** TBD as recurring
+  practice — frequency to be set.
+- **Pre-launch comprehensive #13 review** scheduled after
+  Phase 3 + drag-and-drop ship.
+
+### Don't-touch list (unchanged)
+
+- `src/bpm-worker-source.js` — analyzer DSP
+- `tools/bpm-test-harness/`, `tools/sota-eval/`,
+  `tools/rekordbox-eval/`
+- Worktrees `../collabmix-booth`, `../collabmix-decks`
+- Memory pipeline (`processQ`, `fileMap` LRU,
+  AudioContext recycle)
+- Phase 2 library code (works correctly, ships)
+- Layer 1 telemetry capture (working, do not regress)
+- Bug #1 room/peer code paths (just shipped, verified)
