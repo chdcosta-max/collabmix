@@ -5597,9 +5597,19 @@ function Lobby({ onJoin, djName = null }) {
     return params.get("mix") || "";
   });
   const [copied, setCopied] = useState(false);
+  // Join-by-code: lets a partner type a mix code (e.g., "fade-wave-691")
+  // when they only have the code verbally, no invite link. Without this,
+  // the only path into an existing room was the ?room= URL — users on
+  // the bare base URL always got a fresh random room.
+  const [joinCode, setJoinCode] = useState("");
   const isJoining = useMemo(() => {
     return new URLSearchParams(window.location.search).has("room");
   }, []);
+  const submitJoinCode = () => {
+    const code = joinCode.trim().toLowerCase();
+    if (!code) return;
+    onJoin({ url: SERVER_URL, room: code, name, mixName: mixName || "Untitled Mix" });
+  };
 
   // Auto-join immediately if a name was passed in from the landing page
   useEffect(() => {
@@ -5679,6 +5689,35 @@ function Lobby({ onJoin, djName = null }) {
         >
           {isJoining?"JOIN MIX →":"START MIX →"}
         </button>
+
+        {/* Join-by-code — only in START A MIX mode (an invite link already
+            specifies a room, so the input would be redundant there). */}
+        {!isJoining && (
+          <div style={{ display:"flex", flexDirection:"column", gap:8, paddingTop:4 }}>
+            <div style={{ display:"flex", alignItems:"center", gap:10 }}>
+              <div style={{ flex:1, height:1, background:`${G}18` }}/>
+              <div style={{ fontSize:8, fontFamily:"'Inter',sans-serif", color:`${G}55`, letterSpacing:2 }}>OR</div>
+              <div style={{ flex:1, height:1, background:`${G}18` }}/>
+            </div>
+            <label style={{ fontSize:8, fontFamily:"'Inter',sans-serif", color:`${G}77`, letterSpacing:2 }}>JOIN BY MIX CODE</label>
+            <div style={{ display:"flex", gap:8 }}>
+              <input
+                value={joinCode}
+                onChange={e => setJoinCode(e.target.value)}
+                onKeyDown={e => { if (e.key === "Enter") submitJoinCode(); }}
+                placeholder="e.g., fade-wave-691"
+                style={{ flex:1, background:"#0D0F12", border:`1px solid ${G}33`, color:"#F5F5F7", borderRadius:8, padding:"11px 14px", fontSize:14, fontFamily:"'Inter',sans-serif", fontWeight:500, outline:"none", transition:"border-color 150ms cubic-bezier(0.4, 0, 0.2, 1)" }}
+              />
+              <button
+                onClick={submitJoinCode}
+                disabled={!joinCode.trim()}
+                style={{ background:"transparent", border:`1px solid ${G}33`, color: joinCode.trim() ? G : `${G}55`, fontFamily:"'Inter',sans-serif", fontWeight:500, fontSize:10, letterSpacing:2, padding:"0 16px", borderRadius:8, cursor: joinCode.trim() ? "pointer" : "default", transition:"all 150ms cubic-bezier(0.4, 0, 0.2, 1)" }}
+              >
+                JOIN →
+              </button>
+            </div>
+          </div>
+        )}
 
         <div style={{ fontSize:8, fontFamily:"'Inter',sans-serif", color:"#5A5E66", textAlign:"center", letterSpacing:1 }}>
           Chrome · Edge · Free
