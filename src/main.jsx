@@ -50,12 +50,22 @@ try {
       message: reason?.message || String(reason || ""),
     });
   });
+  // Cmd+Option+L (macOS) / Ctrl+Alt+L (Win/Linux) — download session log.
+  // Capture phase + e.code keep this robust against layout + descendant
+  // listeners. Strict exact-match modifiers prevent accidental triggers on
+  // adjacent combos and avoid preventDefault on any other shortcut.
   window.addEventListener("keydown", (e) => {
-    if ((e.metaKey || e.ctrlKey) && e.shiftKey && (e.key === "L" || e.key === "l")) {
+    if (
+      (e.metaKey || e.ctrlKey) &&
+      e.altKey === true &&
+      e.shiftKey === false &&
+      e.code === "KeyL"
+    ) {
       e.preventDefault();
       downloadSessionLog();
     }
-  });
+  }, { capture: true });
+  try { console.log("[sessionLog] download shortcut: Cmd+Option+L (Ctrl+Alt+L on Win/Linux)"); } catch {}
 } catch {}
 
 import { StrictMode } from 'react'
