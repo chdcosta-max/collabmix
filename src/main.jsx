@@ -1,4 +1,5 @@
 import * as Sentry from "@sentry/react";
+import { initSession, pushEvent, downloadSessionLog } from "./utils/sessionLog.js";
 
 Sentry.init({
   dsn: "https://250727774480086ad89445a3d938a223@o4511385896943616.ingest.us.sentry.io/4511385926107137",
@@ -31,6 +32,31 @@ Sentry.init({
     return event;
   },
 });
+
+initSession({ release: import.meta.env.VITE_SENTRY_RELEASE || "dev" });
+
+try {
+  window.addEventListener("error", (e) => {
+    pushEvent("error", "window_error", {
+      message: e?.message || null,
+      source: e?.filename || null,
+      lineno: e?.lineno ?? null,
+      colno: e?.colno ?? null,
+    });
+  });
+  window.addEventListener("unhandledrejection", (e) => {
+    const reason = e?.reason;
+    pushEvent("error", "unhandled_rejection", {
+      message: reason?.message || String(reason || ""),
+    });
+  });
+  window.addEventListener("keydown", (e) => {
+    if ((e.metaKey || e.ctrlKey) && e.shiftKey && (e.key === "L" || e.key === "l")) {
+      e.preventDefault();
+      downloadSessionLog();
+    }
+  });
+} catch {}
 
 import { StrictMode } from 'react'
 import { createRoot } from 'react-dom/client'
