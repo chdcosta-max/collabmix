@@ -7231,6 +7231,13 @@ export default function CollabMix({ initialPage = "landing", djName = null }) {
 
   // Auto-rejoin on mount.
   // Path 1: URL has both ?room and ?name (library app handoff) — use directly.
+  // Path 1b: URL has ?room but no ?name (invite link from a partner) —
+  //          do NOT auto-rejoin from localStorage. The user came here
+  //          deliberately to join a specific room; falling through to
+  //          Path 2 would silently send them back to their prior session
+  //          and discard the invite. Let the Lobby render (main.jsx has
+  //          already routed initialPage="lobby" when ?room= is present)
+  //          so they confirm name + join.
   // Path 2: localStorage has cm_session from a previous join — refresh-during-session
   //         should land back in the same Mix instead of bouncing to Landing.
   // leave() clears cm_session, so post-leave refresh correctly returns to Landing.
@@ -7244,13 +7251,18 @@ export default function CollabMix({ initialPage = "landing", djName = null }) {
       join({ room: paramRoom, name: paramName, mixName: paramMix || "Untitled Mix" });
       return;
     }
+    if (paramRoom) {
+      // Invite link without explicit name. Skip Path 2 so localStorage
+      // doesn't override the invite.
+      return;
+    }
     try {
       const saved = localStorage.getItem("cm_session");
       if (saved) {
         const parsed = JSON.parse(saved);
         if (parsed?.room && parsed?.name) {
-          // Strip URL params (e.g., ?room= from invite link) — localStorage is source of truth
-          window.history.replaceState({}, "", window.location.pathname);
+          // No URL params present — localStorage is the source of truth
+          // for refresh-during-session.
           join({
             room: parsed.room,
             name: parsed.name,
