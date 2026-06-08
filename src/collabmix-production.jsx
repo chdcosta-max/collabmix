@@ -4122,6 +4122,7 @@ function Deck({ id, ch, ctx:ac, color, local, remote, onChange, midi:mt, bpmResu
     // CUE is an explicit user action (jump to track start) — block any
     // pending auto-position-to-first-downbeat from overriding.
     userMovedRef.current=true;
+    logEvent("deck", "cue", { deck: id, trackId: loadFromLibrary?.track?.id || null });
     // Same local-only hook as seek — CUE while synced should re-align too.
     onTransportFire?.({ type:"seek_local", deckId:id, value:0, fromRemote });
   },[play,id,onTransportFire,isDriver]);
@@ -4565,6 +4566,13 @@ function Deck({ id, ch, ctx:ac, color, local, remote, onChange, midi:mt, bpmResu
                     meanAbs: result.meanAbs?.toFixed(4),
                     ratio: result.ratio?.toFixed(2),
                     reason: result.reason,
+                  });
+                  logEvent("grid", "snap", {
+                    deck: id,
+                    trackId: loadFromLibrary?.track?.id || null,
+                    prevAnchorSec: Number(clamped.toFixed(4)),
+                    newAnchorSec: Number(result.position.toFixed(4)),
+                    source: "snap_to_transient",
                   });
                   onGridEdit({ gridAnchorSec: result.position });
                 }}
