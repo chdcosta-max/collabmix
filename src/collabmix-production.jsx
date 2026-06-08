@@ -5975,6 +5975,13 @@ export default function CollabMix({ initialPage = "landing", djName = null }) {
   const isInitiatorRef          = useRef(()=>false); // mirrors latest role-election helper
   const rtcReconnectAttemptsRef = useRef(0);    // increments per rtc_hangup retry
   const rtcReconnectTimerRef    = useRef(null); // pending reconnect timer
+  // Captured once on first render — before the auto-rejoin useEffect can
+  // strip ?room= via history.replaceState. Subsequent reads of
+  // window.location.search would see the stripped URL and return false,
+  // which would cause the RTC role tiebreaker (when display names match)
+  // to declare BOTH peers initiators and induce SDP glare. Read this
+  // ref instead of re-checking the URL.
+  const initialIsHostRef        = useRef(!new URLSearchParams(window.location.search).has("room"));
   const [rtcReconnectExhausted, setRtcReconnectExhausted] = useState(false);
 
   const bpmRaw = useBPM();
@@ -6576,11 +6583,10 @@ export default function CollabMix({ initialPage = "landing", djName = null }) {
   // Mirror live session data (partner, ping) into Sentry context for crash reports.
   useEffect(() => {
     if (!session) return;
-    const isHost = !new URLSearchParams(window.location.search).has("room");
     setSessionContext({
       djName: session.name,
       roomCode: session.room,
-      isHost,
+      isHost: initialIsHostRef.current,
       partnerName: sync.partner || null,
       ping: sync.ping ?? null,
     });
@@ -6599,15 +6605,16 @@ export default function CollabMix({ initialPage = "landing", djName = null }) {
   }, []);
 
   // Deterministic role election to avoid WebRTC offer/answer glare.
-  // Lexicographically smaller name initiates; same-name fallback uses URL
-  // ?room= presence (host = no param = initiator). The handleAnswer
-  // InvalidStateError catch is the safety net for any election ambiguity.
+  // Lexicographically smaller name initiates; same-name fallback uses the
+  // initial isHost captured at mount (host = arrived without ?room= =
+  // initiator). The handleAnswer InvalidStateError catch is the safety
+  // net for any election ambiguity.
   const isInitiatorRole = useCallback(() => {
     const myName = session?.name || "";
     const partnerName = partnerRef.current;
     if (!partnerName) return false;
     if (myName !== partnerName) return myName < partnerName;
-    return !new URLSearchParams(window.location.search).get('room');
+    return initialIsHostRef.current;
   }, [session]);
 
   // Mirror role-election helper into a ref so handleWS (stale-deps useCallback)
@@ -7208,7 +7215,7 @@ export default function CollabMix({ initialPage = "landing", djName = null }) {
     eng.current = createEngine();
     setReady(true); setSession(info); setPage("session");
     sync.connect(info.room, info.name);
-    const isHost = !new URLSearchParams(window.location.search).has("room");
+    const isHost = initialIsHostRef.current;
     setSessionContext({ djName: info.name, roomCode: info.room, isHost });
     logEvent("session", "room_joined", { roomCode: info.room, isHost });
     // Persist session so library app can link back and page reloads auto-rejoin
