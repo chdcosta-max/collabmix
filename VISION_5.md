@@ -6555,3 +6555,26 @@ enough.
 Same as prior sections.
 
 
+
+---
+
+## ADDENDUM — Rekordbox waveform transient hairline insight (June 8 late night)
+
+Visual inspection of Rekordbox's zoomed-in waveform revealed THREE rendering layers Mix//Sync currently lacks:
+
+1. Bass body (blue diamond) — Mix//Sync HAS this
+2. Mid/high body (orange threaded through center) — Mix//Sync LACKS this
+3. **White transient peak hairline at each kick attack** — Mix//Sync LACKS this, and this is the critical one
+
+The white hairline is what lets users visually verify grid alignment. The grid line lands EXACTLY on the white transient peak. Without this hairline, Mix//Sync's grid placement may be mathematically correct but is visually unverifiable.
+
+Beatport DJ Pro (direct browser competitor) also lacks the transient hairline — adding it would differentiate Mix//Sync from Beatport while approaching Rekordbox-grade visual confidence WITHOUT requiring full Phase 6 frequency-colored waveforms.
+
+NEW issues for tomorrow's roadmap consideration:
+
+- #37 Waveform transient peak hairline (~3-5 hours estimated, MAY BE BETTER Commit C THAN the originally-planned anti-alias polish)
+- #38 Mid/high frequency layer orange overlay (~5-8 hours)
+- #39 Bar/phrase markers in main waveform like Rekordbox uses red lines for every 8 or 16 bars + position indicator like "65.2 Bars" (~2-4 hours)
+
+This refines Phase 3 Commit C priority. Originally planned anti-alias the slightly blocky edges. But the transient hairline may be higher-leverage with similar effort. Decide tomorrow morning based on energy and priorities.
+
