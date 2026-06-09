@@ -3862,7 +3862,7 @@ function snapToTransient(buf, targetSec) {
   return { position: peakIdx / sr, snapped: true, peakAbs, meanAbs, ratio };
 }
 
-function Deck({ id, ch, ctx:ac, color, local, remote, onChange, midi:mt, bpmResult, bpmAnalyze, eqHi=0, eqMid=0, eqLo=0, chanVol=1, loadFromLibrary=null, onTrackInfo=null, onSync=null, syncReady=true, syncRole=null, isMaster=false, onMasterToggle=null, onLibraryTrackDrop=null, onProgUpdate=null, onWaveform=null, onSeekReady=null, remoteSeek=null, onToggleReady=null, onCueReady=null, remoteToggle=null, remoteCue=null, onTransportFire=null, isDriver=true, onNudgeReady=null, acNowRef=null, onBufferReady=null, barOneOffsetSec=0, onGridEdit=null, hasOverride=false }) {
+function Deck({ id, ch, ctx:ac, color, local, remote, onChange, midi:mt, bpmResult, bpmAnalyze, eqHi=0, eqMid=0, eqLo=0, chanVol=1, loadFromLibrary=null, onTrackInfo=null, onSync=null, syncReady=true, syncRole=null, isMaster=false, onMasterToggle=null, onLibraryTrackDrop=null, onProgUpdate=null, onWaveform=null, onSeekReady=null, remoteSeek=null, onToggleReady=null, onCueReady=null, remoteToggle=null, remoteCue=null, onTransportFire=null, isDriver=true, onNudgeReady=null, acNowRef=null, onBufferReady=null, barOneOffsetSec=0, onGridEdit=null, hasOverride=false, userGridOverride=null }) {
   const [buf,setBuf]=useState(null),[name,setName]=useState(null),[play,setPlay]=useState(false);
   const [prog,setProg]=useState(0),[dur,setDur]=useState(0);
   const progRef=useRef(0); // mirror of prog for parent AnimatedZoomedWF without 60fps setState
@@ -3880,6 +3880,11 @@ function Deck({ id, ch, ctx:ac, color, local, remote, onChange, midi:mt, bpmResu
   const [loopEnd,setLoopEnd]=useState(null);
   // Phase 3 Commit 1 — Beat Grid panel open/close state, per-deck.
   const [gridPanelOpen,setGridPanelOpen]=useState(false);
+  // Phase 3 Commit A — Beat Grid panel BPM type-in. Local string state so
+  // mid-typing values (e.g. "12" en route to "122") don't briefly write
+  // through to the override; commit on Enter or blur only.
+  const [bpmInputValue,setBpmInputValue]=useState("");
+  const [bpmInputError,setBpmInputError]=useState(false);
   const loopRef=useRef({active:false,start:null,end:null});
   const src=useRef(null),st=useRef(0),off=useRef(0),raf=useRef(null),fr=useRef(null);
   // Pending nudge bookkeeping (see nudgeRate below).
@@ -4534,7 +4539,7 @@ function Deck({ id, ch, ctx:ac, color, local, remote, onChange, midi:mt, bpmResu
            Future commits will add BPM override stepper (Commit 3) and
            Auto/Manual badges + Reset (Commit 4). */}
       <div style={{borderBottom: gridPanelOpen ? BD : "none", background: "#15171A",
-                   maxHeight: gridPanelOpen ? 84 : 0, overflow: "hidden",
+                   maxHeight: gridPanelOpen ? 126 : 0, overflow: "hidden",
                    transition: "max-height 200ms cubic-bezier(0.4, 0, 0.2, 1), border-bottom 200ms cubic-bezier(0.4, 0, 0.2, 1)"}}>
         {/* Row 1 — BEAT 1 */}
         <div style={{padding: "10px 14px 8px", display: "flex", alignItems: "center", gap: 14, height: 42, boxSizing: "border-box"}}>
@@ -4668,6 +4673,141 @@ function Deck({ id, ch, ctx:ac, color, local, remote, onChange, midi:mt, bpmResu
               <span style={{fontSize: 9, color: "rgba(255,255,255,0.6)", letterSpacing: 2, fontFamily: "'Inter',sans-serif", minWidth: 46}}>ANCHOR</span>
               {nudgeBtn("− 10 ms", -0.010, canNudge ? "Nudge anchor 10 ms earlier" : "Load a track with an analyzed grid to nudge")}
               {nudgeBtn("+ 10 ms", +0.010, canNudge ? "Nudge anchor 10 ms later" : "Load a track with an analyzed grid to nudge")}
+            </div>
+          );
+        })()}
+        {/* Row 3 — BPM override (Phase 3 Commit A).
+            Tempo correction for analyzer mis-detection (Palindrome 90→120
+            class, half/double-time errors, 3/4-vs-4/4 errors). The override
+            pipeline (bpmOverride in IDB → _buildUserGrid → effectiveBpmResults
+            merge) was built in earlier commits; this is the UI surface for
+            it. Writing bpmOverride via onGridEdit propagates to bpm.results.X
+            through the same memo path that anchor edits use — no separate
+            grid-rebuild code path. */}
+        {(()=>{
+          const trackId = loadFromLibrary?.track?.id;
+          const effBpm = bpmResult?.bpm;
+          const baseEnabled = !!buf && !!onGridEdit && !!trackId && effBpm > 0;
+          const inRange = (v) => v >= 60 && v <= 200;
+          const applyBpm = (newBpm, method, multiplier) => {
+            if (!baseEnabled) return;
+            const rounded = Math.round(newBpm * 10) / 10;
+            if (!inRange(rounded)) return;
+            console.log('[GRID-BPM-OVERRIDE]', { deck: id, trackId,
+              prevBpm: Number(effBpm.toFixed(2)), newBpm: rounded, method,
+              ...(multiplier != null ? { multiplier } : {}) });
+            logEvent("grid", "bpm_override", {
+              deck: id, trackId,
+              prevBpm: Number(effBpm.toFixed(2)),
+              newBpm: rounded,
+              method,
+              ...(multiplier != null ? { multiplier } : {}),
+            });
+            onGridEdit({ bpmOverride: rounded });
+          };
+          const multBtn = (label, factor, tip) => {
+            const candidate = effBpm * factor;
+            const enabled = baseEnabled && inRange(Math.round(candidate * 10) / 10);
+            const tooltip = !baseEnabled
+              ? "Load a track with an analyzed BPM to override"
+              : enabled
+                ? tip
+                : `${label} would give ${Math.round(candidate * 10) / 10} — out of range (60-200)`;
+            return (
+              <button onClick={() => applyBpm(candidate, "multiplier", factor)}
+                disabled={!enabled} title={tooltip}
+                style={{
+                  height: 26, padding: "0 10px", minWidth: 52,
+                  background: "transparent",
+                  border: `1px solid ${enabled ? "rgba(255,255,255,0.20)" : "rgba(255,255,255,0.06)"}`,
+                  color: enabled ? "rgba(255,255,255,0.85)" : "rgba(255,255,255,0.30)",
+                  borderRadius: 5,
+                  fontFamily: "'Inter',sans-serif", fontSize: 11, fontWeight: 500, letterSpacing: 0.2,
+                  cursor: enabled ? "pointer" : "default", outline: "none", flexShrink: 0,
+                  transition: "all 150ms cubic-bezier(0.4, 0, 0.2, 1)",
+                  fontVariantNumeric: "tabular-nums",
+                  display: "flex", alignItems: "center", justifyContent: "center",
+                }}>
+                {label}
+              </button>
+            );
+          };
+          const commitTyped = () => {
+            if (!baseEnabled) return;
+            const parsed = parseFloat(bpmInputValue);
+            if (!Number.isFinite(parsed) || !inRange(parsed)) {
+              setBpmInputError(true);
+              setTimeout(() => {
+                setBpmInputError(false);
+                setBpmInputValue("");
+              }, 800);
+              return;
+            }
+            applyBpm(parsed, "typed");
+            setBpmInputValue("");
+          };
+          const resetEnabled = !!onGridEdit && !!trackId && hasOverride;
+          const reset = () => {
+            if (!resetEnabled) return;
+            // Read from userGridOverride (fresh — derived from lib.library by
+            // the parent's useEffect after every setGridEdit). loadFromLibrary
+            // .track is the load-time snapshot and does NOT see overrides
+            // applied in-session, so reading hadAnchor/hadBpm from it would
+            // miss the just-applied override. _buildUserGrid sets
+            // `firstBar1AnchorSec` iff gridAnchorSec was overridden, and `bpm`
+            // iff bpmOverride was overridden — so field presence on the
+            // override object is the authoritative signal.
+            const hadAnchor = userGridOverride?.firstBar1AnchorSec != null;
+            const hadBpm = userGridOverride?.bpm != null;
+            console.log('[GRID-RESET]', { deck: id, trackId, hadAnchor, hadBpm });
+            logEvent("grid", "reset", { deck: id, trackId, hadAnchor, hadBpm });
+            onGridEdit({ gridAnchorSec: null, bpmOverride: null });
+            setBpmInputValue("");
+            setBpmInputError(false);
+          };
+          const placeholder = effBpm > 0 ? effBpm.toFixed(1) : "—";
+          return (
+            <div style={{padding: "0 14px 10px", display: "flex", alignItems: "center", gap: 8, height: 42, boxSizing: "border-box"}}>
+              <span style={{fontSize: 9, color: "rgba(255,255,255,0.6)", letterSpacing: 2, fontFamily: "'Inter',sans-serif", minWidth: 46}}>BPM</span>
+              {multBtn("÷ 2", 0.5, "Halve detected BPM (double-time error fix)")}
+              {multBtn("× 2", 2,   "Double detected BPM (half-time error fix)")}
+              <input
+                type="text" inputMode="decimal"
+                value={bpmInputValue}
+                placeholder={placeholder}
+                onChange={(e) => { setBpmInputValue(e.target.value); if (bpmInputError) setBpmInputError(false); }}
+                onKeyDown={(e) => { if (e.key === "Enter") commitTyped(); }}
+                onBlur={() => { if (bpmInputValue.trim() !== "") commitTyped(); }}
+                disabled={!baseEnabled}
+                title={baseEnabled ? "Type a BPM (60-200), Enter to apply" : "Load a track with an analyzed BPM"}
+                style={{
+                  height: 26, width: 76, padding: "0 10px",
+                  background: "transparent",
+                  border: `1px solid ${bpmInputError ? "rgba(255,59,48,0.7)" : "rgba(255,255,255,0.20)"}`,
+                  color: baseEnabled ? "rgba(255,255,255,0.85)" : "rgba(255,255,255,0.30)",
+                  borderRadius: 5,
+                  fontFamily: "'Inter',sans-serif", fontSize: 11, fontWeight: 500, letterSpacing: 0.2,
+                  fontVariantNumeric: "tabular-nums",
+                  outline: "none", textAlign: "center",
+                  transition: "border-color 150ms cubic-bezier(0.4, 0, 0.2, 1)",
+                  flexShrink: 0,
+                }}
+              />
+              <button onClick={reset} disabled={!resetEnabled}
+                title={resetEnabled ? "Clear all grid overrides for this track" : "No overrides to clear"}
+                style={{
+                  height: 26, padding: "0 12px",
+                  background: "transparent",
+                  border: `1px solid ${resetEnabled ? "rgba(255,255,255,0.20)" : "rgba(255,255,255,0.06)"}`,
+                  color: resetEnabled ? "rgba(255,255,255,0.85)" : "rgba(255,255,255,0.30)",
+                  borderRadius: 5,
+                  fontFamily: "'Inter',sans-serif", fontSize: 11, fontWeight: 500, letterSpacing: 0.2,
+                  cursor: resetEnabled ? "pointer" : "default", outline: "none", flexShrink: 0,
+                  transition: "all 150ms cubic-bezier(0.4, 0, 0.2, 1)",
+                  display: "flex", alignItems: "center", justifyContent: "center",
+                }}>
+                Reset
+              </button>
             </div>
           );
         })()}
@@ -7545,7 +7685,7 @@ export default function CollabMix({ initialPage = "landing", djName = null }) {
           <div style={{ flex:1, display:"flex", alignItems:"flex-start", gap:10, padding:"10px 0 10px 10px", overflow:"hidden", minHeight:0 }}>
             <DeckArt artwork={libLoadA?.track?.artwork} fallback="A" color="#2E86DE"/>
             <div style={{ flex:1, overflow:"hidden", minHeight:0 }}>
-            <Deck id="A" ch={eng.current?.A} ctx={eng.current?.ctx} color="#2E86DE" local remote={pA} onChange={dh("A")} midi={midiEvt} bpmResult={bpm.results["A"]} bpmAnalyze={bpm.analyze} eqHi={eqA.hi} eqMid={eqA.mid} eqLo={eqA.lo} chanVol={eqA.vol} loadFromLibrary={libLoadA} onTrackInfo={handleTrackInfo} onSync={()=>handleSyncToggle("A")} syncReady={!!(bpm.results["B"]?.bpm || pB?.bpm)} syncRole={syncLocked ? (lastSlaveDeck === "A" ? "slave" : "master") : null} isMaster={masterDeck === "A"} onMasterToggle={handleMasterToggle} onLibraryTrackDrop={(trackId)=>{const t=lib.library.find(x=>x.id===trackId);if(t)handleLibLoad(t,"A");}} onProgUpdate={handleProgA} onWaveform={setWfA} onSeekReady={onDeckASeekReady} onToggleReady={onDeckAToggleReady} onCueReady={onDeckACueReady} onNudgeReady={onDeckANudgeReady} onTransportFire={handleTransportFire} isDriver={!deckDrivers.A || deckDrivers.A === session.name} acNowRef={acNowRef} onBufferReady={onDeckABufferReady} barOneOffsetSec={barOneA * (bpm.results["A"]?.beatPeriodSec || 0)} onGridEdit={(fields) => libLoadA?.track?.id && lib.setGridEdit?.(libLoadA.track.id, fields)} hasOverride={!!userGridA}/>
+            <Deck id="A" ch={eng.current?.A} ctx={eng.current?.ctx} color="#2E86DE" local remote={pA} onChange={dh("A")} midi={midiEvt} bpmResult={bpm.results["A"]} bpmAnalyze={bpm.analyze} eqHi={eqA.hi} eqMid={eqA.mid} eqLo={eqA.lo} chanVol={eqA.vol} loadFromLibrary={libLoadA} onTrackInfo={handleTrackInfo} onSync={()=>handleSyncToggle("A")} syncReady={!!(bpm.results["B"]?.bpm || pB?.bpm)} syncRole={syncLocked ? (lastSlaveDeck === "A" ? "slave" : "master") : null} isMaster={masterDeck === "A"} onMasterToggle={handleMasterToggle} onLibraryTrackDrop={(trackId)=>{const t=lib.library.find(x=>x.id===trackId);if(t)handleLibLoad(t,"A");}} onProgUpdate={handleProgA} onWaveform={setWfA} onSeekReady={onDeckASeekReady} onToggleReady={onDeckAToggleReady} onCueReady={onDeckACueReady} onNudgeReady={onDeckANudgeReady} onTransportFire={handleTransportFire} isDriver={!deckDrivers.A || deckDrivers.A === session.name} acNowRef={acNowRef} onBufferReady={onDeckABufferReady} barOneOffsetSec={barOneA * (bpm.results["A"]?.beatPeriodSec || 0)} onGridEdit={(fields) => libLoadA?.track?.id && lib.setGridEdit?.(libLoadA.track.id, fields)} hasOverride={!!userGridA} userGridOverride={userGridA}/>
             </div>
           </div>
         </div>
@@ -7647,7 +7787,7 @@ export default function CollabMix({ initialPage = "landing", djName = null }) {
           <div style={{ flex:1, display:"flex", alignItems:"flex-start", gap:10, padding:"10px 0 10px 10px", overflow:"hidden", minHeight:0 }}>
             <DeckArt artwork={libLoadB?.track?.artwork} fallback="B" color="#A855F7"/>
             <div style={{ flex:1, overflow:"hidden", minHeight:0 }}>
-            <Deck id="B" ch={eng.current?.B} ctx={eng.current?.ctx} color="#A855F7" local remote={pB} onChange={dh("B")} midi={midiEvt} bpmResult={bpm.results["B"]} bpmAnalyze={bpm.analyze} eqHi={eqB.hi} eqMid={eqB.mid} eqLo={eqB.lo} chanVol={eqB.vol} loadFromLibrary={libLoadB} onTrackInfo={handleTrackInfo} onSync={()=>handleSyncToggle("B")} syncReady={!!(bpm.results["A"]?.bpm || pA?.bpm)} syncRole={syncLocked ? (lastSlaveDeck === "B" ? "slave" : "master") : null} isMaster={masterDeck === "B"} onMasterToggle={handleMasterToggle} onLibraryTrackDrop={(trackId)=>{const t=lib.library.find(x=>x.id===trackId);if(t)handleLibLoad(t,"B");}} onProgUpdate={handleProgB} onWaveform={setWfB} onSeekReady={onDeckBSeekReady} onToggleReady={onDeckBToggleReady} onCueReady={onDeckBCueReady} onNudgeReady={onDeckBNudgeReady} onTransportFire={handleTransportFire} isDriver={!deckDrivers.B || deckDrivers.B === session.name} acNowRef={acNowRef} onBufferReady={onDeckBBufferReady} barOneOffsetSec={barOneB * (bpm.results["B"]?.beatPeriodSec || 0)} onGridEdit={(fields) => libLoadB?.track?.id && lib.setGridEdit?.(libLoadB.track.id, fields)} hasOverride={!!userGridB}/>
+            <Deck id="B" ch={eng.current?.B} ctx={eng.current?.ctx} color="#A855F7" local remote={pB} onChange={dh("B")} midi={midiEvt} bpmResult={bpm.results["B"]} bpmAnalyze={bpm.analyze} eqHi={eqB.hi} eqMid={eqB.mid} eqLo={eqB.lo} chanVol={eqB.vol} loadFromLibrary={libLoadB} onTrackInfo={handleTrackInfo} onSync={()=>handleSyncToggle("B")} syncReady={!!(bpm.results["A"]?.bpm || pA?.bpm)} syncRole={syncLocked ? (lastSlaveDeck === "B" ? "slave" : "master") : null} isMaster={masterDeck === "B"} onMasterToggle={handleMasterToggle} onLibraryTrackDrop={(trackId)=>{const t=lib.library.find(x=>x.id===trackId);if(t)handleLibLoad(t,"B");}} onProgUpdate={handleProgB} onWaveform={setWfB} onSeekReady={onDeckBSeekReady} onToggleReady={onDeckBToggleReady} onCueReady={onDeckBCueReady} onNudgeReady={onDeckBNudgeReady} onTransportFire={handleTransportFire} isDriver={!deckDrivers.B || deckDrivers.B === session.name} acNowRef={acNowRef} onBufferReady={onDeckBBufferReady} barOneOffsetSec={barOneB * (bpm.results["B"]?.beatPeriodSec || 0)} onGridEdit={(fields) => libLoadB?.track?.id && lib.setGridEdit?.(libLoadB.track.id, fields)} hasOverride={!!userGridB} userGridOverride={userGridB}/>
             </div>
           </div>
         </div>
