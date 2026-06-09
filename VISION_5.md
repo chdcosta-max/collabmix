@@ -6189,3 +6189,369 @@ the work plan.
 
 Unchanged from prior sections.
 
+
+## Session — June 8 evening/night — Phase 3 Commit A SHIPPED + tempo control build spec + comprehensive design intel
+
+Long session. Phase 3 Beat Grid Panel work landed cleanly
+on production via Commit A. A separate design-exploration
+pass produced a full build spec for the next piece (deck
+inline tempo nudge cluster) — investigation deferred to
+tomorrow morning with fresh judgment. Plus a competitive
+audit, multiple design observations, and a deliberate
+re-deferral of the vertical tab redesign. Capture below
+preserves all of it before stopping.
+
+### Phase 3 Commit A — SHIPPED
+
+- **Commit:** `87627a5` — Phase 3 Beat Grid Panel: Add BPM
+  controls + Reset (Commit A of 3)
+- **Production SHA:**
+  `87627a513951bca616fed4afc3c897bbbed7291d`
+
+#### Verification chain
+
+| Phase | Verifier | Result |
+|---|---|---|
+| Pre-commit (localhost) | Claude Desktop multi-tab | 9/9 PASS |
+| Post-commit (bundle) | Static audit on prod bundle | 8/8 PASS |
+| Post-deploy (prod) | Claude Desktop 4-step on Vercel + Railway | 4/4 PASS |
+
+#### What shipped
+
+- **Beat Grid Panel Row 3 added:** `[BPM] [÷ 2] [× 2]
+  [type-in] [Reset]`
+- **Multipliers trimmed** from initial 4 (÷2, ×0.75, ×1.5,
+  ×2) to 2 (÷2, ×2) per Rekordbox reference pattern.
+- **Reset telemetry bug fixed** — data-flow fix. Deck now
+  reads live `userGridOverride` from parent (derived from
+  `lib.library` via `_buildUserGrid`), not stale
+  `loadFromLibrary?.track` snapshot. The original bug
+  surfaced when an in-session BPM override was applied —
+  `loadFromLibrary.track` is the load-time snapshot and
+  never sees post-load `setGridEdit` writes.
+- **RTC propagation:** BPM override propagates correctly
+  over RTC to partner deck (validated in localhost test).
+- **Indicator dot** lights up for BPM overrides via the
+  existing `hasOverride` truthiness check on
+  `userGridA`/`userGridB` (no separate wiring needed —
+  `_buildUserGrid` already returns non-null when either
+  field is overridden).
+- **Telemetry:** `[GRID-BPM-OVERRIDE]` (`method:
+  multiplier|typed`) and `[GRID-RESET]` (with
+  `hadAnchor`/`hadBpm` flags).
+- **No regressions** to Bug #1 (room/peer), #12 (isHost),
+  or Layer 1 telemetry — all verified by post-deploy
+  bundle audit.
+
+### Deck Inline Tempo Nudge Cluster — build spec READY (for tomorrow)
+
+Claude Desktop produced a comprehensive build spec tonight
+(June 8 late). The spec is ready; the build is deferred to
+tomorrow morning for fresh judgment.
+
+#### Design exploration coverage
+
+- **Competitive analysis:** Rekordbox 7, Serato DJ Pro,
+  Traktor Pro 4, Beatport DJ Pro (browser), Pioneer
+  CDJ-3000, DDJ-FLX10.
+- **Mix//Sync current deck state:** 533×222 px card, 76 px
+  free space in transport row right of M button.
+- **Four options generated** with full tradeoffs +
+  amateur-vs-pro analysis per option.
+
+#### DECISION — Option 1: Inline Nudge Cluster
+
+- **Position:** right of Sync button, before M, in
+  transport row.
+- **Layout:** `[−] [readout] [+]` cluster, 116 px total ×
+  38 px tall.
+- **Controls:**
+  - Click `−` / `+`: ±0.1 BPM
+  - Shift-click: ±1.0 BPM
+  - Scroll over readout: continuous fine adjust
+    (~0.05 BPM/notch)
+  - Double-click readout: reset to 0.0%
+- **Range:** ±8% from native BPM.
+- **Display:** `"0.0%"` gray default, `"+1.8%"` amber when
+  offset.
+- **Hover on readout:** shows effective BPM (e.g.
+  `"122.2"`).
+- **Visual:** matches Sync button styling. Amber accent
+  ONLY when offset ≠ 0.
+- **Sync integration:** **tempo overrides Sync (disengages
+  it on use).** Decision (b) from the spec.
+- **Formula:**
+  `effective BPM = (analyzer BPM OR bpmOverride) × (1 + tempoOffsetPct/100)`
+- **State persistence:** **NONE** — runtime-only. Resets
+  on track load + page reload.
+- **Telemetry:**
+  `logEvent("tempo", "offset_changed", {deck, trackId, prevPct, newPct, method, effectiveBpm})`
+  + `[TEMPO-OFFSET]` console.
+- **Audio engine assumption:** spec assumes WaveSurfer.js
+  `setPlaybackRate(rate, preservePitch=true)`. Claude Code
+  must verify the actual engine before wiring.
+
+#### Critical pre-build investigation (tomorrow)
+
+1. Confirm actual audio engine — WaveSurfer or something
+   else.
+2. Find header BPM rendering location (needs
+   `effectiveBpm` instead of `nativeBpm`).
+3. Find Sync engine disengage API.
+4. Confirm top waveform timer source (clock-derived vs
+   independent).
+
+**Estimated build time:** 2-3 hours including
+investigation, implementation, and verification.
+
+### Competitive audit findings (June 8 morning)
+
+Beat grid + waveform competitive audit done with the same
+source track in Mix//Sync vs Beatport DJ Pro side-by-side.
+
+- **Mix//Sync grids are pro-grade on correctly-detected
+  tracks** — 0-5 ms offsets on attack transients.
+- **Visible failure mode is tempo errors** (Palindrome
+  90→120, long mixes wrong tempo) — NOT small
+  misalignments. This is exactly what Commit A's
+  ÷2/×2/type-in addresses.
+- **Frequency-colored waveforms are NOT a critical gap.**
+  Beatport DJ Pro (direct browser competitor) ships flat
+  single-color waveform like Mix//Sync. Phase 6
+  confirmed deferrable — earlier instinct to elevate
+  priority is moderated by this finding.
+- **Waveform render slightly blocky vs Beatport**
+  (anti-aliasing gap) — material for Commit C.
+
+### Design observations captured tonight
+
+Existing items from morning audit (verbatim summaries):
+
+- **#28** — Transport row gets crowded with 8 controls
+  post-tempo-cluster. Worth deciding if ◂/▸ (pitch-bend)
+  earn their place. Polish question.
+- **#29** — Key badge (`4A`) underweight relative to BPM.
+  Rekordbox/Serato give key more prominence since
+  harmonic mixing is core pro workflow. Could color-code
+  by Camelot wheel position.
+- **#30** — Reinforces #18 (waveform reads as level
+  meter).
+
+New items from production verification + design pass:
+
+- **#32 (NEW)** — Landing-to-workspace transition feels
+  abrupt. Landing punches above app's weight (`MIX
+  TOGETHER. ANYWHERE.` + blue gradient — confident and
+  modern). Transition into workspace loads abruptly. `NO
+  TRACK LOADED` reads as placeholder, not intentional.
+  Fix: easing transition + design the empty workspace
+  state as intentional.
+- **#33 (NEW)** — Lobby serif `Mix//Sync` wordmark + mono
+  room code is a "quiet pro touch." **KEEP** this pattern
+  when doing #15B (unify typography).
+- **#34 (NEW)** — Beat 1 marker red (`#FF3B30`) feels
+  off-palette. Rest of app is amber + blue + warm grays.
+  Could use warmer red (more orange/coral) or amber
+  accent instead. Minor polish.
+- **#35 (NEW)** — Disabled button styling (0.3 alpha) too
+  subtle on bright displays. Add `cursor:not-allowed` +
+  tooltip on disabled state to communicate WHY. The
+  enabled buttons already have good tooltips like
+  `"Halve detected BPM"` — disabled state should match
+  that level of explanation.
+
+#### Positive confirmation from tonight
+
+Grid panel Row 3 is comfortable at 4 controls (down from
+initial 6). The trim was correct. Visual rhythm matches
+the existing ANCHOR row (3 controls + label) closely
+enough.
+
+### Phase 3 vertical tab redesign — DEFERRED AGAIN
+
+- **#31 — Vertical tab redesign for Beat Grid Panel.**
+  Chad raised tonight: *"get rid of the Grid button and
+  make it an easy-to-click tab that then shows the
+  beatgrid option. Should we have claude desktop research
+  this and add it as it might create more space?"*
+- **Deferred** to avoid combining two major architectural
+  changes in one session.
+- Schedule for **after Phase 3 complete** (after tempo
+  control + waveform polish ship).
+- When revisiting: needs to consider migration of Commit
+  A's BPM controls into tab content, indicator dot
+  relocation, interaction with the new tempo control
+  cluster.
+
+### Issue log — full snapshot
+
+#### Closed today
+
+- ✅ **#1** Room/peer connection bug
+- ✅ **#4** `meta.release` shows "dev"
+- ✅ **#12** `isHost: true` on both tabs
+- ✅ **Phase 3 Commit A** — Beat Grid Panel BPM controls
+
+#### In design — spec ready, awaiting build
+
+- 📋 Deck inline tempo nudge cluster (spec produced
+  tonight, ready for tomorrow morning).
+
+#### Pending decision — Jake's clarification needed
+
+- **#2** Sync release rate behavior
+- **#10** Scrub-master-moves-slave behavior
+
+#### Confirmed feature gaps from Jake
+
+- **#8** Manual BPM override UI — **PARTIALLY shipped**
+  via Beat Grid Panel; tempo control next.
+- **#9** Drag-and-drop library → deck.
+
+#### Quick wins from #15 Critic Role review (deferred)
+
+| # | Item | Estimate |
+|---|---|---|
+| 15A | Fix broken icons on feature grid | 30-60 min |
+| 15B | Unify typography | 1-2 hrs |
+| 15C | Replace generic hero with product screenshot | 2-4 hrs |
+| 15D | Consistent naming / vocabulary | 30-45 min |
+| 15E | Add creator / social proof | 2-3 hrs |
+| 15F | Frequency-colored waveforms | 15-20 hrs — Phase 6, **confirmed deferrable per Beatport audit** |
+| 15G | Pricing / limits clarity | depends on business |
+
+#### New from tonight's verification cycles
+
+- **#19** Overview strip vs deck waveform need
+  figure/ground distinction.
+- **#20** Reload recovery is a marketing moment.
+- **#21** Top utility cluster has inconsistent visual
+  weights.
+- **#22** Tempo detection errors are the actual visible
+  failure mode (this drove the Commit A scope).
+- **#23** Waveform render has slightly blocky edges
+  (Commit C material).
+- **#25** Type-in field doesn't look editable.
+- **#26** Reset disabled state inconsistent with
+  multipliers.
+- **#27** Disabled buttons keep full opacity / border.
+- **#28** Transport row crowded with 8 controls.
+- **#29** Key badge underweight relative to BPM.
+- **#30** Reinforces #18 (waveform reads as level meter).
+- **#32** Landing-to-workspace transition abrupt.
+- **#33** Lobby serif + mono is good — **KEEP**.
+- **#34** Beat 1 marker red feels off-palette.
+- **#35** Disabled button styling too subtle.
+
+#### Deferred
+
+- **#3** Phase 3 vertical tab redesign — deferred again
+  tonight (#31 is the same item).
+- **#5** Code hygiene (shortcut handler).
+- **#13** Comprehensive UX review — schedule after Phase
+  3 + drag-and-drop ship.
+- **#14** Claude Desktop 4-role framework documentation.
+- **#31** Vertical tab redesign (re-deferred).
+
+#### Open observations
+
+- **#11** "Could not connect" banner (localhost only;
+  watch for prod).
+- **#16** Beat Grid panel anchor controls visual
+  separator.
+- **#17** Session header connection cluster is strongest
+  emotional beat — **KEEP**.
+- **#18** Waveform reads as level meter (Phase 6
+  priority, but moderated per #15F audit finding).
+
+#### Minor / observational
+
+- **#6** Possible duplicate `session.room_joined` (absent
+  in prod).
+- **#7** Analyzer offset on Jake's tracks.
+
+### Tomorrow (June 9) priority order
+
+1. **Session Start Protocol** — read CLAUDE.md, VISION_5
+   last 2-3 session-end sections (especially this one).
+2. **Check email / messages** for Jake's replies on
+   #2/#10 sync engine clarifications.
+3. **Build deck inline tempo nudge cluster** per Claude
+   Desktop's spec captured above:
+   - Investigation phase first — verify audio engine,
+     header BPM rendering, sync engine API, transport
+     row space, waveform timer source.
+   - Implementation per spec.
+   - Claude Desktop verification (localhost multi-tab).
+   - Push + Vercel deploy.
+   - Production verification (Claude Desktop).
+   - **Estimated 2-3 hours.**
+4. **If tempo control closes cleanly with time/energy
+   remaining:**
+   - Phase 3 Commit C: waveform render anti-aliasing
+     polish (audit identified slight blockiness vs
+     Beatport).
+   - **OR:** Quick wins from #15 review — #34 (Beat 1
+     red), #35 (disabled state cursor) — 15-30 min each.
+5. **After Phase 3 fully ships:**
+   - Schedule Round 2 dogfood with Jake.
+   - Begin #9 drag-and-drop scoping (investigation
+     only).
+6. **Later this week:**
+   - #13 Comprehensive UX/design competitive review.
+   - #15A-E quick wins from design review.
+
+### Jake status
+
+- **Round 2 dogfood:** schedule after tempo control +
+  waveform polish ship.
+- **Pending answers** on #2 (sync release rate) and #10
+  (scrub-master-moves-slave) — these would inform sync
+  engine work.
+- **His feedback shipped today:** #8 manual BPM (partial
+  — Beat Grid Panel done, tempo control next).
+- **Still owed:** #9 drag-and-drop scoping.
+
+### Process learnings today
+
+- **Session Start Protocol** exercised again at session
+  start this morning — caught prior work, oriented
+  quickly. Protocol works.
+- **Visual Verification Protocol** exercised
+  extensively. Claude Desktop drove all major
+  verifications across Commit A localhost + prod, plus
+  competitive audit, plus tempo control design
+  exploration, plus the 4-step prod test.
+- **Pattern reinforced:** founder's gut catches design
+  issues the AI side missed. Tonight's example: Chad
+  noticed the deck needed quick BPM adjustment (separate
+  from Beat Grid Panel) → led to the tempo control spec.
+- **Pattern:** investigate before building, design
+  before building. Multiple times tonight we paused to
+  verify scope (vertical tab redesign deferred,
+  multipliers trimmed based on Rekordbox reference, sync
+  integration decision made deliberately).
+- **Pattern broken (honest note):** work continued past
+  midnight despite multiple "stop" recommendations.
+  Late-night strategic decisions risk being suboptimal.
+  Tomorrow's tempo control build benefits from fresh
+  morning judgment.
+
+### Working state for tomorrow
+
+- **Master HEAD:** `87627a5` (Phase 3 Commit A) + this
+  VISION_5 update.
+- **Working tree:** clean after VISION_5 update lands.
+- **Dev server:** PID 71138 on `localhost:5173` will be
+  killed before stopping tonight — port freed.
+- **All commits pushed** to `origin/master`.
+- **`meta.release` on prod** correctly shows the full
+  git SHA.
+- **Bug #1 + #12 + Layer 1 telemetry** all working in
+  production.
+
+### Don't-touch list (unchanged)
+
+Same as prior sections.
+
+
