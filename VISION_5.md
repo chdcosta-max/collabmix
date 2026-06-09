@@ -5872,3 +5872,216 @@ Going forward:
 - Phase 2 library code (works correctly, ships)
 - Layer 1 telemetry capture (working, do not regress)
 - Bug #1 room/peer code paths (just shipped, verified)
+
+
+## Session log — June 7 night (ADDENDUM) — Post-capture items + process learnings
+
+Supplement to the `f785811` persistence capture. The June 7
+night chat continued after that commit landed, and several
+issue-log additions, framings, and process learnings were
+discussed in that tail. Capturing here before context is
+lost. Nothing in this section changes the prior session log
+or invalidates it — it extends.
+
+### Post-capture issue log additions
+
+#### #11 — UPGRADED from cosmetic to "worth investigating"
+
+Originally logged in the `f785811` capture as: cosmetic,
+localhost only, watch. Reframed after observing the timing:
+
+- The "Could not connect to server" red banner flashes on
+  Tab B reload **right as the user returns to the working
+  session.** RTC connects fine within ~1s, but the first
+  visual impression on every reload is a red error.
+- Bad emotional moment, even if functionally harmless.
+- Tomorrow's investigation question: is this stale state
+  from before reload (UI shows last-known status before
+  the new WS handshake completes), or a real signaling
+  hiccup during reconnect? The former is a 5-line fix
+  (suppress the banner during the first N ms after mount);
+  the latter needs deeper inspection.
+- Worth investigating **before next Jake dogfood** so the
+  first thing he sees on a refresh isn't a red error.
+
+#### #16 — NEW — Beat Grid panel ANCHOR controls too close to transport row
+
+- ±10 ms anchor stepper sits visually too close to the
+  transport row with no clear divider.
+- Easy to mis-click adjacent transport controls.
+- Will likely be addressed by the Phase 3 vertical tab
+  redesign (different surface entirely — anchor controls
+  move INSIDE the GRID tab, off the transport row).
+- Log anyway so we don't drop it if the tab redesign
+  leaves any spacing tension between the new tab content
+  and the transport row.
+
+#### #17 — NEW — Session header connection cluster is the strongest emotional beat in the app
+
+- `CONNECTED · 32ms` + partner pill + `AUDIO: STREAMING`
+- Critic Role observation, verbatim: **"the genuine
+  we're-live-together feeling."**
+- **KEEP THIS DESIGN** — explicit instruction not to
+  disturb in future iterations.
+- Reference as "felt-sense success" when polishing other
+  elements: this is what the rest of the app should feel
+  like at its peak moments.
+- Useful design anchor: when in doubt about visual
+  treatment of any other live/realtime element, look at
+  what the connection cluster does and match the energy.
+
+#### #18 — NEW — Waveform reads as "level meter" not DJ waveform
+
+- Direct observation during the Critic review: still a
+  flat single-color blue.
+- Reinforces **#15F (frequency-colored waveforms,
+  already in Phase 6 roadmap)**.
+- The exact target audience (prosumer/serious-hobbyist
+  DJs per #15 audience read) expects Serato/Rekordbox-
+  style RGB frequency bands. Without them the workspace
+  reads as "level meter visualization" rather than "DJ
+  tool."
+- Conspicuous absence confirmed by both the Critic Role
+  review AND direct in-session observation — two
+  independent signals same conclusion.
+- **Priority bump:** 15-20 hrs work, high visual impact.
+  Elevate within Phase 6 scheduling. Currently a
+  conspicuous "amateur" signal inside an otherwise
+  pro-feel workspace.
+
+### #14 EXPANSION — Claude Desktop 4-role framework (full)
+
+The `f785811` capture mentioned this expansion but didn't
+spell it out. Full framework below.
+
+#### Role 1 — Critic
+
+- **Purpose:** structured reviews of what's shipped
+  against references.
+- **Style:** brutal-honest critique. Not "looks good."
+- **When to use:** after major UI work; weekly minimum;
+  definitely before launch.
+- **Output:** specific observations with examples (e.g.
+  "the feature-grid icons mix emoji styles") not vague
+  praise.
+- Tonight's #15 review is the reference example.
+
+#### Role 2 — Competitive Intelligence
+
+- **Purpose:** deep competitor study (Rekordbox, Serato,
+  Beatport DJ, djay, RecordBox web, etc.).
+- **When to use:** before significant design work; before
+  launch; quarterly for trends.
+- **Output:** study reports with patterns + screenshots +
+  concrete recommendations for what to borrow / avoid /
+  invert.
+
+#### Role 3 — Execution Partner
+
+- **Purpose:** builds variations under user's strategic
+  direction.
+- **When to use:** AFTER decision is made, not during
+  decision-making. Decision-making is Chad's; execution
+  partner generates options to pick from.
+- **Output:** concrete options (visual mockups, code
+  variants, copy variants) to pick from.
+
+#### Role 4 — Validation
+
+- **Purpose:** verifies design intent matches execution.
+- **When to use:** after implementing significant
+  changes, before declaring done.
+- **Output:** honest "user-like" reports — does this feel
+  like what we intended? Examples of moments where
+  intent and execution diverge.
+
+#### Three habits to systematize
+
+| Habit | Status |
+|---|---|
+| **1. Passive design observation request in every Claude Desktop test prompt** | ✅ NOW AUTOMATIC — included in all verification prompts going forward |
+| **2. Weekly structured design review** | TBD recurring schedule |
+| **3. Pre-launch comprehensive #13 review** | Scheduled after this week's changes ship (Phase 3 tab system + drag-and-drop + any quick wins) |
+
+### Strategic framing — Chad's stated weakness + the compensating system
+
+Chad's self-stated weakness from June 7 night chat: **"I'm
+bad at branding, UI design, webpage design, marketing."**
+The system to compensate:
+
+| Function | Owner |
+|---|---|
+| Strategic direction | Chad + Jake + future DJ testers |
+| Brand vision | Chad + persistent `DESIGN_PHILOSOPHY.md` |
+| Daily execution | Claude Code (builds) + Claude Desktop (verifies + critiques) |
+| Quality control | Claude Desktop — Critic role |
+| Competitive awareness | Claude Desktop — Intel role |
+| Validation | Real DJ users (Jake first, others later) |
+
+The system explicitly leverages Chad's strengths (product
+direction, DJ domain knowledge, sense of when something
+feels wrong) and offloads his stated weaknesses to roles
+that compensate for them with structured, repeatable
+process.
+
+### Process learnings from June 7
+
+- **Session Start Protocol** (CLAUDE.md, `c174fd3`)
+  exercised successfully during Bug #1 investigation.
+  Specifically surfaced the prior 47-file `tools/sota-eval/`
+  + 33-file `tools/bpm-test-harness/` work that earlier
+  planning had missed. **Confirmed: protocol works.**
+- **Visual Verification Protocol** (CLAUDE.md, `c174fd3`)
+  exercised successfully across Layer 1 telemetry, Bug #1
+  fix, #15 Critic review, and #12 isHost localhost smoke.
+  Claude Desktop drove all visual verification — CLI
+  Claude never had to ask Chad to paste console output or
+  eyeball UI.
+- **Pattern recognized:** Chad catches design/scope
+  misses by asking "have we done this before?" and "is
+  this how Rekordbox does it?" — the AI side should
+  proactively verify both BEFORE drafting plans. This is
+  now an implicit rule for Claude Code investigation
+  passes.
+- **"Inside is stronger than outside" framing from #15
+  review** is a real strategic insight, not just a
+  one-off observation. Mix//Sync is in the rare position
+  of having a substantive product behind under-polished
+  marketing. **Fixing the surface gives an immediate
+  perceived-tier jump** — most pre-launch tools have the
+  opposite problem (flashy marketing hiding a rough
+  product) and don't have this lever available.
+
+### Jake status — June 8 morning
+
+- **Last contact:** post-session debrief request sent
+  ~midnight June 7.
+- **Awaiting answers on:**
+  - Bug #2 sync release rate — (a) wanted snap back vs
+    (b) couldn't tell what rate it ended up at.
+  - Bug #10 scrub-master-moves-slave — preferred
+    behavior.
+- **Round 2 dogfood:** schedule after Phase 3 Beat Grid
+  Tab + drag-and-drop ship (at minimum scoped, ideally
+  built).
+
+### Today (June 8) priority order — unchanged from `f785811` capture
+
+1. Status check **#12 isHost fix** — verify or push
+   based on last night's Claude Desktop smoke results.
+2. Check for **Jake's replies on #2 / #10.**
+3. **Phase 3 Beat Grid Panel revert + vertical tab
+   system build.** Biggest piece, 5-8 hrs.
+4. **Quick wins from #15** if energy permits: #15A
+   icons (30-60 min), #15D consistent naming (30-45
+   min). Note: prompt referenced #15A icons + "#15C
+   naming" but per the issue numbering in the prior
+   section, naming is #15D (#15C is the generic-hero
+   redesign which is 2-4 hrs and NOT a quick win).
+   Treating naming as #15D below.
+5. **Drag-and-drop scoping (#9)** — investigation only,
+   produce implementation plan, do not build.
+
+### Don't-touch list (unchanged)
+
+Same as prior section.
