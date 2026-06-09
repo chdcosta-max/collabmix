@@ -5634,12 +5634,16 @@ function Lobby({ onJoin, djName = null }) {
   const submitJoinCode = () => {
     const code = joinCode.trim().toLowerCase();
     if (!code) return;
-    onJoin({ url: SERVER_URL, room: code, name, mixName: mixName || "Untitled Mix" });
+    // JOIN BY MIX CODE is always a joiner — the user typed an existing
+    // partner's mix code, they didn't create the room.
+    onJoin({ url: SERVER_URL, room: code, name, mixName: mixName || "Untitled Mix", isHost: false });
   };
 
-  // Auto-join immediately if a name was passed in from the landing page
+  // Auto-join immediately if a name was passed in from the landing page.
+  // isJoining reflects whether the URL had ?room= at mount — that's the
+  // only signal we have here for whether the user is creating or joining.
   useEffect(() => {
-    if (djName) onJoin({ url: SERVER_URL, room, name: djName, mixName: mixName || "Untitled Mix" });
+    if (djName) onJoin({ url: SERVER_URL, room, name: djName, mixName: mixName || "Untitled Mix", isHost: !isJoining });
   }, []);
 
   const inviteLink = buildInviteLink(room, mixName);
@@ -5708,9 +5712,11 @@ function Lobby({ onJoin, djName = null }) {
           <div style={{ fontSize:8, fontFamily:"'Inter',sans-serif", color:"#9CA3AF", lineHeight:1.6, fontWeight:300 }}>Send this link to your partner — they'll join the same mix instantly.</div>
         </div>
 
-        {/* Join button — matches App.jsx btn-gold */}
+        {/* Join button — matches App.jsx btn-gold. isHost reflects the
+            mode: START MIX (no ?room= in URL → creator) vs JOIN MIX
+            (?room= in URL → joiner via invite link). */}
         <button
-          onClick={() => onJoin({ url: SERVER_URL, room, name, mixName: mixName || "Untitled Mix" })}
+          onClick={() => onJoin({ url: SERVER_URL, room, name, mixName: mixName || "Untitled Mix", isHost: !isJoining })}
           style={{ background:G, border:"none", color:"#0D0F12", fontFamily:"'Inter',sans-serif", fontWeight:500, fontSize:12, letterSpacing:2, padding:"15px", borderRadius:10, cursor:"pointer", boxShadow:`0 0 32px ${G}30, 0 8px 20px rgba(0,0,0,.4)`, transition:"all .2s" }}
         >
           {isJoining?"JOIN MIX →":"START MIX →"}
@@ -5991,13 +5997,16 @@ export default function CollabMix({ initialPage = "landing", djName = null }) {
   const isInitiatorRef          = useRef(()=>false); // mirrors latest role-election helper
   const rtcReconnectAttemptsRef = useRef(0);    // increments per rtc_hangup retry
   const rtcReconnectTimerRef    = useRef(null); // pending reconnect timer
-  // Captured once on first render — before the auto-rejoin useEffect can
-  // strip ?room= via history.replaceState. Subsequent reads of
-  // window.location.search would see the stripped URL and return false,
-  // which would cause the RTC role tiebreaker (when display names match)
-  // to declare BOTH peers initiators and induce SDP glare. Read this
-  // ref instead of re-checking the URL.
-  const initialIsHostRef        = useRef(!new URLSearchParams(window.location.search).has("room"));
+  // Authoritative "did this client create the room" flag — written by
+  // join() from info.isHost (set explicitly by each call site). Prior
+  // approach inferred host-ness from URL `?room=` presence at mount,
+  // which broke for the JOIN BY MIX CODE path (joiner arrives at bare
+  // URL same as creator, so URL-based inference saw both as host) and
+  // for cm_session restore after URL stripping (joiner refreshes,
+  // gets stripped URL, flips to host). Now every call site declares
+  // its own role and join() persists it into cm_session for refresh
+  // resilience.
+  const iAmHostRef              = useRef(null);
   const [rtcReconnectExhausted, setRtcReconnectExhausted] = useState(false);
 
   const bpmRaw = useBPM();
@@ -6602,7 +6611,7 @@ export default function CollabMix({ initialPage = "landing", djName = null }) {
     setSessionContext({
       djName: session.name,
       roomCode: session.room,
-      isHost: initialIsHostRef.current,
+      isHost: iAmHostRef.current,
       partnerName: sync.partner || null,
       ping: sync.ping ?? null,
     });
@@ -6621,16 +6630,18 @@ export default function CollabMix({ initialPage = "landing", djName = null }) {
   }, []);
 
   // Deterministic role election to avoid WebRTC offer/answer glare.
-  // Lexicographically smaller name initiates; same-name fallback uses the
-  // initial isHost captured at mount (host = arrived without ?room= =
-  // initiator). The handleAnswer InvalidStateError catch is the safety
-  // net for any election ambiguity.
+  // Lexicographically smaller name initiates; same-name fallback uses
+  // iAmHostRef (room creator = initiator). With hex-suffix default names
+  // the tiebreaker is rarely reached, but if two users manually pick
+  // identical handles the creator-vs-joiner signal still resolves
+  // cleanly. The handleAnswer InvalidStateError catch is the safety net
+  // for any election ambiguity.
   const isInitiatorRole = useCallback(() => {
     const myName = session?.name || "";
     const partnerName = partnerRef.current;
     if (!partnerName) return false;
     if (myName !== partnerName) return myName < partnerName;
-    return initialIsHostRef.current;
+    return !!iAmHostRef.current;
   }, [session]);
 
   // Mirror role-election helper into a ref so handleWS (stale-deps useCallback)
@@ -7231,7 +7242,12 @@ export default function CollabMix({ initialPage = "landing", djName = null }) {
     eng.current = createEngine();
     setReady(true); setSession(info); setPage("session");
     sync.connect(info.room, info.name);
-    const isHost = initialIsHostRef.current;
+    // info.isHost is set explicitly by every call site (Lobby buttons,
+    // JOIN BY MIX CODE, auto-rejoin paths). Coerce undefined to false
+    // for any caller that hasn't been updated or for backwards-compat
+    // with cm_session payloads written before this field existed.
+    const isHost = !!info.isHost;
+    iAmHostRef.current = isHost;
     setSessionContext({ djName: info.name, roomCode: info.room, isHost });
     logEvent("session", "room_joined", { roomCode: info.room, isHost });
     // Persist session so library app can link back and page reloads auto-rejoin
@@ -7240,6 +7256,7 @@ export default function CollabMix({ initialPage = "landing", djName = null }) {
         room: info.room,
         name: info.name,
         mixName: info.mixName || "Untitled Mix",
+        isHost,
       }));
     } catch {}
   };
@@ -7271,7 +7288,9 @@ export default function CollabMix({ initialPage = "landing", djName = null }) {
     const paramMix  = params.get("mix");
     if (paramRoom && paramName) {
       window.history.replaceState({}, "", window.location.pathname);
-      join({ room: paramRoom, name: paramName, mixName: paramMix || "Untitled Mix" });
+      // Library app handoff is always a joiner — the library app
+      // hands off into a room that already exists.
+      join({ room: paramRoom, name: paramName, mixName: paramMix || "Untitled Mix", isHost: false });
       return;
     }
     if (paramRoom) {
@@ -7285,11 +7304,15 @@ export default function CollabMix({ initialPage = "landing", djName = null }) {
         const parsed = JSON.parse(saved);
         if (parsed?.room && parsed?.name) {
           // No URL params present — localStorage is the source of truth
-          // for refresh-during-session.
+          // for refresh-during-session. Preserve isHost from the
+          // original join (defaults to false for pre-fix cm_session
+          // payloads that lack the field — slight transitional cost,
+          // affects telemetry attribution only).
           join({
             room: parsed.room,
             name: parsed.name,
             mixName: parsed.mixName || "Untitled Mix",
+            isHost: !!parsed.isHost,
           });
         }
       }
