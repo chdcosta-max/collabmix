@@ -6085,3 +6085,107 @@ process.
 ### Don't-touch list (unchanged)
 
 Same as prior section.
+
+
+## Session note — June 8 morning — #12 closed, ready to start Phase 3 work
+
+Short update appended to keep the issue log current and
+record the new design observations from Claude Desktop's
+production smoke test of the #12 fix.
+
+### #12 — CLOSED
+
+- **Commit:** `1e0690e` (Bug #12 fix: isHost flag now
+  correctly false for join-by-code and reload-as-joiner)
+- **Production verification:** 4/4 abbreviated smoke test
+  PASS via Claude Desktop on `https://collabmix.vercel.app/`
+  (Vercel + Railway infrastructure).
+  - Step A — Creator `isHost = true` ✅ (regression check)
+  - Step B — Join-by-code joiner `isHost = false` ✅ (THE
+    FIX — was `true` before)
+  - Step C — Bug #1 peering + track sharing intact ✅ (no
+    regression to last night's room/peer work)
+  - Step D — `isHost = false` preserved across reload ✅
+    (THE OTHER FIX — was `true` after reload before)
+- **Bonus confirmations from same run:**
+  - `meta.release` reads the full 40-char SHA
+    `1e0690e2ca8604db3974345c6447f00568e821b9` — confirms
+    last night's Task A (Vercel SHA injection via
+    `vite.config.js` define block, commit `f93318e`) is
+    also live and correct on prod.
+  - "Could not connect to server" banner did **not**
+    appear on prod this run. Consistent with the prior
+    observation that #11 is localhost-only. Still worth
+    investigating the localhost behavior before Jake
+    round 2 per the ADDENDUM #11 upgrade.
+
+### New issue log items from Claude Desktop's bonus design observations
+
+Three observations surfaced during the prod test as part of
+the now-automatic Habit 1 (passive design observation
+embedded in every Claude Desktop test prompt). Captured here
+so they don't get lost in the prod-smoke chat thread.
+
+#### #19 — NEW — Overview strip vs main deck waveform have no figure/ground distinction
+
+- Both visually near-identical in color + treatment.
+- No visual signal of "whole track overview" vs "zoomed
+  playback view."
+- **Reinforces #15F** (frequency-colored waveforms,
+  already in Phase 6 roadmap). Once the main deck waveform
+  is RGB frequency-banded, the contrast with the
+  single-color overview strip emerges naturally — this
+  may auto-resolve.
+- Low priority standalone. Track in case Phase 6 work
+  doesn't fully solve it.
+
+#### #20 — NEW — Reload recovery is a marketing moment
+
+- Critic Role observation, verbatim: **"Tab B dropped
+  straight back into a live, playing, peered session in
+  ~3s with partner pill and AUDIO: STREAMING intact."**
+- Continuation, verbatim: **"the most confidence-inspiring
+  UX beat in the product."**
+- **Strategic implication:** worth capturing as
+  marketing/demo footage. This is exactly the kind of
+  asset that would land hard on the landing page redesign
+  per #15C / #15D.
+- **Connects directly to #15C** (replace generic hero
+  with real product screenshot/loop). Whoever takes on
+  the landing redesign should know reload-recovery
+  footage exists and is the strongest available.
+- Connects to #17 (session header connection cluster as
+  strongest emotional beat) — the same component is the
+  hero of this moment too.
+
+#### #21 — NEW — Top utility cluster has inconsistent visual weights
+
+- `CONNECTED · 37ms` green-dot status, DJ name pill, and
+  `AUDIO: STREAMING` chip — three different visual
+  treatments crammed together.
+- Sits tight against the `Mix//Sync` logo with
+  inconsistent gaps.
+- **Fix direction:** unified pill style + more breathing
+  room between elements.
+- **Tension with #17:** #17 says "the connection cluster
+  is the strongest emotional beat — KEEP this design."
+  Both are true. **The COMPONENT works emotionally; the
+  LAYOUT around it could improve.** Polish opportunity
+  for a future design pass — don't disturb the cluster
+  itself, fix the surrounding rhythm.
+
+### Ready for Phase 3 work
+
+With #12 closed and the issue log current, the next piece
+on today's priority order (from the `f785811` capture and
+`615b55f` ADDENDUM) is:
+
+**Phase 3 Beat Grid Panel revert + vertical tab system
+build.** Plan saved in the June 6 "Phase 3 Beat Grid Panel
+design pivot" section. Standing by for Chad's go-ahead on
+the work plan.
+
+### Don't-touch list
+
+Unchanged from prior sections.
+
