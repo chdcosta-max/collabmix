@@ -3292,7 +3292,7 @@ function renderSilhouetteGlow(ctx,path,dr,dg,db,alpha){
   ctx.fill(path);
 }
 
-function AnimatedZoomedWF({ bands, dur, progRef, onSeek, h=96, windowSec=8, beatPhaseFrac=null, beatPeriodSec=null, gridOffsetMs=0, barOneOffsetSec=0, bpmNudge=0, deckColor="#FFFFFF", rate=1 }) {
+function AnimatedZoomedWF({ bands, dur, progRef, onSeek, h=96, windowSec=8, beatPhaseFrac=null, beatPeriodSec=null, gridOffsetMs=0, barOneOffsetSec=0, deckColor="#FFFFFF", rate=1 }) {
   // Path A glow tuning. Lower canvas renders a single solid-fill silhouette
   // and gets CSS filter:blur applied via inline style; the browser composites
   // the blur on the GPU. Tune visually by adjusting these three values.
@@ -3330,7 +3330,6 @@ function AnimatedZoomedWF({ bands, dur, progRef, onSeek, h=96, windowSec=8, beat
   const beatPeriodSecRef=useRef(beatPeriodSec);
   const gridOffsetMsRef=useRef(gridOffsetMs);
   const barOneOffsetSecRef=useRef(barOneOffsetSec);
-  const bpmNudgeRef=useRef(bpmNudge);
   const deckColorRef=useRef(deckColor);
   // Mirror rate to a ref so the draw loop and drag handler always see the
   // latest value without re-mounting either useEffect. The grid + waveform
@@ -3350,7 +3349,6 @@ function AnimatedZoomedWF({ bands, dur, progRef, onSeek, h=96, windowSec=8, beat
   useEffect(()=>{beatPeriodSecRef.current=beatPeriodSec;},[beatPeriodSec]);
   useEffect(()=>{gridOffsetMsRef.current=gridOffsetMs;},[gridOffsetMs]);
   useEffect(()=>{barOneOffsetSecRef.current=barOneOffsetSec;},[barOneOffsetSec]);
-  useEffect(()=>{bpmNudgeRef.current=bpmNudge;},[bpmNudge]);
   useEffect(()=>{deckColorRef.current=deckColor;},[deckColor]);
 
   useEffect(()=>{
@@ -3597,10 +3595,7 @@ function AnimatedZoomedWF({ bands, dur, progRef, onSeek, h=96, windowSec=8, beat
       const beatPhaseFrac=beatPhaseFracRef.current;
       const beatPeriodSec=beatPeriodSecRef.current;
       if(beatPhaseFrac!=null&&beatPeriodSec!=null&&dur2>0){
-        const bpmNudge=bpmNudgeRef.current;
-        const effectivePeriod=bpmNudge!==0
-          ?60/(60/beatPeriodSec+bpmNudge)
-          :beatPeriodSec;
+        const effectivePeriod=beatPeriodSec;
         // firstDownbeatSec = analyzer anchor + ms grid offset (existing
         // ±5ms tweaks) + manual bar-1 beat shift (whole-beat user override).
         const firstDownbeatSec=beatPhaseFrac*beatPeriodSec+gridOffsetMsRef.current/1000+barOneOffsetSecRef.current;
@@ -3862,7 +3857,47 @@ function snapToTransient(buf, targetSec) {
   return { position: peakIdx / sr, snapped: true, peakAbs, meanAbs, ratio };
 }
 
-function Deck({ id, ch, ctx:ac, color, local, remote, onChange, midi:mt, bpmResult, bpmAnalyze, eqHi=0, eqMid=0, eqLo=0, chanVol=1, loadFromLibrary=null, onTrackInfo=null, onSync=null, syncReady=true, syncRole=null, isMaster=false, onMasterToggle=null, onLibraryTrackDrop=null, onProgUpdate=null, onWaveform=null, onSeekReady=null, remoteSeek=null, onToggleReady=null, onCueReady=null, remoteToggle=null, remoteCue=null, onTransportFire=null, isDriver=true, onNudgeReady=null, acNowRef=null, onBufferReady=null, barOneOffsetSec=0, onGridEdit=null, hasOverride=false, userGridOverride=null }) {
+// Pitch nudge buttons — [−][+]. Mutates the deck's rate. Web Audio's
+// playbackRate shifts pitch + tempo together (no time-stretch), matching
+// CDJ/Rekordbox pitch-fader semantics. Range ±8% from native rate.
+// Click ±0.1 BPM equivalent, Shift-click ±1.0. The readout (with scroll +
+// double-click reset) lives in the BPM display cluster directly above.
+const PITCH_RANGE = 0.08; // ±8% from rate=1
+function PitchNudge({ rate, nativeBpm, enabled, synced, onApply }) {
+  // Compute step as BPM-accurate fraction of native rate.
+  // Δrate = ΔBPM / nativeBpm (since rate=1 == nativeBpm).
+  const bpmStep = (bpmDelta) => nativeBpm > 0 ? bpmDelta / nativeBpm : 0;
+  const apply = (deltaRate) => {
+    if (!enabled) return;
+    const target = Math.max(1 - PITCH_RANGE, Math.min(1 + PITCH_RANGE, rate + deltaRate));
+    if (Math.abs(target - rate) < 1e-6) return;
+    onApply(target);
+  };
+  const onMinus = (e) => apply(-bpmStep(e.shiftKey ? 1.0 : 0.1));
+  const onPlus  = (e) => apply( bpmStep(e.shiftKey ? 1.0 : 0.1));
+  const btnBase = {
+    width: 24, height: 24, background: "transparent",
+    border: "1px solid rgba(255,255,255,0.12)",
+    color: enabled ? "#9CA3AF" : "#5A5E66",
+    fontFamily: "'Inter',sans-serif", fontSize: 12, fontWeight: 500,
+    cursor: enabled ? "pointer" : "default", outline: "none",
+    padding: 0, display: "flex", alignItems: "center", justifyContent: "center",
+    transition: "all 150ms cubic-bezier(0.4, 0, 0.2, 1)",
+    flexShrink: 0, lineHeight: 1,
+  };
+  const minusTip = !enabled ? undefined : synced ? "Pitch −0.1 BPM (shift: −1.0) · disengages Sync" : "Pitch −0.1 BPM (shift: −1.0)";
+  const plusTip  = !enabled ? undefined : synced ? "Pitch +0.1 BPM (shift: +1.0) · disengages Sync" : "Pitch +0.1 BPM (shift: +1.0)";
+  return (
+    <div style={{ display:"flex", gap:0, flexShrink:0 }}>
+      <button onClick={onMinus} disabled={!enabled} title={minusTip}
+        style={{ ...btnBase, borderTopLeftRadius:4, borderBottomLeftRadius:4, borderRight:"none" }}>−</button>
+      <button onClick={onPlus} disabled={!enabled} title={plusTip}
+        style={{ ...btnBase, borderTopRightRadius:4, borderBottomRightRadius:4 }}>+</button>
+    </div>
+  );
+}
+
+function Deck({ id, ch, ctx:ac, color, local, remote, onChange, midi:mt, bpmResult, bpmAnalyze, eqHi=0, eqMid=0, eqLo=0, chanVol=1, loadFromLibrary=null, onTrackInfo=null, onSync=null, syncReady=true, syncRole=null, isMaster=false, onMasterToggle=null, onLibraryTrackDrop=null, onProgUpdate=null, onWaveform=null, onSeekReady=null, remoteSeek=null, onToggleReady=null, onCueReady=null, remoteToggle=null, remoteCue=null, onTransportFire=null, isDriver=true, onNudgeReady=null, acNowRef=null, onBufferReady=null, barOneOffsetSec=0, onGridEdit=null, hasOverride=false, userGridOverride=null, onPitchInteract=null }) {
   const [buf,setBuf]=useState(null),[name,setName]=useState(null),[play,setPlay]=useState(false);
   const [prog,setProg]=useState(0),[dur,setDur]=useState(0);
   const progRef=useRef(0); // mirror of prog for parent AnimatedZoomedWF without 60fps setState
@@ -4491,29 +4526,103 @@ function Deck({ id, ch, ctx:ac, color, local, remote, onChange, midi:mt, bpmResu
               <div style={{fontSize:11, fontFamily:"'Inter',sans-serif", fontWeight:500, color:"#F5F5F7", background:"rgba(255,255,255,0.06)", border:"1px solid rgba(255,255,255,0.08)", borderRadius:4, padding:"2px 6px", letterSpacing:.5, fontVariantNumeric:"tabular-nums"}}>{ck}</div>
             </div>
           ):null;})()}
-          {/* BPM display — LCD-style oak, tabular-nums, bold */}
+          {/* BPM + pitch cluster — compact two-row stack:
+                Row 1: BPM number (hero, 28 px)
+                Row 2: pitch % readout (left) + ± buttons (right), inline.
+              Per Rekordbox/Beatport reference, pitch lives with the BPM
+              display (not the transport row) so adjustments read as "tuning
+              the BPM" rather than "another transport action".
+              Inline pct+buttons layout was chosen over a 3-row vertical
+              stack to keep the deck card vertical budget within the (now
+              260 px) container — the 3-row version overflowed by ~50 px.
+              The "BPM" label below the number was dropped; the big tabular
+              number is unambiguously BPM in deck-card context (matches the
+              Beatport reference layout).
+              Readout supports scroll (±0.05 BPM/notch) and double-click reset.
+              Color stays neutral gray at all offsets — no amber/red escalation
+              (Pro tool restraint; user is responsible for knowing their range). */}
           <div style={{flexShrink:0, textAlign:"right", alignSelf:"flex-end"}}>
-            {(()=>{
+            {(() => {
               const effectiveBpm = bpmResult?.bpm ?? remote?.bpm;
               const rateApplies  = !!bpmResult?.bpm;
+              const nativeBpm    = rateApplies ? effectiveBpm : 0;
               const adjustedBpm  = effectiveBpm ? effectiveBpm * (rateApplies ? rate : 1) : null;
-              const pctOff       = rateApplies && Math.abs(rate - 1) > 0.001 ? (rate - 1) * 100 : null;
-              const pctColor     = pctOff === null ? null
-                : Math.abs(pctOff) > 10 ? "#ef4444"
-                : Math.abs(pctOff) > 6  ? "#f59e0b"
-                : "#9CA3AF";
+              const pctOff       = (rate - 1) * 100;
+              const atNative     = Math.abs(pctOff) < 0.05;
+              const synced       = syncRole !== null;
+              const enabled      = isDriver && nativeBpm > 0;
+              const bpmStep      = (bpmDelta) => nativeBpm > 0 ? bpmDelta / nativeBpm : 0;
+              const applyRate = (newRate) => {
+                onPitchInteract?.(id);
+                setRate(newRate);
+                onChange?.("rate", newRate);
+                logEvent("pitch", "offset_changed", {
+                  deck: id,
+                  trackId: loadFromLibrary?.track?.id || null,
+                  prevRate: rate,
+                  newRate,
+                  prevPct: (rate - 1) * 100,
+                  newPct: (newRate - 1) * 100,
+                  nativeBpm,
+                  effectiveBpm: nativeBpm * newRate,
+                  wasSynced: synced,
+                });
+                console.log(`[PITCH-OFFSET] deck ${id} ${((newRate-1)*100).toFixed(2)}% (rate=${newRate.toFixed(4)}, effBpm=${(nativeBpm*newRate).toFixed(2)}${synced?", was synced":""})`);
+              };
+              const resetRate = () => {
+                if (Math.abs(rate - 1) < 1e-6) return;
+                onPitchInteract?.(id);
+                setRate(1);
+                onChange?.("rate", 1);
+                logEvent("pitch", "reset", {
+                  deck: id,
+                  trackId: loadFromLibrary?.track?.id || null,
+                  prevPct: (rate - 1) * 100,
+                  wasSynced: synced,
+                });
+                console.log(`[PITCH-RESET] deck ${id} prevRate=${rate.toFixed(4)}${synced?", was synced":""}`);
+              };
+              const onWheel = (e) => {
+                if (!enabled) return;
+                e.preventDefault();
+                const delta = bpmStep(e.deltaY < 0 ? 0.05 : -0.05);
+                const target = Math.max(1 - PITCH_RANGE, Math.min(1 + PITCH_RANGE, rate + delta));
+                if (Math.abs(target - rate) < 1e-6) return;
+                applyRate(target);
+              };
+              const bpmTip = effectiveBpm
+                ? `Natural BPM ${effectiveBpm.toFixed(1)}${atNative?"":` · pitch ${pctOff>0?"+":""}${pctOff.toFixed(1)}%`}`
+                : undefined;
+              const pctTip = !enabled ? undefined
+                : synced ? "Pitch (synced) · scroll to fine-tune · double-click resets"
+                : "Pitch · scroll to fine-tune · double-click resets";
               return (
-                <div style={{display:"flex", alignItems:"baseline", gap:5, justifyContent:"flex-end"}}>
-                  <div title={effectiveBpm?`Natural BPM ${effectiveBpm.toFixed(1)}${pctOff!==null?` · pitch ${pctOff>0?"+":""}${pctOff.toFixed(1)}%`:""}`:undefined} style={{fontSize:28, fontFamily:"'Inter',sans-serif", fontWeight:600, color:effectiveBpm?"#F5F5F7":"#2a2a2a", lineHeight:0.95, letterSpacing:-0.5, fontVariantNumeric:"tabular-nums"}}>{adjustedBpm!=null?adjustedBpm.toFixed(1):"—"}</div>
-                  {pctOff !== null && (
-                    <div title={`Track natural BPM ${effectiveBpm.toFixed(1)} pitch-adjusted ${pctOff>0?"+":""}${pctOff.toFixed(1)}%`} style={{fontSize:9, fontFamily:"'Inter',sans-serif", color:pctColor, fontVariantNumeric:"tabular-nums"}}>
-                      {pctOff>0?"+":""}{pctOff.toFixed(1)}%
+                <div style={{display:"flex", flexDirection:"column", alignItems:"flex-end", gap:4}}>
+                  {/* BPM number — hero, 28 px */}
+                  <div title={bpmTip} style={{fontSize:28, fontFamily:"'Inter',sans-serif", fontWeight:600, color:effectiveBpm?"#F5F5F7":"#2a2a2a", lineHeight:0.95, letterSpacing:-0.5, fontVariantNumeric:"tabular-nums"}}>
+                    {adjustedBpm!=null?adjustedBpm.toFixed(1):"—"}
+                  </div>
+                  {/* Inline pitch row — readout left, ± buttons right.
+                      Buttons drive the row height (24 px). Readout is
+                      vertically centered. Gap separates the two halves so
+                      the eye reads "value · controls" cleanly. */}
+                  <div style={{display:"flex", alignItems:"center", gap:8}}>
+                    <div onDoubleClick={enabled?resetRate:undefined} onWheel={onWheel} title={pctTip}
+                      style={{
+                        fontSize:11, fontFamily:"'Inter',sans-serif", fontWeight:500,
+                        color: enabled ? "#9CA3AF" : "#5A5E66",
+                        fontVariantNumeric:"tabular-nums", letterSpacing:0.3,
+                        cursor: enabled ? "ns-resize" : "default",
+                        userSelect:"none",
+                        transition:"color 150ms cubic-bezier(0.4, 0, 0.2, 1)",
+                      }}>
+                      {atNative ? "0.0%" : `${pctOff>0?"+":""}${pctOff.toFixed(1)}%`}
                     </div>
-                  )}
+                    <PitchNudge rate={rate} nativeBpm={nativeBpm} enabled={enabled} synced={synced} onApply={applyRate}/>
+                  </div>
                 </div>
               );
             })()}
-            <div style={{fontSize:7, color:"#9CA3AF", fontFamily:"'Inter',sans-serif", letterSpacing:2, marginTop:2}}>BPM</div>
           </div>
         </div>
         <input ref={fr} type="file" accept="audio/*" style={{display:"none"}} onChange={e=>{ const f=e.target.files[0]; e.target.value=""; if(f) load(f); }}/>
@@ -4893,7 +5002,10 @@ function Deck({ id, ch, ctx:ac, color, local, remote, onChange, midi:mt, bpmResu
            Phase 3 Commit 1: the standalone Set-Beat-1 vertical bar that
            used to live at the leftmost position was migrated INTO the Beat
            Grid panel (rendered above the cue chips row). The Grid button
-           here toggles that panel. ── */}
+           here toggles that panel.
+           Pitch nudge is intentionally NOT in this row — it lives in the
+           BPM cluster up in the header (Rekordbox/Beatport convention,
+           reads as "tuning the BPM" rather than another transport action). ── */}
       <div style={{display:"flex", alignItems:"center", gap:8, padding:"8px 12px", borderBottom:BD, justifyContent:"center"}}>
         {/* Grid panel toggle. Carries a small white-at-0.9 dot when the
             currently-loaded track has a user override (gridAnchorSec or
@@ -6333,22 +6445,26 @@ export default function CollabMix({ initialPage = "landing", djName = null }) {
   }, [pB?.waveformBass, pB?.waveformMid, pB?.waveformHigh]);
 
   // ── Per-track beat-grid overrides (retired localStorage knobs) ──
-  // The pre-Commit-1 nudge state (gridOffsetA/B, bpmNudgeA/B, barOneA/B) was
-  // never exposed via UI, so the localStorage values were always 0 in
-  // practice. User grid edits now live on the IDB track record
-  // (gridAnchorSec, bpmOverride) and flow through effectiveBpmResults
-  // declared above — every consumer of bpm.results.X automatically picks
-  // up the effective grid, including the sync path, the beat-skip buttons,
-  // and the partner broadcast. The variables below are kept as zero
-  // constants only to satisfy the downstream JSX in <AnimatedZoomedWF> and
-  // <Deck> until Commit 2 retires those props alongside the new Grid Edit
-  // toolbar. The math at AnimatedZoomedWF:firstDownbeatSec is
+  // The pre-Commit-1 nudge state (gridOffsetA/B, barOneA/B) was never
+  // exposed via UI, so the localStorage values were always 0 in practice.
+  // User grid edits now live on the IDB track record (gridAnchorSec,
+  // bpmOverride) and flow through effectiveBpmResults declared above —
+  // every consumer of bpm.results.X automatically picks up the effective
+  // grid, including the sync path, the beat-skip buttons, and the partner
+  // broadcast. The variables below are kept as zero constants only to
+  // satisfy the downstream JSX in <AnimatedZoomedWF> and <Deck> until a
+  // future commit retires those props alongside the new Grid Edit toolbar.
+  // The math at AnimatedZoomedWF:firstDownbeatSec is
   //   beatPhaseFrac × beatPeriodSec + gridOffsetMs/1000 + barOneOffsetSec
   // with the new pipeline, gridOffsetMs and barOneOffsetSec contribute 0
   // and the first two terms already include any user override via
   // effectiveBpmResults.
+  // bpmNudge (originally part of this retired triplet) was fully removed
+  // when the Pitch Nudge cluster shipped — pitch offset now lives in each
+  // deck's `rate` state, not in a separate per-track override. The legacy
+  // localStorage `bpmNudge:` key migration below still sweeps any stale
+  // entries from old builds.
   const gridOffsetA = 0, gridOffsetB = 0;
-  const bpmNudgeA = 0, bpmNudgeB = 0;
   const barOneA = 0, barOneB = 0;
 
   // One-time localStorage cleanup. The previous knobs persisted under three
@@ -6719,6 +6835,19 @@ export default function CollabMix({ initialPage = "landing", djName = null }) {
         const v = m.value === "A" || m.value === "B" ? m.value : null;
         masterDeckRef.current = v;
         setMasterDeck(v);
+      }
+      // Mirror driver-broadcast rate to the local Deck audio + visual. The
+      // sync engine independently runs syncDecks on the partner side (driven
+      // by syncLocked mirror), so for sync-driven rate changes this is a
+      // redundant idempotent set. For pitch-nudge-driven rate changes (which
+      // bypass the sync engine), this is the only path that makes the
+      // partner's audio source + header BPM follow. setRate is idempotent for
+      // identical values, so the driver's own loopback (if any) is a no-op.
+      if (m.field === "rate" && (m.deckId === "A" || m.deckId === "B")) {
+        if (m.deckId === "A") setRateA(m.value);
+        else                  setRateB(m.value);
+        const el = document.querySelector(`[data-set-rate='${m.deckId}']`);
+        if (el?._setRate) el._setRate(m.value);
       }
     }
     if (m.type==="seek_request")   seekFnsRef.current[m.deckId]?.(m.value, true);
@@ -7163,6 +7292,27 @@ export default function CollabMix({ initialPage = "landing", djName = null }) {
     }
     logEvent("sync", "toggle", { locked: true, slave: slaveDeck, master: effectiveMaster, mode: masterMode });
   }, [syncLocked, syncDecks, bpm.results, pA, pB, sync, getEffectiveMasterBpm, rateA, rateB]);
+
+  // Pitch nudge → sync interaction. Per design decision: nudging pitch on
+  // EITHER deck while sync is engaged disengages sync. The deck's own rate
+  // setRate + broadcast handles the audio side; this just clears the sync
+  // metadata + broadcasts so both browsers' lock visual releases. Same OFF
+  // semantics as handleSyncToggle's OFF branch (rate is preserved — the
+  // deck keeps whatever rate the user just set; we don't snap back).
+  const handlePitchInteract = useCallback((deckId) => {
+    if (!syncLockedRef.current) return;
+    setSyncLocked(false);
+    const broadcastDeck = lastSlaveDeckRef.current || deckId;
+    const k = `deck${broadcastDeck}`;
+    lsRef.current[k] = { ...(lsRef.current[k]||{}), syncLocked: false };
+    sync.send({ type:"deck_update", deckId: broadcastDeck, field: "syncLocked", value: false });
+    masterDeckRef.current = null;
+    setMasterDeck(null);
+    lastSlaveDeckRef.current = null;
+    setLastSlaveDeck(null);
+    logEvent("sync", "disengaged_by_pitch", { deck: deckId, slave: broadcastDeck });
+    console.log("[SYNC] disengaged by pitch nudge on deck", deckId);
+  }, [sync]);
 
   // Explicit master toggle. Click M on a deck → mark as master; click again
   // → clear (no explicit master, SYNC will fall back to implicit logic).
@@ -7632,7 +7782,7 @@ export default function CollabMix({ initialPage = "landing", djName = null }) {
                   } catch {}
                 }}
                 style={{ minHeight:wfH, flexShrink:0 }}>
-                <AnimatedZoomedWF bands={wfA} dur={wfA?.dur||0} progRef={progRefA} onSeek={seekDeckA} h={wfH} windowSec={WF_WINDOWS[wfZoom]} beatPhaseFrac={bpm.results["A"]?.beatPhaseFrac??null} beatPeriodSec={bpm.results["A"]?.beatPeriodSec??null} gridOffsetMs={gridOffsetA} barOneOffsetSec={barOneA * (bpm.results["A"]?.beatPeriodSec || 0)} bpmNudge={bpmNudgeA*0.01} deckColor="#2E86DE" rate={rateA}/>
+                <AnimatedZoomedWF bands={wfA} dur={wfA?.dur||0} progRef={progRefA} onSeek={seekDeckA} h={wfH} windowSec={WF_WINDOWS[wfZoom]} beatPhaseFrac={bpm.results["A"]?.beatPhaseFrac??null} beatPeriodSec={bpm.results["A"]?.beatPeriodSec??null} gridOffsetMs={gridOffsetA} barOneOffsetSec={barOneA * (bpm.results["A"]?.beatPeriodSec || 0)} deckColor="#2E86DE" rate={rateA}/>
               </div>
             )}
             {hasB && (
@@ -7649,7 +7799,7 @@ export default function CollabMix({ initialPage = "landing", djName = null }) {
                   } catch {}
                 }}
                 style={{ minHeight:wfH, flexShrink:0 }}>
-                <AnimatedZoomedWF bands={wfB} dur={wfB?.dur||0} progRef={progRefB} onSeek={seekDeckB} h={wfH} windowSec={WF_WINDOWS[wfZoom]} beatPhaseFrac={bpm.results["B"]?.beatPhaseFrac??null} beatPeriodSec={bpm.results["B"]?.beatPeriodSec??null} gridOffsetMs={gridOffsetB} barOneOffsetSec={barOneB * (bpm.results["B"]?.beatPeriodSec || 0)} bpmNudge={bpmNudgeB*0.01} deckColor="#A855F7" rate={rateB}/>
+                <AnimatedZoomedWF bands={wfB} dur={wfB?.dur||0} progRef={progRefB} onSeek={seekDeckB} h={wfH} windowSec={WF_WINDOWS[wfZoom]} beatPhaseFrac={bpm.results["B"]?.beatPhaseFrac??null} beatPeriodSec={bpm.results["B"]?.beatPeriodSec??null} gridOffsetMs={gridOffsetB} barOneOffsetSec={barOneB * (bpm.results["B"]?.beatPeriodSec || 0)} deckColor="#A855F7" rate={rateB}/>
               </div>
             )}
             {/* Zoom selector — floats in the top-right corner of the waveform
@@ -7676,8 +7826,15 @@ export default function CollabMix({ initialPage = "landing", djName = null }) {
           button on each deck (no vertical addition), so height returned to
           248. The grid edit data layer + sync migration from Commit 1 stays
           in place — user clicks the red dot to call lib.setGridEdit at the
-          current playhead. */}
-      <div style={{ flexShrink:0, display:"grid", gridTemplateColumns:"1fr 200px 1fr", gap:8, padding:"6px 12px 0", height:"248px", overflow:"hidden", width:"100%" }}>
+          current playhead.
+          Pitch Nudge (June 9): bumped 248 → 260 (+12 px). The BPM hero
+          cluster gained a pitch readout + ± buttons row, which costs ~16 px
+          inside the header. The compact inline pct+buttons layout absorbs
+          most of that internally; 12 px container grow covers the rest and
+          gives the grid-panel-open state (previously ~14 px over budget)
+          back some breathing room. Library forfeits 12 px of vertical space —
+          ~4% loss at 820 vh, imperceptible at typical track-row heights. */}
+      <div style={{ flexShrink:0, display:"grid", gridTemplateColumns:"1fr 200px 1fr", gap:8, padding:"6px 12px 0", height:"260px", overflow:"hidden", width:"100%" }}>
 
         {/* ── DECK A (shared) — outer "Deck A · driver" header bar removed;
               new inner Deck header has the 3-part identity row at top. ── */}
@@ -7685,7 +7842,7 @@ export default function CollabMix({ initialPage = "landing", djName = null }) {
           <div style={{ flex:1, display:"flex", alignItems:"flex-start", gap:10, padding:"10px 0 10px 10px", overflow:"hidden", minHeight:0 }}>
             <DeckArt artwork={libLoadA?.track?.artwork} fallback="A" color="#2E86DE"/>
             <div style={{ flex:1, overflow:"hidden", minHeight:0 }}>
-            <Deck id="A" ch={eng.current?.A} ctx={eng.current?.ctx} color="#2E86DE" local remote={pA} onChange={dh("A")} midi={midiEvt} bpmResult={bpm.results["A"]} bpmAnalyze={bpm.analyze} eqHi={eqA.hi} eqMid={eqA.mid} eqLo={eqA.lo} chanVol={eqA.vol} loadFromLibrary={libLoadA} onTrackInfo={handleTrackInfo} onSync={()=>handleSyncToggle("A")} syncReady={!!(bpm.results["B"]?.bpm || pB?.bpm)} syncRole={syncLocked ? (lastSlaveDeck === "A" ? "slave" : "master") : null} isMaster={masterDeck === "A"} onMasterToggle={handleMasterToggle} onLibraryTrackDrop={(trackId)=>{const t=lib.library.find(x=>x.id===trackId);if(t)handleLibLoad(t,"A");}} onProgUpdate={handleProgA} onWaveform={setWfA} onSeekReady={onDeckASeekReady} onToggleReady={onDeckAToggleReady} onCueReady={onDeckACueReady} onNudgeReady={onDeckANudgeReady} onTransportFire={handleTransportFire} isDriver={!deckDrivers.A || deckDrivers.A === session.name} acNowRef={acNowRef} onBufferReady={onDeckABufferReady} barOneOffsetSec={barOneA * (bpm.results["A"]?.beatPeriodSec || 0)} onGridEdit={(fields) => libLoadA?.track?.id && lib.setGridEdit?.(libLoadA.track.id, fields)} hasOverride={!!userGridA} userGridOverride={userGridA}/>
+            <Deck id="A" ch={eng.current?.A} ctx={eng.current?.ctx} color="#2E86DE" local remote={pA} onChange={dh("A")} midi={midiEvt} bpmResult={bpm.results["A"]} bpmAnalyze={bpm.analyze} eqHi={eqA.hi} eqMid={eqA.mid} eqLo={eqA.lo} chanVol={eqA.vol} loadFromLibrary={libLoadA} onTrackInfo={handleTrackInfo} onSync={()=>handleSyncToggle("A")} syncReady={!!(bpm.results["B"]?.bpm || pB?.bpm)} syncRole={syncLocked ? (lastSlaveDeck === "A" ? "slave" : "master") : null} isMaster={masterDeck === "A"} onMasterToggle={handleMasterToggle} onLibraryTrackDrop={(trackId)=>{const t=lib.library.find(x=>x.id===trackId);if(t)handleLibLoad(t,"A");}} onProgUpdate={handleProgA} onWaveform={setWfA} onSeekReady={onDeckASeekReady} onToggleReady={onDeckAToggleReady} onCueReady={onDeckACueReady} onNudgeReady={onDeckANudgeReady} onTransportFire={handleTransportFire} isDriver={!deckDrivers.A || deckDrivers.A === session.name} acNowRef={acNowRef} onBufferReady={onDeckABufferReady} barOneOffsetSec={barOneA * (bpm.results["A"]?.beatPeriodSec || 0)} onGridEdit={(fields) => libLoadA?.track?.id && lib.setGridEdit?.(libLoadA.track.id, fields)} hasOverride={!!userGridA} userGridOverride={userGridA} onPitchInteract={handlePitchInteract}/>
             </div>
           </div>
         </div>
@@ -7787,7 +7944,7 @@ export default function CollabMix({ initialPage = "landing", djName = null }) {
           <div style={{ flex:1, display:"flex", alignItems:"flex-start", gap:10, padding:"10px 0 10px 10px", overflow:"hidden", minHeight:0 }}>
             <DeckArt artwork={libLoadB?.track?.artwork} fallback="B" color="#A855F7"/>
             <div style={{ flex:1, overflow:"hidden", minHeight:0 }}>
-            <Deck id="B" ch={eng.current?.B} ctx={eng.current?.ctx} color="#A855F7" local remote={pB} onChange={dh("B")} midi={midiEvt} bpmResult={bpm.results["B"]} bpmAnalyze={bpm.analyze} eqHi={eqB.hi} eqMid={eqB.mid} eqLo={eqB.lo} chanVol={eqB.vol} loadFromLibrary={libLoadB} onTrackInfo={handleTrackInfo} onSync={()=>handleSyncToggle("B")} syncReady={!!(bpm.results["A"]?.bpm || pA?.bpm)} syncRole={syncLocked ? (lastSlaveDeck === "B" ? "slave" : "master") : null} isMaster={masterDeck === "B"} onMasterToggle={handleMasterToggle} onLibraryTrackDrop={(trackId)=>{const t=lib.library.find(x=>x.id===trackId);if(t)handleLibLoad(t,"B");}} onProgUpdate={handleProgB} onWaveform={setWfB} onSeekReady={onDeckBSeekReady} onToggleReady={onDeckBToggleReady} onCueReady={onDeckBCueReady} onNudgeReady={onDeckBNudgeReady} onTransportFire={handleTransportFire} isDriver={!deckDrivers.B || deckDrivers.B === session.name} acNowRef={acNowRef} onBufferReady={onDeckBBufferReady} barOneOffsetSec={barOneB * (bpm.results["B"]?.beatPeriodSec || 0)} onGridEdit={(fields) => libLoadB?.track?.id && lib.setGridEdit?.(libLoadB.track.id, fields)} hasOverride={!!userGridB} userGridOverride={userGridB}/>
+            <Deck id="B" ch={eng.current?.B} ctx={eng.current?.ctx} color="#A855F7" local remote={pB} onChange={dh("B")} midi={midiEvt} bpmResult={bpm.results["B"]} bpmAnalyze={bpm.analyze} eqHi={eqB.hi} eqMid={eqB.mid} eqLo={eqB.lo} chanVol={eqB.vol} loadFromLibrary={libLoadB} onTrackInfo={handleTrackInfo} onSync={()=>handleSyncToggle("B")} syncReady={!!(bpm.results["A"]?.bpm || pA?.bpm)} syncRole={syncLocked ? (lastSlaveDeck === "B" ? "slave" : "master") : null} isMaster={masterDeck === "B"} onMasterToggle={handleMasterToggle} onLibraryTrackDrop={(trackId)=>{const t=lib.library.find(x=>x.id===trackId);if(t)handleLibLoad(t,"B");}} onProgUpdate={handleProgB} onWaveform={setWfB} onSeekReady={onDeckBSeekReady} onToggleReady={onDeckBToggleReady} onCueReady={onDeckBCueReady} onNudgeReady={onDeckBNudgeReady} onTransportFire={handleTransportFire} isDriver={!deckDrivers.B || deckDrivers.B === session.name} acNowRef={acNowRef} onBufferReady={onDeckBBufferReady} barOneOffsetSec={barOneB * (bpm.results["B"]?.beatPeriodSec || 0)} onGridEdit={(fields) => libLoadB?.track?.id && lib.setGridEdit?.(libLoadB.track.id, fields)} hasOverride={!!userGridB} userGridOverride={userGridB} onPitchInteract={handlePitchInteract}/>
             </div>
           </div>
         </div>
