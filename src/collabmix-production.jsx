@@ -3867,21 +3867,98 @@ function snapToTransient(buf, targetSec) {
 // Pitch nudge buttons — [−][+]. Mutates the deck's rate. Web Audio's
 // playbackRate shifts pitch + tempo together (no time-stretch), matching
 // CDJ/Rekordbox pitch-fader semantics. Range ±8% from native rate.
-// Click ±0.1 BPM equivalent, Shift-click ±1.0. The readout (with scroll +
-// double-click reset) lives in the BPM display cluster directly above.
+// Click ±0.1 BPM, Shift-click ±1.0, press-and-hold = accelerated repeat.
+// The readout (PitchReadout below) handles scroll + drag + double-click reset.
 const PITCH_RANGE = 0.08; // ±8% from rate=1
+// Press-and-hold timing — first step fires on mousedown so quick taps still
+// register, then a 500 ms silence before the slow phase starts; after another
+// 1000 ms in slow phase (1500 ms total from press) the cadence + step both
+// grow. The shift variants use 10× the per-step BPM delta.
+const HOLD_INITIAL_DELAY_MS = 500;
+const HOLD_FAST_DELAY_MS = 1000;
+const HOLD_SLOW_INTERVAL_MS = 100;
+const HOLD_FAST_INTERVAL_MS = 50;
+const HOLD_SLOW_STEP_BPM = 0.1;
+const HOLD_FAST_STEP_BPM = 0.5;
+const HOLD_SHIFT_SLOW_STEP_BPM = 1.0;
+const HOLD_SHIFT_FAST_STEP_BPM = 5.0;
+// Drag on readout: 3 px slop before drag activates (so single click + double-
+// click still register cleanly), then 5 px of vertical travel per 0.1 % step.
+const DRAG_THRESHOLD_PX = 3;
+const DRAG_PX_PER_STEP = 5;
+// Drag fires applyRate() on every step boundary crossed — that can be 10-20 Hz
+// during continuous drag. Throttle telemetry to ~10 Hz so the analytics
+// pipeline isn't flooded; setRate + RTC broadcast are unaffected.
+const DRAG_TELEMETRY_DEBOUNCE_MS = 100;
+
 function PitchNudge({ rate, nativeBpm, enabled, synced, onApply }) {
-  // Compute step as BPM-accurate fraction of native rate.
-  // Δrate = ΔBPM / nativeBpm (since rate=1 == nativeBpm).
-  const bpmStep = (bpmDelta) => nativeBpm > 0 ? bpmDelta / nativeBpm : 0;
-  const apply = (deltaRate) => {
-    if (!enabled) return;
-    const target = Math.max(1 - PITCH_RANGE, Math.min(1 + PITCH_RANGE, rate + deltaRate));
-    if (Math.abs(target - rate) < 1e-6) return;
-    onApply(target);
+  // Latest-prop refs so setInterval callbacks (created at press time) read the
+  // current rate / native BPM / enabled flag rather than the values captured
+  // at interval creation. Without these, a hold that started at rate=1 would
+  // keep applying deltas relative to rate=1 even after the rate moved.
+  const rateRef = useRef(rate);
+  const nativeBpmRef = useRef(nativeBpm);
+  const enabledRef = useRef(enabled);
+  useEffect(() => { rateRef.current = rate; }, [rate]);
+  useEffect(() => { nativeBpmRef.current = nativeBpm; }, [nativeBpm]);
+  useEffect(() => { enabledRef.current = enabled; }, [enabled]);
+
+  // initialTimeout = the 500 ms gate before slow phase starts.
+  // fastDelayTimeout = the 1000 ms gate (during slow phase) before fast starts.
+  // intervalId = whichever phase's repeat interval is currently active.
+  const holdRef = useRef({ initialTimeout: null, fastDelayTimeout: null, intervalId: null });
+  const clearHoldTimers = () => {
+    const h = holdRef.current;
+    if (h.initialTimeout) { clearTimeout(h.initialTimeout); h.initialTimeout = null; }
+    if (h.fastDelayTimeout) { clearTimeout(h.fastDelayTimeout); h.fastDelayTimeout = null; }
+    if (h.intervalId) { clearInterval(h.intervalId); h.intervalId = null; }
   };
-  const onMinus = (e) => apply(-bpmStep(e.shiftKey ? 1.0 : 0.1));
-  const onPlus  = (e) => apply( bpmStep(e.shiftKey ? 1.0 : 0.1));
+  // Clean up timers on unmount — otherwise a deck removal during hold would
+  // leak intervals that keep firing applyRate against a stale onApply.
+  useEffect(() => clearHoldTimers, []);
+
+  // Apply one step. Returns false when the clamp blocks the change so the
+  // caller can stop the hold (otherwise the interval would keep firing
+  // no-op updates against the clamped rate).
+  const applyStep = (dir, stepBpm, method) => {
+    if (!enabledRef.current) return false;
+    const nb = nativeBpmRef.current;
+    if (!(nb > 0)) return false;
+    const cur = rateRef.current;
+    const target = Math.max(1 - PITCH_RANGE, Math.min(1 + PITCH_RANGE, cur + dir * stepBpm / nb));
+    if (Math.abs(target - cur) < 1e-6) return false;
+    onApply(target, method);
+    return true;
+  };
+
+  const startHold = (dir, shift) => {
+    const slowStep = shift ? HOLD_SHIFT_SLOW_STEP_BPM : HOLD_SLOW_STEP_BPM;
+    const fastStep = shift ? HOLD_SHIFT_FAST_STEP_BPM : HOLD_FAST_STEP_BPM;
+    // First step fires immediately. Quick-tap path: mouseup arrives before the
+    // 500 ms timeout, hold timers get cleared, the user only sees the single step.
+    applyStep(dir, slowStep, shift ? "shift_button" : "button");
+    holdRef.current.initialTimeout = setTimeout(() => {
+      holdRef.current.initialTimeout = null;
+      holdRef.current.intervalId = setInterval(() => {
+        if (!applyStep(dir, slowStep, "hold")) clearHoldTimers();
+      }, HOLD_SLOW_INTERVAL_MS);
+      // Schedule the slow → fast transition relative to slow-phase start, so
+      // the total time from press to fast phase is initial + fastDelay.
+      holdRef.current.fastDelayTimeout = setTimeout(() => {
+        holdRef.current.fastDelayTimeout = null;
+        if (holdRef.current.intervalId) clearInterval(holdRef.current.intervalId);
+        holdRef.current.intervalId = setInterval(() => {
+          if (!applyStep(dir, fastStep, "hold")) clearHoldTimers();
+        }, HOLD_FAST_INTERVAL_MS);
+      }, HOLD_FAST_DELAY_MS);
+    }, HOLD_INITIAL_DELAY_MS);
+  };
+
+  const onMinusDown = (e) => { if (!enabled || e.button !== 0) return; startHold(-1, e.shiftKey); };
+  const onPlusDown  = (e) => { if (!enabled || e.button !== 0) return; startHold( 1, e.shiftKey); };
+  const onUp = () => clearHoldTimers();
+  const onLeave = () => clearHoldTimers();
+
   const btnBase = {
     width: 24, height: 24, background: "transparent",
     border: "1px solid rgba(255,255,255,0.12)",
@@ -3890,16 +3967,96 @@ function PitchNudge({ rate, nativeBpm, enabled, synced, onApply }) {
     cursor: enabled ? "pointer" : "default", outline: "none",
     padding: 0, display: "flex", alignItems: "center", justifyContent: "center",
     transition: "all 150ms cubic-bezier(0.4, 0, 0.2, 1)",
-    flexShrink: 0, lineHeight: 1,
+    flexShrink: 0, lineHeight: 1, userSelect: "none",
   };
-  const minusTip = !enabled ? undefined : synced ? "Pitch −0.1 BPM (shift: −1.0) · disengages Sync" : "Pitch −0.1 BPM (shift: −1.0)";
-  const plusTip  = !enabled ? undefined : synced ? "Pitch +0.1 BPM (shift: +1.0) · disengages Sync" : "Pitch +0.1 BPM (shift: +1.0)";
+  const minusTip = !enabled ? undefined : synced ? "Pitch −0.1 BPM (shift: −1.0, hold to repeat) · disengages Sync" : "Pitch −0.1 BPM (shift: −1.0, hold to repeat)";
+  const plusTip  = !enabled ? undefined : synced ? "Pitch +0.1 BPM (shift: +1.0, hold to repeat) · disengages Sync" : "Pitch +0.1 BPM (shift: +1.0, hold to repeat)";
   return (
     <div style={{ display:"flex", gap:0, flexShrink:0 }}>
-      <button onClick={onMinus} disabled={!enabled} title={minusTip}
+      <button onMouseDown={onMinusDown} onMouseUp={onUp} onMouseLeave={onLeave}
+        disabled={!enabled} title={minusTip}
         style={{ ...btnBase, borderTopLeftRadius:4, borderBottomLeftRadius:4, borderRight:"none" }}>−</button>
-      <button onClick={onPlus} disabled={!enabled} title={plusTip}
+      <button onMouseDown={onPlusDown} onMouseUp={onUp} onMouseLeave={onLeave}
+        disabled={!enabled} title={plusTip}
         style={{ ...btnBase, borderTopRightRadius:4, borderBottomRightRadius:4 }}>+</button>
+    </div>
+  );
+}
+
+// Pitch readout — `+0.0%` text with three orthogonal interactions:
+//   - Scroll wheel: ±0.05 BPM/notch fine adjust (method "scroll")
+//   - Vertical drag: 5 px per 0.1 % step, target = startRate + steps × 0.001
+//     (method "drag"); 3 px slop before drag activates so single click /
+//     double-click don't accidentally trigger drag
+//   - Double-click: reset to 0.0 % (method "reset")
+// Pointer Events + setPointerCapture so drag tracking survives the cursor
+// leaving the element. Drag's startRate is captured at pointerdown — external
+// rate changes mid-drag get overridden by the drag's next move event ("most
+// recent input wins" per spec).
+function PitchReadout({ rate, nativeBpm, enabled, displayText, tooltip, color, onApply, onReset }) {
+  const dragRef = useRef({ pointerId: null, startY: 0, startRate: 1, threshold: false });
+
+  const onPointerDown = (e) => {
+    if (!enabled || e.button !== 0) return;
+    if (dragRef.current.pointerId != null) return; // already dragging another pointer
+    dragRef.current = {
+      pointerId: e.pointerId,
+      startY: e.clientY,
+      startRate: rate,
+      threshold: false,
+    };
+    try { e.currentTarget.setPointerCapture(e.pointerId); } catch {}
+  };
+  const onPointerMove = (e) => {
+    const d = dragRef.current;
+    if (d.pointerId !== e.pointerId) return;
+    const verticalDelta = d.startY - e.clientY; // positive = dragged UP = +pitch
+    if (!d.threshold) {
+      if (Math.abs(verticalDelta) < DRAG_THRESHOLD_PX) return;
+      d.threshold = true;
+    }
+    const steps = Math.trunc(verticalDelta / DRAG_PX_PER_STEP);
+    const target = Math.max(1 - PITCH_RANGE, Math.min(1 + PITCH_RANGE, d.startRate + steps * 0.001));
+    if (Math.abs(target - rate) < 1e-6) return;
+    onApply(target, "drag");
+  };
+  const releasePointer = (e) => {
+    const d = dragRef.current;
+    if (d.pointerId !== e.pointerId) return;
+    try { e.currentTarget.releasePointerCapture(d.pointerId); } catch {}
+    d.pointerId = null;
+    d.threshold = false;
+  };
+
+  const onWheel = (e) => {
+    if (!enabled) return;
+    e.preventDefault();
+    if (!(nativeBpm > 0)) return;
+    const delta = (e.deltaY < 0 ? 0.05 : -0.05) / nativeBpm;
+    const target = Math.max(1 - PITCH_RANGE, Math.min(1 + PITCH_RANGE, rate + delta));
+    if (Math.abs(target - rate) < 1e-6) return;
+    onApply(target, "scroll");
+  };
+
+  return (
+    <div
+      onPointerDown={onPointerDown}
+      onPointerMove={onPointerMove}
+      onPointerUp={releasePointer}
+      onPointerCancel={releasePointer}
+      onDoubleClick={enabled ? onReset : undefined}
+      onWheel={onWheel}
+      title={tooltip}
+      style={{
+        fontSize:11, fontFamily:"'Inter',sans-serif", fontWeight:500,
+        color,
+        fontVariantNumeric:"tabular-nums", letterSpacing:0.3,
+        cursor: enabled ? "ns-resize" : "default",
+        userSelect:"none",
+        touchAction:"none", // let pointermove fire instead of native vertical scroll
+        transition:"color 150ms cubic-bezier(0.4, 0, 0.2, 1)",
+      }}>
+      {displayText}
     </div>
   );
 }
@@ -3958,6 +4115,10 @@ function Deck({ id, ch, ctx:ac, color, local, remote, onChange, midi:mt, bpmResu
   // EQ is now passed as props: eqHi, eqMid, eqLo, chanVol
   const remProgRef=useRef(0),remTimeRef=useRef(0),remRateRef=useRef(0),remRaf=useRef(null);
   const lastProgBroadcastRef=useRef(0);
+  // Drag telemetry timestamp. applyRate skips logEvent when method==="drag" and
+  // the last drag log was <DRAG_TELEMETRY_DEBOUNCE_MS ago. Hold, scroll, button,
+  // shift_button, and reset always log.
+  const lastDragTelemetryRef=useRef(0);
 
   // Escape closes the Beat Grid panel when it is open. Scoped per-deck —
   // each Deck attaches its own listener and only acts on its own state.
@@ -4559,22 +4720,33 @@ function Deck({ id, ch, ctx:ac, color, local, remote, onChange, midi:mt, bpmResu
               const synced       = syncRole !== null;
               const enabled      = isDriver && nativeBpm > 0;
               const bpmStep      = (bpmDelta) => nativeBpm > 0 ? bpmDelta / nativeBpm : 0;
-              const applyRate = (newRate) => {
+              // applyRate is called by ± buttons (method: "button"/"shift_button"),
+              // press-and-hold repeats ("hold"), scroll-wheel ("scroll"), and
+              // drag ("drag"). Drag fires at ~10-20 Hz so its telemetry is
+              // throttled to ~10 Hz via lastDragTelemetryRef — setRate +
+              // onChange broadcast still run every call regardless.
+              const applyRate = (newRate, method) => {
                 onPitchInteract?.(id);
                 setRate(newRate);
                 onChange?.("rate", newRate);
-                logEvent("pitch", "offset_changed", {
-                  deck: id,
-                  trackId: loadFromLibrary?.track?.id || null,
-                  prevRate: rate,
-                  newRate,
-                  prevPct: (rate - 1) * 100,
-                  newPct: (newRate - 1) * 100,
-                  nativeBpm,
-                  effectiveBpm: nativeBpm * newRate,
-                  wasSynced: synced,
-                });
-                console.log(`[PITCH-OFFSET] deck ${id} ${((newRate-1)*100).toFixed(2)}% (rate=${newRate.toFixed(4)}, effBpm=${(nativeBpm*newRate).toFixed(2)}${synced?", was synced":""})`);
+                const now = Date.now();
+                const shouldLog = method !== "drag" || (now - lastDragTelemetryRef.current >= DRAG_TELEMETRY_DEBOUNCE_MS);
+                if (shouldLog) {
+                  if (method === "drag") lastDragTelemetryRef.current = now;
+                  logEvent("pitch", "offset_changed", {
+                    deck: id,
+                    trackId: loadFromLibrary?.track?.id || null,
+                    prevRate: rate,
+                    newRate,
+                    prevPct: (rate - 1) * 100,
+                    newPct: (newRate - 1) * 100,
+                    nativeBpm,
+                    effectiveBpm: nativeBpm * newRate,
+                    wasSynced: synced,
+                    method,
+                  });
+                  console.log(`[PITCH-OFFSET] deck ${id} ${((newRate-1)*100).toFixed(2)}% (rate=${newRate.toFixed(4)}, method=${method}, effBpm=${(nativeBpm*newRate).toFixed(2)}${synced?", was synced":""})`);
+                }
               };
               const resetRate = () => {
                 if (Math.abs(rate - 1) < 1e-6) return;
@@ -4586,23 +4758,18 @@ function Deck({ id, ch, ctx:ac, color, local, remote, onChange, midi:mt, bpmResu
                   trackId: loadFromLibrary?.track?.id || null,
                   prevPct: (rate - 1) * 100,
                   wasSynced: synced,
+                  method: "reset",
                 });
                 console.log(`[PITCH-RESET] deck ${id} prevRate=${rate.toFixed(4)}${synced?", was synced":""}`);
-              };
-              const onWheel = (e) => {
-                if (!enabled) return;
-                e.preventDefault();
-                const delta = bpmStep(e.deltaY < 0 ? 0.05 : -0.05);
-                const target = Math.max(1 - PITCH_RANGE, Math.min(1 + PITCH_RANGE, rate + delta));
-                if (Math.abs(target - rate) < 1e-6) return;
-                applyRate(target);
               };
               const bpmTip = effectiveBpm
                 ? `Natural BPM ${effectiveBpm.toFixed(1)}${atNative?"":` · pitch ${pctOff>0?"+":""}${pctOff.toFixed(1)}%`}`
                 : undefined;
               const pctTip = !enabled ? undefined
-                : synced ? "Pitch (synced) · scroll to fine-tune · double-click resets"
-                : "Pitch · scroll to fine-tune · double-click resets";
+                : synced ? "Pitch (synced) · drag, scroll, or double-click to reset"
+                : "Pitch · drag, scroll, or double-click to reset";
+              const pctColor = enabled ? "#9CA3AF" : "#5A5E66";
+              const pctText = atNative ? "0.0%" : `${pctOff>0?"+":""}${pctOff.toFixed(1)}%`;
               return (
                 <div style={{display:"flex", flexDirection:"column", alignItems:"flex-end", gap:4}}>
                   {/* BPM number — hero, 28 px */}
@@ -4614,17 +4781,7 @@ function Deck({ id, ch, ctx:ac, color, local, remote, onChange, midi:mt, bpmResu
                       vertically centered. Gap separates the two halves so
                       the eye reads "value · controls" cleanly. */}
                   <div style={{display:"flex", alignItems:"center", gap:8}}>
-                    <div onDoubleClick={enabled?resetRate:undefined} onWheel={onWheel} title={pctTip}
-                      style={{
-                        fontSize:11, fontFamily:"'Inter',sans-serif", fontWeight:500,
-                        color: enabled ? "#9CA3AF" : "#5A5E66",
-                        fontVariantNumeric:"tabular-nums", letterSpacing:0.3,
-                        cursor: enabled ? "ns-resize" : "default",
-                        userSelect:"none",
-                        transition:"color 150ms cubic-bezier(0.4, 0, 0.2, 1)",
-                      }}>
-                      {atNative ? "0.0%" : `${pctOff>0?"+":""}${pctOff.toFixed(1)}%`}
-                    </div>
+                    <PitchReadout rate={rate} nativeBpm={nativeBpm} enabled={enabled} displayText={pctText} tooltip={pctTip} color={pctColor} onApply={applyRate} onReset={resetRate}/>
                     <PitchNudge rate={rate} nativeBpm={nativeBpm} enabled={enabled} synced={synced} onApply={applyRate}/>
                   </div>
                 </div>
