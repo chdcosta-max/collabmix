@@ -3681,17 +3681,24 @@ function AnimatedZoomedWF({ bands, dur, progRef, onSeek, h=96, windowSec=8, beat
             // (was too visually heavy, competed with waveform content). They
             // render as a normal downbeat (deck-color through-line + downbeat
             // ticks) PLUS red top/bottom phrase ticks for identity.
+            //
+            // Sub-pixel positions (no Math.floor) so canvas-2D anti-aliasing
+            // splits the fill across the two adjacent pixels proportionally
+            // to the fractional part of x. At non-1.0 rate, the inter-beat
+            // gap becomes non-integer and floor-snapping alternated adjacent
+            // beats between two pixel positions each frame — visible as a
+            // ~10 Hz shimmer on the grid. Sub-pixel rendering eliminates it.
             ctx.fillStyle=DOWN_LINE;
-            ctx.fillRect(Math.floor(x),0,lineW,physH);
+            ctx.fillRect(x,0,lineW,physH);
             ctx.fillStyle=DOWN_FILL;
-            const dx=Math.floor(x-downTickW/2);
+            const dx=x-downTickW/2;
             ctx.fillRect(dx,downTopY,downTickW,downTickH);
             ctx.fillRect(dx,downBotY,downTickW,downTickH);
             // Red phrase ticks on the outer rails — color-coherent red glow.
             ctx.shadowColor=`rgba(${PHRASE_RGB},0.7)`;
             ctx.shadowBlur=4;
             ctx.fillStyle=PHRASE_FILL;
-            const px=Math.floor(x-phraseTickW/2);
+            const px=x-phraseTickW/2;
             ctx.fillRect(px,phraseTopY,phraseTickW,phraseTickH);
             ctx.fillRect(px,phraseBotY,phraseTickW,phraseTickH);
             // Restore deck-color glow for subsequent off/downbeat draws.
@@ -3700,16 +3707,16 @@ function AnimatedZoomedWF({ bands, dur, progRef, onSeek, h=96, windowSec=8, beat
           }else if(isDownbeat){
             // Downbeat: 1px deck-color through-line + 2px×12px centered ticks.
             ctx.fillStyle=DOWN_LINE;
-            ctx.fillRect(Math.floor(x),0,lineW,physH);
+            ctx.fillRect(x,0,lineW,physH);
             ctx.fillStyle=DOWN_FILL;
-            const dx=Math.floor(x-downTickW/2);
+            const dx=x-downTickW/2;
             ctx.fillRect(dx,downTopY,downTickW,downTickH);
             ctx.fillRect(dx,downBotY,downTickW,downTickH);
           }else if(showOffBeats){
             // Off-beat: 1px×5px centered ticks, no through-line.
             ctx.fillStyle=OFF_FILL;
-            ctx.fillRect(Math.floor(x),offTopY,lineW,offTickH);
-            ctx.fillRect(Math.floor(x),offBotY,lineW,offTickH);
+            ctx.fillRect(x,offTopY,lineW,offTickH);
+            ctx.fillRect(x,offBotY,lineW,offTickH);
           }
         }
         // Reset shadow so downstream draws (playhead, hot cues) aren't blurred.
@@ -4082,10 +4089,10 @@ function Deck({ id, ch, ctx:ac, color, local, remote, onChange, midi:mt, bpmResu
       let p;
       if(lr2.active&&lr2.start!==null&&lr2.end!==null){
         const lDur=(lr2.end-lr2.start)*buf.duration;
-        const pos=(o-lr2.start*buf.duration+elapsedBuf);
+        const pos=(off.current-lr2.start*buf.duration+elapsedBuf);
         p=lr2.start+(pos%lDur)/buf.duration;
       } else {
-        p=Math.min(1,(o+elapsedBuf)/buf.duration);
+        p=Math.min(1,(off.current+elapsedBuf)/buf.duration);
       }
       setProg(p); progRef.current=p; onProgUpdate?.(p);
       // Throttle progress broadcasts to 10Hz to reduce network jitter on partner side
