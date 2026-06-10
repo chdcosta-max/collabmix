@@ -6874,3 +6874,168 @@ Same as prior sections.
 - **Production state:** Commit B + #44 fix live and verified
   via Desktop. `meta.release` SHA on prod = `09249e5dcc3987e2...`
   (or B-2's SHA if it commits tonight).
+
+---
+
+## Session — June 9-10 evening — Bug #43 shipped + Small WF Slice A WIP + signal extraction root cause identified
+
+### Shipped to production
+
+- **`f48d0ea` — Bug #43 partner BPM hero now shows effective BPM**
+  - One-line fix: `rateApplies` gates on `effectiveBpm` instead of
+    `bpmResult?.bpm` only
+  - Catches a Phase 3B follow-up that was missed at the time
+  - Verified 4/4 PASS on localhost + 11/11 production bundle audit
+
+### Small WF Slice A — in working tree (stashed)
+
+#### Foundation work
+
+- `buildSilhouettePath` replacing per-column `fillRect` loop
+- `GAMMA = 0.7`
+- `PEAK_HEIGHT_RATIO = 0.85` breathing room above and below silhouette
+- Two-pass silhouette fill (vertical gradient + horizontal
+  played/unplayed)
+- Empty / loading / analyzing state branches
+- `ResizeObserver` responsive density
+- **Step A:** bright-at-center vertical gradient (inverted from peak-tip
+  brightness — peak-tip stop coinciding with flat silhouette top edge
+  was lighting up 600+ adjacent columns as a continuous "border")
+- **Step B:** per-track 5/95 percentile normalization (median + scale
+  soft-clip variant was tried and reverted — looked like uniform tubes)
+- Cache key on `bArr` Float32Array (perf fix — was recomputing 24K-element
+  sort × 60 fps × 2 decks because wrapper bands object was being
+  rebuilt every render)
+- Minute markers as 1 px bottom ticks at `y = H - tickHeight - 4` (spacing
+  to waveform body not fully resolved — canvas-expansion option deferred)
+- `[WF-DIAG]` diagnostic instrumentation that logs raw env / normalized /
+  heightPx at 9 fixed track positions on track load (`window.__cap` hook
+  installed by Claude Desktop to deep-clone the payload for survival)
+
+#### Critical finding — real root cause
+
+Multiple rendering iterations failed to make dense tracks (Embers in
+Bloom) show structural variation. Claude Desktop captured `[WF-DIAG]`
+data showing env values clustered near maximum (0.864–0.997) at all 9
+sampled positions on BOTH Embers and Lost Canvas, despite envFloor
+being 0.10–0.20 (i.e. low values exist somewhere in each track).
+
+Claude Desktop's initial fix recommendation ("shorten the IIR filter
+time constant") was wrong. Claude Code's investigation showed:
+
+- The IIR in question is a 300 Hz one-pole low-pass on the **audio
+  signal** (`lpB = aB*lpB + (1-aB)*s`), not an envelope follower
+- Time constant: τ = 1/(2π × 300) ≈ **0.53 ms** — already very fast
+- Shortening it (smaller aB → higher cutoff) would pass MORE signal
+  content, making magnitudes HIGHER on average, not lower
+- The recommended change targeted the wrong mechanism
+
+**Actual root cause:** bass-band content in dense electronic tracks is
+sustained (synth pads + sustained kicks + sub-bass through the track),
+not transient. Peak detection on rectified bass-band magnitude
+correctly captures this as constant loudness. **The visual flatness
+is faithful representation of the bass band.**
+
+The variation DJs want to see (no-kick intros, breakdowns, sparse
+sections) lives in OTHER frequency bands — especially the high band
+(hi-hats, leads, vocals, atmospheric elements) which DO vary between
+sections.
+
+### Tomorrow's order
+
+1. **Session Start Protocol** — read CLAUDE.md + this VISION_5 addendum
+2. **`git stash pop`** to restore small WF work + `[WF-DIAG]`
+3. **Candidate 1 first** — change small WF env from `max(bv, mv, hv)`
+   to just `hv` (high band only). One-line change in small WF, no
+   analyzer touch. Re-run `[WF-DIAG]` via `window.__cap`. Check:
+   - Do intros register as low env now?
+   - Do drops register as high env?
+4. **If Candidate 1 works** — ship Slice A + move to Slice B
+5. **If high-band-only too "shimmery" / loses bass character** — try
+   Candidate 2 (weighted blend `0.2*bv + 0.5*mv + 0.3*hv`)
+6. **If neither lands** — Candidate 3 (transient/onset detection in
+   analyzer) — but this touches the don't-touch list (analyzer
+   pipeline), larger scope
+7. **After fix lands** — address the marker spacing question (canvas
+   height +6 px option vs alternative)
+8. **Then** — Slice B (big WF improvements)
+
+### Unresolved this session
+
+1. **Minute marker visually touches waveform body** despite `y=32`
+   reposition. Canvas height expansion option deferred (would cost
+   ~6 px from library; alternatives: marker inside silhouette
+   accepted, or different marker geometry).
+2. **#45 (NEW)** — Small WF loading state renders a smooth gradient
+   when bands fail to load — visually indistinguishable from a
+   real-but-flat waveform. Robustness issue caught during Desktop
+   testing. Log for future fix.
+
+### Process learnings
+
+1. **When agents disagree about code facts, believe the one reading
+   the code.** Twice tonight Claude Desktop's analysis was directionally
+   useful but mechanistically wrong: first claiming "mean binning" when
+   the code was already peak; then claiming "shorten IIR" when the IIR
+   was a low-pass on the signal at 0.53 ms time constant, not an
+   envelope follower. Claude Code pushed back appropriately both times
+   rather than implementing wrong fixes.
+2. **When iteration fails, investigate a different layer.** Hours
+   tonight spent tuning RENDERING (gradient inversion, gamma 1.4 → 0.9
+   → 0.7, normalization percentiles 5/95 → 10/90 → 20/80 → back to 5/95,
+   soft-clip experiment) when the actual issue was SIGNAL EXTRACTION.
+   When math reasoning says "should work" but visual reality says
+   "worse," the problem is at a different layer than the one being
+   tuned.
+3. **Chad's eye is the ground truth.** Every iteration tonight that
+   Chad said "looks worse" was actually worse, even when math reasoning
+   suggested improvement. Trust visual judgment over math when they
+   disagree.
+4. **Instrument before theorizing.** Once `[WF-DIAG]` captured actual
+   env numbers at fixed positions, the diagnosis became clear in
+   minutes. Should have asked for measurements much earlier instead of
+   iterating on theory.
+5. **Saving energy is worth more than shipping tired.** Chad correctly
+   called the stop. Decisions made fatigued compound losses.
+
+### Roadmap status
+
+**Closed this session:**
+
+- ✅ Bug #43 — partner-side BPM hero shows effective BPM
+
+**Active for tomorrow:**
+
+- 🔄 Small WF Slice A — high-band env experiment is the next try
+- 📋 Slice B — big WF improvements (per VISION_5 Phase 1 spec)
+- 📋 Slice C — transient hairline (issue #37)
+
+**Pending Jake:**
+
+- Bug #2 — sync release rate
+- Bug #10 — scrub-master-moves-slave
+
+**Pre-dogfood essentials still needed:**
+
+- Slice A complete
+- Slice B big WF improvements
+- #9 drag-and-drop library → deck
+- Self-verify audio + RTC with headphones
+
+**New issues logged this session:**
+
+- **#45** — Small WF loading state visually indistinguishable from
+  real-but-flat waveform
+
+### Don't-touch list (unchanged)
+
+Same as prior sections.
+
+### Working state for tomorrow
+
+- **Master HEAD:** `f48d0ea` (Bug #43) at write time, will advance to
+  this VISION_5 commit after this section ships
+- **Working tree:** clean after stash + VISION_5 commit
+- **Stash:** `stash@{0}` carries the small WF Slice A WIP + `[WF-DIAG]`
+  diagnostic + marker reposition — restore with `git stash pop`
+- **Dev server:** PID 76963 will be killed at end of session
