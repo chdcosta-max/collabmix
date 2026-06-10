@@ -6578,3 +6578,299 @@ NEW issues for tomorrow's roadmap consideration:
 
 This refines Phase 3 Commit C priority. Originally planned anti-alias the slightly blocky edges. But the transient hairline may be higher-leverage with similar effort. Decide tomorrow morning based on energy and priorities.
 
+
+---
+
+## Session — June 9 (full day) — Phase 3 Commit B SHIPPED + #44 stutter/floor-aliasing fix SHIPPED + PitchNudge polish verified + Commit C Phase 1 ready
+
+Heavy day. Shipped two production commits, built and verified a
+third (uncommitted at write time, pending final 13-item check),
+cross-referenced today's Commit C research against the May
+locked record, and produced a Phase 1 build spec ready for
+tomorrow morning. Capture below preserves all decisions before
+context window resets.
+
+### Shipped to production
+
+#### Phase 3 Commit B — `ae83a62`
+
+Deck inline PitchNudge cluster — compact 96 px layout integrated
+into the BPM hero block (not the transport row, per Rekordbox /
+Beatport convention).
+
+- **Layout:** BPM hero (28 px) above `+0.0% [−] [+]` inline row.
+  Drops the "BPM" label below the number (matches Beatport
+  reference; the number is unambiguous in deck-card context).
+- **Container:** Decks + Mixer row grown 248 → 260 px (+12 px,
+  ~4 % library loss at 820 vh viewport — imperceptible).
+- **Interactions:** click ± = 0.1 % step, shift-click = 1.0 %,
+  scroll over readout = 0.05 BPM / notch, double-click resets to
+  0.0 %. Range ± 8 % from native rate.
+- **Sync interaction:** touching pitch on either deck while
+  Sync is engaged disengages Sync on both decks (RTC mirror).
+  Rates are PRESERVED on disengage (matches Rekordbox / CDJ).
+- **Audio:** raw Web Audio `playbackRate` with the existing
+  5 ms anti-click ramp. Pitch + tempo change together (CDJ pitch
+  fader semantics).
+- **RTC:** driver-side rate change broadcasts via existing
+  `deck_update` channel; receive-side `dh` extended to push to
+  local Deck via `_setRate` so partner audio + visual mirror.
+- **Telemetry:** `pitch.offset_changed`,
+  `pitch.reset`, `sync.disengaged_by_pitch`.
+- **Verified:** localhost 5/5 PASS (Claude Desktop layout +
+  interaction + clamp + neutrality + sync release), production
+  bundle audit 5/5 PASS (all symbols present, no Bug #1 / #12 /
+  Phase 3A regressions). Audio + RTC verified to the extent prod
+  allows (real two-tab session pending).
+
+#### #44 Stutter + floor-aliasing fix — `09249e5`
+
+Two latent issues, both exposed by Commit B's pitch usage:
+
+1. **`tick()` closure bug.** The animation loop inside `play_`
+   was reading `o` (closure parameter from play start) instead
+   of `off.current` (the ref the rate `useEffect` rebases on
+   every rate change). On every pitch change the visual playhead
+   snapped back to whatever `o` was at last `play_()` call —
+   typically 0 (start of track). Sync engagement had masked this
+   because sync always paired the rate change with a phase-align
+   seek that recreates the tick closure. PitchNudge has no seek,
+   so the bug was fully exposed.
+   - **Fix:** two identifier replacements at lines 4092, 4095 —
+     tick now reads `off.current` directly, so the existing
+     rebase actually takes effect.
+
+2. **`Math.floor()` grid line aliasing.** Six grid line render
+   call sites in `AnimatedZoomedWF` floor-snapped the x position
+   each frame. At non-1.0 rate, `pxPerSec × beatPeriodSec` is
+   non-integer, so adjacent beats alternated between two pixel
+   positions as `prog` advanced — visible as ~10 Hz shimmer on
+   the grid during pitch nudges. Wasn't visible before fix #1
+   because the snap-back was freezing `prog` near 0.
+   - **Fix:** removed `Math.floor()` from 7 call sites
+     (lines 3679–3713). Canvas-2D anti-aliasing handles
+     sub-pixel positioning; lines stay crisp at rate 1.0
+     because the existing `shadowBlur=4` halo already softened
+     them slightly.
+
+- **Verified:** localhost 5/5 PASS Claude Desktop with sub-pixel
+  position measurements before/after. Eyeball-confirmed by Chad:
+  smooth at all rates, still crisp at rate 1.0. Production
+  deploy audit 9/9 PASS (all `pitch.*` + `sync.*` strings, plus
+  Bug #1 / #12 / Phase 3A regression checks all green).
+
+### In working tree (uncommitted at write time) — Commit B-2 candidate
+
+PitchNudge polish — three UX gaps verified during today's Claude
+Desktop session:
+
+- **Press-and-hold on ± buttons.**
+  - 0 ms (immediate): first step fires (preserves quick-tap)
+  - 0 → 500 ms: dormant (initial gate)
+  - 500 → 1500 ms: repeats at 100 ms interval, 0.1 BPM step
+  - 1500 ms+: repeats at 50 ms interval, 0.5 BPM step
+  - Shift+hold variants use 1.0 / 5.0 BPM steps
+  - Clamp at ± 8 % stops the repeat
+- **Click-and-drag on the % readout.**
+  - 5 px vertical drag = 0.1 % step
+  - 3 px threshold prevents accidental drag (double-click + quick
+    click still register cleanly)
+  - Uses Pointer Events + `setPointerCapture` so drag survives
+    the cursor leaving the readout
+  - Drag start captures `rate`; subsequent moves compute
+    `target = startRate + steps × 0.001`
+- **Telemetry method field** added to `pitch.offset_changed` and
+  `pitch.reset` payloads:
+  `button | shift_button | hold | scroll | drag | reset`
+- **Drag telemetry debounced** at 100 ms (other methods always
+  log). `setRate` + RTC broadcast unaffected.
+- **All existing PitchNudge behaviors preserved:** range clamp,
+  sync disengage trigger, RTC mirror, track-load reset to 0.0 %.
+
+Build clean (587.52 KB, +2.3 KB), HMR-served, dev server live on
+`localhost:5173`. **If Claude Desktop's 13-item verification
+returns 13/13 PASS, commits as B-2 tonight.** If issues found,
+fix and re-verify; if substantive issues, B-2 ships tomorrow.
+
+### Commit C Phase 1 plan — ready for tomorrow
+
+Cross-referenced today against:
+
+- **May locked decisions** — `tools/docs/DESIGN_PHILOSOPHY.md`,
+  VISION_5 sections 1844–2050 (May 21–23 + May 26 evolution),
+  `tools/rekordbox-eval/WAVEFORM_BUILD_PLAN.md`
+- **Today's Claude Code research agent** — Tier 1 (envelope +
+  silhouette path), Tier 2 (transient hairline)
+- **Today's Claude Desktop design exploration** — 12-item spec
+
+#### Locked decisions (preserved from May, NOT re-litigated)
+
+- Calm monochrome amplitude direction (spectral revert
+  preserved — locked tabled until dogfood feedback)
+- White beat grid markers with deck-color halo
+- Red 16-bar phrase markers as **outer ticks only**, no
+  full-height through-line
+- Pure black background `#000000` (OLED + glow contrast)
+- Single accent: white at three opacity tiers
+  (0.9 / 0.6 / 0.3); NO amber, NO warm fill saturation on decks
+- Deck identity colors in cool family — Deck A `#2E86DE`
+  (Vivid Ocean Blue), Deck B `#A855F7` (Electric Royal Purple)
+- Path A glow architecture for the big waveform — two-canvas
+  stack with CSS `filter: blur()` on lower canvas
+
+#### Phase 1 build scope (universal improvements; no palette
+decisions — those deferred to Phase 2 visual iteration)
+
+1. **Silhouette path replacement (both waveforms).** Replace
+   the per-column `fillRect` loop with `buildSilhouettePath`
+   (already in file at line 3232, used by Path A on the big
+   waveform). Anti-aliased smooth edges.
+2. **Gamma drop (both waveforms).** 1.4 → ~0.9. Makes structure
+   visible (drops, breakdowns, intro/outro) instead of
+   "too full everywhere."
+3. **Transient hairline (BIG waveform only).** 1 px white at
+   ~70 % opacity, top half of waveform only. Cap density at
+   zoom level so it doesn't flood. The Rekordbox-style
+   grid-verification cue (#37 from June 8 late night).
+4. **Played / unplayed split (both waveforms).** Deck identity
+   color on played portion; dimmer same color on unplayed.
+   Clip-region over a single silhouette path (one geometry,
+   two fills).
+5. **Edge stroke (big waveform only).** 1 px brighter
+   same-hue edge on the silhouette path for crispness.
+6. **Responsive density (both waveforms).** Re-bin peaks to
+   `floor(cssWidth × DPR)` columns on resize. Debounce 100 ms.
+   Cache peak array keyed by `bands` identity.
+7. **Edge cases (both waveforms).**
+   - Empty deck: flat thin centerline in neutral gray
+   - Loading: subtle left-to-right shimmer
+   - Analyzing: silhouette dim to 40 %
+
+#### Phase 1 does NOT touch (preserved for Phase 2 visual
+iteration)
+
+- Playhead color (stays current white per locked decision)
+- Beat 1 anchor color (stays current red)
+- Cue marker treatment
+- Beatgrid weight / color (white with deck-color halo per lock)
+- Three-band frequency coloring (locked out — spectral tabled)
+
+**Estimated 4–6 hours for Phase 1 build** including
+investigation, implementation, Claude Desktop verification,
+deploy, and prod smoke test.
+
+#### Phase 2 approach
+
+Per Chad's "I need to see things to know" principle: palette
+decisions are deferred to **visual iteration after Phase 1
+ships**. Don't lock palette in a spec up front. Implement
+Phase 1, see the result on real tracks in two-tab session, then
+decide:
+
+- Does playhead need amber, or is white fine after the new
+  waveform body?
+- Does Beat 1 anchor red still bother us (issue #34)?
+- Are cue tabs visible enough against the new silhouette?
+- Does beatgrid weight feel right?
+
+Visual iteration, not theorize-then-build.
+
+### Open bugs / issues at end of day
+
+- **#43 Partner deck shows native BPM instead of effective BPM.**
+  Cosmetic display bug. RTC propagation works correctly (pitch
+  readout shows correct `+X %` on partner). Only the big BPM
+  hero is wrong — partner side reads stale or wrong field.
+  Pre-existing pattern (present on production before today).
+  Scope ~30–60 min. Bump to top of tomorrow.
+- **#42 Deck header zone redesign.** Post-launch consideration.
+  Reclaim empty space below thumbnail. Three options identified:
+  (a) BPM stays right + controls shift left, (b) thumbnail to
+  lower-left, (c) BPM moves into empty space. Deferred —
+  substantial redesign, not blocking.
+
+### Process improvements identified
+
+- **Claude Desktop sessions need a briefing document.** Too many
+  sessions today re-litigated locked decisions because Desktop
+  came in fresh without the May design history. Build a
+  "Mix//Sync briefing template" when convenient — a short
+  one-pager Desktop reads first that captures the locked
+  decisions + open questions + don't-touch list. Eliminates
+  re-litigation cost.
+
+### Tomorrow's work order (June 10)
+
+1. **Session Start Protocol** — read CLAUDE.md + this addendum
+   + the prior June 8 / June 9 sections.
+2. **If PitchNudge polish committed last night:** verify shipped
+   to prod, smoke-test audio + RTC in a real two-tab session.
+3. **Bug #43 fix** — partner BPM hero shows effective BPM
+   (~30–60 min). Fix before Commit C so dogfood-ready.
+4. **Commit C Phase 1 build** per spec above (~4–6 hours):
+   - Investigation phase first (silhouette path call sites,
+     gamma constants, transient detection signal)
+   - Implementation in slices (silhouette swap → gamma → split
+     → hairline → edge cases) so each can verify independently
+   - Claude Desktop visual verification on multiple track types
+     (drop-heavy, breakdown-heavy, vocal, ambient)
+   - Push to production
+5. **After Phase 1 ships:** Chad evaluates visually, decides
+   Phase 2 palette adjustments.
+6. **Phase 2 implementation** if needed (~1–2 hours):
+   per-element palette tweaks based on the live Phase 1 result.
+
+### Today's process learnings
+
+- **Investigation-before-building pattern continues to work
+  excellently.** Today's catches:
+  - PitchNudge placement caught (transport row → BPM cluster)
+  - Color escalation caught and neutralized (amber → neutral)
+  - Container overflow caught and right-sized
+  - Stutter root cause found (closure mismatch)
+  - Floor-aliasing latent issue found and pinned to the right
+    root cause (non-integer `pxPerSec`)
+- **Visual verification pattern works.** Chad eyeballs
+  subjective things (smoothness, crispness, feel) that Claude
+  Desktop can't fully judge from screenshots alone. The split
+  works: Desktop measures + flags, Chad arbitrates.
+- **Cross-reference research pattern matters.** When multiple
+  sources of design intent exist (May locked record + today's
+  research agent + today's Desktop spec), reconciling them
+  explicitly *before* drafting a build plan prevents
+  re-litigating locked decisions.
+- **"I need to see things to know."** Palette decisions
+  deferred to visual iteration after build. Specifying palette
+  in spec before seeing the new substrate is theorize-then-build,
+  which doesn't work for Chad's evaluation style.
+
+### Jake status
+
+- Pending replies on Bugs #2 + #10 (sync engine clarifications)
+- Round 2 dogfood: 5 of 6 critical items now addressed:
+  - Room/peer connection ✓ (Bug #1)
+  - Manual BPM control ✓ (Phase 3 Commit A — Beat Grid Panel)
+  - Deck-level pitch control with polish ✓ (Phase 3 Commit B
+    + B-2 pending verification)
+  - Telemetry ✓ (Layer 1 + pitch events)
+  - Sync engine fixes ⏳ (need Jake's input on #2 + #10)
+  - Drag-and-drop library → deck ❌ (not scoped — separate
+    workstream)
+
+### Don't-touch list (unchanged)
+
+Same as prior sections.
+
+### Working state for tomorrow
+
+- **Master HEAD at time of writing:** `09249e5` (#44 fix). Will
+  advance to B-2 commit if PitchNudge polish verifies tonight.
+- **Working tree:** dirty with the PitchNudge polish + this
+  VISION_5 update at write time. Expected to be clean after
+  the end-of-night sequence (B-2 commit if it verifies +
+  VISION_5 commit + push).
+- **Dev server:** PID 1477 on `localhost:5173` — will be killed
+  at end of night.
+- **Production state:** Commit B + #44 fix live and verified
+  via Desktop. `meta.release` SHA on prod = `09249e5dcc3987e2...`
+  (or B-2's SHA if it commits tonight).
