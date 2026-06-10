@@ -4712,7 +4712,7 @@ function Deck({ id, ch, ctx:ac, color, local, remote, onChange, midi:mt, bpmResu
           <div style={{flexShrink:0, textAlign:"right", alignSelf:"flex-end"}}>
             {(() => {
               const effectiveBpm = bpmResult?.bpm ?? remote?.bpm;
-              const rateApplies  = !!bpmResult?.bpm;
+              const rateApplies  = !!effectiveBpm;
               const nativeBpm    = rateApplies ? effectiveBpm : 0;
               const adjustedBpm  = effectiveBpm ? effectiveBpm * (rateApplies ? rate : 1) : null;
               const pctOff       = (rate - 1) * 100;
