@@ -4495,7 +4495,7 @@ function Deck({ id, ch, ctx:ac, color, local, remote, onChange, midi:mt, bpmResu
   useEffect(()=>{ rateRef.current=rate; },[rate]);
   useEffect(()=>{ isDriverRef.current=isDriver; console.log('[PLAY-STATE] deck',id,'isDriver changed to '+isDriver); },[isDriver,id]);
   // EQ is now passed as props: eqHi, eqMid, eqLo, chanVol
-  const remProgRef=useRef(0),remTimeRef=useRef(0),remRateRef=useRef(0),remRaf=useRef(null);
+  const remProgRef=useRef(0),remTimeRef=useRef(0),remRateRef=useRef(0),remRaf=useRef(null),remSlewRef=useRef(0);
   const lastProgBroadcastRef=useRef(0);
   // Drag telemetry timestamp. applyRate skips logEvent when method==="drag" and
   // the last drag log was <DRAG_TELEMETRY_DEBOUNCE_MS ago. Hold, scroll, button,
@@ -4551,48 +4551,50 @@ function Deck({ id, ch, ctx:ac, color, local, remote, onChange, midi:mt, bpmResu
     if(remote.waveformBass)setWfBass(remote.waveformBass);
     if(remote.waveformMid)setWfMid(remote.waveformMid);
     if(remote.waveformHigh)setWfHigh(remote.waveformHigh);
-    // Update interpolation refs when we get a new progress value
+    // Non-driver playhead model — anchor + rate-aware extrapolation + slew:
+    //   visible(t) = clamp( remProg + remRate*(t-remTime) + remSlew*e^(-(t-remTime)/TAU) )
+    // remProg/remTime = truth anchor; remRate = per-ms progress at the DRIVER'S
+    // actual rate; remSlew = a visual offset (set so the screen never JUMPS on a
+    // correction) that decays to 0, easing the playhead onto truth.
+    const SLEW_TAU_MS=220;     // slew half-life feel — eases a correction over ~½s
+    const SEEK_SNAP_SEC=3;     // discrepancy beyond this = a genuine seek → hard snap
     if(remote.progress!=null){
       const now=performance.now();
-      // Compute rate from track duration, not from packet arrivals.
-      // Packets arrive with variable network latency (2-200ms inter-arrival),
-      // making packet-derived rate too noisy. Using duration: rate = 1 / duration_in_ms
-      // gives a perfectly stable rate equal to real-time playback.
       const trackDurSec=remote.duration||dur;
+      // Rate-aware: extrapolate at the driver's ACTUAL playback rate, not a fixed
+      // 1×. A synced/pitched driver deck (rate≠1, the norm in a beatmatched set)
+      // otherwise makes our interp drift off truth; the periodic snap-back that
+      // produced was the backward sawtooth. remote.rate is broadcast on the wire.
+      const driverRate=(typeof remote.rate==="number"&&remote.rate>0)?remote.rate:1;
       if(trackDurSec&&trackDurSec>0){
-        remRateRef.current=nowPlaying?(1/(trackDurSec*1000)):0;
+        remRateRef.current=nowPlaying?(driverRate/(trackDurSec*1000)):0;
       }
-      // Compute where our current interp would be RIGHT NOW
-      const elapsed=remTimeRef.current?(now-remTimeRef.current):0;
-      const currentInterp=remProgRef.current!=null
-        ?remProgRef.current+(remRateRef.current||0)*elapsed
-        :remote.progress;
-      const drift=remote.progress-currentInterp;
-      // First packet ever, or huge drift (e.g., scrub/seek): hard snap
-      const SNAP_THRESHOLD=0.005; // 0.5% of track = ~1.8s on a 6min track
-      if(remProgRef.current==null||Math.abs(drift)>SNAP_THRESHOLD){
-        // Hard snap — first time, or major position change (seek/scrub on B1)
-        remProgRef.current=remote.progress;
-        remTimeRef.current=now;
-      } else if(drift>0){
-        // Truth is slightly ahead — accept the correction (B2 was running slow)
-        remProgRef.current=remote.progress;
-        remTimeRef.current=now;
+      // Where the playhead is VISIBLE right now (model + decaying slew).
+      const since=now-remTimeRef.current;
+      const modeledNow=remProgRef.current+(remRateRef.current||0)*since;
+      const slewNow=remSlewRef.current*Math.exp(-since/SLEW_TAU_MS);
+      const visibleNow=(remTimeRef.current>0)?(modeledNow+slewNow):remote.progress;
+      const driftSec=Math.abs(remote.progress-visibleNow)*(trackDurSec||1);
+      if(remTimeRef.current===0||driftSec>SEEK_SNAP_SEC){
+        // First packet, or a genuine seek (large jump either direction): hard snap.
+        remProgRef.current=remote.progress; remTimeRef.current=now; remSlewRef.current=0;
+      } else {
+        // Sub-seek drift (either direction): re-anchor the model to truth but
+        // CARRY the current visible offset into slew so there is NO visible jump —
+        // it then decays to 0, easing onto truth. This never snaps backward.
+        remProgRef.current=remote.progress; remTimeRef.current=now;
+        remSlewRef.current=visibleNow-remote.progress;
       }
-      // Else: drift is small AND backward (B2 is slightly ahead of truth).
-      // Don't update — let the duration-based rate keep running. The next packet
-      // that catches up to current interp will resync. This eliminates the
-      // freeze-on-correction by letting B2 coast forward at the correct rate
-      // until truth catches up.
-      // DO NOT setProg here — the RAF interp loop below reads the refs and
-      // computes the visible position smoothly.
+      // DO NOT setProg here — the RAF loop below renders the smooth position.
     }
     // Start/stop smooth interpolation RAF
     cancelAnimationFrame(remRaf.current);
     if(nowPlaying){
       const animate=()=>{
-        const elapsed=performance.now()-remTimeRef.current;
-        const interp=Math.min(1,Math.max(0,remProgRef.current+remRateRef.current*elapsed));
+        const since=performance.now()-remTimeRef.current;
+        const modeled=remProgRef.current+remRateRef.current*since;
+        const slew=remSlewRef.current*Math.exp(-since/SLEW_TAU_MS);
+        const interp=Math.min(1,Math.max(0,modeled+slew));
         setProg(interp); progRef.current=interp; onProgUpdate?.(interp);
         remRaf.current=requestAnimationFrame(animate);
       };

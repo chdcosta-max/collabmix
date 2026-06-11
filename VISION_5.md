@@ -7960,3 +7960,32 @@ Proposed fix (NOT built — awaiting approval):
    snap for a LARGE jump (a genuine driver seek-backward).
 Relates to the `initiator display echo` and `decks-visually-
 offset` tickets (same 10Hz-packet-vs-interp family).
+
+### Waveform-jump fix — BUILT + SHIPPED
+
+Both parts built and pushed: (1) rate-aware interp using
+`remote.rate` (kills the systematic drift); (2) never snap
+backward — re-anchor the model to truth each packet but carry the
+current visible offset into a slew term (`remSlewRef`) that
+decays to 0 over ~220ms (TAU), so the playhead EASES onto truth
+instead of jumping; a hard snap is reserved for a genuine seek
+(>3s discrepancy, either direction). Verified by a math-model
+simulation of the interp: the synced-slower case (rates
+0.90–0.97) goes from a 1.79s backward sawtooth (OLD) to a 0.004s
+worst-case backward step (NEW, imperceptible) across a 0.90–1.06
+rate sweep. App build + headless boot + two-client partner-mirror
+render all clean (no console errors). Audio was never affected
+(partner deck has no local buffer; its sound is the driver's RTC
+stream) — this was always display-only.
+
+### Smoke suite — APPROVED for tomorrow's first build
+
+Decision: build the two-client smoke suite in `tools/smoke/`
+tomorrow, WITH a test-only load hook — `window.__loadTestTrack`
+behind a dev flag — that runs a bundled sample track through the
+normal load path so the headless suite can exercise track-mirror
++ play/seek-propagate + drift-telemetry without the unautomatable
+`showOpenFilePicker` dialog. Seed: `_join_repro*.mjs`. Promote
+`playwright-core` to a saved devDependency at that point. The
+interp-math harness `_interp_sim.mjs` also stays as the
+regression check for the playhead model.
