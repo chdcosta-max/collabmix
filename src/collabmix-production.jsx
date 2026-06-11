@@ -87,6 +87,24 @@ function buildInviteLink(roomId, mixName) {
   return `${base}?${params.toString()}`;
 }
 
+// Normalize whatever the user typed/pasted in the join field down to a bare
+// room code. Pasting a full invite URL (or any "…room=CODE…" fragment) was
+// being sent verbatim as the roomId — the server then created a room literally
+// NAMED that URL (the production room-split bug; [JOIN-DIAG] caught it). Extract
+// the room param when present; otherwise treat the input as a bare code. Trim +
+// lowercase to match generated codes (lowercase word-word-###).
+function normalizeRoomCode(raw) {
+  let s = (raw || "").trim();
+  if (!s) return "";
+  if (/room=/i.test(s)) {
+    let code = null;
+    try { code = new URL(s).searchParams.get("room"); } catch { /* not a full URL */ }
+    if (!code) { const m = s.match(/[?&]?room=([^&#\s]+)/i); if (m) code = m[1]; }
+    if (code) { try { s = decodeURIComponent(code); } catch { s = code; } }
+  }
+  return s.trim().toLowerCase();
+}
+
 const ICE = { iceServers: [
   { urls: "stun:stun.l.google.com:19302" },
   { urls: "stun:stun1.l.google.com:19302" },
@@ -6442,7 +6460,7 @@ function Lobby({ onJoin, djName = null }) {
     return new URLSearchParams(window.location.search).has("room");
   }, []);
   const submitJoinCode = () => {
-    const code = joinCode.trim().toLowerCase();
+    const code = normalizeRoomCode(joinCode);
     if (!code) return;
     // JOIN BY MIX CODE is always a joiner — the user typed an existing
     // partner's mix code, they didn't create the room.

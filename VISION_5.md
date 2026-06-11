@@ -7978,6 +7978,33 @@ render all clean (no console errors). Audio was never affected
 (partner deck has no local buffer; its sound is the driver's RTC
 stream) — this was always display-only.
 
+### Room-split ROOT-CAUSED + FIXED (the `[JOIN-DIAG]` net worked)
+
+The production `[JOIN-DIAG]` instrumentation caught it: Chad pasted the
+full INVITE URL into the Lobby join field, and the client sent the
+entire URL as the roomId —
+`roomId="https://collabmix.vercel.app/?room=drop-haze-451&mix=untitled+mix"`
+— so the server created a room literally NAMED that URL. Bare codes
+always worked (Cowork + all 14 headless runs typed bare codes); pasted
+links split. This is why I could never reproduce it — I was always
+feeding bare codes.
+
+Fix: `normalizeRoomCode()` — if the join input parses as a URL or
+contains `room=`, extract the room param (via `new URL().searchParams`
+with a regex fallback for bare `?room=…` fragments), URL-decode, trim,
+lowercase. Wired into `submitJoinCode`. Verified headlessly: pasting the
+full invite URL now sends `roomId="echo-bass-772"` and PAIRS (was SPLIT);
+opening the invite URL directly also PAIRS (invite flow end-to-end OK);
+8/8 normalizer unit cases pass. Shipped.
+
+Open follow-ups:
+- **Server-side defense in depth:** reject/normalize roomIds that look
+  like URLs. NOT done — the server is a separate Railway repo, not in
+  this tree. Ticket for the server side.
+- **Share flow copyable bare code:** the Share button copies the full
+  invite LINK; add a one-tap copy of the BARE code too (the booth
+  already displays it). Ticket.
+
 ### Smoke suite — APPROVED for tomorrow's first build
 
 Decision: build the two-client smoke suite in `tools/smoke/`
