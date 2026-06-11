@@ -7205,3 +7205,254 @@ math, no gate threshold, no existing output value touched.
   at session end).
 - **Strategy docs added:** `tools/docs/SOCIAL_VISION.md` and
   `tools/docs/LANDING_BRIEF.md` (commit `11a00ee`).
+
+---
+
+## Session — June 10 late evening — SYNC_MAP + Phase 1 measurement layer + #10 fix + #2 decision + first two-client soak (partial)
+
+### Shipped to production
+
+- **`8cc01a7`** — `Sync Phase 1: wire timestamps, clock-offset
+  estimator, phase-error monitor, debug HUD, engage telemetry`.
+  Measurement-only — no behavior change to the sync engine itself.
+  Makes sync quality a number so design decisions can follow data.
+- **`26cc278`** — `Sync: master scrub no longer re-aligns slave
+  (#10); document #2 rate-persist as intended`. Chad's decisions
+  on both bugs landed in code (#10 behavior change + telemetry,
+  #2 comment-only documenting the CDJ-convention intent).
+- **(server) `d708747`** — `Relay sync_ping / sync_pong for
+  client clock-offset estimator` on `collabmix-server-repo`
+  (Railway auto-deployed, verified live with `/health` uptime
+  reset to 6.75 s after push).
+
+### Slice A recap
+
+Earlier in the same session day (June 10): Slice A kick-presence
+small WF shipped — `11a00ee` (docs), `1b0989c` (code), `cb8e60b`
+(VISION_5 prior addendum). Bundle audit on `main-BlOaY8yI.js`
+confirmed live. Recapped here for session-boundary clarity; full
+detail in the June 10 evening section above.
+
+### The SYNC_MAP audit (what the sync engine actually is today)
+
+Investigation-first map produced before any code change. Findings:
+
+1. **Architecture.** WS = control plane (`deck_update`, scrub /
+   toggle / cue requests, sync engage state). WebRTC = audio
+   plane only. `useSync` at `:2816-2862`, `useRTC` at `:2865-2997`,
+   `syncDecks` at `:7691-7910`, `handleSyncToggle` at
+   `:7944-8042`, `handleTransportFire` at `:8095-8125`.
+
+2. **What syncDecks does** at engage time, then never again:
+   (a) rate match with ±12 % safety clamp,
+   (b) beat-phase seek wrapped to ±0.5 beat, then
+   (c) Path C cross-correlation refinement (40-200 Hz kick band,
+       2 s window) gated by `peakRatio ≥ 2.0`.
+   After return, audio engines run independently.
+
+3. **Clock problem.** No shared clock. No NTP-style offset
+   estimation. No server timestamps on wire messages. Ping/pong
+   measures client↔server RTT only and uses `Date.now`. The
+   `seek_request` path executes "now" on receive — one-way WS
+   latency is baked into every cross-machine alignment.
+
+4. **Drift.** Zero continuous correction. `AudioContext.currentTime`
+   on the two browsers drifts (±50 ppm hardware tolerance =
+   ±15 ms over 5 min, structurally). No periodic re-check. No
+   ongoing drift monitor. The xcorr that runs at engage is
+   one-shot — designed for `beatPhaseSec` misdetection, not for
+   accumulating clock skew.
+
+5. **Telemetry.** Engage decisions log via console (`[SYNC]`).
+   `logEvent("sync","toggle")` etc. ship to Layer 1 telemetry.
+   **No phase-error measurement anywhere** — we had zero signal
+   on how alignment evolves over a mix.
+
+6. **The bugs.** Both intentional code: #2 explicitly defends
+   rate-persist on release (matches Rekordbox/CDJ); #10's
+   scrub-master-moves-slave is an intentional re-align trigger
+   on EITHER deck's scrub. Both became "design questions, not
+   bugs" once decoded.
+
+Risk-ranked gaps: (1) no clock-offset estimator, (2) no drift
+correction loop, (3) no phase-error telemetry, (4) WebRTC
+audio carries no timing reference and the partner's deck is on
+a different audio clock, (5) wire messages lack `t_send`.
+Gap (5) was the cheap unblock for measurement.
+
+### Phase 1 measurement layer (what shipped tonight)
+
+- **Wire timestamps.** `useSync.send` wraps every outbound
+  payload as `{...m, t_send: performance.now()}`. Backward-safe:
+  receivers destructure named keys, ignore extras.
+- **Clock-offset estimator.** New `src/utils/clockSync.js`
+  implementing Cristian's algorithm — 20-sample rolling window,
+  top-quartile RTT rejection, median offset over the remaining,
+  confidence = `1 − rttSpread/rttMedian`.
+- **Peer-to-peer ping.** 3-second `sync_ping`/`sync_pong` round
+  trip relayed via the WS server (distinct from client↔server
+  ping). Server-side relay added in `d708747`.
+- **Phase-error monitor.** Every 2 s while syncLocked AND in
+  remote B2B AND clock warmed up, projects partner's last
+  progress packet forward via offset, computes beat-fractional
+  drift vs my synced deck, converts to ms. Emits `[SYNC-DRIFT]`
+  + `logEvent("sync","drift_sample")`. **No correction applied.**
+- **Engage snapshot.** `syncDecks` accumulates rate delta,
+  beat-phase seek ms, xcorr applied/skipped/reason (including
+  new `bufrefs_unavailable` reason that surfaces the remote
+  B2B path), total runtime ms. Emits `[SYNC-ENGAGE-QUALITY]`
+  + `logEvent("sync","engage_quality")`.
+- **Debug HUD.** `SyncDebugHUD` component, gated behind
+  `?syncdebug=1`. JetBrains Mono, top-right, opacity 0.85,
+  pointer-events:none. Polls a ref at 5 Hz (no re-render storm).
+
+Investigation result: in remote B2B the xcorr refinement
+**always skips** — local `bufRefs.current[partnerDeck]` is null
+because the partner loaded the track. Beat-phase alignment IS
+the entire engage in remote B2B, and it lands with one-way WS
+latency baked in. Phase 1 will quantify both.
+
+### Bug fixes / decisions
+
+- **#10 fix (`26cc278`).** `handleTransportFire`'s scrub-resync
+  scheduler now gates on the scrubbed deck identity. Master-deck
+  scrubs suppress the auto re-align (emits
+  `logEvent("sync","scrub_realign_suppressed")`); tempo lock
+  stays engaged; slave holds position. Slave-deck scrubs
+  preserve the original auto-realign — user explicitly asking
+  to line back up. Pro-DJ ergonomic call per Chad.
+- **#2 decision.** No code change. Rate persists on release per
+  CDJ/Rekordbox convention. Jake's snap-back expectation = a
+  teaching moment, not a bug. Optional settings toggle deferred
+  until other dogfooders raise the same expectation.
+
+### Live test findings (first two-client soak, partial)
+
+1. **Railway relay dropped `sync_ping`/`sync_pong`.** Server's
+   explicit-allowlist message handler had no case for the new
+   types → silently dropped. Both clients stuck at
+   `sampleCount=0`, HUD state=`clock_warmup`, no
+   `[SYNC-DRIFT]` ever emitted. Fixed in
+   `collabmix-server-repo d708747`, deployed and verified.
+2. **Xcorr CONFIRMED absent in remote B2B.** Engage-quality log
+   captured: `result=ok rateDelta=0.0000 phaseSeekMs=104.37
+   durationMs=0.8 xcorr={applied:false,reason:"bufrefs_unavailable",
+   haveSlaveBuf:true,haveMasterBuf:false}`. Matches the
+   SYNC_MAP prediction. Beat-phase alone carried the engage.
+3. **Listening verdict blocked — four audio sources stacked.**
+   Two browser tabs × two decks each = four audio sources
+   playing simultaneously. Tab 2 unmuted made the musical
+   clash drown the actual sync signal. Verdict UNAVAILABLE
+   from tonight's test.
+
+### Tomorrow's soak protocol (locked in)
+
+Run with the Railway relay fix live + tonight's clean Tab 2.
+
+1. **Mute Tab 2 BEFORE engage.** Chad listens to Tab 1 only.
+2. **Same track on both decks, both cued to position 0 (first
+   downbeat)** before pressing play. Perfect sync = sounds like
+   one track; any error = flange/flam, unambiguous verdict.
+   Tonight's run had decks ~85 s apart in the arrangement,
+   making musical content clash mask the sync verdict.
+3. **Play both → press SYNC.**
+4. **HUD snapshot at engage / +1 / +2 / +5 / +8 / +10 minutes.**
+   Capture `offset`, `rttMedian`, `confidence`, `phaseErrorMs`,
+   `msSinceEngage` at each marker.
+5. **Verify #10 live.** Scrub master, confirm slave holds.
+   Scrub slave, confirm slave re-aligns.
+
+### New gaps logged this session
+
+- **Gap #4 — RTC jitter-buffer delay uncompensated in local
+  monitoring.** Even with a perfectly synced engine, each DJ
+  hears their own deck via local AudioContext and the partner's
+  deck via the WebRTC jitter buffer (stable but adds
+  ~50-200 ms). Result: local-deck beatslap in each DJ's ears
+  today, regardless of engine accuracy. **Local-deck delay
+  compensation is a required Phase 2 component, not optional.**
+  Surfaces as a different fix path from clock-offset (which
+  fixes cross-machine engage accuracy) — this fixes
+  same-machine perceptual sync.
+- **Stale session reaches deck UI with dead WS silently.** Once
+  the WS drops, the deck-mixer view stays mounted with no
+  banner indicating the partner channel is gone. Telemetry
+  shows `ws.disconnected` but UI doesn't react.
+- **No Lobby return path from deck view.** Leaving back to
+  Lobby requires `localStorage.removeItem("cm_session")` +
+  reload. Add an explicit "leave session" UI affordance.
+- **AUDIO indicator vs CONNECTED pill semantics unclear.** The
+  two indicators report different layers (WebRTC vs WS) but
+  look similar — Chad had to inspect to know which was which.
+
+### Tomorrow's order (priority-ranked)
+
+1. **Relay fix is already deployed** (server `d708747`,
+   verified). No action needed pre-soak.
+2. **Re-run two-client soak with the protocol above.** Goal:
+   first real drift data + engage-accuracy data + #10
+   verification.
+3. **Phase 2 design** happens only after drift data exists.
+   Likely components based on tonight's map:
+   - **Continuous drift correction loop** — periodic
+     `nudgeRate` calls sized by measured phase error.
+   - **Latency compensation on cross-machine commands** —
+     timestamp every action with `t_send` (already wired),
+     apply on receive based on estimated offset.
+   - **Remote xcorr alternative** for the case where one buf is
+     missing locally — either ship partial buf for xcorr at
+     engage time (bandwidth concern) or do all xcorr on the
+     driver side and broadcast the correction.
+   - **Local-deck delay compensation** (Gap #4) so each DJ's
+     OWN ears hear the two decks aligned, accounting for the
+     RTC jitter buffer adding latency to the partner's stream.
+4. **Slice B big WF** per the existing Slice A/B/C punch list
+   — once the sync work stabilizes.
+
+### Roadmap status
+
+**Closed this session:**
+
+- ✅ SYNC_MAP architecture audit
+- ✅ Phase 1 measurement instrumentation shipped
+- ✅ Bug #10 fix shipped (master scrub no longer yanks slave)
+- ✅ Bug #2 resolution documented (rate persists per CDJ
+  convention; no code change)
+- ✅ Server relay fix shipped and deployed
+- ✅ Slice A kick-presence WF (recapped from earlier today)
+
+**Active for tomorrow:**
+
+- 🔄 Two-client soak with cleaned protocol — first real drift
+  numbers
+- 🔄 Live verification of #10 + Phase 1 telemetry flow
+
+**Pending (priority order):**
+
+- 📋 Phase 2 sync design — drift loop + latency comp + remote
+  xcorr alternative + local-deck delay comp (Gap #4)
+- 📋 Slice B big WF improvements
+- 📋 Slice C transient hairline (#37) — inputs already prewired
+  via `beatTimes`/`beatAttacks`
+- 📋 #9 drag-and-drop library → deck
+- 📋 Stale-session-with-dead-WS banner + Lobby return path
+
+### Don't-touch list (unchanged)
+
+Same as prior sections. Phase 1 added measurement only; no DSP
+math, no sync engine math, no gate threshold change.
+
+### Working state for next session
+
+- **Master HEAD:** `26cc278` (Task 2) at write time; will
+  advance one more to this VISION_5 commit.
+- **Production (client):** `collabmix.vercel.app` live on
+  bundle `main-CDt3TaQD.js`. Audit confirmed: `sync_ping` ×2,
+  `sync_pong` ×2, `SYNC-DRIFT` ×1, `SYNC-ENGAGE-QUALITY` ×1,
+  `scrub_realign_suppressed` ×1, `SYNC DEBUG` ×1.
+- **Production (server):** `collabmix-server-production.up.
+  railway.app` live at `d708747`, uptime reset confirmed.
+- **Working tree:** clean (after this VISION_5 commit).
+- **Stash:** none.
+- **Strategy docs:** `tools/docs/SOCIAL_VISION.md` and
+  `LANDING_BRIEF.md` from `11a00ee` still standing.
