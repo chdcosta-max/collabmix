@@ -2934,11 +2934,19 @@ function useRTC({ engineRef, send }) {
   // Delta-based (recent average, not lifetime) so it tracks the buffer adapting.
   // Always measures when connected (cheap); APPLYING the delay is gated by
   // ?delaycomp=1 in CollabMix. compRef.compMs = jitterBuffer + playout delay.
-  const compRef = useRef({ jbMs:0, playoutMs:0, targetMs:null, compMs:0, rttMs:null, ts:0 });
+  const compRef = useRef({ jbMs:0, playoutMs:0, targetMs:null, compMs:0, rttMs:null, settleUntil:0, ts:0 });
   const prevStatsRef = useRef(null);
+  // A transport event (play/pause/seek/engage — local OR partner's) can interrupt
+  // the inbound stream and make the jitter buffer re-converge to a new delay.
+  // CollabMix calls this so the next poll RE-BASELINES instead of averaging a
+  // stale value across the discontinuity. Also auto-detected below (counter reset
+  // / emit-rate collapse) so it self-heals even without the hook.
+  const transportEventRef = useRef(0);
+  const markTransportEvent = useCallback(()=>{ transportEventRef.current = Date.now(); }, []);
   useEffect(()=>{
     if(state!=="connected") return;
     let stop=false;
+    const SAMPLE_HZ = 48000; // Opus
     const poll=async()=>{
       const p=pc.current; if(!p||stop) return;
       try{
@@ -2949,28 +2957,42 @@ function useRTC({ engineRef, send }) {
           if(r.type==="media-playout")play=r;
           if(r.type==="remote-inbound-rtp"&&r.kind==="audio")rem=r;
         });
-        if(inb&&inb.jitterBufferEmittedCount>0){
-          const prev=prevStatsRef.current;
-          let jbMs, playoutMs;
-          if(prev&&inb.jitterBufferEmittedCount>prev.jbe){
-            jbMs=((inb.jitterBufferDelay-prev.jbd)/(inb.jitterBufferEmittedCount-prev.jbe))*1000;
-          } else { jbMs=(inb.jitterBufferDelay/inb.jitterBufferEmittedCount)*1000; }
-          if(play&&play.totalSamplesCount>0){
-            if(prev&&play.totalSamplesCount>prev.psc){
-              playoutMs=((play.totalPlayoutDelay-prev.ppd)/(play.totalSamplesCount-prev.psc))*1000;
-            } else { playoutMs=(play.totalPlayoutDelay/play.totalSamplesCount)*1000; }
-          } else playoutMs=0;
-          const targetMs=inb.jitterBufferTargetDelay!=null
-            ?(inb.jitterBufferTargetDelay/inb.jitterBufferEmittedCount)*1000:null;
-          const rttMs=rem&&rem.roundTripTime!=null?rem.roundTripTime*1000:null;
-          const compMs=Math.max(0,(jbMs||0)+(playoutMs||0));
-          compRef.current={ jbMs, playoutMs, targetMs, compMs, rttMs, ts:Date.now() };
-          prevStatsRef.current={ jbd:inb.jitterBufferDelay, jbe:inb.jitterBufferEmittedCount,
-            ppd:play?play.totalPlayoutDelay:0, psc:play?play.totalSamplesCount:0 };
+        if(!inb || !(inb.jitterBufferEmittedCount>0)) return;
+        const now=Date.now();
+        const prev=prevStatsRef.current;
+        const emitted=inb.jitterBufferEmittedCount;
+        const dEmit = prev ? emitted - prev.jbe : 0;
+        const dt    = prev ? (now - prev.ts)/1000 : 0;
+        // Re-baseline on any discontinuity: first sample, counter reset, a
+        // transport event since the last sample, or an emit-rate collapse (the
+        // window spans a stall/rebuffer — its average would be garbage).
+        const transportSince = prev ? transportEventRef.current > prev.ts : true;
+        const rateCollapsed  = prev ? dEmit <= 0.5*(dt*SAMPLE_HZ) : false;
+        if(!prev || emitted < prev.jbe || transportSince || rateCollapsed){
+          prevStatsRef.current = { jbd:inb.jitterBufferDelay, jbe:emitted,
+            ppd:play?play.totalPlayoutDelay:0, psc:play?play.totalSamplesCount:0, ts:now };
+          // Trigger a fast re-converge; keep the last compMs until a clean window.
+          compRef.current = { ...compRef.current, settleUntil: now + 4000 };
+          return;
         }
+        // Clean window → recent-average delta (NEVER the lifetime cumulative mean,
+        // which barely moves and was the stale-after-pause bug).
+        const jbMs = ((inb.jitterBufferDelay - prev.jbd)/dEmit)*1000;
+        let playoutMs = compRef.current.playoutMs || 0;
+        if(play && prev.psc!=null && play.totalSamplesCount>prev.psc){
+          playoutMs = ((play.totalPlayoutDelay - prev.ppd)/(play.totalSamplesCount - prev.psc))*1000;
+        }
+        const targetMs = inb.jitterBufferTargetDelay!=null
+          ? (inb.jitterBufferTargetDelay/emitted)*1000 : null;
+        const rttMs = rem&&rem.roundTripTime!=null?rem.roundTripTime*1000:null;
+        const compMs = Math.max(0,(jbMs||0)+(playoutMs||0));
+        compRef.current = { jbMs, playoutMs, targetMs, compMs, rttMs,
+          settleUntil: compRef.current.settleUntil, ts:now };
+        prevStatsRef.current = { jbd:inb.jitterBufferDelay, jbe:emitted,
+          ppd:play?play.totalPlayoutDelay:0, psc:play?play.totalSamplesCount:0, ts:now };
       }catch{ /* getStats can throw mid-teardown */ }
     };
-    const iv=setInterval(poll,1500); poll();
+    const iv=setInterval(poll,700); poll();
     return ()=>{ stop=true; clearInterval(iv); };
   },[state]);
 
@@ -3097,7 +3119,7 @@ function useRTC({ engineRef, send }) {
   const handleRtc   = useCallback((msg)=>{ switch(msg.type){case"rtc_offer":handleOffer(msg);break;case"rtc_answer":handleAnswer(msg);break;case"rtc_ice":handleIce(msg);break;case"rtc_hangup":endCall();break;} },[handleOffer,handleAnswer,handleIce,endCall]);
 
   useEffect(()=>()=>endCall(),[]);
-  return { state, muted, remVol, setRemVol, autoplayBlocked, startCall, endCall, toggleMute, handleRtc, compRef };
+  return { state, muted, remVol, setRemVol, autoplayBlocked, startCall, endCall, toggleMute, handleRtc, compRef, markTransportEvent };
 }
 
 // ── MIDI ─────────────────────────────────────────────────────
@@ -4617,6 +4639,12 @@ function Deck({ id, ch, ctx:ac, color, local, remote, onChange, midi:mt, bpmResu
     if(!remote||buf)return;
     const wasPlaying=play; const nowPlaying=remote.playing||false;
     setPlay(nowPlaying);
+    // On play-START, the extrapolated playhead is running off stale paused state.
+    // Force the next progress packet to HARD-SNAP to truth (re-anchor) instead of
+    // slewing — otherwise the never-snap-backward slew turns the correction into a
+    // visible glide backward over a few bars. Reset the anchor so the packet block
+    // below takes its first-packet (hard-snap) path.
+    if(nowPlaying && !wasPlaying){ remTimeRef.current=0; remSlewRef.current=0; }
     // EQ values now come from parent props when remote is true
     if(remote.trackName)setName(remote.trackName);
     if(remote.duration)setDur(remote.duration);
@@ -7516,6 +7544,9 @@ export default function CollabMix({ initialPage = "landing", djName = null }) {
     if (m.type==="deck_update")    {
       // 1) Mirror partner's deck state for visuals
       (m.deckId==="A"?setPA:setPB)(p=>({...(p||{}),[m.field]:m.value}));
+      // Partner play/pause interrupts the stream I receive — re-baseline delay
+      // comp. Only on "playing" (NOT every 10Hz "progress" packet).
+      if (m.field==="playing") rtcRef.current?.markTransportEvent?.();
       // Capture progress packet metadata for the phase-error monitor.
       // Stores partner's send-time (their performance.now() via useSync.send
       // t_send injection) + value + my receive-time. Lets the monitor
@@ -7623,16 +7654,21 @@ export default function CollabMix({ initialPage = "landing", djName = null }) {
       const c = rtc.compRef?.current || {};
       const measured = Math.max(0, Math.min(400, c.compMs || 0)); // clamp 0–400ms
       const appliedMs = delayCompOn ? measured : 0;
-      try { e.monitorDelay.delayTime.setTargetAtTime(appliedMs / 1000, e.ctx.currentTime, 1.5); } catch {}
+      // Fast settle right after a transport event (re-baseline window), then
+      // slow-follow so steady-state never clicks.
+      const settling = Date.now() < (c.settleUntil || 0);
+      const slewTC = settling ? 0.3 : 1.5;
+      try { e.monitorDelay.delayTime.setTargetAtTime(appliedMs / 1000, e.ctx.currentTime, slewTC); } catch {}
       syncStatsRef.current = { ...syncStatsRef.current,
         compMeasuredMs: c.compMs != null ? +c.compMs.toFixed(1) : null,
         compJbMs:       c.jbMs != null ? +c.jbMs.toFixed(1) : null,
         compPlayoutMs:  c.playoutMs != null ? +c.playoutMs.toFixed(1) : null,
-        compAppliedMs:  +appliedMs.toFixed(1), compOn: delayCompOn };
+        compAppliedMs:  +appliedMs.toFixed(1), compOn: delayCompOn, compSettling: settling };
       if (delayCompOn && c.compMs != null) {
         console.log("[SYNC-COMP] measured=" + c.compMs.toFixed(1) + "ms (jb=" +
           (c.jbMs?.toFixed(1) ?? "?") + " playout=" + (c.playoutMs?.toFixed(1) ?? "?") +
-          ") applied=" + appliedMs.toFixed(1) + "ms");
+          " target=" + (c.targetMs?.toFixed(1) ?? "?") + ") applied=" + appliedMs.toFixed(1) +
+          "ms" + (settling ? " [settling]" : ""));
       }
     }, 1000);
     return () => clearInterval(iv);
@@ -8306,6 +8342,7 @@ export default function CollabMix({ initialPage = "landing", djName = null }) {
   // EITHER deck's scrub — slave moved → realign; master moved → reference
   // changed → realign.
   const handleTransportFire = useCallback((msg) => {
+    rtcRef.current?.markTransportEvent?.(); // re-baseline delay comp on seek/cue/toggle
     // seek_local is a Deck → parent local-only hook (driver-path seeks fire
     // it after the seek completes). Suppress broadcast — partner doesn't
     // need to see it — but still use it to trigger the scrub-resync below.
@@ -8462,6 +8499,7 @@ export default function CollabMix({ initialPage = "landing", djName = null }) {
   const dh = (id) => (field, value) => {
     if (field === "playing") {
       deckPlayStartRef.current[id] = value ? Date.now() : null;
+      rtcRef.current?.markTransportEvent?.(); // re-baseline delay comp on local play/pause
       // ── one-shot audio diagnostics (booth-silence investigation) ──
       if (value) {
         const e = eng.current;

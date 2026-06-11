@@ -8085,3 +8085,57 @@ to one. The `comp meas` number is visible even with the flag off.
 - Optional refinements if the single value isn't enough by ear: add an
   RTT/2 network term (`remote-inbound roundTripTime`), a small constant
   manual trim, and freeze adjustments during an active blend (fader move).
+
+### EAR VERDICT (Chad, production, Chrome + Safari, ?delaycomp=1)
+
+**THE WIN:** double kick GONE on first engagement, no perceptible lag,
+`comp appl ~53.7ms`. Booth sounded locked — Gap #4 audibly closed.
+
+**THE BUG (founder QA, minutes later):** comp does NOT survive pause/
+resume. PAUSE + PLAY a deck → double kick returned, while the HUD still
+showed `comp appl ~47.8ms` applied. DelayNode survives; Chad's read =
+the measurement went stale.
+
+**Promotion to default-on is BLOCKED on transport robustness** until comp
+survives pause/resume, seek, track swap, and re-sync.
+
+### Investigation — could NOT reproduce the stale-measurement permanently
+
+- `_rtc_interrupt_probe.mjs`: a silent interruption (`track.enabled=false`,
+  like a deck pause where the engine stays connected but silent) does NOT
+  stall the jitter buffer — `emittedCount` keeps advancing at 48000/s and
+  the delta stays a clean 30ms. So a silent pause shouldn't stale the
+  measurement.
+- `_comp_rebaseline_sim.mjs`: even modelling a 1.5s jitter-buffer STALL +
+  true-delay jump (30→120ms), the OLD poller still re-converges (~5.3s) —
+  it does not permanently stick. So the lifetime-average fallback is a real
+  latent transient but likely NOT the permanent-stick Chad saw.
+- Conclusion: the measurement is robust in both models; the real cause may
+  be elsewhere (resume transient / local-deck restart timing / DelayNode).
+  Not claiming a fix — added instrumentation to catch the real numbers on
+  Chad's next pause/resume (the [JOIN-DIAG] playbook).
+
+### Hardening shipped (behind ?delaycomp=1 — genuine improvements)
+
+- Removed the lifetime-average fallback; skip ticks with no new samples
+  (keep last value) instead of reporting a stale mean.
+- Re-baseline on any discontinuity: counter reset, emit-rate collapse
+  (auto-detected stall), OR a transport event. `markTransportEvent()` is
+  called from local play/pause (`dh`), seek/cue/toggle
+  (`handleTransportFire`), and partner play/pause (`handleWS` deck_update
+  `playing` only — never the 10Hz progress packets).
+- Fast settle (~0.3s slew TC) for 4s after a transport event, then
+  slow-follow (~1.5s). Poll 1.5s → 700ms for responsiveness.
+- `[SYNC-COMP]` now logs `jb / playout / target / applied / [settling]` so
+  the next real pause/resume confesses what actually happens.
+- Sim: re-converge after a stall improved 5.3s → 2.57s. Two-client happy
+  path still measures + applies (48–51ms), no errors.
+
+### Display ticket — non-driver beatgrid slides back on play (FIXED, same family)
+
+On play-START the non-driver extrapolated off stale paused state, then the
+never-snap-backward slew turned the first-packet correction into a visible
+backward glide over a few bars (sound unaffected). Fix: on the play
+transition (`!wasPlaying && nowPlaying`) reset the interp anchor so the
+first authoritative packet HARD-SNAPS to truth, then resumes slewing.
+Refines tonight's sawtooth fix; does not revert it.
