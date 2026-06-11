@@ -8338,3 +8338,100 @@ Deferred (not built tonight) because it touches the visual glow (needs a
 DESIGN_PHILOSOPHY check + Chad's eye), adds a Safari-specific code path, and the
 smoothness gain can't be verified headlessly (no WebKit here). Belongs to the
 dedicated Safari-support pass alongside the earlier Safari-jitter note.
+
+## 🧭 BEAT-GRID UNIFICATION PLAN (sync regression — priority #1 tomorrow)
+
+### The regression
+
+Post-quantize (`main-CQUPH1xf.js`), four symptoms appeared on the sync/seek
+path: SYNC engage lands off-grid AND sounds off (kicks unlocked) with
+repeat-presses walking ~a beat and never settling; quantized seeks land
+"close but not crisp" on the partner deck and seemingly do nothing on the
+local deck; and play-while-synced doesn't align at all. Beat-phase sync was
+verified working May 22 — this is a regression, and the analyzer's REFINE
+rebuild (per-beat shifts ±5–25ms, walk-back firstBar1AnchorSec, snapped BPM)
+is the trigger.
+
+### Root cause — TWO beat grids, systems split across them
+
+Since the REFINE rebuild there are two definitions of "where the beats are":
+
+- **REFINED** — `beatTimes[]`: per-beat positions, REFINE-shifted ±5–25ms,
+  non-uniform. **The actual kicks.**
+- **LINEAR** — `beatPhaseSec / beatPhaseFrac / beatPeriodSec`: a single-anchor
+  + single-period reconstruction (`beatPhaseSec = anchor % period`, ~line 7031).
+  One period value — **cannot represent** the refined per-beat positions.
+
+**Source-of-truth audit (verbatim):**
+
+| Path | Consults | Camp |
+|---|---|---|
+| **SYNC engage** (`syncDecks`) | `beatPhaseSec` + `beatPeriodSec` | **LINEAR** |
+| **Big-waveform grid** (`AnimatedZoomedWF`) | `beatPhaseFrac` + `beatPeriodSec` (never receives `beatTimes`) | **LINEAR** |
+| Small-WF grid lines | `beatPhaseFrac` | LINEAR |
+| Small-WF kick markers | `beatTimes` | REFINED |
+| **Seek-quantize** | `beatTimes` | **REFINED** |
+
+Engage + the big grid are LINEAR; quantize + the kicks are REFINED. They
+disagree by the refine deltas. NOT an analyzer error — the refined `beatTimes`
+are the *better* data; engage and the grid simply never adopted them.
+
+### Four-symptom mapping
+
+1. **Engage off + sounds off:** engage aligns *linear* beat positions, but the
+   audible kicks sit at *refined* `beatTimes` ±5–25ms away → kicks don't
+   coincide → sounds off. PLUS the new quantize snaps the engage's seek to the
+   slave's nearest *refined* beat (a third position); repeat-engage recomputes
+   from the new spot and re-snaps → **the wander**.
+2. **Partner-deck quantize "close but not crisp":** quantize snaps to refined
+   `beatTimes` (the real kick), but the watched big-waveform grid is *linear* →
+   playhead on the kick, ±5–25ms off the linear gridline.
+3. **Local-deck quantize "nothing":** same split — likely small refine deltas
+   on that track (snap sub-perceptible) or clicked while paused (free by
+   design). A per-seek log would confirm; same root.
+4. **Play-while-synced no align:** play-start re-align (~line 8582) fires only
+   when the starting deck IS the previously-designated `lastSlaveDeck`, so a
+   freshly-cued deck never part of an engage gets no alignment → the canonical
+   mix-in moment enters unlocked. A missing/too-narrow trigger.
+
+### The fix — unify on refined `beatTimes` (one source of truth)
+
+Build behind a flag (`?beatsv2=1`) for A/B ear-verification. Decision (Chad):
+**NO stopgap tonight — do not touch the engage seek; half-states on the core
+sync path are how this regression was born.**
+
+1. Shared `nearestBeatTime(beats, t)` / beat-align helper.
+2. **Engage** aligns refined-beat-to-refined-beat (coincide master's nearest
+   `beatTime` with slave's nearest `beatTime`) → idempotent → repeat-engage
+   stable, no wander. Targets a real `beatTime`, so seek-quantize agrees and
+   the quantize regression auto-resolves.
+3. **Big-WF grid** renders gridlines from `beatTimes` in the visible window
+   (pass it as a prop) → grid matches kicks AND quantize.
+4. **Play-while-synced** triggers the same align (rate + phase) for ANY deck
+   starting under sync, not just `lastSlaveDeck`.
+5. **Linear model demoted** to telemetry / display-summary only — deprecated
+   for alignment.
+
+So seek, engage, repeat-engage, play-while-synced, and the visible grid all
+share ONE definition of "on the beat."
+
+### Smoke-suite assertion (build alongside)
+
+After engage: **slave nearest-beat offset from master < 10ms**, and
+**repeat-engage produces identical alignment** — so this regression class can
+never travel silently again.
+
+### TOMORROW'S ORDER
+
+a. **beatTimes unification** behind `?beatsv2=1` + ear/eye A/B verify (priority #1).
+b. **comp 30-min endurance soak** via Cowork (`?delaycomp=1`, full HUD protocol).
+c. **promote delaycomp default-on** with kill-switch (`delayCompOn = …get("delaycomp") !== "0"`).
+d. **smoke-suite build** in `tools/smoke/` (fold `_*.mjs` seeds in; promote
+   `playwright-core` to a saved devDependency; add the engage assertion above).
+e. **stale `collabmix-server/` dir cleanup** (non-repo working copy; real server
+   is `collabmix-server-repo`).
+
+### Deferred display tickets (shared display-path cleanup, same family)
+
+play-start glide (fixed), post-load partner-waveform jumpiness, Safari
+waveform jitter (diagnosed: per-frame shadowBlur at dpr in WebKit).
