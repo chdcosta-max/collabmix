@@ -8279,3 +8279,24 @@ packets + waveform payload have landed).
 - Verification tooling (`_*.mjs` at repo root) kept untracked for now; fold the
   keepers into `tools/smoke/` during tomorrow's smoke-suite build (with
   `playwright-core` promoted to a saved devDependency).
+
+### TICKET — Safari waveform jitter (cosmetic, Safari-specific, NOT chased)
+
+First Safari compatibility data point of the project. On `main-CH1s4n8g.js`,
+BOTH decks' waveforms render jittery / uneven in Safari (it's the MOVEMENT —
+like a lower/uneven frame rate — not the visuals), while Chrome is perfectly
+smooth on the same session. Audio clean. Affects local AND partner decks
+equally → it's a rendering-engine difference, NOT network/sync. Likely
+suspects to triage when Safari gets a proper support pass:
+- Safari `requestAnimationFrame` throttling (background/occluded window?
+  low-power mode? — note the render loops in `AnimatedZoomedWF` and the
+  per-deck WF use rAF).
+- canvas2D performance with the blur/glow draw stack.
+- `devicePixelRatio` handling on the canvas.
+Log only — do not chase tonight. Belongs to a dedicated Safari-support pass.
+
+### Re-verification (main-CH1s4n8g.js)
+
+Both decks confirmed working in both tabs, including Safari pause/play —
+**one kick holds.** Comp gauntlet result stands; promotion still gated on
+tomorrow's Cowork 30-min soak.
