@@ -8016,3 +8016,25 @@ normal load path so the headless suite can exercise track-mirror
 `playwright-core` to a saved devDependency at that point. The
 interp-math harness `_interp_sim.mjs` also stays as the
 regression check for the playhead model.
+
+## CLOSING VERDICT — June 10 (Chad, production, Chrome + Safari)
+
+Blend test, post all fixes: **the sync engine is LOCKED.** The only
+audible artifact is a clean, constant "quick double kick" — a tight,
+steady flam between the local deck and the RTC-streamed partner deck.
+No chaos, no wander; the gap does not grow over the blend. That steady
+offset is **Gap #4 isolated by ear: monitoring delay, NOT engine
+error.** The engine holds time; the local monitor and the RTC-streamed
+partner audio simply arrive a fixed beat apart at the listener.
+
+This confirms the Phase 2 priority: **local-deck delay compensation
+against the shared mix timeline** — align every listener to one mix
+clock (ONE BOOTH, ONE TRUTH; a small shared delay is acceptable) rather
+than minimizing each path independently. The flam is the founder-by-ear
+measurement of exactly that uncompensated delay.
+
+The night's arc is complete: every sync layer measured (identity, seek
+propagation, drift ~4.3ms p2p / slope≈0, audio-path output truth, entry
+flows, playhead render), and the last remaining artifact is named and
+specced. Tomorrow opens on the two-client smoke suite (with the
+`__loadTestTrack` hook), then Phase 2 delay compensation.
