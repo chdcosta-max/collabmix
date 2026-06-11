@@ -2958,8 +2958,11 @@ function useRTC({ engineRef, send }) {
         // → jb=0/playout=0 forever → applied slewed to 0 → double kick never
         // recovers. getReceivers() always returns the live receiver; scope
         // getStats() to it so dead inbound reports can't poison the read.
-        const recv = p.getReceivers?.().find(r=>r.track && r.track.kind==="audio");
-        if(!recv){ healthRef.current=0; return; }            // no receiver yet → HOLD
+        // Prefer a LIVE audio receiver (ended tracks from prior negotiations can
+        // linger). Among live ones, the most recent is the active receiver.
+        const recvs = (p.getReceivers?.()||[]).filter(r=>r.track && r.track.kind==="audio" && r.track.readyState==="live");
+        const recv = recvs[recvs.length-1] || null;
+        if(!recv){ healthRef.current=0; compRef.current={ ...compRef.current, noFrames:true }; return; }
         if(recv.track.id !== lastTrackRef.current){
           // Rebind: new receiver/track. Re-baseline; keep last good compMs.
           lastTrackRef.current = recv.track.id;
@@ -2974,8 +2977,10 @@ function useRTC({ engineRef, send }) {
           if(r.type==="media-playout")play=r;
           if(r.type==="remote-inbound-rtp"&&r.kind==="audio")rem=r;
         });
-        // No measurable frames → HOLD last good compMs (never follow to 0).
-        if(!inb || !(inb.jitterBufferEmittedCount>0)){ healthRef.current=0; return; }
+        // No measurable frames (silent/empty inbound — e.g. partner has no deck
+        // loaded) → HOLD last good compMs (never follow to 0) and flag noFrames
+        // so telemetry shows "no inbound frames" instead of a masking measured=0.
+        if(!inb || !(inb.jitterBufferEmittedCount>0)){ healthRef.current=0; compRef.current={ ...compRef.current, noFrames:true }; return; }
         const now=Date.now();
         const prev=prevStatsRef.current;
         const emitted=inb.jitterBufferEmittedCount;
@@ -2989,7 +2994,7 @@ function useRTC({ engineRef, send }) {
           prevStatsRef.current = { jbd:inb.jitterBufferDelay, jbe:emitted,
             ppd:play?play.totalPlayoutDelay:0, psc:play?play.totalSamplesCount:0, ts:now };
           healthRef.current = 0;
-          compRef.current = { ...compRef.current, settleUntil: now + 4000 };
+          compRef.current = { ...compRef.current, settleUntil: now + 4000, noFrames:false };
           return;
         }
         // Flowing window → candidate recent-average delta (never lifetime mean).
@@ -3007,11 +3012,11 @@ function useRTC({ engineRef, send }) {
         const lastGood = compRef.current.compMs || 0;
         const bigDrop = lastGood>5 && cand < 0.5*lastGood;
         const need = bigDrop ? HEALTH_MIN+3 : HEALTH_MIN;
-        if(healthRef.current < need){ compRef.current = { ...compRef.current, settleUntil: Math.max(compRef.current.settleUntil, now+1500) }; return; }
+        if(healthRef.current < need){ compRef.current = { ...compRef.current, settleUntil: Math.max(compRef.current.settleUntil, now+1500), noFrames:false }; return; }
         const targetMs = inb.jitterBufferTargetDelay!=null ? (inb.jitterBufferTargetDelay/emitted)*1000 : null;
         const rttMs = rem&&rem.roundTripTime!=null?rem.roundTripTime*1000:null;
         compRef.current = { jbMs, playoutMs, targetMs, compMs:cand, rttMs,
-          settleUntil: compRef.current.settleUntil, ts:now };
+          settleUntil: compRef.current.settleUntil, ts:now, noFrames:false };
       }catch{ /* getStats can throw mid-teardown */ }
     };
     const iv=setInterval(poll,700); poll();
@@ -3068,16 +3073,12 @@ function useRTC({ engineRef, send }) {
 
   useEffect(()=>{ if(remAudio.current)remAudio.current.volume=Math.min(1,remVol); },[remVol]);
 
-  // One-time document click handler that retries play() once user has interacted.
-  // Browser autoplay policy blocks <audio>.play() until a user gesture has occurred
-  // on the page; this catches that case without forcing the user to click an exact
-  // banner button.
-  useEffect(()=>{
-    if(!autoplayBlocked) return;
-    const handler = () => { tryPlayRemote(); };
-    document.addEventListener('click', handler, { once: true });
-    return () => document.removeEventListener('click', handler);
-  },[autoplayBlocked,tryPlayRemote]);
+  // NOTE: deliberately NO global "any click resumes partner audio" handler.
+  // It made an UNRELATED gesture (e.g. a deck pause/play click) silently start
+  // the partner-audio element — on a one-machine two-browser test that surfaced
+  // as a permanent "double kick" (local deck + the other browser's speakers),
+  // and it's dishonest UX. Partner audio now starts ONLY via the explicit
+  // "enable partner audio" control (enablePartnerAudio), surfaced when blocked.
 
   const startCall = useCallback(async()=>{
     console.log('[RTC] startCall fired');
@@ -3141,7 +3142,7 @@ function useRTC({ engineRef, send }) {
   const handleRtc   = useCallback((msg)=>{ switch(msg.type){case"rtc_offer":handleOffer(msg);break;case"rtc_answer":handleAnswer(msg);break;case"rtc_ice":handleIce(msg);break;case"rtc_hangup":endCall();break;} },[handleOffer,handleAnswer,handleIce,endCall]);
 
   useEffect(()=>()=>endCall(),[]);
-  return { state, muted, remVol, setRemVol, autoplayBlocked, startCall, endCall, toggleMute, handleRtc, compRef, markTransportEvent };
+  return { state, muted, remVol, setRemVol, autoplayBlocked, startCall, endCall, toggleMute, handleRtc, compRef, markTransportEvent, enablePartnerAudio: tryPlayRemote };
 }
 
 // ── MIDI ─────────────────────────────────────────────────────
@@ -3242,7 +3243,7 @@ function SyncDebugHUD({ statsRef }) {
       <div>engage   {fmt(s.msSinceEngage != null ? s.msSinceEngage / 1000 : null, 1, " s")}</div>
       <div style={{ opacity: 0.55 }}>state    {s.monitorReason || "idle"}</div>
       <div style={{ borderTop: "1px solid rgba(255,255,255,0.08)", marginTop: 4, paddingTop: 4 }}>
-        comp meas {fmt(s.compMeasuredMs, 1, " ms")}
+        comp meas {s.compNoFrames ? "no inbound frames" : fmt(s.compMeasuredMs, 1, " ms")}
       </div>
       <div style={{ opacity: 0.7 }}>· jb={fmt(s.compJbMs, 0)} play={fmt(s.compPlayoutMs, 0)}</div>
       <div>comp appl {fmt(s.compAppliedMs, 1, " ms")} {s.compOn ? "(on)" : "(off)"}</div>
@@ -7674,23 +7675,31 @@ export default function CollabMix({ initialPage = "landing", djName = null }) {
     const iv = setInterval(() => {
       const e = eng.current; if (!e?.ctx || !e.monitorDelay) return;
       const c = rtc.compRef?.current || {};
+      const noFrames = !!c.noFrames; // inbound silent/empty — measurement not meaningful
       const measured = Math.max(0, Math.min(400, c.compMs || 0)); // clamp 0–400ms
-      const appliedMs = delayCompOn ? measured : 0;
+      // Hold the last applied delay while there are no inbound frames (don't slew
+      // toward a meaningless 0). Apply the measured value only with real frames.
+      const appliedMs = delayCompOn && !noFrames ? measured : 0;
       // Fast settle right after a transport event (re-baseline window), then
       // slow-follow so steady-state never clicks.
       const settling = Date.now() < (c.settleUntil || 0);
       const slewTC = settling ? 0.3 : 1.5;
-      try { e.monitorDelay.delayTime.setTargetAtTime(appliedMs / 1000, e.ctx.currentTime, slewTC); } catch {}
+      if (delayCompOn && !noFrames) { try { e.monitorDelay.delayTime.setTargetAtTime(measured / 1000, e.ctx.currentTime, slewTC); } catch {} }
       syncStatsRef.current = { ...syncStatsRef.current,
-        compMeasuredMs: c.compMs != null ? +c.compMs.toFixed(1) : null,
+        compMeasuredMs: noFrames ? null : (c.compMs != null ? +c.compMs.toFixed(1) : null),
         compJbMs:       c.jbMs != null ? +c.jbMs.toFixed(1) : null,
         compPlayoutMs:  c.playoutMs != null ? +c.playoutMs.toFixed(1) : null,
-        compAppliedMs:  +appliedMs.toFixed(1), compOn: delayCompOn, compSettling: settling };
-      if (delayCompOn && c.compMs != null) {
-        console.log("[SYNC-COMP] measured=" + c.compMs.toFixed(1) + "ms (jb=" +
-          (c.jbMs?.toFixed(1) ?? "?") + " playout=" + (c.playoutMs?.toFixed(1) ?? "?") +
-          " target=" + (c.targetMs?.toFixed(1) ?? "?") + ") applied=" + appliedMs.toFixed(1) +
-          "ms" + (settling ? " [settling]" : ""));
+        compAppliedMs:  +(delayCompOn && !noFrames ? measured : 0).toFixed(1),
+        compOn: delayCompOn, compSettling: settling, compNoFrames: noFrames };
+      if (delayCompOn) {
+        if (noFrames) {
+          console.log("[SYNC-COMP] no inbound frames (partner silent / no deck) — holding");
+        } else if (c.compMs != null) {
+          console.log("[SYNC-COMP] measured=" + c.compMs.toFixed(1) + "ms (jb=" +
+            (c.jbMs?.toFixed(1) ?? "?") + " playout=" + (c.playoutMs?.toFixed(1) ?? "?") +
+            " target=" + (c.targetMs?.toFixed(1) ?? "?") + ") applied=" + appliedMs.toFixed(1) +
+            "ms" + (settling ? " [settling]" : ""));
+        }
       }
     }, 1000);
     return () => clearInterval(iv);
@@ -8832,9 +8841,12 @@ export default function CollabMix({ initialPage = "landing", djName = null }) {
           element from playing. The document-level click handler in useRTC will
           retry play() on the next click anywhere, so the banner is informational. */}
       {rtc.autoplayBlocked && (
-        <div style={{ flexShrink:0, padding:"8px 14px", background:"#f59e0b18", borderBottom:"1px solid #f59e0b44", color:"#f59e0b", fontSize:11, fontFamily:"'Inter',sans-serif", letterSpacing:.5, textAlign:"center" }}>
-          🔇 Click anywhere to enable partner audio
-        </div>
+        <button
+          onClick={() => rtc.enablePartnerAudio?.()}
+          style={{ flexShrink:0, width:"100%", padding:"8px 14px", background:"#f59e0b22", borderTop:"none", borderLeft:"none", borderRight:"none", borderBottom:"1px solid #f59e0b44", color:"#f59e0b", fontSize:11, fontFamily:"'Inter',sans-serif", letterSpacing:.5, textAlign:"center", cursor:"pointer" }}
+        >
+          🔇 Tap here to enable partner audio
+        </button>
       )}
 
       {/* MAIN CONTENT AREA */}

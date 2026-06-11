@@ -8178,3 +8178,45 @@ Verified headlessly:
 
 Still flag-gated. Promotion to default-on pending Chad's full gauntlet:
 local pause/resume, REMOTE pause/resume, partner refresh, seek, re-sync.
+
+### RETRACTION + REAL ROOT CAUSE — it was autoplay, not comp
+
+**RETRACTED:** "remote pause/resume breaks comp." The comp gauntlet has NOT
+cleanly run yet. Both browser logs (Chrome + Safari) showed the truth:
+Safari's RTC `<audio>` element was autoplay-BLOCKED (`play() failed:
+NotAllowedError`, Safari silent). Chad's pause/play CLICK in Safari was the
+user gesture that UNBLOCKED it (`play() succeeded`) → Safari's speakers began
+playing the (delayed) Deck A stream. On a one-machine, two-browser test that
+is a permanent "double kick" (Chrome local deck + Safari speakers) — and comp
+can't touch it (the offset is ~a full round trip, not the receive buffer).
+Comp itself behaved (Safari measured a steady ~30ms throughout). Chrome's
+`measured=0` was because Safari had no deck loaded → silent/empty inbound.
+
+**Echo / mix-minus check (from the prior message): NO echo.** Confirmed in
+code: the outbound stream taps `eng.master` (local decks only); partner audio
+plays via a separate `<audio>` element (`srcObject`) that is NEVER connected
+into the AudioContext. So the outbound can't contain partner audio — mix-minus
+is inherently correct.
+
+### Product fixes shipped
+
+1. **Autoplay (the culprit):** removed the global "any click resumes partner
+   audio" handler — an unrelated gesture must never start partner audio. The
+   blocked-state banner is now an EXPLICIT button ("Tap here to enable partner
+   audio") that calls `enablePartnerAudio` (the only way it starts).
+2. **Comp telemetry honesty:** when the inbound stream has no frames
+   (partner silent / no deck), HUD + `[SYNC-COMP]` now show "no inbound frames"
+   instead of a masking `measured=0`, and comp HOLDS (doesn't apply a
+   meaningless 0). Also: poll only LIVE receivers (`readyState==="live"`) so
+   ended tracks from prior negotiations can't be selected.
+3. **Partner-audio local monitor mute — TICKET (consider):** a per-side mute of
+   what I hear from the partner. Largely covered today by the Partner-vol
+   slider (→0); fold into the shared-mixer monitoring ticket.
+
+Verified headlessly: happy path still measures (48/50ms); renegotiation rebind
+still recovers (50.8→48.2ms in 0.3s, 2 rebinds); no errors. Tooling:
+`_remote_pause_probe.mjs` (unused — superseded by the log diagnosis).
+
+**Next:** Chad re-runs the comp gauntlet now that the autoplay artifact is
+gone — partner audio will only start via the explicit button, so a deck
+pause/play can no longer trigger the phantom double kick.
