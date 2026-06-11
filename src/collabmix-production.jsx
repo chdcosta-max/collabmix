@@ -4589,7 +4589,11 @@ function Deck({ id, ch, ctx:ac, color, local, remote, onChange, midi:mt, bpmResu
 
   const stop_=()=>{ console.log('[PLAY-STATE] deck',id,'stop_() called, destroying source (hadSrc='+!!src.current+')'); if(src.current){src.current.onended=null;try{src.current.stop();}catch{}src.current.disconnect();src.current=null;}cancelAnimationFrame(raf.current); };
 
-  const play_=(o)=>{ if(!buf||!ch||!ac){console.log('[PLAY-STATE] deck',id,'play_() bailed early: hasBuf='+!!buf+' hasCh='+!!ch+' hasAc='+!!ac); return;} console.log('[PLAY-STATE] deck',id,'play_() creating source at offset',o); stop_(); if(ac.state==="suspended")ac.resume();
+  const play_=(o)=>{ if(!buf||!ch||!ac){console.log('[PLAY-STATE] deck',id,'play_() bailed early: hasBuf='+!!buf+' hasCh='+!!ch+' hasAc='+!!ac); return;} console.log('[PLAY-STATE] deck',id,'play_() creating source at offset',o); stop_();
+    // ── one-shot audio diagnostics (booth-silence investigation) ──
+    const _stateBefore=ac.state;
+    if(ac.state==="suspended")ac.resume().then(()=>console.log('[AUDIO-DIAG] deck',id,'resume() resolved → ac.state='+ac.state)).catch(e=>console.warn('[AUDIO-DIAG] deck',id,'resume() FAILED',e?.message||e));
+    try{ console.log('[AUDIO-DIAG] deck '+id+' play_ source-create | ac.state(before)='+_stateBefore+' trim='+ch.trim.gain.value.toFixed(3)+' vol='+ch.vol.gain.value.toFixed(3)+' xf='+ch.xf.gain.value.toFixed(3)+' rate='+rate); }catch(err){ console.warn('[AUDIO-DIAG] deck',id,'gain read failed',err?.message||err); }
     const s=ac.createBufferSource(); s.buffer=buf; s.playbackRate.value=rate; s.connect(ch.trim);
     const lr=loopRef.current;
     if(lr.active&&lr.start!==null){s.loop=true;s.loopStart=lr.start*buf.duration;s.loopEnd=(lr.end??1)*buf.duration;}
@@ -6814,6 +6818,10 @@ export default function CollabMix({ initialPage = "landing", djName = null }) {
   // resilience.
   const iAmHostRef              = useRef(null);
   const [rtcReconnectExhausted, setRtcReconnectExhausted] = useState(false);
+  // Output-truth flag: true when a deck I drive is playing but my master bus is
+  // emitting no signal (the booth-silence failure mode). Drives the AUDIO chip
+  // so the indicator reflects ACTUAL local output, not just the WebRTC link.
+  const [outputSilent, setOutputSilent] = useState(false);
 
   const bpmRaw = useBPM();
   const rec = useRecorder({ engineRef: eng });
@@ -7136,14 +7144,61 @@ export default function CollabMix({ initialPage = "landing", djName = null }) {
   useEffect(() => {
     const e = eng.current;
     if (!e?.ctx || !e?.A || !e?.B) return;
-    const myName = session?.name;
+    // Identity is djId, NOT display name. deckDrivers[id] is { id, name } | null
+    // since the identity fix (33273e5). Comparing that OBJECT to session.name
+    // (a string) was the June-2026 booth-silence bug: object !== name is ALWAYS
+    // true, so `open` was always false the moment any driver was assigned —
+    // muting the driver's OWN decks to trim=0 while the AUDIO chip still read
+    // STREAMING. Open the local trim when the deck is unowned OR I drive it;
+    // mute only when the PARTNER drives it (their audio reaches me via WebRTC).
+    // Read djId via syncRef (populated each render at the syncRef.current=sync
+    // effect) — `sync` itself is declared BELOW this effect, so referencing it
+    // here (or in the deps) is a temporal-dead-zone crash. deckDrivers only
+    // gains my own driver object AFTER djId is known, so re-running on
+    // deckDrivers/ready is sufficient to pick up the id.
+    const myDjId = syncRef.current?.djId;
     const tc = 0.02;
     for (const id of ["A", "B"]) {
       const driver = deckDrivers[id];
-      const open = !driver || driver === myName;
+      const open = !driver || driver.id === myDjId;
       try { e[id].trim.gain.setTargetAtTime(open ? 1 : 0, e.ctx.currentTime, tc); } catch {}
     }
-  }, [deckDrivers, session, ready]);
+  }, [deckDrivers, ready]);
+
+  // Output-truth monitor — the AUDIO chip historically read only rtc.state, so
+  // a silent local master (suspended context, or a gain/trim desync) showed
+  // "STREAMING" while nothing reached the speakers. This polls the master
+  // analyser: if a deck I DRIVE is playing but the master bus reads flat for a
+  // sustained window, flag outputSilent so the chip can show NO OUTPUT.
+  // Partner-driven audio arrives via a separate <audio> element, never through
+  // eng.master, so this level reflects only my own decks — no false positives
+  // from partner playback.
+  useEffect(() => {
+    if (!ready) return;
+    const SILENT_LEVEL = 2;   // byte-FFT max below this ≈ digital silence
+    const SUSTAIN = 5;        // consecutive silent polls (×400ms ≈ 2s) before flagging
+    let silentCount = 0;
+    let bins = null;
+    const tick = () => {
+      const e = eng.current;
+      if (!e?.ctx || !e?.masterAn) { silentCount = 0; setOutputSilent(false); return; }
+      const myDjId = syncRef.current?.djId; // syncRef, not `sync` (declared below — TDZ)
+      const drives = (id) => { const d = deckDriversRef.current?.[id]; return !d || d.id === myDjId; };
+      const expectOutput =
+        (!!deckPlayStartRef.current.A && drives("A")) ||
+        (!!deckPlayStartRef.current.B && drives("B"));
+      if (!expectOutput) { silentCount = 0; setOutputSilent(false); return; }
+      if (!bins || bins.length !== e.masterAn.frequencyBinCount) bins = new Uint8Array(e.masterAn.frequencyBinCount);
+      e.masterAn.getByteFrequencyData(bins);
+      let max = 0;
+      for (let i = 0; i < bins.length; i++) if (bins[i] > max) max = bins[i];
+      const silentNow = e.ctx.state !== "running" || max < SILENT_LEVEL;
+      if (silentNow) { silentCount++; if (silentCount >= SUSTAIN) setOutputSilent(true); }
+      else { silentCount = 0; setOutputSilent(false); }
+    };
+    const iv = setInterval(tick, 400);
+    return () => clearInterval(iv);
+  }, [ready]);
 
   const handleTrackInfo = useCallback((deckId, trackMeta) => {
     if (trackMeta) setPlayingTrack(trackMeta);
@@ -8284,6 +8339,24 @@ export default function CollabMix({ initialPage = "landing", djName = null }) {
   const dh = (id) => (field, value) => {
     if (field === "playing") {
       deckPlayStartRef.current[id] = value ? Date.now() : null;
+      // ── one-shot audio diagnostics (booth-silence investigation) ──
+      if (value) {
+        const e = eng.current;
+        const myDjId = sync.djId;
+        if (e?.ctx) {
+          console.log('[AUDIO-DIAG] PLAY deck '+id+' | ctx.state='+e.ctx.state+' master.gain='+e.master.gain.value.toFixed(3)+' djId='+myDjId);
+          for (const d of ["A","B"]) {
+            const dr = deckDriversRef.current?.[d];
+            const open = !dr || dr.id === myDjId;
+            try {
+              console.log('[TRIM-GATE] deck '+d+' driver='+JSON.stringify(dr)+' open='+open+' → trim.gain='+e[d].trim.gain.value.toFixed(3)+' vol='+e[d].vol.gain.value.toFixed(3)+' xf='+e[d].xf.gain.value.toFixed(3));
+            } catch(err) { console.warn('[TRIM-GATE] deck',d,'read failed',err?.message||err); }
+          }
+          console.log('[AUDIO-DIAG] playStart A='+deckPlayStartRef.current.A+' B='+deckPlayStartRef.current.B+' deckDrivers='+JSON.stringify(deckDriversRef.current));
+        } else {
+          console.warn('[AUDIO-DIAG] PLAY deck '+id+' but engine/ctx MISSING — eng.current='+!!e);
+        }
+      }
       // When the SLAVE deck transitions to play AND sync is engaged, re-run
       // alignment. Engaging SYNC while paused at prog=0 leaves slaveCurTime=0,
       // so the phase-alignment seek gets clamped to [0,1] and the slave can
@@ -8518,7 +8591,8 @@ export default function CollabMix({ initialPage = "landing", djName = null }) {
             // AUDIO status pill — surfaces WebRTC state so users know if partner audio is flowing.
             const isBusy = ["offering","answering","connecting"].includes(rtc.state);
             const status =
-              !sync.partner            ? { label:"AUDIO: OFFLINE",       c:"#5A5E66", pulse:false }
+              outputSilent             ? { label:"AUDIO: NO OUTPUT",     c:"#ef4444", pulse:true  }
+              : !sync.partner          ? { label:"AUDIO: OFFLINE",       c:"#5A5E66", pulse:false }
               : rtcReconnectExhausted  ? { label:"AUDIO: FAILED",        c:"#ef4444", pulse:false }
               : rtc.state==="connected"? { label:"AUDIO: STREAMING",     c:"#22c55e", pulse:false }
               : rtc.state==="failed"   ? { label:"AUDIO: FAILED",        c:"#ef4444", pulse:false }
