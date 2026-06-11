@@ -7763,10 +7763,11 @@ export default function CollabMix({ initialPage = "landing", djName = null }) {
   // when ?delaycomp=1. Slewed slowly (never clicks), clamped 0–400ms. Measure +
   // telemetry run regardless so the HUD shows numbers even with the flag off.
   const delayCompOn = new URLSearchParams(window.location.search).get("delaycomp") === "1";
-  // ?beatsv2=1 — unify SYNC engage, seek-quantize, and the big-waveform grid
-  // on the REFINED beatTimes[] (one source of truth). OFF = legacy LINEAR
-  // engage + grid (kept for A/B ear-verification of the sync regression fix).
-  const beatsV2On = new URLSearchParams(window.location.search).get("beatsv2") === "1";
+  // Beat-grid unification: SYNC engage, seek-quantize, and the big-waveform
+  // grid all read the REFINED beatTimes[] (one source of truth). PROMOTED
+  // default-on June 11 2026 after the 7-point A/B passed by ear + eye. Kill
+  // switch: ?beatsv2=0 restores the legacy LINEAR engage + grid.
+  const beatsV2On = new URLSearchParams(window.location.search).get("beatsv2") !== "0";
   const beatsV2Ref = useRef(beatsV2On); beatsV2Ref.current = beatsV2On;
   useEffect(() => {
     const iv = setInterval(() => {

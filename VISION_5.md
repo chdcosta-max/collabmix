@@ -8487,3 +8487,15 @@ ear-verification. Build passes; headless smoke asserts the engage math.
   `?beatsv2=0` kill-switch (mirror the planned delaycomp promotion).
 - ESLint config migration is now on the board (blocks the lint half of the
   verification protocol).
+
+## ✅ beatsv2 PROMOTED default-on (June 11, 2026)
+
+The 7-point A/B passed by ear + eye (engage locks, no wander, quantize crisp,
+play-while-synced aligns, implicit-master edge behaves, flag-off restores old
+behavior). Flipped `beatsV2On` default-on with a `?beatsv2=0` kill-switch
+(mirrors the planned delaycomp promotion). Production now runs the unified
+refined-beat path for everyone; the legacy LINEAR engage + grid is one URL
+param away if a regression surfaces. Build + smoke green.
+
+NEXT: grid-anchors-to-kick-attack precision pass (see investigation below) —
+gridlines currently land mid-kick-blob, not on the onset (the Rekordbox bar).
