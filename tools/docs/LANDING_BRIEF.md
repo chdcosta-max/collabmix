@@ -51,3 +51,14 @@ until Phase 4.
 - Hero: video loop vs animated mock — prototype both
 - React mock v1 exists from June 10 Claude.ai session (in chat,
   not yet in repo) — iterate there before any web build
+
+## June 10 late addendum — hero direction OPEN
+Chad verdict on mock v2: better (light fields, human moments,
+set card all landed) BUT waveform-as-hero is wrong until app
+waveforms are genuinely beautiful (post Slice B/C). Explore
+instead: real photography — real DJs, real decks, hands on gear,
+home setups — cinematic warm grading per MI Thumbnail Bible
+taste. Chad: "I'm very bad at this stuff and need to SEE it" →
+next session = visual exploration with image-rich mockups /
+mood boards, not more abstract mocks. Both landing mocks (v1, v2)
+exist in June 10 Claude.ai chat.
