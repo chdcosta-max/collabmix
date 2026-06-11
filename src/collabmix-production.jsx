@@ -151,12 +151,12 @@ function useBPM() {
   useEffect(() => {
     worker.current = createBPMWorker();
     worker.current.onmessage = (e) => {
-      const { id, bpm, confidence, candidates, beatPhaseFrac, beatPeriodSec, beatPhaseSec, firstBar1AnchorSec, snapped, error, _debug } = e.data;
+      const { id, bpm, confidence, candidates, beatPhaseFrac, beatPeriodSec, beatPhaseSec, firstBar1AnchorSec, snapped, beatTimes, beatAttacks, error, _debug } = e.data;
       if (id === '__err') { console.error('[BPM Worker global error]', e.data.error); return; }
       if (error) console.error('[BPM Worker caught error]', error);
       console.log('[BPM result] id='+id+' bpm='+bpm+' bpf='+beatPhaseFrac+' bps='+beatPeriodSec+' bphs='+beatPhaseSec+' anchor='+firstBar1AnchorSec+' snapped='+(snapped??false)+' debug='+JSON.stringify(_debug));
       console.log('[BPM] analysis complete for deck', id, 'bpm=', bpm);
-      setResults(prev => ({ ...prev, [id]: { bpm, confidence, candidates, beatPhaseFrac: beatPhaseFrac||0, beatPeriodSec: beatPeriodSec||null, beatPhaseSec: beatPhaseSec??null, firstBar1AnchorSec: firstBar1AnchorSec??null, analyzing: false } }));
+      setResults(prev => ({ ...prev, [id]: { bpm, confidence, candidates, beatPhaseFrac: beatPhaseFrac||0, beatPeriodSec: beatPeriodSec||null, beatPhaseSec: beatPhaseSec??null, firstBar1AnchorSec: firstBar1AnchorSec??null, beatTimes: beatTimes||null, beatAttacks: beatAttacks||null, analyzing: false } }));
     };
     worker.current.onerror = (e) => { console.error('[BPM Worker onerror]', e.message, e.lineno); };
     return () => worker.current?.terminate();
@@ -170,7 +170,7 @@ function useBPM() {
     // for the new track arrived. The Deck auto-position useEffect could fire
     // in that window with stale data and lock itself out of re-firing when
     // the real result came in.
-    setResults(prev => ({ ...prev, [id]: { ...(prev[id] || {}), bpm: null, beatPhaseFrac: null, beatPeriodSec: null, beatPhaseSec: null, firstBar1AnchorSec: null, analyzing: true } }));
+    setResults(prev => ({ ...prev, [id]: { ...(prev[id] || {}), bpm: null, beatPhaseFrac: null, beatPeriodSec: null, beatPhaseSec: null, firstBar1AnchorSec: null, beatTimes: null, beatAttacks: null, analyzing: true } }));
     const cd = [];
     for (let c = 0; c < buf.numberOfChannels; c++) cd.push(buf.getChannelData(c).slice());
     // Transfer ArrayBuffers (O(1) vs O(n) structured clone) — avoids 10-30s stall on large tracks
@@ -3071,8 +3071,32 @@ function VU({ an, color, w=100 }) {
 //  calm monochrome amplitude per design brief. See PHASE_2_STATUS.md for
 //  the spectral attempt's diagnostic data + future revisit notes.)
 
-function WF({ bands, peaks, freq, prog, onSeek, h=80, hotCues=[], loopStart=null, loopEnd=null, loopActive=false, bpm=null, dur=0, beatPhaseFrac=null, color='#ffffff' }) {
+function WF({ bands, peaks, freq, prog, onSeek, h=80, hotCues=[], loopStart=null, loopEnd=null, loopActive=false, bpm=null, dur=0, beatPhaseFrac=null, color='#ffffff', analyzing=false, beatTimes=null, beatAttacks=null }) {
   const ref=useRef(null);
+  // Step B: per-track envelope-percentile cache. 5th and 95th percentiles
+  // of the combined env (max of bass/mid/high) across the full source
+  // array — normalization stretches that [envFloor, envCeil] band to [0,1]
+  // so dense tracks read with the same dynamic range as dynamic tracks.
+  // Cache keys on bArr (Float32Array reference, stable across renders)
+  // rather than the wrapper bands object literal which the parent rebuilds
+  // every render. Soft-clip (tanh) variant was tried and reverted — looked
+  // like uniform tubes on both dense AND dynamic tracks.
+  const envNormRef=useRef({bArr:null,envFloor:0,envCeil:1});
+  // Inner-core kick-presence cache. Median of non-zero beatAttacks values
+  // (track-relative reference for normalizing per-beat kick strength).
+  // Keyed on the beatAttacks Float32Array reference.
+  const kickCacheRef=useRef({beatAttacks:null,median:0});
+  // Phase 1 Tier 6: responsive density. ResizeObserver bumps resizeTick whenever
+  // the canvas's CSS dimensions change, which retriggers the main draw effect at
+  // the new physical width. Previously the WF rendered once at mount and never
+  // re-binned on viewport resize.
+  const [resizeTick,setResizeTick]=useState(0);
+  useEffect(()=>{
+    if(!ref.current)return;
+    const ro=new ResizeObserver(()=>setResizeTick(t=>t+1));
+    ro.observe(ref.current);
+    return ()=>ro.disconnect();
+  },[]);
   useEffect(()=>{
     if(!ref.current)return;
     const canvas=ref.current;
@@ -3096,22 +3120,80 @@ function WF({ bands, peaks, freq, prog, onSeek, h=80, hotCues=[], loopStart=null
 
     if(bArr){
       const len=bArr.length;
-      // Beatport-style smooth filled envelope, mirrored around center.
-      // Per-pixel envelope = max of bass/mid/high. Trace as single closed
-      // path for the silhouette, then layer per-column brightness + centerline
-      // weight on top to give loud sections visual pop without rounding off
-      // transient peaks.
+      // Slice A polish #1 (kept): peak height capped at PEAK_HEIGHT_RATIO of
+      // the available half-canvas so the silhouette sits with visible
+      // breathing room above and below instead of touching the canvas edges.
+      // At h=40, 0.85 leaves ~3 css px padding on each side.
+      const PEAK_HEIGHT_RATIO=0.85;
       const center=H/2;
-      const maxH=H/2 - 1;
-      const GAMMA=1.4;
+      const maxH=(H/2)*PEAK_HEIGHT_RATIO;
+      // Phase 1 Tier 2: gamma was 1.4 → 0.9 (Slice A) → 0.7 (Path Conservative).
+      // GAMMA=0.7 keeps breakdowns visible at h=40 (env=0.1 → ~3.4 px tall);
+      // LIFT pushes drops (env>0.8) extra height on top of the gamma curve so
+      // drops "punch" above verses without raising the verse floor. Scaled
+      // down from big WF's 0.7/0.35 — small WF respects "calmer at small size"
+      // locked design intent.
+      const GAMMA=0.7;
+      // DIM_GAMMA lifts quiet sections inside kick-out regions (breakdowns,
+      // no-kick intros/outros). Bright (kick-present) columns render at the
+      // standard GAMMA; dim columns use heightsDim[x] computed below, so a
+      // breakdown's envelope shape stays readable instead of collapsing to a
+      // sliver. Single-knob tuning — DIM_GAMMA<GAMMA lifts, ==GAMMA matches
+      // pre-change behavior.
+      const DIM_GAMMA=0.55;
+      // Run-length filter knobs (FIX — morphological cleanup on kickClass).
+      // Refiner skips ~23/834 beats on dense tracks; a single skipped beat
+      // inside a kick region cuts a 1-column dim slit. Real kick-out
+      // sections are ≥4 bars. Minimum run lengths are expressed in BARS so
+      // they scale across short/long tracks; converted to columns at render
+      // time using bpm + dur. Clamped to safe pixel ranges for outliers.
+      // Fallback values fire when bpm is unavailable (analyzing or failed).
+      const MIN_DIM_RUN_BARS=4,    MIN_DIM_RUN_FALLBACK=5;
+      const MIN_BRIGHT_RUN_BARS=2, MIN_BRIGHT_RUN_FALLBACK=3;
+      // Diagnostic console output for the env / normalization pipeline
+      // (samples raw env, normalized, heightPx at 9 fixed track positions
+      // on every fresh bArr ref). Off by default — flip to true to debug
+      // height extraction or per-track normalization regressions.
+      const WF_DIAG=false;
+      // Lift removed: every variant (0.7/0.35, 0.8/0.18, 0.85/0.10) produced
+      // the same flat-top "border outline" symptom on sustained loud sections
+      // at h=40. Adjacent columns near maxH lit up Fill 1's peak-tip stop as a
+      // continuous bright line — works on big WF because halo softens it,
+      // breaks on small WF without halo. Per-track normalization (below) now
+      // carries the dynamic-range work; gamma 0.7 still shapes the curve.
+
+      // Step B percentile pre-pass. Recompute envFloor/envCeil only when
+      // the underlying Float32Array reference changes — cache hit on every
+      // subsequent render of the same track.
+      let logThisRender=false;
+      if(envNormRef.current.bArr!==bArr){
+        const srcLen=bArr.length;
+        const envArr=new Float32Array(srcLen);
+        for(let i=0;i<srcLen;i++){
+          const bv=bArr[i]||0;
+          const mv=mArr?mArr[i]||0:0;
+          const hv=hArr?hArr[i]||0:0;
+          envArr[i]=hv;
+        }
+        envArr.sort();
+        envNormRef.current={
+          bArr,
+          envFloor:envArr[Math.floor(srcLen*0.05)],
+          envCeil: envArr[Math.floor(srcLen*0.95)],
+        };
+        if(WF_DIAG) logThisRender=true;
+      }
+      const {envFloor,envCeil}=envNormRef.current;
+      const envRange=Math.max(0.0001,envCeil-envFloor);
+
       const heights=new Float32Array(W);
-      const envs=new Float32Array(W);
-      // Per-column bv/mv/hv preserved so Pass 2 can drive spectral color from
-      // the same source data as the height calculation. Without this we'd be
-      // recomputing band peaks per pixel in the color pass.
-      const colB=new Float32Array(W);
-      const colM=new Float32Array(W);
-      const colH=new Float32Array(W);
+      // Parallel envelope height array using DIM_GAMMA (gentler curve) for
+      // kick-out columns — see FIX 2 above. Indexing matches heights[].
+      const heightsDim=new Float32Array(W);
+      // Diagnostic sampling — fills as the height loop runs so we can log
+      // raw env / normalized / hVal at fixed track positions on track load.
+      const diagPcts=[0.05,0.15,0.25,0.35,0.50,0.65,0.75,0.85,0.95];
+      const diagSamples=logThisRender?diagPcts.map(()=>null):null;
       for(let x=0;x<W;x++){
         const i0=Math.floor(x*len/W), i1=Math.min(len-1,Math.floor((x+1)*len/W));
         let bv=0,mv=0,hv=0;
@@ -3120,14 +3202,45 @@ function WF({ bands, peaks, freq, prog, onSeek, h=80, hotCues=[], loopStart=null
           const mk=mArr?mArr[k]||0:0; if(mk>mv)mv=mk;
           const hk=hArr?hArr[k]||0:0; if(hk>hv)hv=hk;
         }
-        colB[x]=bv; colM[x]=mv; colH[x]=hv;
-        const env=bv>mv?(bv>hv?bv:hv):(mv>hv?mv:hv);
-        envs[x]=env;
-        heights[x]=env<=0?0:Math.min(maxH,Math.pow(env,GAMMA)*maxH);
+        const env=hv;
+        if(env<=0){heights[x]=0;heightsDim[x]=0;continue;}
+        const normalized=Math.max(0,Math.min(1,(env-envFloor)/envRange));
+        let hVal=Math.pow(normalized,GAMMA)*maxH;
+        if(env>0.02&&hVal<1.5) hVal=1.5;
+        heights[x]=hVal<maxH?hVal:maxH;
+        let hValDim=Math.pow(normalized,DIM_GAMMA)*maxH;
+        if(env>0.02&&hValDim<1.5) hValDim=1.5;
+        heightsDim[x]=hValDim<maxH?hValDim:maxH;
+        if(diagSamples){
+          for(let di=0;di<diagPcts.length;di++){
+            if(diagSamples[di]===null){
+              const targetX=Math.floor(diagPcts[di]*W);
+              if(x===targetX){
+                diagSamples[di]={
+                  pct:(diagPcts[di]*100).toFixed(0)+'%',
+                  x,
+                  env:+env.toFixed(3),
+                  normalized:+normalized.toFixed(3),
+                  heightPx:+heights[x].toFixed(2),
+                };
+              }
+            }
+          }
+        }
+      }
+      if(logThisRender){
+        console.log('[WF-DIAG]',{
+          color,
+          W,
+          maxH:+maxH.toFixed(2),
+          envFloor:+envFloor.toFixed(3),
+          envCeil:+envCeil.toFixed(3),
+          envRange:+envRange.toFixed(3),
+          samples:diagSamples,
+        });
       }
 
-      // Parse color → rgb. Played portion (left of playhead) gets a brighter
-      // alpha multiplier so you can still read progress at a glance.
+      // Parse color → rgb.
       const c=color||'#ffffff';
       let r=255,g=255,b=255;
       if(c.length>=7&&c[0]==='#'){
@@ -3136,40 +3249,220 @@ function WF({ bands, peaks, freq, prog, onSeek, h=80, hotCues=[], loopStart=null
         b=parseInt(c.slice(5,7),16)|0;
       }
 
-      // ── Pass 1: smooth filled envelope path at DIM baseline (silhouette).
-      const baseGrad=ctx.createLinearGradient(0,center-maxH,0,center+maxH);
-      baseGrad.addColorStop(0,`rgba(${r},${g},${b},0.18)`);
-      baseGrad.addColorStop(0.5,`rgba(${r},${g},${b},0.32)`);
-      baseGrad.addColorStop(1,`rgba(${r},${g},${b},0.18)`);
-      ctx.fillStyle=baseGrad;
-      ctx.beginPath();
-      ctx.moveTo(0,center);
-      for(let x=0;x<W;x++) ctx.lineTo(x+0.5,center-heights[x]);
-      ctx.lineTo(W,center);
-      for(let x=W-1;x>=0;x--) ctx.lineTo(x+0.5,center+heights[x]);
-      ctx.closePath();
-      ctx.fill();
+      // Analyzing dim is folded into every alpha so re-analysis of an already-
+      // loaded track reads as provisional data without globalAlpha thrash.
+      const a=(alpha)=>analyzing?alpha*0.4:alpha;
 
-      // ── Pass 2: per-column amplitude overlay — calm, monochrome.
-      // Solid deck-color fill with env-driven alpha. Per design brief: the
-      // small in-deck waveform reads as "calm amplitude, not spectral" —
-      // spectral colors live only in AnimatedZoomedWF (top zoomed area).
-      // Per-column color was Phase 2 v3 work; reverted to monochrome here for
-      // visual restraint at small (h=40) size.
-      ctx.fillStyle=`rgb(${r},${g},${b})`;
-      for(let x=0;x<W;x++){
-        const h=heights[x];
-        if(h<=0) continue;
-        const env=envs[x];
-        const playedMul=x<px?1.40:1.0;
-        ctx.globalAlpha=Math.min(1,Math.pow(env,0.75)*0.55*playedMul);
-        ctx.fillRect(x,center-h,1,h*2+1);
+      const splitPos=Math.max(0.001,Math.min(0.999,px/W));
+
+      // ── PER-COLUMN SHAPE SELECT ──────────────────────────────────────────
+      // Per column x → nearest analyzer beat k → strength = beatAttacks[k].
+      // Where the analyzer found a kick (strength > 0), the rendered shape
+      // is the CORE: normalizedStrength × envH × 0.9 — punchy kick-driven
+      // height. Where the analyzer found no kick (strength === 0) or x falls
+      // before first / after last beat, the rendered shape is the ENVELOPE:
+      // the full hv envelope height (heights[x]).
+      //
+      // Heights ramp linearly across kick-in/out boundaries (5-tap moving
+      // average) so the silhouette has no vertical cliff. Brightness is a
+      // binary step at the exact class boundary — bright class fills with
+      // full Step A alphas, dim class fills at ~37.5% of those alphas. The
+      // shape is ONE silhouette path; per-column 1-px-wide fillRects inside
+      // a single ctx.clip(silhouettePath) deliver per-column brightness with
+      // zero overlap haze.
+      //
+      // Guard: pre-change track results lack beatTimes/beatAttacks → fall
+      // through to the original two-fill envelope render at full brightness
+      // (pre-kick visual behavior).
+      const hasKickData=beatTimes&&beatAttacks&&beatTimes.length>=2&&dur>0;
+      let renderHeights=heights, kickClass=null;
+      if(hasKickData){
+        if(kickCacheRef.current.beatAttacks!==beatAttacks){
+          const nz=[];
+          for(let i=0;i<beatAttacks.length;i++){if(beatAttacks[i]>0)nz.push(beatAttacks[i]);}
+          nz.sort((a,b)=>a-b);
+          kickCacheRef.current={
+            beatAttacks,
+            median:nz.length?nz[nz.length>>1]:0,
+          };
+        }
+        const median=kickCacheRef.current.median;
+        if(median>0){
+          const targetH=new Float32Array(W);
+          const maxStrengthArr=new Float32Array(W);
+          kickClass=new Uint8Array(W);
+          // FIX 1 — At W=264 / ~600 beats, every column spans ~2-3 beats.
+          // Nearest-beat lookup let a single refinement-skipped beat
+          // (strength=0) blank a column inside an otherwise solid kick
+          // region. The fix: per column, take the MAX of beatAttacks over
+          // ALL beats whose beatTime falls within the column's time span.
+          // Any kick in the span makes the column read as kick-present.
+          // Running pointer over the sorted beatTimes (no per-column search).
+          //
+          // No explicit tFirst/tLast check needed: columns whose span
+          // contains no beats naturally collect maxStrength=0 → dim class.
+          //
+          // Phase 1 — build raw kickClass + record per-column maxStrength.
+          let k=0;
+          for(let x=0;x<W;x++){
+            const tStart=(x/W)*dur;
+            const tEnd=((x+1)/W)*dur;
+            while(k<beatTimes.length&&beatTimes[k]<tStart)k++;
+            let maxStrength=0;
+            let j=k;
+            while(j<beatTimes.length&&beatTimes[j]<tEnd){
+              const s=beatAttacks[j];
+              if(s>maxStrength)maxStrength=s;
+              j++;
+            }
+            maxStrengthArr[x]=maxStrength;
+            kickClass[x]=maxStrength>0?1:0;
+          }
+
+          // Phase 2 — morphological cleanup. Short dim runs are slits from
+          // individually skipped beats inside a real kick region; short
+          // bright runs are stray kicks inside an otherwise quiet section.
+          // Thresholds in BARS, converted to columns via bpm + dur. Order
+          // matters: absorb short dim runs first, then prune short bright
+          // runs — a dim-flip can join two bright runs into one long bright
+          // run that survives the bright-prune step.
+          let minDimRun, minBrightRun;
+          if(bpm&&bpm>0&&dur>0){
+            const barSec=4*60/bpm;
+            const colsPerBar=W*barSec/dur;
+            minDimRun=Math.ceil(MIN_DIM_RUN_BARS*colsPerBar);
+            if(minDimRun<3)minDimRun=3;else if(minDimRun>12)minDimRun=12;
+            minBrightRun=Math.ceil(MIN_BRIGHT_RUN_BARS*colsPerBar);
+            if(minBrightRun<2)minBrightRun=2;else if(minBrightRun>8)minBrightRun=8;
+          } else {
+            minDimRun=MIN_DIM_RUN_FALLBACK;
+            minBrightRun=MIN_BRIGHT_RUN_FALLBACK;
+          }
+          // Flip short dim runs → bright.
+          for(let i=0;i<W;){
+            if(kickClass[i]===0){
+              const runStart=i;
+              while(i<W&&kickClass[i]===0)i++;
+              if(i-runStart<minDimRun){
+                for(let x=runStart;x<i;x++)kickClass[x]=1;
+              }
+            } else i++;
+          }
+          // Flip short bright runs → dim.
+          for(let i=0;i<W;){
+            if(kickClass[i]===1){
+              const runStart=i;
+              while(i<W&&kickClass[i]===1)i++;
+              if(i-runStart<minBrightRun){
+                for(let x=runStart;x<i;x++)kickClass[x]=0;
+              }
+            } else i++;
+          }
+
+          // Phase 3 — fill targetH from cleaned kickClass + maxStrengthArr.
+          // Flipped columns: a dim→bright flip has maxStrength=0 → norm=0
+          // → coreH=0; the 0.35×envH floor kicks in and the column reads as
+          // a weak fill-in inside the kick region. A bright→dim flip uses
+          // the lifted DIM_GAMMA envelope height like any other kick-out
+          // column.
+          for(let x=0;x<W;x++){
+            if(kickClass[x]===0){
+              targetH[x]=heightsDim[x];
+            } else {
+              const envH=heights[x];
+              let norm=maxStrengthArr[x]/median;
+              if(norm>1)norm=1;else if(norm<0)norm=0;
+              const coreH=norm*envH*0.9;
+              const floor=0.35*envH;
+              targetH[x]=floor>coreH?floor:coreH;
+            }
+          }
+          // 5-tap moving average smooths the coreH↔envH height transition
+          // across ~3 columns so the boundary reads as a soft swell rather
+          // than a vertical cliff.
+          const smoothH=new Float32Array(W);
+          for(let x=0;x<W;x++){
+            let s=0,cnt=0;
+            for(let d=-2;d<=2;d++){
+              const xi=x+d;
+              if(xi>=0&&xi<W){s+=targetH[xi];cnt++;}
+            }
+            smoothH[x]=s/cnt;
+          }
+          renderHeights=smoothH;
+        } else {
+          // No non-zero strengths resolved → treat as no kick data.
+          kickClass=null;
+        }
       }
-      ctx.globalAlpha=1;
 
-      // (Centerline weight band intentionally omitted on the small WF —
-      // at h=40 there's not enough vertical space; it read as a divider
-      // line rather than "energy" and added visual noise.)
+      // Phase 1 Tier 1: buildSilhouettePath replaces the inline path-building.
+      const silhouettePath=buildSilhouettePath(renderHeights,center,W,maxH);
+
+      if(!kickClass){
+        // Guard path — original two-fill render at full brightness.
+        // Fill 1: vertical bright-at-center gradient.
+        const baseGrad=ctx.createLinearGradient(0,center-maxH,0,center+maxH);
+        baseGrad.addColorStop(0,   `rgba(${r},${g},${b},${a(0.25)})`);
+        baseGrad.addColorStop(0.5, `rgba(${r},${g},${b},${a(0.65)})`);
+        baseGrad.addColorStop(1,   `rgba(${r},${g},${b},${a(0.25)})`);
+        ctx.fillStyle=baseGrad;
+        ctx.fill(silhouettePath);
+        // Fill 2: horizontal played/unplayed sweep.
+        const sweep=ctx.createLinearGradient(0,0,W,0);
+        sweep.addColorStop(0,        `rgba(${r},${g},${b},${a(0.30)})`);
+        sweep.addColorStop(splitPos, `rgba(${r},${g},${b},${a(0.30)})`);
+        sweep.addColorStop(splitPos, `rgba(${r},${g},${b},${a(0.10)})`);
+        sweep.addColorStop(1,        `rgba(${r},${g},${b},${a(0.10)})`);
+        ctx.fillStyle=sweep;
+        ctx.fill(silhouettePath);
+      } else {
+        // Kick-data path — clip to silhouette, per-column 1-px fillRect
+        // with one of 4 precomputed composite gradients. Each gradient
+        // pre-composes the vertical bright-at-center alphas (0.25/0.65/0.25)
+        // with the played/unplayed horizontal boost (+0.30 played, +0.10
+        // unplayed) via source-over math, then optionally × 0.375 for the
+        // dim class. Source-over composite: outA = vert + horiz × (1 − vert).
+        const DIM=0.375;
+        const mkV=(a0,a05,a1)=>{
+          const gr=ctx.createLinearGradient(0,center-maxH,0,center+maxH);
+          gr.addColorStop(0,   `rgba(${r},${g},${b},${a(a0)})`);
+          gr.addColorStop(0.5, `rgba(${r},${g},${b},${a(a05)})`);
+          gr.addColorStop(1,   `rgba(${r},${g},${b},${a(a1)})`);
+          return gr;
+        };
+        const brightPlayed   =mkV(0.475,      0.755,      0.475);
+        const brightUnplayed =mkV(0.325,      0.685,      0.325);
+        const dimPlayed      =mkV(0.475*DIM,  0.755*DIM,  0.475*DIM);
+        const dimUnplayed    =mkV(0.325*DIM,  0.685*DIM,  0.325*DIM);
+
+        ctx.save();
+        ctx.clip(silhouettePath);
+        let curStyle=null;
+        for(let x=0;x<W;x++){
+          const style=kickClass[x]
+            ?(x<px?brightPlayed:brightUnplayed)
+            :(x<px?dimPlayed:dimUnplayed);
+          if(style!==curStyle){ctx.fillStyle=style;curStyle=style;}
+          ctx.fillRect(x,0,1,H);
+        }
+        ctx.restore();
+      }
+
+      // Minute time markers — 1 CSS px tick every 60 s of track time.
+      // Position y in [32, 36] at h=40: above the silhouette's nominal
+      // bottom edge (y=37 at PEAK_HEIGHT_RATIO=0.85) without touching it,
+      // and above the canvas bottom edge (y=40) so the deck card's
+      // beatgrid row has visible separation below.
+      if(dur>=60){
+        const tickHeight=4;
+        const tickY=H-tickHeight-4;
+        ctx.fillStyle=`rgba(255,255,255,${a(0.50)})`;
+        for(let t=60;t<dur;t+=60){
+          const mx=(t/dur)*W;
+          ctx.fillRect(mx,tickY,1,tickHeight);
+        }
+      }
 
       // ── Playhead marker ──
       ctx.fillStyle='rgba(0,0,0,0.35)'; ctx.fillRect(px-1,0,4,H);
@@ -3194,11 +3487,26 @@ function WF({ bands, peaks, freq, prog, onSeek, h=80, hotCues=[], loopStart=null
         ctx.fillRect(cx,0,2,H); ctx.shadowBlur=0;
         if(cx>4&&cx<W-4){ctx.beginPath();ctx.moveTo(cx-4,0);ctx.lineTo(cx+5,0);ctx.lineTo(cx+1,9);ctx.fillStyle=CUE_CLR[ci];ctx.fill();}
       });
+    } else if(analyzing){
+      // Phase 1 Tier 7 — loading / analyzing state with no bands yet.
+      // Subtle horizontal gradient hairline at the centerline. Reads as
+      // "something is happening" without spinner / motion / chrome.
+      const cy=H/2;
+      const grad=ctx.createLinearGradient(0,0,W,0);
+      grad.addColorStop(0,   "rgba(255,255,255,0.04)");
+      grad.addColorStop(0.5, "rgba(255,255,255,0.14)");
+      grad.addColorStop(1,   "rgba(255,255,255,0.04)");
+      ctx.fillStyle=grad;
+      ctx.fillRect(0,cy-0.5,W,1);
     } else {
-      // Empty state
-      ctx.fillStyle="#ffffff08"; ctx.fillRect(0,H-1,W,1);
+      // Phase 1 Tier 7 — empty state. Centered thin neutral-gray line
+      // (was a 1-px line at the BOTTOM of the canvas — looked like a stray
+      // border, not an intentional empty deck affordance).
+      const cy=H/2;
+      ctx.fillStyle="rgba(156,163,175,0.20)";
+      ctx.fillRect(0,cy-0.5,W,1);
     }
-  },[bands,peaks,freq,prog,hotCues,loopStart,loopEnd,loopActive,bpm,dur,beatPhaseFrac,color]);
+  },[bands,peaks,freq,prog,hotCues,loopStart,loopEnd,loopActive,bpm,dur,beatPhaseFrac,color,analyzing,resizeTick,h,beatTimes,beatAttacks]);
 
   const onClick=e=>{
     if(!onSeek||!ref.current)return;
@@ -4801,7 +5109,7 @@ function Deck({ id, ch, ctx:ac, color, local, remote, onChange, midi:mt, bpmResu
       <div style={{borderTop:BD, borderBottom: gridPanelOpen ? "none" : BD, background:"#06070A",
                    maxHeight: gridPanelOpen ? 0 : 42, overflow: "hidden",
                    transition: "max-height 200ms cubic-bezier(0.4, 0, 0.2, 1), border-bottom 200ms cubic-bezier(0.4, 0, 0.2, 1)"}}>
-        <WF bands={wfBass?{bass:wfBass,mid:wfMid,high:wfHigh}:null} peaks={wfPeaks} freq={wfFreq} prog={prog} onSeek={local?seek:remoteSeek} h={40} hotCues={hotCues} loopStart={loopStart} loopEnd={loopEnd} loopActive={loopActive} bpm={bpmResult?.bpm?(bpmResult.bpm*rate):null} dur={dur} beatPhaseFrac={bpmResult?.beatPhaseFrac??null} color={color}/>
+        <WF bands={wfBass?{bass:wfBass,mid:wfMid,high:wfHigh}:null} peaks={wfPeaks} freq={wfFreq} prog={prog} onSeek={local?seek:remoteSeek} h={40} hotCues={hotCues} loopStart={loopStart} loopEnd={loopEnd} loopActive={loopActive} bpm={bpmResult?.bpm?(bpmResult.bpm*rate):null} dur={dur} beatPhaseFrac={bpmResult?.beatPhaseFrac??null} color={color} analyzing={!!bpmResult?.analyzing} beatTimes={bpmResult?.beatTimes??null} beatAttacks={bpmResult?.beatAttacks??null}/>
       </div>
 
       {/* ── BEAT GRID PANEL (Phase 3, Commits 1+2) ──

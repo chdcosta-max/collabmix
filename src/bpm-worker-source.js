@@ -1364,5 +1364,7 @@ self.onmessage=function(e){
     best32Mod4,
     dpBeatsLen:dpBeats.length,
   };
-  self.postMessage({id,bpm:finalBpm,confidence:conf,candidates:cands,beatPhaseFrac,beatPeriodSec:finalPeriod,beatPhaseSec,firstBar1AnchorSec,snapped,phase});
+  const beatTimes=Float32Array.from(dpBeatsFloat,f=>f*hop/sr);
+  const beatAttacks=Float32Array.from(beatAttackSlopes);
+  self.postMessage({id,bpm:finalBpm,confidence:conf,candidates:cands,beatPhaseFrac,beatPeriodSec:finalPeriod,beatPhaseSec,firstBar1AnchorSec,snapped,phase,beatTimes,beatAttacks});
 };`;
