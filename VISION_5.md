@@ -7818,3 +7818,96 @@ than minimizing per-listener delay independently.
   bundle audit recorded in the session report.
 - **Production (server):** Railway unchanged (`8849446`); this
   was a client-only fix.
+
+## Session — June 10 — Entry-flow investigation + stale-socket fix
+
+### Entry-path map (Chad, localhost, two-window testing)
+
+1. **Fresh via Landing** (private tab, no storage): WORKS.
+2. **Auto-rejoin from storage** (regular tab): WORKS post-identity
+   -fix (distinct djIds). Storage decides destination — same URL
+   goes to Landing in a private tab, straight to the booth in a
+   regular tab.
+3. **Join-by-code:** reported BROKEN on localhost (typing a valid
+   code silently creates a NEW empty room); reported WORKING on
+   production in the re-soak → suspected dev-only.
+
+### Headless reproduction — could NOT reproduce the split
+
+Drove the real two-window click path (Playwright + system Chrome,
+dev StrictMode, live Railway server). **14/14 runs PAIRED**
+across: fresh-create + join-by-code (5), stale-room restore +
+join-by-code (4), and a tight timing race with B joining inside
+A's double-mount gap (5). The join-by-code room-split did not
+reproduce. NOT claiming a fix for it — it is likely intermittent
+/ timing- or environment-specific (server room-GC race in the
+double-mount gap, or a copy-paste artifact). The `[JOIN-DIAG]`
+logs added this session capture the exact roomId each socket
+sends, so the next real occurrence in Chad's browser will show
+whether it's a code mismatch, a dead-socket send, or a server
+room miss.
+
+Mechanism note: the "fires once on a doomed socket" hypothesis
+does not hold for join-by-code — its `connect()` comes from a
+CLICK handler, which React StrictMode does NOT double-invoke, so
+there is no teardown to lose the join to. The double-mount is
+real only on EFFECT-driven connects (auto-rejoin/restore), and
+those RECOVER because `connect()` re-fires on the effect's second
+setup.
+
+### FIXED + VERIFIED: restore "ghost room" / contradictory banner
+
+The earlier restore symptom — "CONNECTED·43ms" + "Could not
+connect to server" banner + AUDIO: OFFLINE simultaneously — IS
+reproduced and fixed. Cause: the StrictMode double-mount tears
+down the first WebSocket; unpatched, that dying socket's
+`onerror`/`onclose` painted "Could not connect" and flipped
+status to disconnected OVER the healthy live socket. Fix:
+stale-socket guards in `useSync` — ignore `onopen`/`onerror`/
+`onclose` when `ws.current !== w`. Verified headlessly (stale
+onerror suppressed, stale close `wasCurrent=false`). Restore
+re-registers a REAL server room (WS#2 sends join, server
+responds `joined`, partner pairs) — NOT a ghost.
+
+### No exit from the booth (UX ticket logged, not built)
+
+`leave()` exists (returns to Landing, clears `cm_session`) but is
+wired to nothing. There is currently no way back from the mixing
+view to Landing/Lobby. Decision: log only this session; build
+later (needs a header button + confirm).
+
+### NEW / UPDATED TICKETS
+
+1. **Join-by-code room-split:** unreproduced across 14 headless
+   runs. Capture `[JOIN-DIAG]` from the next real occurrence
+   (browser console) — need the actual roomId-sent-vs-matched.
+2. **INVITE button flow** (invitee landed in a room without the
+   inviter's track): same family; now rides `[JOIN-DIAG]`. Not
+   separately reproduced.
+3. **Back-to-lobby navigation** (UX): wire the existing `leave()`
+   to a booth-header control.
+4. **Transport-from-non-driver recheck:** play button on a
+   partner-driven deck did nothing once from the non-driver tab;
+   resolved after refreshing both tabs. Stale-state artifact, not
+   reproducible clean — recheck after entry-flow fixes settle.
+
+### PHASE 2 EVIDENCE (no action — founder-validated by ear)
+
+Chad's first clean listening verdict (two tabs, same room, same
+track on both decks, synced): audibly smeared/doubled but far
+better than pre-fix chaos. Confirms **Gap #4** (RTC jitter-buffer
+delay vs local deck, uncompensated in monitoring) is THE audible
+artifact. Phase 2 delay compensation is now validated by ear as
+the right next work.
+
+### Working state for next session
+
+- **Master HEAD:** advances to this VISION_5 commit (sits above
+  the stale-socket-fix commit).
+- **Production (client):** stale-socket guards + `[JOIN-DIAG]`
+  pushed; bundle audit in the session report.
+- **Production (server):** Railway unchanged (`8849446`);
+  client-only.
+- **Verification tooling:** `_join_repro*.mjs` (Playwright +
+  system Chrome, `playwright-core` installed --no-save) drive a
+  two-window join headlessly — re-runnable for regression.
