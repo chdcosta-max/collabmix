@@ -7911,3 +7911,52 @@ the right next work.
 - **Verification tooling:** `_join_repro*.mjs` (Playwright +
   system Chrome, `playwright-core` installed --no-save) drive a
   two-window join headlessly — re-runnable for regression.
+
+### Two-client smoke suite — SEED (kept on disk, to be extended)
+
+`_join_repro*.mjs` (root, untracked; dev server left running) are
+the SEED of a two-client smoke suite. They already assert: two
+clients boot, join one room by code, get distinct djIds, and see
+each other as partners (names crossed). Extend into the full
+smoke test:
+- distinct djIds ✓ (seed)
+- partners crossed ✓ (seed)
+- track load mirrors (driver loads → partner paints
+  title/BPM/waveform)
+- play/seek propagate (driver play/seek → partner deck reflects)
+- drift telemetry emits (`[SYNC-DRIFT]`/phaseErrorMs while both
+  decks play synced)
+Intended home: `tools/smoke/` (repo convention), with a runner
+(PASS/FAIL + exit code), `playwright-core` promoted to a saved
+devDependency, and a small license-clean audio fixture. Effort
+estimate logged in the session report (~2–3 focused sessions;
+Phase 2 headless track-load is the one real unknown — a tiny
+test-only load hook de-risks it).
+
+### NEW BUG: partner-deck waveform jumps backward (display-only)
+
+During the live two-tab listening test, Tab 2's partner-driven
+deck waveform repeatedly jumps BACK several beats. Diagnosed as
+DISPLAY-ONLY (the partner deck has no local buffer; its audio is
+the driver's continuous RTC stream — the jumps are not audible).
+
+Root cause: the non-driver playhead interpolation
+(`Deck`, ~:4555) extrapolates at a FIXED 1× rate
+(`1/(trackDurSec*1000)`), IGNORING the driver's actual
+`remote.rate`. When the driver deck is rate-adjusted (synced/
+pitched — the norm in a beatmatched set), the interp drifts ahead
+of truth at `(1−rate)/dur` per ms. The drift accumulates until it
+crosses `SNAP_THRESHOLD` (0.5% of track ≈ 1.8s ≈ several beats),
+then the hard-snap branch (~:4573) yanks the playhead BACK to
+truth. Sawtooth — amplitude ≈ threshold ≈ "multiple beats,"
+exactly as observed.
+
+Proposed fix (NOT built — awaiting approval):
+1. Rate-aware interp: `rate = (remote.rate ?? 1)/(dur*1000)` —
+   removes the systematic drift (the root cause).
+2. Never snap BACKWARD visually — slew: for sub-seek backward
+   drift, reduce interp rate until the playhead eases down to
+   truth instead of hard-resetting; still allow a backward HARD
+   snap for a LARGE jump (a genuine driver seek-backward).
+Relates to the `initiator display echo` and `decks-visually-
+offset` tickets (same 10Hz-packet-vs-interp family).
