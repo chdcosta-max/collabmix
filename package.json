@@ -10,7 +10,8 @@
     "dev": "vite",
     "build": "vite build",
     "lint": "eslint .",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "smoke:engage": "node tools/smoke/engage_align.smoke.mjs"
   },
   "dependencies": {
     "@sentry/react": "^10.53.1",
