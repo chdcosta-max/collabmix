@@ -3793,7 +3793,7 @@ function renderSilhouetteGlow(ctx,path,dr,dg,db,alpha){
   ctx.fill(path);
 }
 
-function AnimatedZoomedWF({ bands, dur, progRef, onSeek, h=96, windowSec=8, beatPhaseFrac=null, beatPeriodSec=null, gridOffsetMs=0, barOneOffsetSec=0, deckColor="#FFFFFF", rate=1 }) {
+function AnimatedZoomedWF({ bands, dur, progRef, onSeek, h=96, windowSec=8, beatPhaseFrac=null, beatPeriodSec=null, gridOffsetMs=0, barOneOffsetSec=0, deckColor="#FFFFFF", rate=1, beatTimes=null, beatsV2=false }) {
   // Path A glow tuning. Lower canvas renders a single solid-fill silhouette
   // and gets CSS filter:blur applied via inline style; the browser composites
   // the blur on the GPU. Tune visually by adjusting these three values.
@@ -3848,6 +3848,10 @@ function AnimatedZoomedWF({ bands, dur, progRef, onSeek, h=96, windowSec=8, beat
   useEffect(()=>{bandsRef.current=bands;},[bands]);
   useEffect(()=>{beatPhaseFracRef.current=beatPhaseFrac;},[beatPhaseFrac]);
   useEffect(()=>{beatPeriodSecRef.current=beatPeriodSec;},[beatPeriodSec]);
+  const beatTimesRef=useRef(beatTimes);
+  const beatsV2Ref=useRef(beatsV2);
+  useEffect(()=>{beatTimesRef.current=beatTimes;},[beatTimes]);
+  useEffect(()=>{beatsV2Ref.current=beatsV2;},[beatsV2]);
   useEffect(()=>{gridOffsetMsRef.current=gridOffsetMs;},[gridOffsetMs]);
   useEffect(()=>{barOneOffsetSecRef.current=barOneOffsetSec;},[barOneOffsetSec]);
   useEffect(()=>{deckColorRef.current=deckColor;},[deckColor]);
@@ -4110,12 +4114,33 @@ function AnimatedZoomedWF({ bands, dur, progRef, onSeek, h=96, windowSec=8, beat
         const halfWinSec=viewBufSec/2;
         const minTime=currentTimeSec-halfWinSec-effectivePeriod;
         const maxTime=currentTimeSec+halfWinSec+effectivePeriod;
-        const startN=Math.ceil((minTime-firstDownbeatSec)/effectivePeriod);
-        const endN=Math.floor((Math.min(dur2,maxTime)-firstDownbeatSec)/effectivePeriod);
+        // Grid markers — {beatTime (sec), n (beat index for tier emphasis)}.
+        // beatsv2 draws gridlines AT the refined beatTimes (the actual kicks,
+        // matching the seek-quantize + kick markers + the engage alignment) and
+        // labels downbeat/phrase tiers from the linear downbeat anchor; legacy
+        // draws the uniform linear grid. The draw loop below is identical for
+        // both — only the marker positions differ.
+        const gridMarkers=[];
+        const bts=beatTimesRef.current;
+        if(beatsV2Ref.current && bts && bts.length>1){
+          const gridOff=gridOffsetMsRef.current/1000;   // manual fine-tune still honored
+          let lo=0,hi=bts.length-1;                      // first beat >= minTime
+          while(lo<hi){ const mid=(lo+hi)>>1; if(bts[mid]<minTime) lo=mid+1; else hi=mid; }
+          for(let i=lo;i<bts.length&&bts[i]<=maxTime;i++){
+            // Tier from the established downbeat anchor (incorporates
+            // beatPhaseFrac + barOneOffset); round() absorbs the refine deltas.
+            const nLinear=Math.round((bts[i]-firstDownbeatSec)/effectivePeriod);
+            gridMarkers.push({beatTime:bts[i]+gridOff,n:nLinear});
+          }
+        }else{
+          const startN=Math.ceil((minTime-firstDownbeatSec)/effectivePeriod);
+          const endN=Math.floor((Math.min(dur2,maxTime)-firstDownbeatSec)/effectivePeriod);
+          for(let n=startN;n<=endN;n++) gridMarkers.push({beatTime:firstDownbeatSec+n*effectivePeriod,n});
+        }
 
         // Zoom thinning: if off-beat density would exceed ~50 ticks per 100px,
         // suppress off-beats (downbeats + phrase markers always render).
-        const visibleBeats=Math.max(0,endN-startN+1);
+        const visibleBeats=gridMarkers.length;
         const densityPer100px=(visibleBeats*100)/Math.max(1,physW);
         const showOffBeats=densityPer100px<=50;
 
@@ -4169,13 +4194,13 @@ function AnimatedZoomedWF({ bands, dur, progRef, onSeek, h=96, windowSec=8, beat
         ctx.shadowColor=`rgba(${DECK_RGB},0.65)`;
         ctx.shadowBlur=4;
 
-        for(let n=startN;n<=endN;n++){
-          const beatTime=firstDownbeatSec+n*effectivePeriod;
+        for(const mk of gridMarkers){
+          const beatTime=mk.beatTime;
           if(beatTime<0) continue; // no grid before t=0 — audio doesn't exist there
           const x=(physW>>1)+(beatTime-currentTimeSec)*pxPerSec;
           if(x<-phraseTickW||x>physW+phraseTickW) continue;
-          const isPhrase=(n%16===0);
-          const isDownbeat=(n%4===0);
+          const isPhrase=(mk.n%16===0);
+          const isDownbeat=(mk.n%4===0);
 
           if(isPhrase){
             // v5.2: phrase columns no longer get a red full-height through-line
@@ -4814,7 +4839,7 @@ function Deck({ id, ch, ctx:ac, color, local, remote, onChange, midi:mt, bpmResu
   // remote.beatTimes is the fallback.
   const beatTimesRef=useRef(null);
   useEffect(()=>{ beatTimesRef.current = bpmResult?.beatTimes ?? remote?.beatTimes ?? null; }, [bpmResult?.beatTimes, remote?.beatTimes]);
-  const seek  =useCallback((p, fromRemote=false)=>{
+  const seek  =useCallback((p, fromRemote=false, noQuantize=false)=>{
     // Clamp to [0, 1] — guards against unclamped callers (small WF onClick,
     // network seek_request) feeding negative or >1 fractions. Without this,
     // negative p stores a negative off.current that crashes the next play_()
@@ -4836,15 +4861,17 @@ function Deck({ id, ch, ctx:ac, color, local, remote, onChange, midi:mt, bpmResu
     // dragging (the drag commits one seek on release, so this only snaps the
     // landing). Quantized HERE at execution on the driver, so the broadcast
     // progress IS the landed beat and both sides agree on the position.
+    // noQuantize=true is the SYNC engage's own phase-align seek: it lands the
+    // slave at the master's sub-beat PHASE (generally off-beat), so re-snapping
+    // it to the nearest beat here would destroy the alignment and cause the
+    // repeat-engage wander. Engage is the alignment authority; only user scrubs
+    // get quantized.
     let pq=pc;
     const durSec=buf?.duration||0;
     const beats=beatTimesRef.current;
-    if(play && beats && beats.length>1 && durSec>0){
+    if(play && !noQuantize && beats && beats.length>1 && durSec>0){
       const targetSec=pc*durSec;
-      let lo=0,hi=beats.length-1;            // binary search: first beat >= target
-      while(lo<hi){ const mid=(lo+hi)>>1; if(beats[mid]<targetSec) lo=mid+1; else hi=mid; }
-      let nearest=beats[lo];
-      if(lo>0 && Math.abs(beats[lo-1]-targetSec)<=Math.abs(beats[lo]-targetSec)) nearest=beats[lo-1];
+      const nearest=nearestBeatTime(beats,targetSec);   // shared helper (beatsv2)
       pq=Math.max(0,Math.min(1,nearest/durSec));
       console.log("[SEEK-QUANTIZE]",{deckId:id,fromSec:+targetSec.toFixed(3),toSec:+nearest.toFixed(3),deltaMs:+((nearest-targetSec)*1000).toFixed(1)});
     }
@@ -6716,6 +6743,49 @@ function Lobby({ onJoin, djName = null }) {
   );
 }
 
+// ── Beat-grid v2 (refined beatTimes) shared helpers ───────────
+// Single source of truth for "where the beats are", used by the
+// seek-quantize, the SYNC engage phase-align, and the big-waveform
+// grid when ?beatsv2=1. Before unification these three disagreed:
+// quantize + kick markers read the REFINED beatTimes[] (the actual
+// kicks, per-beat REFINE-shifted ±5-25ms) while engage + grid read
+// the LINEAR beatPhaseSec/beatPeriodSec reconstruction — they
+// differ by the refine deltas, which is the sync regression.
+//
+// NOTE: nearestBeatTime + refinedBeatPhase are duplicated verbatim
+// in tools/smoke/engage_align.smoke.mjs so the headless idempotency
+// assertion exercises the SAME math. Keep them in sync.
+
+// Nearest analyzed beat time (seconds) to t. beats[] sorted ascending.
+// Binary search, O(log n). Returns null on empty input.
+function nearestBeatTime(beats, t) {
+  if (!beats || beats.length === 0) return null;
+  let lo = 0, hi = beats.length - 1;            // first beat >= t
+  while (lo < hi) { const mid = (lo + hi) >> 1; if (beats[mid] < t) lo = mid + 1; else hi = mid; }
+  let nearest = beats[lo];
+  if (lo > 0 && Math.abs(beats[lo - 1] - t) <= Math.abs(beats[lo] - t)) nearest = beats[lo - 1];
+  return nearest;
+}
+
+// Local refined-beat phase at time t: the beat interval containing t,
+// the fraction elapsed through it, and that interval's period (sec).
+// Clamps to the first/last interval at the analyzed-range edges so the
+// engage phase math never divides by zero. Returns null if <2 beats or
+// a degenerate (non-positive) interval. frac can be <0 / >1 when t sits
+// outside the analyzed beats — callers wrap the master/slave difference
+// to [-0.5,0.5] so that is harmless.
+function refinedBeatPhase(beats, t) {
+  if (!beats || beats.length < 2) return null;
+  let lo = 0, hi = beats.length - 1;            // index of last beat <= t
+  while (lo < hi) { const mid = (lo + hi + 1) >> 1; if (beats[mid] <= t) lo = mid; else hi = mid - 1; }
+  let i = lo;
+  if (i >= beats.length - 1) i = beats.length - 2;   // clamp to last interval
+  const period = beats[i + 1] - beats[i];
+  if (!(period > 0)) return null;
+  const frac = (t - beats[i]) / period;
+  return { index: i, frac, period };
+}
+
 // ── Sync cross-correlation helpers (Path C) ───────────────────
 // Kick-band envelope: 40-200 Hz bandpass via cascaded one-pole IIR
 // (highpass-via-subtraction at 40, lowpass at 200), then half-wave
@@ -7693,6 +7763,11 @@ export default function CollabMix({ initialPage = "landing", djName = null }) {
   // when ?delaycomp=1. Slewed slowly (never clicks), clamped 0–400ms. Measure +
   // telemetry run regardless so the HUD shows numbers even with the flag off.
   const delayCompOn = new URLSearchParams(window.location.search).get("delaycomp") === "1";
+  // ?beatsv2=1 — unify SYNC engage, seek-quantize, and the big-waveform grid
+  // on the REFINED beatTimes[] (one source of truth). OFF = legacy LINEAR
+  // engage + grid (kept for A/B ear-verification of the sync regression fix).
+  const beatsV2On = new URLSearchParams(window.location.search).get("beatsv2") === "1";
+  const beatsV2Ref = useRef(beatsV2On); beatsV2Ref.current = beatsV2On;
   useEffect(() => {
     const iv = setInterval(() => {
       const e = eng.current; if (!e?.ctx || !e.monitorDelay) return;
@@ -8073,6 +8148,10 @@ export default function CollabMix({ initialPage = "landing", djName = null }) {
     const slaveBphs  = bpm.results[slave]?.beatPhaseSec    ?? slavePartnerState?.beatPhaseSec;
     const masterBps  = bpm.results[master]?.beatPeriodSec  ?? masterPartnerState?.beatPeriodSec;
     const masterBphs = bpm.results[master]?.beatPhaseSec   ?? masterPartnerState?.beatPhaseSec;
+    // REFINED beat positions (the actual kicks) for beatsv2 engage. Same
+    // local-then-partner fallback shape as the linear phase fields above.
+    const slaveBeats  = bpm.results[slave]?.beatTimes   ?? slavePartnerState?.beatTimes;
+    const masterBeats = bpm.results[master]?.beatTimes  ?? masterPartnerState?.beatTimes;
     const slaveDur   = slave==="A"  ? wfA?.dur : wfB?.dur;
     const slaveProg  = slave==="A"  ? progRefA.current : progRefB.current;
     const masterProg = master==="A" ? progRefA.current : progRefB.current;
@@ -8091,25 +8170,59 @@ export default function CollabMix({ initialPage = "landing", djName = null }) {
       // downbeats) is a manual mix exercise via cue points and not attempted
       // here. slaveBps / masterBps name is misleading — these are beat PERIODS
       // in seconds, not beats-per-second. Kept as-is to minimize diff churn.
-      const masterBeatPos  = (masterCurTime - masterBphs) / masterBps;
-      const masterBeatFrac = masterBeatPos - Math.floor(masterBeatPos);
-      const slaveBeatPos   = (slaveCurTime  - slaveBphs)  / slaveBps;
-      const slaveBeatFrac  = slaveBeatPos  - Math.floor(slaveBeatPos);
-      let phaseOffsetBeats = masterBeatFrac - slaveBeatFrac;
-      if (phaseOffsetBeats >  0.5) phaseOffsetBeats -= 1;
-      if (phaseOffsetBeats < -0.5) phaseOffsetBeats += 1;
-      const phaseOffsetSeconds = phaseOffsetBeats * slaveBps;
+      // beatsv2: align on the REFINED beat grids (the actual kicks) instead of
+      // the LINEAR single-period reconstruction. Falls back to linear if the
+      // refined beatTimes aren't available on either deck.
+      const beatsV2 = beatsV2Ref.current;
+      const mPhase = beatsV2 ? refinedBeatPhase(masterBeats, masterCurTime) : null;
+      const sPhase = beatsV2 ? refinedBeatPhase(slaveBeats,  slaveCurTime)  : null;
+      const useRefined = beatsV2 && mPhase && sPhase;
+
+      let masterBeatFrac, slaveBeatFrac, newSlaveTime;
+      if (useRefined) {
+        // Align slave's local refined-beat phase to master's. Iterate the
+        // minimal (wrap-bounded ≤0.5-beat) nudge to a fixed point: the refine
+        // jitter means a single seek lands in a neighbouring interval with a
+        // slightly different period, leaving a small residual — iterating to
+        // convergence makes repeat-engage IDEMPOTENT (no wander). First step is
+        // the minimal move; subsequent steps are sub-ms. master's fraction is
+        // fixed (only the slave moves). Verified by tools/smoke/engage_align.
+        masterBeatFrac = mPhase.frac - Math.floor(mPhase.frac);
+        slaveBeatFrac  = sPhase.frac - Math.floor(sPhase.frac);
+        let t = slaveCurTime;
+        for (let iter = 0; iter < 6; iter++) {
+          const sp = refinedBeatPhase(slaveBeats, t);
+          if (!sp) break;
+          let off = masterBeatFrac - (sp.frac - Math.floor(sp.frac));
+          if (off >  0.5) off -= 1;
+          if (off < -0.5) off += 1;
+          if (Math.abs(off) < 1e-4) break;   // <0.01% of a beat → converged
+          t += off * sp.period;
+        }
+        newSlaveTime = t;
+      } else {
+        masterBeatFrac = ((masterCurTime - masterBphs) / masterBps) % 1;
+        slaveBeatFrac  = ((slaveCurTime  - slaveBphs)  / slaveBps)  % 1;
+        if (masterBeatFrac < 0) masterBeatFrac += 1;
+        if (slaveBeatFrac  < 0) slaveBeatFrac  += 1;
+        let phaseOffsetBeats = masterBeatFrac - slaveBeatFrac;
+        if (phaseOffsetBeats >  0.5) phaseOffsetBeats -= 1;
+        if (phaseOffsetBeats < -0.5) phaseOffsetBeats += 1;
+        newSlaveTime = slaveCurTime + phaseOffsetBeats * slaveBps;
+      }
+      const phaseOffsetSeconds = newSlaveTime - slaveCurTime;
       engageStats.phaseSeekMs = phaseOffsetSeconds * 1000;
-      console.log("[SYNC] beat phase before: master=", masterBeatFrac.toFixed(3), "slave=", slaveBeatFrac.toFixed(3), "(in beats)");
-      const newSlaveTime = slaveCurTime + phaseOffsetSeconds;
+      console.log("[SYNC] beat phase before: master=", masterBeatFrac.toFixed(3), "slave=", slaveBeatFrac.toFixed(3),
+        "(in beats, " + (useRefined ? "REFINED" : "linear") + ")");
       const newSlaveProg = Math.max(0, Math.min(1, newSlaveTime / slaveDur));
       // seekFnsRef.current[slave] is the local Deck's seek; it already
       // broadcasts seek_request to the partner so their playhead follows.
-      seekFnsRef.current[slave]?.(newSlaveProg);
+      // noQuantize=true under beatsv2: engage owns the alignment, so the slave
+      // must NOT be re-snapped to its nearest beat (that re-snap, recomputed
+      // each press, is the repeat-engage wander). Legacy path keeps the
+      // quantizing seek so the A/B baseline is unchanged.
+      seekFnsRef.current[slave]?.(newSlaveProg, false, useRefined);
       console.log("[SYNC] beat phase nudged slave by", phaseOffsetSeconds.toFixed(3), "seconds (newProg=", newSlaveProg.toFixed(4), ")");
-      const newSlaveBeatPos = (newSlaveTime - slaveBphs) / slaveBps;
-      const newSlaveBeatFrac = newSlaveBeatPos - Math.floor(newSlaveBeatPos);
-      console.log("[SYNC] beat phase after: master=", masterBeatFrac.toFixed(3), "slave=", newSlaveBeatFrac.toFixed(3), "(in beats)");
 
       // ── Path C: cross-correlation refinement ────────────────────────
       // After beat-phase seek lands slave near master's beat, run a short
@@ -8118,6 +8231,15 @@ export default function CollabMix({ initialPage = "landing", djName = null }) {
       // (e.g., snare-mistaken-for-kick, wrong-beat-of-bar). Silent fallback
       // on low confidence so breakdowns / ambient passages don't introduce
       // spurious corrections.
+      //
+      // beatsv2: SKIPPED. Path C existed to patch the LINEAR model's
+      // mis-anchoring; the refined beatTimes already sit on the real kicks,
+      // and Path C's own seek would re-quantize and break the deterministic
+      // (idempotent) refined alignment. Refined phase-align IS the engage.
+      if (useRefined) {
+        engageStats.xcorr = { applied: false, reason: "beatsv2_refined" };
+        console.log("[SYNC-XCORR] skipped — beatsv2 refined phase-align is authoritative");
+      } else {
       const bufA = bufRefs.current?.A?.current;
       const bufB = bufRefs.current?.B?.current;
       const slaveBuf  = slave  === "A" ? bufA : bufB;
@@ -8220,6 +8342,7 @@ export default function CollabMix({ initialPage = "landing", djName = null }) {
         console.log("[SYNC-XCORR] bufRefs not available, skipped" +
           " (haveSlaveBuf=" + !!slaveBuf + ", haveMasterBuf=" + !!masterBuf + ")");
       }
+      } // end else (legacy Path C)
     }
    } // end if (phaseAlign)
 
@@ -8579,11 +8702,20 @@ export default function CollabMix({ initialPage = "landing", djName = null }) {
       // to work with, so the seek can move freely in either direction and
       // beat alignment lands cleanly. No-op if BPM data not ready or sync
       // metadata absent.
-      if (value && syncLockedRef.current && lastSlaveDeckRef.current === id) {
+      // Legacy: only the designated slave (lastSlaveDeck) re-aligns on play.
+      // That left the canonical mix-in unlocked — a freshly-cued deck that was
+      // never part of an engage got no alignment when its play was pressed.
+      // beatsv2 broadens the trigger: ANY deck starting under sync aligns to
+      // the other deck (syncDecks treats the started deck as slave), EXCEPT the
+      // explicit master — that deck is the reference and must not be moved.
+      if (value && syncLockedRef.current) {
         const target = sessionTempoRef.current;
-        if (target) {
+        const shouldAlign = beatsV2Ref.current
+          ? (masterDeckRef.current !== id)
+          : (lastSlaveDeckRef.current === id);
+        if (target && shouldAlign) {
           setTimeout(() => {
-            console.log("[SYNC] play-start re-align for slave", id, "target=", target.toFixed(2));
+            console.log("[SYNC] play-start re-align for deck", id, "target=", target.toFixed(2), "(beatsv2=" + beatsV2Ref.current + ")");
             syncDecks(id, target);
           }, 50);
         }
@@ -8910,7 +9042,7 @@ export default function CollabMix({ initialPage = "landing", djName = null }) {
                   } catch {}
                 }}
                 style={{ minHeight:wfH, flexShrink:0 }}>
-                <AnimatedZoomedWF bands={wfA} dur={wfA?.dur||0} progRef={progRefA} onSeek={seekDeckA} h={wfH} windowSec={WF_WINDOWS[wfZoom]} beatPhaseFrac={bpm.results["A"]?.beatPhaseFrac ?? pA?.beatPhaseFrac ?? null} beatPeriodSec={bpm.results["A"]?.beatPeriodSec ?? pA?.beatPeriodSec ?? null} gridOffsetMs={gridOffsetA} barOneOffsetSec={barOneA * (bpm.results["A"]?.beatPeriodSec || pA?.beatPeriodSec || 0)} deckColor="#2E86DE" rate={rateA}/>
+                <AnimatedZoomedWF bands={wfA} dur={wfA?.dur||0} progRef={progRefA} onSeek={seekDeckA} h={wfH} windowSec={WF_WINDOWS[wfZoom]} beatPhaseFrac={bpm.results["A"]?.beatPhaseFrac ?? pA?.beatPhaseFrac ?? null} beatPeriodSec={bpm.results["A"]?.beatPeriodSec ?? pA?.beatPeriodSec ?? null} gridOffsetMs={gridOffsetA} barOneOffsetSec={barOneA * (bpm.results["A"]?.beatPeriodSec || pA?.beatPeriodSec || 0)} deckColor="#2E86DE" rate={rateA} beatTimes={bpm.results["A"]?.beatTimes ?? pA?.beatTimes ?? null} beatsV2={beatsV2On}/>
               </div>
             )}
             {hasB && (
@@ -8927,7 +9059,7 @@ export default function CollabMix({ initialPage = "landing", djName = null }) {
                   } catch {}
                 }}
                 style={{ minHeight:wfH, flexShrink:0 }}>
-                <AnimatedZoomedWF bands={wfB} dur={wfB?.dur||0} progRef={progRefB} onSeek={seekDeckB} h={wfH} windowSec={WF_WINDOWS[wfZoom]} beatPhaseFrac={bpm.results["B"]?.beatPhaseFrac ?? pB?.beatPhaseFrac ?? null} beatPeriodSec={bpm.results["B"]?.beatPeriodSec ?? pB?.beatPeriodSec ?? null} gridOffsetMs={gridOffsetB} barOneOffsetSec={barOneB * (bpm.results["B"]?.beatPeriodSec || pB?.beatPeriodSec || 0)} deckColor="#A855F7" rate={rateB}/>
+                <AnimatedZoomedWF bands={wfB} dur={wfB?.dur||0} progRef={progRefB} onSeek={seekDeckB} h={wfH} windowSec={WF_WINDOWS[wfZoom]} beatPhaseFrac={bpm.results["B"]?.beatPhaseFrac ?? pB?.beatPhaseFrac ?? null} beatPeriodSec={bpm.results["B"]?.beatPeriodSec ?? pB?.beatPeriodSec ?? null} gridOffsetMs={gridOffsetB} barOneOffsetSec={barOneB * (bpm.results["B"]?.beatPeriodSec || pB?.beatPeriodSec || 0)} deckColor="#A855F7" rate={rateB} beatTimes={bpm.results["B"]?.beatTimes ?? pB?.beatTimes ?? null} beatsV2={beatsV2On}/>
               </div>
             )}
             {/* Zoom selector — floats in the top-right corner of the waveform
