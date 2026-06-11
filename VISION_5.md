@@ -7456,3 +7456,156 @@ math, no sync engine math, no gate threshold change.
 - **Stash:** none.
 - **Strategy docs:** `tools/docs/SOCIAL_VISION.md` and
   `LANDING_BRIEF.md` from `11a00ee` still standing.
+
+### POST-DEPLOY SOAK — first real production data
+
+Run on production (`collabmix.vercel.app` + Railway server),
+real network between two clients, post-relay-fix.
+
+#### Engage accuracy — TIGHT
+
+Single `[SYNC-ENGAGE-QUALITY]` capture with the cued-to-zero
+protocol from the same-room test:
+
+```
+result=ok  rateDelta=0.0000  phaseSeekMs=3.73  durationMs=~1
+xcorr={applied:false, reason:"bufrefs_unavailable",
+       haveSlaveBuf:true, haveMasterBuf:false}
+```
+
+**Engage math is tight when cueing is right.** Earlier
+`phaseSeekMs=104.37` came from decks ~85 s apart in the
+arrangement (different beat-positions in the bar). With both
+decks cued to position 0 before pressing play, the beat-phase
+seek required only 3.73 ms to land. The cueing protocol matters
+as much as the algorithm — same-position cue is the right
+engage discipline, and the engage math currently doesn't need
+xcorr to land well from a clean cue.
+
+Remote-B2B xcorr-skip confirmed again with the exact
+`bufrefs_unavailable` reason and `haveMasterBuf:false` field.
+
+#### Clock estimator — WORKING
+
+Post-relay-fix the Cristian's-algorithm offset estimator is
+collecting samples cleanly:
+
+- **RTT median ~93 ms** between the two clients (real-network
+  round trip).
+- **Confidence 0.66 – 0.88** range, well above the 0-stuck
+  state from the tonight-pre-fix run.
+- **Offset stable at ±53 026 ms epoch delta** — large absolute
+  value reflects the unrelated zero-time on the two browsers'
+  `performance.now()`, NOT real clock skew.
+- **Non-monotonic wander only ~2.6 ms over 2 minutes** of
+  observation — clock skew between the two machines is small
+  and slow at this timescale. Phase 2 drift loop won't need to
+  chase fast oscillations.
+
+#### Drift monitor — NEVER EMITTED (root cause: progress meta)
+
+State remained `no_recent_progress` throughout the run. The
+phase-error monitor wasn't getting fresh
+`partnerProgressMetaRef[partnerDeck]` updates. Engage data was
+clean (so syncDecks fired) and the clock estimator was
+collecting (so the WS relay works), but the 10 Hz partner
+progress packets weren't reaching the monitor's read of
+`m.t_send`. Investigate the partner-progress mirroring path
+first thing tomorrow — possible causes: the broadcast isn't
+firing on the right side of the driver model, the t_send
+field is being stripped on the wire, or the read path is
+checking the wrong deck.
+
+#### NEW CRITICAL BUG — non-driver seek_request not executing
+
+Live observation, production, two clients in one room:
+**Tab 2 (non-driver) clicking seek on the partner-driven deck
+did not move the playhead.** Driver→partner mirroring works in
+the opposite direction (driver-side seek mirrors to partner via
+10 Hz progress + `deck_update`), so the receive path on the
+driver works for one type of flow.
+
+Engage path dependency: in remote B2B, `syncDecks` calls
+`seekFnsRef.current[slave]?.(newProg)` to align beat phase.
+When slave is partner-driven, that seek call is non-driver →
+it fires `onTransportFire({type:"seek_request",
+deckId:id, value:pc})`. If `seek_request` from non-driver is
+silently dropping in production, then **the engage's beat-phase
+seek is silently not landing on the partner side either** —
+meaning the 3.73 ms phaseSeekMs above was computed but may not
+have been APPLIED to the partner-driven deck. Possible
+explanations for the observed `result=ok` while the actual
+seek failed: the driver still receives `seek_request`, executes
+its own `seek`, but… something blocks. Likely candidates:
+server-side `seek_request` relay branch dropping the message,
+client-side driver guard in `seek` not unwrapping
+`fromRemote=true`, or `seekFnsRef` not yet populated on the
+driver side when the request lands. INVESTIGATE FIRST
+TOMORROW — this is the most consequential finding from the
+soak.
+
+#### NEW BUGS (lower severity)
+
+- **Audio continues after track end.** Playhead reaches 1.0
+  and the buffer source's `onended` should fire `setPlay(false)`
+  + `setProg(0)`. Either the loop guard at `loopRef.current
+  .active` is mis-evaluated post-track-end, or the buffer is
+  being re-triggered. Surfaces as audible silence followed by
+  the track restarting at 0 without a play press.
+- **Partner-driven deck missing kick-presence WF AND grid
+  markers.** The analyzer payload (`beatTimes`, `beatAttacks`,
+  `beatPhaseSec`, `beatPeriodSec`, full bands arrays) computed
+  on the driver side isn't reaching the non-driver's local
+  `bpmResult` state. The non-driver renders the partner deck
+  with `remote.*` fallbacks only, which don't include the
+  analyzer payload. Same path degrades the sync engine's
+  inputs — when MY-side `syncDecks` reads
+  `bpm.results[partnerDeck]?.bpm` it falls back to
+  `pX?.bpm`, which is available (broadcast on track load),
+  but `beatPhaseSec` / `beatPeriodSec` may not be on the
+  fallback path in all cases. Mirror these fields explicitly
+  in `deck_update` field broadcasts at analyzer completion,
+  symmetric to how `bpm` and `rate` are mirrored today.
+
+#### Tomorrow's order — UPDATED (replaces the prior locked order)
+
+1. **`seek_request` path fix.** The most consequential finding
+   — silent failure on a code path that the sync engine
+   depends on. Trace driver/non-driver/server-relay all the
+   way through with two-client logging before patching.
+2. **Drift monitor `partnerProgressMetaRef` fix.** Without
+   this, Phase 1 measurement is half-built — we have engage
+   data but no drift data. Re-soak needs both.
+3. **Re-soak, full 10 minutes.** Same cued protocol. Goal:
+   full drift slope across the time markers
+   (+1/+2/+5/+8/+10), data that sizes Phase 2's drift loop.
+4. **Phase 2 design — only after step 3 data lands.** Components
+   now confirmed required:
+   - **Local-deck delay compensation (Gap #4).** Without
+     this, perceptual sync inside each DJ's ears remains
+     broken regardless of engine accuracy.
+   - **Drift correction loop** sized by the measured drift
+     rate from the 10-minute re-soak.
+   - **Remote xcorr alternative** still relevant — the
+     `bufrefs_unavailable` skip remains the structural
+     limit on engage accuracy when same-position cueing
+     isn't enforced.
+5. **Partner-side analyzer payload mirroring.** Broadcast
+   `beatTimes` / `beatAttacks` / `beatPhaseSec` /
+   `beatPeriodSec` / full bands on the driver side at
+   analyzer completion. Fixes the missing WF and grid
+   markers AND restores sync engine input quality on the
+   partner side.
+
+#### New issues logged from soak
+
+- **Sync-#1 (CRITICAL)** — `seek_request` from non-driver
+  silently fails in production. Blocks every cross-machine
+  seek including the sync engine's beat-phase alignment.
+- **Sync-#2** — Drift monitor `no_recent_progress` stuck;
+  partner progress meta path not reaching the read site.
+- **Bug #11 (NEW)** — Audio continues / re-triggers after
+  track end on driver side.
+- **Bug #12 (NEW)** — Partner-driven deck missing
+  kick-presence WF and grid markers (analyzer payload not
+  mirrored).
