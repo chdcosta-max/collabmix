@@ -8139,3 +8139,42 @@ backward glide over a few bars (sound unaffected). Fix: on the play
 transition (`!wasPlaying && nowPlaying`) reset the interp anchor so the
 first authoritative packet HARD-SNAPS to truth, then resumes slewing.
 Refines tonight's sawtooth fix; does not revert it.
+
+### COMP ZERO-OUT ROOT CAUSE FOUND — stale receiver after renegotiation
+
+Chad's Chrome console (the broken side) cracked it: `[SYNC-COMP]
+measured=0.0ms (jb=0.0 playout=0.0)` EVERY tick the whole session, and RTC
+negotiated TWICE (`[RTC] role determination` ×2, `incoming track received`
+×2, autoplay `NotAllowedError` then later `play() succeeded`). The comp
+poller was reading a STALE/DEAD receiver: `pc.getStats()` returns ALL
+inbound-rtp reports including the corpse of the pre-renegotiation receiver,
+and last-wins picked it → jb=0/playout=0 forever → applied slewed to 0 →
+double kick returned and never recovered. Explains both the original break
+(win on connection #1, Safari pause forced a rebuild, comp polled the
+corpse) and the all-zero session (renegotiation happened early). NOT the
+delta math — receiver binding.
+
+Fix (behind ?delaycomp=1):
+- Bind to the LIVE receiver every tick via
+  `pc.getReceivers().find(audio)` and scope `getStats()` to it, so dead
+  inbound reports can't poison the read. On `track.id` change → rebind:
+  re-baseline + fast-settle + `[SYNC-COMP] rebind → live receiver` log.
+- Never follow to zero: HOLD the last good compMs whenever there are no
+  measurable frames (no receiver / emittedCount not advancing / not
+  flowing) — only re-measure once frames flow again.
+- Health gate: require `HEALTH_MIN=4` consecutive flowing windows before
+  trusting a value; a big DROP (<50% of last good) needs +3 more — so a
+  refill transient or spurious-low can't drag comp toward zero.
+
+Verified headlessly:
+- Renegotiation (`_comp_reneg_verify.mjs`): A measuring 53.3ms → partner B
+  reloaded (forces A to renegotiate a new receiver) → 2 rebind events,
+  A recovered to 48.2ms in **0.3s** (was: stuck at 0).
+- Sender interruption (`_sender_interrupt_probe.mjs`): NEW holds last good
+  through the resume transient, never dips below the real value; OLD
+  followed the refill dip down.
+- Happy path: receiver-scoped stats still yield jb+playout+target
+  (55/48ms), no errors.
+
+Still flag-gated. Promotion to default-on pending Chad's full gauntlet:
+local pause/resume, REMOTE pause/resume, partner refresh, seek, re-sync.

@@ -2943,53 +2943,75 @@ function useRTC({ engineRef, send }) {
   // / emit-rate collapse) so it self-heals even without the hook.
   const transportEventRef = useRef(0);
   const markTransportEvent = useCallback(()=>{ transportEventRef.current = Date.now(); }, []);
+  const lastTrackRef = useRef(null), healthRef = useRef(0);
   useEffect(()=>{
     if(state!=="connected") return;
     let stop=false;
     const SAMPLE_HZ = 48000; // Opus
+    const HEALTH_MIN = 4;    // consecutive healthy windows before trusting a value
     const poll=async()=>{
       const p=pc.current; if(!p||stop) return;
       try{
-        const stats=await p.getStats();
+        // Bind to the CURRENT live audio receiver every tick. On renegotiation
+        // (partner refresh / transport / track replace) Chrome makes a NEW
+        // receiver; polling pc.getStats() and last-wins could read the DEAD one
+        // → jb=0/playout=0 forever → applied slewed to 0 → double kick never
+        // recovers. getReceivers() always returns the live receiver; scope
+        // getStats() to it so dead inbound reports can't poison the read.
+        const recv = p.getReceivers?.().find(r=>r.track && r.track.kind==="audio");
+        if(!recv){ healthRef.current=0; return; }            // no receiver yet → HOLD
+        if(recv.track.id !== lastTrackRef.current){
+          // Rebind: new receiver/track. Re-baseline; keep last good compMs.
+          lastTrackRef.current = recv.track.id;
+          prevStatsRef.current = null; healthRef.current = 0;
+          compRef.current = { ...compRef.current, settleUntil: Date.now()+4000 };
+          console.log("[SYNC-COMP] rebind → live receiver track=" + recv.track.id.slice(0,8));
+        }
+        const stats=await recv.getStats();
         let inb=null, play=null, rem=null;
         stats.forEach(r=>{
           if(r.type==="inbound-rtp"&&r.kind==="audio")inb=r;
           if(r.type==="media-playout")play=r;
           if(r.type==="remote-inbound-rtp"&&r.kind==="audio")rem=r;
         });
-        if(!inb || !(inb.jitterBufferEmittedCount>0)) return;
+        // No measurable frames → HOLD last good compMs (never follow to 0).
+        if(!inb || !(inb.jitterBufferEmittedCount>0)){ healthRef.current=0; return; }
         const now=Date.now();
         const prev=prevStatsRef.current;
         const emitted=inb.jitterBufferEmittedCount;
         const dEmit = prev ? emitted - prev.jbe : 0;
         const dt    = prev ? (now - prev.ts)/1000 : 0;
-        // Re-baseline on any discontinuity: first sample, counter reset, a
-        // transport event since the last sample, or an emit-rate collapse (the
-        // window spans a stall/rebuffer — its average would be garbage).
+        const flowing = prev ? dEmit > 0.5*(dt*SAMPLE_HZ) : false;
         const transportSince = prev ? transportEventRef.current > prev.ts : true;
-        const rateCollapsed  = prev ? dEmit <= 0.5*(dt*SAMPLE_HZ) : false;
-        if(!prev || emitted < prev.jbe || transportSince || rateCollapsed){
+        // Discontinuity (first / counter reset / not flowing / transport) →
+        // re-baseline, reset health, HOLD last good compMs (do NOT write 0).
+        if(!prev || emitted < prev.jbe || !flowing || transportSince){
           prevStatsRef.current = { jbd:inb.jitterBufferDelay, jbe:emitted,
             ppd:play?play.totalPlayoutDelay:0, psc:play?play.totalSamplesCount:0, ts:now };
-          // Trigger a fast re-converge; keep the last compMs until a clean window.
+          healthRef.current = 0;
           compRef.current = { ...compRef.current, settleUntil: now + 4000 };
           return;
         }
-        // Clean window → recent-average delta (NEVER the lifetime cumulative mean,
-        // which barely moves and was the stale-after-pause bug).
+        // Flowing window → candidate recent-average delta (never lifetime mean).
         const jbMs = ((inb.jitterBufferDelay - prev.jbd)/dEmit)*1000;
         let playoutMs = compRef.current.playoutMs || 0;
         if(play && prev.psc!=null && play.totalSamplesCount>prev.psc){
           playoutMs = ((play.totalPlayoutDelay - prev.ppd)/(play.totalSamplesCount - prev.psc))*1000;
         }
-        const targetMs = inb.jitterBufferTargetDelay!=null
-          ? (inb.jitterBufferTargetDelay/emitted)*1000 : null;
-        const rttMs = rem&&rem.roundTripTime!=null?rem.roundTripTime*1000:null;
-        const compMs = Math.max(0,(jbMs||0)+(playoutMs||0));
-        compRef.current = { jbMs, playoutMs, targetMs, compMs, rttMs,
-          settleUntil: compRef.current.settleUntil, ts:now };
+        const cand = Math.max(0,(jbMs||0)+(playoutMs||0));
         prevStatsRef.current = { jbd:inb.jitterBufferDelay, jbe:emitted,
           ppd:play?play.totalPlayoutDelay:0, psc:play?play.totalSamplesCount:0, ts:now };
+        healthRef.current += 1;
+        // Require sustained healthy flow before trusting; a big DROP needs extra
+        // confirmation so a refill transient / spurious-low never zeroes comp.
+        const lastGood = compRef.current.compMs || 0;
+        const bigDrop = lastGood>5 && cand < 0.5*lastGood;
+        const need = bigDrop ? HEALTH_MIN+3 : HEALTH_MIN;
+        if(healthRef.current < need){ compRef.current = { ...compRef.current, settleUntil: Math.max(compRef.current.settleUntil, now+1500) }; return; }
+        const targetMs = inb.jitterBufferTargetDelay!=null ? (inb.jitterBufferTargetDelay/emitted)*1000 : null;
+        const rttMs = rem&&rem.roundTripTime!=null?rem.roundTripTime*1000:null;
+        compRef.current = { jbMs, playoutMs, targetMs, compMs:cand, rttMs,
+          settleUntil: compRef.current.settleUntil, ts:now };
       }catch{ /* getStats can throw mid-teardown */ }
     };
     const iv=setInterval(poll,700); poll();
