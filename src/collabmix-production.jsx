@@ -4659,9 +4659,15 @@ function Deck({ id, ch, ctx:ac, color, local, remote, onChange, midi:mt, bpmResu
     const pc=Math.max(0,Math.min(1,p));
     // Driver model gate (same shape as toggle).
     if (!isDriver) {
-      if (!fromRemote) onTransportFire?.({ type:"seek_request", deckId:id, value:pc });
+      if (!fromRemote) {
+        console.log("[SEEK-SEND]", { deckId: id, value: pc, reason: "non-driver -> seek_request" });
+        onTransportFire?.({ type:"seek_request", deckId:id, value:pc });
+      } else {
+        console.warn("[SEEK-EXEC] dropped — fromRemote=true on non-driver Deck", id);
+      }
       return;
     }
+    if (fromRemote) console.log("[SEEK-EXEC]", { deckId: id, value: pc, isDriver, hasBuf: !!buf, play });
     const o=pc*(buf?.duration||0);off.current=o;if(play)play_(o);else{setProg(pc);progRef.current=pc;onProgUpdate?.(pc);}onChange?.("progress",pc);
     // User interacted — block auto-position-to-first-downbeat on this track.
     userMovedRef.current=true;
@@ -7413,7 +7419,12 @@ export default function CollabMix({ initialPage = "landing", djName = null }) {
       const t2 = performance.now();
       clockSyncRef.current.addSample(m.t0, m.t1, t2);
     }
-    if (m.type==="seek_request")   seekFnsRef.current[m.deckId]?.(m.value, true);
+    if (m.type==="seek_request") {
+      const fn = seekFnsRef.current[m.deckId];
+      console.log("[SEEK-RECV]", { deckId: m.deckId, value: m.value, hasFn: !!fn, from: m.from });
+      if (fn) fn(m.value, true);
+      else console.warn("[SEEK-RECV] dropped — no seek function registered for deck", m.deckId);
+    }
     if (m.type==="toggle_request") toggleFnsRef.current[m.deckId]?.(true);
     if (m.type==="cue_request")    cueFnsRef.current[m.deckId]?.(true);
     if (m.type==="xfade_update")   { setXf(m.value); applyXF(m.value); }
