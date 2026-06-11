@@ -8300,3 +8300,41 @@ Log only — do not chase tonight. Belongs to a dedicated Safari-support pass.
 Both decks confirmed working in both tabs, including Safari pause/play —
 **one kick holds.** Comp gauntlet result stands; promotion still gated on
 tomorrow's Cowork 30-min soak.
+
+## SMART QUANTIZE-SEEK — SHIPPED (Chad's design call)
+
+Seeks land off-grid mid-mix, breaking the lock feel. Implemented snap-to-
+nearest-beat in `Deck.seek` using the analyzer's `beatTimes`:
+- **When PLAYING → snap** the seek to the nearest analyzed beat; **paused →
+  free** (cue placement). The big-waveform DRAG commits one seek on release, so
+  dragging stays free and only the landing snaps; small-WF click snaps too.
+- Quantized at EXECUTION on the driver (after the `isDriver` gate, before
+  off/play_/setProg/broadcast) so the broadcast `progress` IS the landed beat —
+  local seeks and remote `seek_request`s land identically; both sides agree.
+- Beats read via `beatTimesRef` (driver's own `bpmResult.beatTimes`, remote
+  fallback) so `seek`'s deps don't churn. Binary-search nearest beat. Logs
+  `[SEEK-QUANTIZE]` with from/to/deltaMs.
+- Verified: quantize math unit test 7/7 (incl. ties → lower beat, beyond-last →
+  clamps to last); build + two-client boot clean, no errors. Chad ear/eye-
+  verifies on deploy (a synced blend should survive any seek).
+
+## TICKET — Safari waveform jitter (DIAGNOSED; fix deferred to Safari pass)
+
+Root cause (from the render code): `AnimatedZoomedWF` is a time-scrolling
+window, so it redraws EVERYTHING every rAF frame (can't cache — it scrolls).
+Per frame: full `clearRect` of both canvases at `devicePixelRatio` (2× on
+Retina) + hundreds of per-column `fillRect`s with `globalAlpha` churn + gradient
+creation + **`shadowBlur` glow** on the beat grid (blur=4) and playhead
+(blur=8). `shadowBlur` is the most expensive canvas2D op in WebKit
+(software-rendered); Chrome's Skia backend is GPU-fast. So Chrome sustains
+60fps and Safari can't → uneven frame rate (movement jitter, both decks, visuals
+fine). NOT network/sync.
+
+Proposed fix (cheap, Safari-gated render path; ~½ day incl. in-Safari verify):
+- Set `shadowBlur=0` in the draw loop on Safari (drop the glow — biggest win).
+- Cap the canvas `devicePixelRatio` to ~1.5 on Safari (halve pixel count).
+- Optionally batch per-column fills by alpha to cut `globalAlpha` state changes.
+Deferred (not built tonight) because it touches the visual glow (needs a
+DESIGN_PHILOSOPHY check + Chad's eye), adds a Safari-specific code path, and the
+smoothness gain can't be verified headlessly (no WebKit here). Belongs to the
+dedicated Safari-support pass alongside the earlier Safari-jitter note.

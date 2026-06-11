@@ -4809,6 +4809,11 @@ function Deck({ id, ch, ctx:ac, color, local, remote, onChange, midi:mt, bpmResu
       logEvent("deck", "play_toggled", { deck: id, isPlaying: true });
     }
   },[buf,play,ac,rate,id,onTransportFire,isDriver]);
+  // Latest analyzed beat times (seconds), via ref so `seek`'s quantize reads
+  // fresh data without re-creating the callback. Driver uses its own analysis;
+  // remote.beatTimes is the fallback.
+  const beatTimesRef=useRef(null);
+  useEffect(()=>{ beatTimesRef.current = bpmResult?.beatTimes ?? remote?.beatTimes ?? null; }, [bpmResult?.beatTimes, remote?.beatTimes]);
   const seek  =useCallback((p, fromRemote=false)=>{
     // Clamp to [0, 1] — guards against unclamped callers (small WF onClick,
     // network seek_request) feeding negative or >1 fractions. Without this,
@@ -4826,7 +4831,24 @@ function Deck({ id, ch, ctx:ac, color, local, remote, onChange, midi:mt, bpmResu
       return;
     }
     if (fromRemote) console.log("[SEEK-EXEC]", { deckId: id, value: pc, isDriver, hasBuf: !!buf, play });
-    const o=pc*(buf?.duration||0);off.current=o;if(play)play_(o);else{setProg(pc);progRef.current=pc;onProgUpdate?.(pc);}onChange?.("progress",pc);
+    // SMART QUANTIZE — snap to the nearest analyzed beat when PLAYING (keeps a
+    // synced blend locked); FREE seek when paused (cue placement) and while
+    // dragging (the drag commits one seek on release, so this only snaps the
+    // landing). Quantized HERE at execution on the driver, so the broadcast
+    // progress IS the landed beat and both sides agree on the position.
+    let pq=pc;
+    const durSec=buf?.duration||0;
+    const beats=beatTimesRef.current;
+    if(play && beats && beats.length>1 && durSec>0){
+      const targetSec=pc*durSec;
+      let lo=0,hi=beats.length-1;            // binary search: first beat >= target
+      while(lo<hi){ const mid=(lo+hi)>>1; if(beats[mid]<targetSec) lo=mid+1; else hi=mid; }
+      let nearest=beats[lo];
+      if(lo>0 && Math.abs(beats[lo-1]-targetSec)<=Math.abs(beats[lo]-targetSec)) nearest=beats[lo-1];
+      pq=Math.max(0,Math.min(1,nearest/durSec));
+      console.log("[SEEK-QUANTIZE]",{deckId:id,fromSec:+targetSec.toFixed(3),toSec:+nearest.toFixed(3),deltaMs:+((nearest-targetSec)*1000).toFixed(1)});
+    }
+    const o=pq*durSec;off.current=o;if(play)play_(o);else{setProg(pq);progRef.current=pq;onProgUpdate?.(pq);}onChange?.("progress",pq);
     // User interacted — block auto-position-to-first-downbeat on this track.
     userMovedRef.current=true;
     // Local-only hook for sync re-align (see handleTransportFire). seek_local
@@ -4835,7 +4857,7 @@ function Deck({ id, ch, ctx:ac, color, local, remote, onChange, midi:mt, bpmResu
     // Without this, driver-path seeks (drag-release, small-WF click, beat
     // arrows) bypassed handleScrubResync entirely and the slave drifted out
     // of sync after any user-initiated seek while syncLocked.
-    onTransportFire?.({ type:"seek_local", deckId:id, value:pc, fromRemote });
+    onTransportFire?.({ type:"seek_local", deckId:id, value:pq, fromRemote });
   },[buf,play,rate,id,onTransportFire,isDriver]);
   const cue   =useCallback((fromRemote=false)=>{
     // Driver model gate (same shape as toggle).
