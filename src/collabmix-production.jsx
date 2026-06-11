@@ -7966,6 +7966,12 @@ export default function CollabMix({ initialPage = "landing", djName = null }) {
       // about sticky master/slave refs, NOT about rate. Clearing those refs
       // below still prevents the contamination cleanly.
       //
+      // Bug #2 resolution (Chad decision June 10 2026): KEEP this behavior.
+      // Intended: rate persists on release per CDJ/Rekordbox convention.
+      // Jake's expectation of snap-back is a teaching moment, not a bug.
+      // Optional settings toggle for snap-back-on-release is deferred until
+      // we see whether the same expectation surfaces from other dogfooders.
+      //
       // Clear sticky auto-master + slave so next engage re-detects fresh.
       // (Explicit M-button master selections clear too — user can re-set
       //  if desired. Keeps mental model simple: "unsync = metadata clean slate,
@@ -8096,11 +8102,24 @@ export default function CollabMix({ initialPage = "landing", djName = null }) {
     if (msg?.type !== "seek_local") sync.send(msg);
     if (!syncLocked) return;
     if (msg?.type !== "seek_request" && msg?.type !== "seek_local") return;
+    // Bug #10 fix (Chad decision June 10 2026): a MASTER-deck scrub no
+    // longer triggers an auto re-align of the slave. Pro-DJ ergonomics —
+    // scrubbing master to preview/find the next cue point shouldn't yank
+    // the slave's playhead. Tempo lock stays engaged; user must re-press
+    // SYNC to phase-realign, or scrub the slave (preserved below). The
+    // slave-scrub path still re-aligns the slave to master, since that's
+    // the user explicitly asking to line back up.
+    const scrubbedDeck = msg?.deckId;
+    const slave = lastSlaveDeckRef.current;
+    if (scrubbedDeck && scrubbedDeck !== slave) {
+      logEvent("sync", "scrub_realign_suppressed", { scrubbedDeck });
+      console.log("[SYNC] master-deck scrub suppressed — slave holds position (#10)", { scrubbedDeck, slave });
+      return;
+    }
     clearTimeout(scrubResyncTimerRef.current);
     scrubResyncTimerRef.current = setTimeout(() => {
       const now = Date.now();
       if (now - lastScrubResyncTimeRef.current < 200) return;
-      const slave = lastSlaveDeckRef.current;
       if (slave !== "A" && slave !== "B") return;
       const explicitMaster = masterDeckRef.current;
       const master = explicitMaster && explicitMaster !== slave ? explicitMaster : (slave === "A" ? "B" : "A");
@@ -8110,7 +8129,7 @@ export default function CollabMix({ initialPage = "landing", djName = null }) {
       const target = sessionTempoRef.current ?? getEffectiveMasterBpm(master);
       if (!target) return;
       lastScrubResyncTimeRef.current = now;
-      console.log("[SYNC] scrub detected while locked — auto re-aligning slave to session tempo", target.toFixed(2));
+      console.log("[SYNC] slave scrub detected while locked — auto re-aligning slave to session tempo", target.toFixed(2));
       syncDecks(slave, target);
     }, 100);
   }, [syncLocked, bpm.results, pA, pB, syncDecks, sync, getEffectiveMasterBpm]);
