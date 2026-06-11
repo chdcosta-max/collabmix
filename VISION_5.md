@@ -8220,3 +8220,62 @@ still recovers (50.8→48.2ms in 0.3s, 2 rebinds); no errors. Tooling:
 **Next:** Chad re-runs the comp gauntlet now that the autoplay artifact is
 gone — partner audio will only start via the explicit button, so a deck
 pause/play can no longer trigger the phantom double kick.
+
+## 🏆 COMP GAUNTLET — ALL FIVE PASS (Chrome + Safari, production)
+
+Clean protocol: Safari audio woken deliberately then tab-muted, real Deck B
+loaded, one-kick baseline confirmed first.
+1. Local pause/resume (Chrome) — PASS
+2. Remote pause/resume (Safari) — PASS (the old killer, now clean)
+3. Full Safari reload + rejoin — PASS
+4. Seek — PASS
+5. Re-sync engage — PASS
+
+Canonical flow also exercised: partner loaded a NEW track on Deck B
+mid-session, heard cleanly in the driver's booth. **Comp is transport-proof.**
+
+### Tonight's full comp arc (one place)
+
+- Gap #4 named by ear (the "double kick"): local deck instant vs partner deck
+  jitter-buffer-delayed.
+- Built local-monitor delay comp behind `?delaycomp=1`: a single `monitorDelay`
+  on `masterAn → destination` (local-only; partner-send + recorder tap `master`
+  upstream), driven by a `getStats()` poll of `jitterBufferDelay + playout`.
+- First ear test: WIN — double kick collapsed, `comp appl ~53.7ms`.
+- Robustness pass: removed lifetime-average staleness, re-baseline on transport
+  events / stalls, fast-settle slew, faster poll.
+- Zero-out bug: poller read a DEAD receiver after renegotiation → fixed by
+  binding to the LIVE receiver via `getReceivers()` each tick + rebind on
+  track change.
+- The "remote pause breaks comp" red herring: RETRACTED — it was the autoplay
+  `<audio>` element unblocking on an unrelated click (one-machine artifact).
+  Fixed the autoplay UX; comp was innocent.
+- Gauntlet: 5/5 PASS. Mix-minus confirmed correct (no echo).
+
+### PROMOTION PLAN (Chad's call — NOT flipped tonight)
+
+- delaycomp stays OPT-IN (`?delaycomp=1`) tonight.
+- Tomorrow: Cowork runs ONE 30-min soak with `?delaycomp=1` active (full HUD
+  protocol, comp fields tracked) as the final endurance check.
+- If clean → promote to default-ON, keeping a kill-switch: disable with
+  `?delaycomp=0`. Implementation for tomorrow: flip the gate to
+  `delayCompOn = new URLSearchParams(...).get("delaycomp") !== "0"` (default on,
+  off only when explicitly =0). Do NOT change tonight.
+
+### NEW DISPLAY TICKET (not urgent, display-only)
+
+A freshly-loaded partner deck's waveform is visually jumpy for a while after
+load (audio clean). Likely the interp stabilizing during the load burst
+(analyzer payload + first progress packets + comp settle). Same family as the
+play-start glide / sawtooth — handle in the shared display-path cleanup
+(candidate: suppress/hard-anchor the interp until the first post-load progress
+packets + waveform payload have landed).
+
+### Working state
+
+- Master HEAD advances to this VISION_5 commit (above `1f5ddc2`, the autoplay
+  + telemetry fix). Production client live on the `1f5ddc2` bundle
+  (`main-CH1s4n8g.js`); Railway server unchanged.
+- Verification tooling (`_*.mjs` at repo root) kept untracked for now; fold the
+  keepers into `tools/smoke/` during tomorrow's smoke-suite build (with
+  `playwright-core` promoted to a saved devDependency).
