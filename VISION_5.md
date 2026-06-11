@@ -8038,3 +8038,50 @@ propagation, drift ~4.3ms p2p / slope≈0, audio-path output truth, entry
 flows, playhead render), and the last remaining artifact is named and
 specced. Tomorrow opens on the two-client smoke suite (with the
 `__loadTestTrack` hook), then Phase 2 delay compensation.
+
+## PHASE 2 BUILD — local-deck delay compensation (Gap #4), behind ?delaycomp=1
+
+Built and headless-verified; NOT yet pushed (awaiting Chad's ear test —
+the double kick should collapse to ONE kick).
+
+**Investigation result — measurement is feasible.** Chrome's audio
+receiver `getStats()` exposes `jitterBufferDelay/jitterBufferEmittedCount`
+(dominant variable delay) + `media-playout` `totalPlayoutDelay/
+totalSamplesCount`. A self-contained loopback probe
+(`_rtc_stats_probe.mjs`) read avg jitter-buffer ≈31ms + playout ≈18ms at
+near-zero network; scales to 100–200ms over a real network. Computed
+DELTA-based (recent average, not lifetime) so it tracks the buffer
+adapting.
+
+**Build:**
+- `createEngine`: one `monitorDelay = ctx.createDelay(1.0)` inserted
+  `masterAn → monitorDelay → destination`. It sits ONLY on the local
+  speaker path — the partner-send tap (`capture()`) and the recorder tap
+  read `master` upstream, so compensation never colours what we send or
+  record. Default 0 = no-op.
+- `useRTC`: a 1.5s `getStats()` poller computes `compMs = jitterBuffer +
+  playout` and exposes it via `compRef`.
+- `CollabMix`: a 1s driver clamps to 0–400ms and slews
+  `monitorDelay.delayTime` via `setTargetAtTime` (~1.5s TC, never clicks).
+  Applied only when `?delaycomp=1`; measurement + telemetry always run.
+- Telemetry: `syncStatsRef` → `SyncDebugHUD` (`?syncdebug=1`) now shows
+  `comp meas / jb / play / comp appl (on|off)`; `[SYNC-COMP]` log.
+
+**Verified headlessly:** flag ON, two real clients RTC-connected →
+measured 48.2ms, applied 48.2ms, HUD shows it, no errors (even silent
+master measures — NetEQ emits silence frames). Flag OFF (production
+default) → applied 0.0ms, bit-identical, no errors. Symmetric: each side
+measures its own inbound delay and delays its own monitor. Tooling:
+`_rtc_stats_probe.mjs`, `_delaycomp_verify.mjs`.
+
+**Ear test (Chad):** load `…/?delaycomp=1&syncdebug=1` (best on production
+with Cowork on a second machine for real network jitter). The HUD's
+`comp appl` shows the live applied delay; the double kick should collapse
+to one. The `comp meas` number is visible even with the flag off.
+
+**Open / follow-ups:**
+- Recorder still captures local master only (no partner stream) — "one
+  truth" recordings are separate future work.
+- Optional refinements if the single value isn't enough by ear: add an
+  RTT/2 network term (`remote-inbound roundTripTime`), a small constant
+  manual trim, and freeze adjustments during an active blend (fader move).

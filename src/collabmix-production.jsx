@@ -115,7 +115,12 @@ function createEngine() {
   const ctx = new (window.AudioContext || window.webkitAudioContext)();
   const master = ctx.createGain(); master.gain.value = 0.85;
   const masterAn = ctx.createAnalyser(); masterAn.fftSize = 256;
-  master.connect(masterAn); masterAn.connect(ctx.destination);
+  // Local-monitor delay (Gap #4 compensation). Sits ONLY on the path to the
+  // local speakers — the partner-send tap (capture) and the recorder tap both
+  // read `master` upstream of this, so the delay never colours what we send or
+  // record. Default 0 = no-op; driven only when ?delaycomp=1.
+  const monitorDelay = ctx.createDelay(1.0); monitorDelay.delayTime.value = 0;
+  master.connect(masterAn); masterAn.connect(monitorDelay); monitorDelay.connect(ctx.destination);
   function chain() {
     const trim = ctx.createGain(); trim.gain.value = 1;
     const hi  = ctx.createBiquadFilter(); hi.type  = "highshelf"; hi.frequency.value  = 8000;
@@ -129,7 +134,7 @@ function createEngine() {
     lo.connect(flt); flt.connect(vol); vol.connect(xf); xf.connect(master); xf.connect(an);
     return { trim, hi, mid, lo, flt, vol, xf, an };
   }
-  return { ctx, master, masterAn, A: chain(), B: chain() };
+  return { ctx, master, masterAn, monitorDelay, A: chain(), B: chain() };
 }
 function xg(p) { const a = p * Math.PI / 2; return { a: Math.cos(a), b: Math.sin(a) }; }
 
@@ -2923,6 +2928,52 @@ function useRTC({ engineRef, send }) {
   const pc=useRef(null),dest=useRef(null),remAudio=useRef(null),pend=useRef([]),sRef=useRef(send);
   useEffect(()=>{sRef.current=send;},[send]);
 
+  // ── RTC receive-delay measurement (Gap #4 monitoring compensation) ──
+  // Poll the inbound audio jitter-buffer + playout delay so CollabMix can delay
+  // the LOCAL deck monitor to land with this (jitter-buffered) partner stream.
+  // Delta-based (recent average, not lifetime) so it tracks the buffer adapting.
+  // Always measures when connected (cheap); APPLYING the delay is gated by
+  // ?delaycomp=1 in CollabMix. compRef.compMs = jitterBuffer + playout delay.
+  const compRef = useRef({ jbMs:0, playoutMs:0, targetMs:null, compMs:0, rttMs:null, ts:0 });
+  const prevStatsRef = useRef(null);
+  useEffect(()=>{
+    if(state!=="connected") return;
+    let stop=false;
+    const poll=async()=>{
+      const p=pc.current; if(!p||stop) return;
+      try{
+        const stats=await p.getStats();
+        let inb=null, play=null, rem=null;
+        stats.forEach(r=>{
+          if(r.type==="inbound-rtp"&&r.kind==="audio")inb=r;
+          if(r.type==="media-playout")play=r;
+          if(r.type==="remote-inbound-rtp"&&r.kind==="audio")rem=r;
+        });
+        if(inb&&inb.jitterBufferEmittedCount>0){
+          const prev=prevStatsRef.current;
+          let jbMs, playoutMs;
+          if(prev&&inb.jitterBufferEmittedCount>prev.jbe){
+            jbMs=((inb.jitterBufferDelay-prev.jbd)/(inb.jitterBufferEmittedCount-prev.jbe))*1000;
+          } else { jbMs=(inb.jitterBufferDelay/inb.jitterBufferEmittedCount)*1000; }
+          if(play&&play.totalSamplesCount>0){
+            if(prev&&play.totalSamplesCount>prev.psc){
+              playoutMs=((play.totalPlayoutDelay-prev.ppd)/(play.totalSamplesCount-prev.psc))*1000;
+            } else { playoutMs=(play.totalPlayoutDelay/play.totalSamplesCount)*1000; }
+          } else playoutMs=0;
+          const targetMs=inb.jitterBufferTargetDelay!=null
+            ?(inb.jitterBufferTargetDelay/inb.jitterBufferEmittedCount)*1000:null;
+          const rttMs=rem&&rem.roundTripTime!=null?rem.roundTripTime*1000:null;
+          const compMs=Math.max(0,(jbMs||0)+(playoutMs||0));
+          compRef.current={ jbMs, playoutMs, targetMs, compMs, rttMs, ts:Date.now() };
+          prevStatsRef.current={ jbd:inb.jitterBufferDelay, jbe:inb.jitterBufferEmittedCount,
+            ppd:play?play.totalPlayoutDelay:0, psc:play?play.totalSamplesCount:0 };
+        }
+      }catch{ /* getStats can throw mid-teardown */ }
+    };
+    const iv=setInterval(poll,1500); poll();
+    return ()=>{ stop=true; clearInterval(iv); };
+  },[state]);
+
   const capture = useCallback(() => {
     const eng=engineRef.current; if(!eng)throw new Error("No engine");
     const d=eng.ctx.createMediaStreamDestination(); eng.master.connect(d); dest.current=d; return d.stream;
@@ -3046,7 +3097,7 @@ function useRTC({ engineRef, send }) {
   const handleRtc   = useCallback((msg)=>{ switch(msg.type){case"rtc_offer":handleOffer(msg);break;case"rtc_answer":handleAnswer(msg);break;case"rtc_ice":handleIce(msg);break;case"rtc_hangup":endCall();break;} },[handleOffer,handleAnswer,handleIce,endCall]);
 
   useEffect(()=>()=>endCall(),[]);
-  return { state, muted, remVol, setRemVol, autoplayBlocked, startCall, endCall, toggleMute, handleRtc };
+  return { state, muted, remVol, setRemVol, autoplayBlocked, startCall, endCall, toggleMute, handleRtc, compRef };
 }
 
 // ── MIDI ─────────────────────────────────────────────────────
@@ -3146,6 +3197,11 @@ function SyncDebugHUD({ statsRef }) {
       </div>
       <div>engage   {fmt(s.msSinceEngage != null ? s.msSinceEngage / 1000 : null, 1, " s")}</div>
       <div style={{ opacity: 0.55 }}>state    {s.monitorReason || "idle"}</div>
+      <div style={{ borderTop: "1px solid rgba(255,255,255,0.08)", marginTop: 4, paddingTop: 4 }}>
+        comp meas {fmt(s.compMeasuredMs, 1, " ms")}
+      </div>
+      <div style={{ opacity: 0.7 }}>· jb={fmt(s.compJbMs, 0)} play={fmt(s.compPlayoutMs, 0)}</div>
+      <div>comp appl {fmt(s.compAppliedMs, 1, " ms")} {s.compOn ? "(on)" : "(off)"}</div>
       {s.myDeck && s.partnerDeck && (
         <div style={{ opacity: 0.55 }}>me={s.myDeck} / them={s.partnerDeck}</div>
       )}
@@ -7553,6 +7609,35 @@ export default function CollabMix({ initialPage = "landing", djName = null }) {
 
   const sync = useSync({ url: SERVER_URL, onMsg: handleWS });
   const rtc  = useRTC({ engineRef: eng, send: sync.send });
+
+  // ── Gap #4: local-monitor delay compensation ──
+  // Delay the LOCAL deck monitor to land with the (jitter-buffered) partner
+  // stream so both decks hit the ear together (one booth, one truth — we DELAY
+  // local, never speed up). Measured by useRTC's getStats poll; applied only
+  // when ?delaycomp=1. Slewed slowly (never clicks), clamped 0–400ms. Measure +
+  // telemetry run regardless so the HUD shows numbers even with the flag off.
+  const delayCompOn = new URLSearchParams(window.location.search).get("delaycomp") === "1";
+  useEffect(() => {
+    const iv = setInterval(() => {
+      const e = eng.current; if (!e?.ctx || !e.monitorDelay) return;
+      const c = rtc.compRef?.current || {};
+      const measured = Math.max(0, Math.min(400, c.compMs || 0)); // clamp 0–400ms
+      const appliedMs = delayCompOn ? measured : 0;
+      try { e.monitorDelay.delayTime.setTargetAtTime(appliedMs / 1000, e.ctx.currentTime, 1.5); } catch {}
+      syncStatsRef.current = { ...syncStatsRef.current,
+        compMeasuredMs: c.compMs != null ? +c.compMs.toFixed(1) : null,
+        compJbMs:       c.jbMs != null ? +c.jbMs.toFixed(1) : null,
+        compPlayoutMs:  c.playoutMs != null ? +c.playoutMs.toFixed(1) : null,
+        compAppliedMs:  +appliedMs.toFixed(1), compOn: delayCompOn };
+      if (delayCompOn && c.compMs != null) {
+        console.log("[SYNC-COMP] measured=" + c.compMs.toFixed(1) + "ms (jb=" +
+          (c.jbMs?.toFixed(1) ?? "?") + " playout=" + (c.playoutMs?.toFixed(1) ?? "?") +
+          ") applied=" + appliedMs.toFixed(1) + "ms");
+      }
+    }, 1000);
+    return () => clearInterval(iv);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [delayCompOn]);
 
   // Keep refs synced with the latest values so handleWS / setTimeout callbacks
   // never read stale closures.
