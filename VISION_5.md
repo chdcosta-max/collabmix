@@ -7609,3 +7609,141 @@ soak.
 - **Bug #12 (NEW)** — Partner-driven deck missing
   kick-presence WF and grid markers (analyzer payload not
   mirrored).
+
+---
+
+## Session — June 10 late-late — Soak re-verification + identity root cause + Chad observations
+
+### Soak verdict on tonight's three fixes (deployed earlier)
+
+Live two-client soak with the cued protocol:
+
+- ✅ **Check A — Bug #12 (analyzer payload mirror) PASS.** Partner-
+  driven deck rendered kick-presence WF, minute markers, and
+  grid markers identical to driver side.
+- ✅ **Check D — Bug #10 (master-scrub-doesn't-yank-slave) PASS.**
+  `scrub_realign_suppressed` telemetry fired correctly on master
+  scrubs; slave held its position.
+- ❌ **Check B — Drift telemetry FAIL.** `[SYNC-DRIFT]` never
+  emitted. HUD state pinned at `not_remote_b2b` throughout.
+- ❌ **Check C — Seek trace FAIL.** `[SEEK-SEND]`/`[SEEK-RECV]`/
+  `[SEEK-EXEC]` all silent. The instrumentation never fired
+  because the path was never taken.
+
+### Root cause for B and C: identity collision
+
+Both tabs were assigned the **identical** DJ name "DJ Nova 440b".
+Deck headers showed "you" on owned decks, no crossed partner
+names anywhere in the UI. Investigation:
+
+1. **Identity in code was pure display name.** All driver checks
+   used `deckDrivers.X === session.name`. The server already
+   generated a per-connection unique `djId` but the client threw
+   it away — never captured from the `joined` payload.
+2. **`cm_session` localStorage rejoin.** When both tabs opened
+   the bare base URL in the same browser profile, the auto-
+   rejoin path at `:8397-8413` read the same persisted
+   `{room, name}` and both auto-joined as the same display
+   name. The name pool was 6 words × 65,536 hex suffix
+   (per code comment at `:6388-6390` — "DJ Nova" had already
+   collided once for Jake/Chad), but **identical persisted name
+   trumped the pool size entirely**.
+3. **Cascading failures.** Tab 2's `isDriver` for Deck A
+   evaluated to `true` (`"DJ Nova 440b" === "DJ Nova 440b"`).
+   Tab 2's seek on the partner deck fell into the DRIVER branch,
+   never emitted `seek_request` (explains silent `[SEEK-SEND]`).
+   Phase-error monitor's `myDecks = ["A","B"].filter(d =>
+   drivers[d] === myName)` returned BOTH decks under collision →
+   permanent `not_remote_b2b` (explains silent `[SYNC-DRIFT]`).
+
+### Identity fix shipped (commits 8849446 server + 33273e5 client)
+
+- **Server** (`d708747 → 8849446`): `room.deckDrivers[deckId]` is
+  now `{ id, name } | null`. `id` = the server-generated `djId`
+  (per-WS-connection unique, was already produced for a different
+  purpose). `deck_driver_change` broadcast carries both
+  `driverId` and `driverName`. Close-cleanup matches by id.
+- **Client** (`33273e5`): `useSync` captures `djId` from the
+  `joined` payload (logs `[WS-JOINED] djId=…`), exposes it on
+  the sync return. Driver-routing comparisons (`isDriver` in
+  Deck render, `dh` driver-gate, phase-error monitor's
+  remote-B2B filter, `handleWS deck_driver_change` echo
+  detection, optimistic deckDrivers set) all moved to id.
+  `session.name` remains cosmetic (UI display, telemetry,
+  server "join" payload for the display name).
+
+Production audit on `main-_MXI3OgT.js`: `djId ×11`, `driverId
+×2`, `WS-JOINED ×1`. Railway live on `8849446` with uptime
+reset confirmed.
+
+### Display-name collision is now COSMETIC ONLY
+
+With ID-based identity, two tabs auto-rejoining the same room
+with identical persisted names still get distinct `djId`s from
+the server. Driver routing, seek path, drift monitor all work
+correctly. The only remaining annoyance is two clients showing
+the same display name in the UI. Deferred as polish — on the
+agenda after the re-soak confirms the identity fix lands the
+seek + drift behavior.
+
+### Chad's observations from tonight's soak (triage tomorrow)
+
+a. **Seeks/cues sometimes don't snap to nearest gridline.**
+   Possible causes: (i) analyzer phase error (the track's
+   `beatPhaseSec` is slightly off, so the grid is mathematically
+   correct but visually mis-located); (ii) ABSENCE of
+   quantize-seek-to-beat behavior (the click is honored exactly
+   where it lands, not snapped to the nearest beat). If (ii):
+   feature ticket — quantize-seek-to-beat (or option-modified
+   snap) is DJ-tool standard. Triage after a clean drift
+   trace shows whether phase math itself is off.
+
+b. **Decks visually offset from each other even when on
+   gridlines.** Likely 10 Hz progress packet display lag vs
+   actual audio. Tab 1 broadcasts progress at 100 ms intervals;
+   Tab 2's interp loop smooths between snapshots but can lag the
+   actual audio. Confirm via drift telemetry: if `phaseErrorMs`
+   shows the audio is aligned within ±5 ms but the visual is
+   off, the visual is the issue, not engine sync. Fix path:
+   either drive the interp from `acNow + offset` instead of
+   pure `performance.now()`-since-last-packet, or render the
+   playhead from a periodic `getActualBufferPosition()` if the
+   driver exposes one.
+
+c. **Engage `phaseSeekMs=-231.26` this run** (vs 3.73 first
+   soak with cued protocol). Decks were ~25 s apart in the
+   arrangement. The math is correct — the engage seeks the slave
+   back 231 ms to land on the nearest beat — but it confirms
+   same-position cueing matters for calibration tests. For
+   real-world DJ use the engage will land on the nearest beat
+   to the slave's current position, which is the intended
+   behavior; for measurement runs we want both decks at
+   matching positions so we can interpret `phaseSeekMs` as
+   "alignment error from a pristine starting point."
+
+### Tomorrow's order — UPDATED
+
+1. **Re-soak with identity fix live.** Same cued protocol,
+   Tab 2 muted, HUD snapshots at engage/+1/+2/+5/+8/+10. This
+   should finally produce the first real drift trace AND the
+   seek-path log trace.
+2. **Triage Chad observations (a) and (b)** with drift data in
+   hand — distinguishing analyzer phase error from
+   display-interp lag from missing-quantize feature.
+3. **Audio-after-end (Bug #11)** if soak goes cleanly.
+4. **Display-name collision UX polish.** Append window-disambig
+   suffix on auto-rejoin OR detect partner_joined with same
+   name and force rename. Decide after re-soak.
+5. **Phase 2 design** once drift loop is sized by data, per
+   prior plan (Gap #4 local-deck delay comp + drift correction
+   + remote xcorr alternative).
+
+### Working state for next session
+
+- **Master HEAD:** `33273e5` (identity fix client) at write
+  time; will advance one more to this VISION_5 commit.
+- **Production (client):** `collabmix.vercel.app` live on
+  `main-_MXI3OgT.js`. Audit clean.
+- **Production (server):** Railway live on `8849446`. `/health`
+  uptime 23 s confirms fresh boot.
+- **Working tree:** clean after this VISION_5 commit.
