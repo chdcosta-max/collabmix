@@ -5156,7 +5156,7 @@ function Deck({ id, ch, ctx:ac, color, local, remote, onChange, midi:mt, bpmResu
       <div style={{borderTop:BD, borderBottom: gridPanelOpen ? "none" : BD, background:"#06070A",
                    maxHeight: gridPanelOpen ? 0 : 42, overflow: "hidden",
                    transition: "max-height 200ms cubic-bezier(0.4, 0, 0.2, 1), border-bottom 200ms cubic-bezier(0.4, 0, 0.2, 1)"}}>
-        <WF bands={wfBass?{bass:wfBass,mid:wfMid,high:wfHigh}:null} peaks={wfPeaks} freq={wfFreq} prog={prog} onSeek={local?seek:remoteSeek} h={40} hotCues={hotCues} loopStart={loopStart} loopEnd={loopEnd} loopActive={loopActive} bpm={bpmResult?.bpm?(bpmResult.bpm*rate):null} dur={dur} beatPhaseFrac={bpmResult?.beatPhaseFrac??null} color={color} analyzing={!!bpmResult?.analyzing} beatTimes={bpmResult?.beatTimes??null} beatAttacks={bpmResult?.beatAttacks??null}/>
+        <WF bands={wfBass?{bass:wfBass,mid:wfMid,high:wfHigh}:null} peaks={wfPeaks} freq={wfFreq} prog={prog} onSeek={local?seek:remoteSeek} h={40} hotCues={hotCues} loopStart={loopStart} loopEnd={loopEnd} loopActive={loopActive} bpm={(bpmResult?.bpm??remote?.bpm)?((bpmResult?.bpm??remote?.bpm)*rate):null} dur={dur} beatPhaseFrac={bpmResult?.beatPhaseFrac??remote?.beatPhaseFrac??null} color={color} analyzing={!!bpmResult?.analyzing} beatTimes={bpmResult?.beatTimes??remote?.beatTimes??null} beatAttacks={bpmResult?.beatAttacks??remote?.beatAttacks??null}/>
       </div>
 
       {/* ── BEAT GRID PANEL (Phase 3, Commits 1+2) ──
@@ -8285,6 +8285,38 @@ export default function CollabMix({ initialPage = "landing", djName = null }) {
     sync.send({ type:"deck_update", deckId:id, field, value });
   };
 
+  // Bug 3 (partner-side analyzer mirror) — broadcast analyzer payload on
+  // completion so the non-driver renders the partner deck with the same
+  // kick-presence WF + grid markers + sync inputs that the driver sees.
+  // Fires only when the underlying Float32Array reference changes, so
+  // analyzer completion (one ref change per track load) triggers exactly
+  // one broadcast per analysis. The dh driver-gate handles the "I'm not
+  // the driver" case → no broadcast on the partner side, which is
+  // correct since the partner has no analyzer result of their own.
+  //
+  // Wire shape: each field broadcast as its own deck_update, matching
+  // the existing waveformBass/Mid/High pattern. Float32Arrays converted
+  // to JS arrays for JSON; receiver lands them in pA/pB.
+  const analyzerBroadcastedRef = useRef({ A: null, B: null });
+  useEffect(() => {
+    for (const deck of ["A", "B"]) {
+      const r = bpm.results[deck];
+      if (!r?.beatTimes || !r?.beatAttacks) continue;
+      if (analyzerBroadcastedRef.current[deck] === r.beatTimes) continue;
+      analyzerBroadcastedRef.current[deck] = r.beatTimes;
+      const send = dh(deck);
+      send("beatTimes",          Array.from(r.beatTimes));
+      send("beatAttacks",        Array.from(r.beatAttacks));
+      if (r.beatPhaseSec    != null) send("beatPhaseSec",    r.beatPhaseSec);
+      if (r.beatPeriodSec   != null) send("beatPeriodSec",   r.beatPeriodSec);
+      if (r.beatPhaseFrac   != null) send("beatPhaseFrac",   r.beatPhaseFrac);
+      if (r.firstBar1AnchorSec != null) send("firstBar1AnchorSec", r.firstBar1AnchorSec);
+      if (r.bpm             != null) send("bpm",             r.bpm);
+      console.log("[ANALYZER-BROADCAST]", deck, "beats=" + r.beatTimes.length);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [bpm.results.A?.beatTimes, bpm.results.B?.beatTimes]);
+
   const setXfLocal = (v) => { setXf(v); applyXF(v); lsRef.current.xfade=v; sync.send({type:"xfade_update",value:v}); };
   // Shared master fader — wrap setMvol so every move broadcasts. lsRef carries
   // it forward as masterVol for sync_response replay to new joiners.
@@ -8551,7 +8583,7 @@ export default function CollabMix({ initialPage = "landing", djName = null }) {
                   } catch {}
                 }}
                 style={{ minHeight:wfH, flexShrink:0 }}>
-                <AnimatedZoomedWF bands={wfA} dur={wfA?.dur||0} progRef={progRefA} onSeek={seekDeckA} h={wfH} windowSec={WF_WINDOWS[wfZoom]} beatPhaseFrac={bpm.results["A"]?.beatPhaseFrac??null} beatPeriodSec={bpm.results["A"]?.beatPeriodSec??null} gridOffsetMs={gridOffsetA} barOneOffsetSec={barOneA * (bpm.results["A"]?.beatPeriodSec || 0)} deckColor="#2E86DE" rate={rateA}/>
+                <AnimatedZoomedWF bands={wfA} dur={wfA?.dur||0} progRef={progRefA} onSeek={seekDeckA} h={wfH} windowSec={WF_WINDOWS[wfZoom]} beatPhaseFrac={bpm.results["A"]?.beatPhaseFrac ?? pA?.beatPhaseFrac ?? null} beatPeriodSec={bpm.results["A"]?.beatPeriodSec ?? pA?.beatPeriodSec ?? null} gridOffsetMs={gridOffsetA} barOneOffsetSec={barOneA * (bpm.results["A"]?.beatPeriodSec || pA?.beatPeriodSec || 0)} deckColor="#2E86DE" rate={rateA}/>
               </div>
             )}
             {hasB && (
@@ -8568,7 +8600,7 @@ export default function CollabMix({ initialPage = "landing", djName = null }) {
                   } catch {}
                 }}
                 style={{ minHeight:wfH, flexShrink:0 }}>
-                <AnimatedZoomedWF bands={wfB} dur={wfB?.dur||0} progRef={progRefB} onSeek={seekDeckB} h={wfH} windowSec={WF_WINDOWS[wfZoom]} beatPhaseFrac={bpm.results["B"]?.beatPhaseFrac??null} beatPeriodSec={bpm.results["B"]?.beatPeriodSec??null} gridOffsetMs={gridOffsetB} barOneOffsetSec={barOneB * (bpm.results["B"]?.beatPeriodSec || 0)} deckColor="#A855F7" rate={rateB}/>
+                <AnimatedZoomedWF bands={wfB} dur={wfB?.dur||0} progRef={progRefB} onSeek={seekDeckB} h={wfH} windowSec={WF_WINDOWS[wfZoom]} beatPhaseFrac={bpm.results["B"]?.beatPhaseFrac ?? pB?.beatPhaseFrac ?? null} beatPeriodSec={bpm.results["B"]?.beatPeriodSec ?? pB?.beatPeriodSec ?? null} gridOffsetMs={gridOffsetB} barOneOffsetSec={barOneB * (bpm.results["B"]?.beatPeriodSec || pB?.beatPeriodSec || 0)} deckColor="#A855F7" rate={rateB}/>
               </div>
             )}
             {/* Zoom selector — floats in the top-right corner of the waveform
