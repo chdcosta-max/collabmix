@@ -7747,3 +7747,74 @@ c. **Engage `phaseSeekMs=-231.26` this run** (vs 3.73 first
 - **Production (server):** Railway live on `8849446`. `/health`
   uptime 23 s confirms fresh boot.
 - **Working tree:** clean after this VISION_5 commit.
+
+## Session — June 10 — Re-soak verification + booth-audio-dead fix
+
+### RE-SOAK RESULTS — all four checks PASS
+
+- **Identity fix VERIFIED** — distinct djIds, crossed names,
+  join-by-code all confirmed live.
+- **HEADLINE: first real drift data** — cross-client offset
+  wander ~4.3 ms peak-to-peak over 7.5 min lock, slope ≈ 0
+  ms/min. Clock drift is NOT a major problem. Phase 2
+  re-prioritized: drift loop = low-priority maintenance; engage
+  precision + monitoring latency comp (Gap #4) + audio-path
+  robustness = the real work.
+- **Seek propagation VERIFIED end-to-end** (SEND→RECV→EXEC ×3) —
+  Bug 1's root cause was the identity collision, not seek code.
+- **#10 + analyzer-mirroring regressions hold.**
+
+### AUDIO-DEAD BUG CLOSED
+
+Root cause = identity fix's unmigrated trim-gate comparison
+(`{id,name}` object vs name string → every driven deck gated to
+0). Fixed via syncRef djId migration after one render-order
+crash iteration. AUDIO chip now polls master analyser → red NO
+OUTPUT on playing-but-silent (warning only). Verified by ear on
+localhost. Shipped in commit `63adacd`.
+
+Note for the record: the live console diagnostic paste did not
+make it into this session's notes (placeholder came through
+empty); the fix is ear-verified rather than log-pasted. One-shot
+`[AUDIO-DIAG]`/`[TRIM-GATE]` play-time logs remain in the build
+for field diagnosis; the high-frequency per-tick monitor log was
+removed before push to avoid production console spam.
+
+### NEW TICKETS
+
+1. **Initiator display echo:** remote seek executes on driver but
+   initiating tab's view of that deck stays frozen.
+2. **Asymmetric monitor sampling:** slave-side tab stayed
+   `no_recent_progress` all run — check progress meta both ways.
+3. **Drift estimator noise:** ±9–186 ms oscillation around stable
+   offset — needs smoothing before Phase 2 consumes it.
+4. **Part 3 click-to-resume recovery** (specced).
+5. **ESLint v9 config migration** — repo lint is broken; ESLint
+   v9 needs an `eslint.config.js` (no `.eslintrc` support).
+6. **AUDIO chip semantics:** OFFLINE means "no partner" —
+   misleading; consider separate connection vs output indicators.
+
+### THE CANONICAL FLOW (Chad, June 10)
+
+Check every sync/audio decision against this: DJ A loads a track;
+partner sees AND hears it in real time. Both listen together
+while partner digs. At the mix-out point, partner loads Deck B,
+hits play — both hear it instantly — and performs the blend from
+A into B until the new track owns the room. Roles alternate. The
+blend IS the performance; everyone hears all of it.
+
+### ONE BOOTH, ONE TRUTH (founder principle)
+
+All listeners — both DJs, spectators, recordings, livestreams —
+hear the SAME mix. Phase 2 latency compensation aligns everyone
+to one shared mix timeline (tiny shared delay acceptable) rather
+than minimizing per-listener delay independently.
+
+### Working state for next session
+
+- **Master HEAD:** `63adacd` (booth-audio-dead fix) at write
+  time; advances one more to this VISION_5 commit.
+- **Production (client):** deploy triggered by this push —
+  bundle audit recorded in the session report.
+- **Production (server):** Railway unchanged (`8849446`); this
+  was a client-only fix.
