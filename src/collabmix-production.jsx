@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef, useCallback, useMemo } from "react";
 import { WORKER_SRC } from "./bpm-worker-source.js";
 import { logEvent, setSessionContext, captureHandledError } from "./utils/telemetry.js";
+import { createClockSync } from "./utils/clockSync.js";
 import { connectRekordboxLibrary } from "./rekordbox-library.js";
 import {
   openCmDB,
@@ -2823,8 +2824,14 @@ function useSync({ url, onMsg }) {
   const pt=useRef(null), cb=useRef(onMsg);
   useEffect(()=>{cb.current=onMsg;},[onMsg]);
 
+  // All outbound WS payloads carry t_send (performance.now() at queue time).
+  // Receivers ignore unknown fields today (handlers destructure specific
+  // keys), so this is backward-safe. Used by the phase-error monitor to
+  // estimate partner playhead position accounting for one-way latency.
   const send = useCallback((m) => {
-    if (ws.current?.readyState === WebSocket.OPEN) ws.current.send(JSON.stringify(m));
+    if (ws.current?.readyState === WebSocket.OPEN) {
+      ws.current.send(JSON.stringify({ ...m, t_send: performance.now() }));
+    }
   }, []);
 
   const connect = useCallback((roomId, djName) => {
@@ -3056,6 +3063,46 @@ function DeckArt({ artwork, fallback, color }) {
           color: `${color}80`,  // 50% deck color
           letterSpacing: 0,
         }}>{fallback}</span>
+      )}
+    </div>
+  );
+}
+
+// Sync Phase 1 debug HUD. Tiny mono overlay shown when ?syncdebug=1 is
+// in the URL. Reads its state from a ref (no per-tick re-render storm)
+// and polls at 5 Hz for display refresh. Removable in production — gated
+// behind URL param so it never lights up for real users.
+function SyncDebugHUD({ statsRef }) {
+  const [, tick] = useState(0);
+  useEffect(() => {
+    const iv = setInterval(() => tick((t) => t + 1), 200);
+    return () => clearInterval(iv);
+  }, []);
+  const s = statsRef.current || {};
+  const fmt = (v, digits = 1, unit = "") => v == null ? "—" : v.toFixed(digits) + unit;
+  return (
+    <div style={{
+      position: "fixed", top: 8, right: 8, zIndex: 99999,
+      background: "rgba(0,0,0,0.72)", color: "rgba(255,255,255,0.88)",
+      border: "1px solid rgba(255,255,255,0.12)", borderRadius: 4,
+      padding: "8px 10px", minWidth: 220,
+      fontFamily: "'JetBrains Mono', ui-monospace, monospace",
+      fontSize: 10, lineHeight: 1.55, letterSpacing: 0.2,
+      pointerEvents: "none", opacity: 0.85,
+    }}>
+      <div style={{ opacity: 0.55, marginBottom: 4 }}>SYNC DEBUG</div>
+      <div>offset    {fmt(s.offset, 2, " ms")}</div>
+      <div>rtt med   {fmt(s.rttMedian, 0, " ms")}</div>
+      <div>rtt sprd  {fmt(s.rttSpread, 0, " ms")}</div>
+      <div>conf      {fmt(s.confidence, 2)}</div>
+      <div>samples   {s.sampleCount ?? 0}</div>
+      <div style={{ borderTop: "1px solid rgba(255,255,255,0.08)", marginTop: 4, paddingTop: 4 }}>
+        drift     {fmt(s.phaseErrorMs, 2, " ms")}
+      </div>
+      <div>engage   {fmt(s.msSinceEngage != null ? s.msSinceEngage / 1000 : null, 1, " s")}</div>
+      <div style={{ opacity: 0.55 }}>state    {s.monitorReason || "idle"}</div>
+      {s.myDeck && s.partnerDeck && (
+        <div style={{ opacity: 0.55 }}>me={s.myDeck} / them={s.partnerDeck}</div>
       )}
     </div>
   );
@@ -6703,6 +6750,26 @@ export default function CollabMix({ initialPage = "landing", djName = null }) {
   // Master role is preserved (visual indicator, phase reference) but its
   // current effective BPM is held to the session tempo.
   const sessionTempoRef = useRef(null);
+  // ── Sync Phase 1 measurement plumbing ────────────────────────────────
+  // Cristian's clock-offset estimator. Fed by sync_ping/sync_pong round
+  // trips bounced off the partner via the WS relay. Read by the phase-
+  // error monitor and the debug HUD. Measurement-only — never used to
+  // change behavior in Phase 1.
+  const clockSyncRef = useRef(createClockSync());
+  // Latest progress packet metadata per deck, captured from partner's
+  // deck_update field:"progress" broadcasts. tSend = partner's
+  // performance.now() at queue time (added by useSync.send); value = the
+  // progress fraction [0,1]; tRecvLocal = my performance.now() at receive.
+  // Used to estimate partner playhead "now" via lastValue + (myNow_adjusted
+  // - tSend) × rate. Engage timestamp for "ms since engage" telemetry.
+  const partnerProgressMetaRef = useRef({ A: null, B: null });
+  const engageTimeMsRef        = useRef(null);
+  // Latest computed sync stats — drives the debug HUD without triggering
+  // re-renders on every monitor tick.
+  const syncStatsRef = useRef({
+    offset: 0, confidence: 0, rttMedian: null, rttSpread: null, sampleCount: 0,
+    phaseErrorMs: null, msSinceEngage: null, monitorReason: "idle",
+  });
   // Auto re-align when user scrubs while locked (Problem 1)
   const scrubResyncTimerRef     = useRef(null);
   const lastScrubResyncTimeRef  = useRef(0);
@@ -7273,6 +7340,17 @@ export default function CollabMix({ initialPage = "landing", djName = null }) {
     if (m.type==="deck_update")    {
       // 1) Mirror partner's deck state for visuals
       (m.deckId==="A"?setPA:setPB)(p=>({...(p||{}),[m.field]:m.value}));
+      // Capture progress packet metadata for the phase-error monitor.
+      // Stores partner's send-time (their performance.now() via useSync.send
+      // t_send injection) + value + my receive-time. Lets the monitor
+      // estimate partner's playhead position "now" without rebroadcasting.
+      if (m.field === "progress" && (m.deckId === "A" || m.deckId === "B") && typeof m.t_send === "number") {
+        partnerProgressMetaRef.current[m.deckId] = {
+          tSend: m.t_send,
+          value: m.value,
+          tRecvLocal: performance.now(),
+        };
+      }
       // Track partner-driven play-start for auto-master detection. The local
       // owner-driven path updates deckPlayStartRef inside dh; this branch
       // covers the case where the partner is driving the deck.
@@ -7321,6 +7399,19 @@ export default function CollabMix({ initialPage = "landing", djName = null }) {
         const el = document.querySelector(`[data-set-rate='${m.deckId}']`);
         if (el?._setRate) el._setRate(m.value);
       }
+    }
+    // ── Sync Phase 1: clock-offset estimator (Cristian's) ─────────────
+    // sync_ping: partner asked for the time → echo their t0 + my current
+    // performance.now() back as sync_pong. Cheap: one WS round-trip.
+    // sync_pong: partner answered → feed clockSync (t0=their original send,
+    // t1=their processing time, t2=my receive time). RTT outliers and
+    // confidence handled inside clockSync.
+    if (m.type==="sync_ping") {
+      sync.send({ type:"sync_pong", t0: m.t0, t1: performance.now() });
+    }
+    if (m.type==="sync_pong") {
+      const t2 = performance.now();
+      clockSyncRef.current.addSample(m.t0, m.t1, t2);
     }
     if (m.type==="seek_request")   seekFnsRef.current[m.deckId]?.(m.value, true);
     if (m.type==="toggle_request") toggleFnsRef.current[m.deckId]?.(true);
@@ -7422,6 +7513,139 @@ export default function CollabMix({ initialPage = "landing", djName = null }) {
   // Cancel any pending reconnect on unmount.
   useEffect(() => () => clearTimeout(rtcReconnectTimerRef.current), []);
 
+  // ── Sync Phase 1: sync_ping interval (clock-offset sampler) ────────────
+  // Bounces a small ping off the partner every 3s while a partner is
+  // present. Each round trip feeds clockSyncRef via the sync_pong handler.
+  // Independent of the WS-level server ping (which measures client↔server
+  // RTT only and uses Date.now); this measures client↔client offset in
+  // performance.now() units, which the phase-error monitor needs.
+  useEffect(() => {
+    if (!sync.partner) {
+      clockSyncRef.current.reset();
+      return;
+    }
+    const tick = () => sync.send({ type:"sync_ping", t0: performance.now() });
+    tick(); // immediate first sample
+    const iv = setInterval(tick, 3000);
+    return () => clearInterval(iv);
+  }, [sync.partner, sync.send]);
+
+  // ── Sync Phase 1: phase-error monitor (measurement only) ───────────────
+  // Every 2s while syncLocked, estimate partner's playhead "now" by
+  // projecting their last progress packet forward via the clock offset,
+  // then compute beat-fractional drift vs my local synced deck. Logs
+  // [SYNC-DRIFT] + emits a telemetry sample. NEVER applies a correction —
+  // that's a deliberate Phase 1 design boundary. Stats also stashed in
+  // syncStatsRef for the debug HUD.
+  //
+  // Monitor bails out (and records monitorReason) when:
+  //   - no partner / not syncLocked / not a remote B2B (I drive both decks)
+  //   - clock offset confidence too low (insufficient samples)
+  //   - no recent progress packet on the partner-driven deck
+  //   - missing beatPhaseSec / beatPeriodSec on either deck
+  useEffect(() => {
+    if (!syncLocked || !sync.partner) {
+      syncStatsRef.current = { ...syncStatsRef.current,
+        phaseErrorMs: null, msSinceEngage: null,
+        monitorReason: !syncLocked ? "not_locked" : "no_partner",
+      };
+      return;
+    }
+    const sample = () => {
+      const myName = sessionRef.current?.name;
+      const drivers = deckDrivers; // {A, B}
+      // Phase-error monitor only meaningful in remote B2B: I drive exactly
+      // one deck, partner drives the other. Local two-deck mode (I drive
+      // both) needs no cross-machine measurement.
+      const myDecks = ["A","B"].filter(d => drivers[d] === myName);
+      const partnerDecks = ["A","B"].filter(d => drivers[d] && drivers[d] !== myName);
+      if (myDecks.length !== 1 || partnerDecks.length !== 1) {
+        syncStatsRef.current = { ...syncStatsRef.current,
+          phaseErrorMs: null, monitorReason: "not_remote_b2b" };
+        return;
+      }
+      const myDeck = myDecks[0];
+      const partnerDeck = partnerDecks[0];
+      const clk = clockSyncRef.current.getOffset();
+      if (clk.sampleCount < 3) {
+        syncStatsRef.current = { ...syncStatsRef.current, ...clk,
+          phaseErrorMs: null, monitorReason: "clock_warmup" };
+        return;
+      }
+      const meta = partnerProgressMetaRef.current[partnerDeck];
+      if (!meta || (performance.now() - meta.tRecvLocal) > 3000) {
+        syncStatsRef.current = { ...syncStatsRef.current, ...clk,
+          phaseErrorMs: null, monitorReason: "no_recent_progress" };
+        return;
+      }
+      // Partner playhead estimate.
+      // tSend is in partner's performance.now() timebase. My local "now"
+      // remapped to partner timebase = myNow + offset. Elapsed time in
+      // partner's timebase since their send = partnerNowMapped - tSend.
+      const partnerState = partnerDeck === "A" ? pA : pB;
+      const partnerDur   = partnerState?.duration ?? null;
+      const partnerRate  = partnerState?.rate ?? 1;
+      const partnerBps   = partnerState?.beatPeriodSec ?? null;
+      const partnerBphs  = partnerState?.beatPhaseSec ?? null;
+      const myBps        = bpm.results[myDeck]?.beatPeriodSec ?? (myDeck==="A"?pA:pB)?.beatPeriodSec ?? null;
+      const myBphs       = bpm.results[myDeck]?.beatPhaseSec  ?? (myDeck==="A"?pA:pB)?.beatPhaseSec  ?? null;
+      const myDur        = (myDeck === "A" ? wfA?.dur : wfB?.dur) ?? null;
+      const myProg       = myDeck === "A" ? progRefA.current : progRefB.current;
+      const myRate       = myDeck === "A" ? rateA : rateB;
+      if (!partnerDur || !partnerBps || partnerBphs == null ||
+          !myBps || myBphs == null || !myDur || myProg == null) {
+        syncStatsRef.current = { ...syncStatsRef.current, ...clk,
+          phaseErrorMs: null, monitorReason: "missing_phase_data" };
+        return;
+      }
+      const myNow = performance.now();
+      const partnerNowMapped = myNow + clk.offset;
+      const elapsedPartnerMs = partnerNowMapped - meta.tSend;
+      const partnerNowSec = meta.value * partnerDur + (elapsedPartnerMs / 1000) * partnerRate;
+      const mySec = myProg * myDur;
+      // Drift in beats — both decks at session tempo, so their effective
+      // beat periods match within rate-quantization. Wrap to ±0.5 beat.
+      const myBeatPos      = (mySec - myBphs) / myBps;
+      const myBeatFrac     = myBeatPos - Math.floor(myBeatPos);
+      const partnerBeatPos = (partnerNowSec - partnerBphs) / partnerBps;
+      const partnerBeatFrac= partnerBeatPos - Math.floor(partnerBeatPos);
+      let beatDiff = partnerBeatFrac - myBeatFrac;
+      if (beatDiff >  0.5) beatDiff -= 1;
+      if (beatDiff < -0.5) beatDiff += 1;
+      // Convert beat-frac diff to wall-time ms using slave's effective beat
+      // period at its current rate. Sign convention: positive ms = partner
+      // ahead of me (partner playhead is later in the beat).
+      const effBeatPeriodMs = (myBps / Math.max(0.001, myRate)) * 1000;
+      const phaseErrorMs = beatDiff * effBeatPeriodMs;
+      const msSinceEngage = engageTimeMsRef.current
+        ? performance.now() - engageTimeMsRef.current
+        : null;
+      console.log("[SYNC-DRIFT]" +
+        " phaseMs=" + phaseErrorMs.toFixed(2) +
+        " offsetMs=" + clk.offset.toFixed(2) +
+        " rttMs=" + (clk.rttMedian ?? 0).toFixed(0) +
+        " conf=" + clk.confidence.toFixed(2) +
+        " sinceEngageMs=" + (msSinceEngage != null ? msSinceEngage.toFixed(0) : "—") +
+        " myDeck=" + myDeck + " partnerDeck=" + partnerDeck);
+      logEvent("sync", "drift_sample", {
+        phaseMs: +phaseErrorMs.toFixed(2),
+        offsetMs: +clk.offset.toFixed(2),
+        rttMedian: clk.rttMedian != null ? +clk.rttMedian.toFixed(0) : null,
+        confidence: +clk.confidence.toFixed(2),
+        msSinceEngage: msSinceEngage != null ? +msSinceEngage.toFixed(0) : null,
+        myDeck, partnerDeck,
+      });
+      syncStatsRef.current = {
+        ...clk, phaseErrorMs, msSinceEngage,
+        monitorReason: "sampling", myDeck, partnerDeck,
+      };
+    };
+    sample();
+    const iv = setInterval(sample, 2000);
+    return () => clearInterval(iv);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [syncLocked, sync.partner, deckDrivers, pA, pB, wfA, wfB, rateA, rateB, bpm.results]);
+
   // Auto-connect WebSocket on session mount. The original flow opened the
   // socket from <Lobby>'s join() call, but the landing-page bypass shortcut
   // (initial page="session") skipped Lobby entirely. Without this effect,
@@ -7479,15 +7703,52 @@ export default function CollabMix({ initialPage = "landing", djName = null }) {
   //   phase-aligned offset (looks "random" to the user — depends on the new
   //   track's beatPhaseSec) within a couple seconds of loading.
   const syncDecks = useCallback((slave, targetBPM, phaseAlign = true) => {
+    // Phase 1 engage-quality snapshot. Populated as each step completes
+    // (rate → phase → xcorr) and emitted at function exit on the success
+    // path. Numbers feed both the [SYNC-ENGAGE-QUALITY] log and the
+    // telemetry sample so we can correlate engage accuracy with drift
+    // observed by the phase-error monitor afterwards.
+    const tEngageStart = performance.now();
+    const engageStats = {
+      slave, targetBPM, phaseAlign,
+      rateDelta: null,                 // |rate − 1|
+      phaseSeekMs: null,               // beat-phase seek amount in ms
+      xcorr: null,                     // { applied|skipped, peakRatio, peakSec }
+      durationMs: null,                // total syncDecks runtime
+      result: "ok",                    // ok | rate_invalid | no_bpm | safety_clamp
+    };
+    const emitEngageQuality = () => {
+      engageStats.durationMs = +(performance.now() - tEngageStart).toFixed(2);
+      console.log("[SYNC-ENGAGE-QUALITY]" +
+        " result=" + engageStats.result +
+        " rateDelta=" + (engageStats.rateDelta != null ? engageStats.rateDelta.toFixed(4) : "—") +
+        " phaseSeekMs=" + (engageStats.phaseSeekMs != null ? engageStats.phaseSeekMs.toFixed(2) : "—") +
+        " xcorr=" + (engageStats.xcorr ? JSON.stringify(engageStats.xcorr) : "—") +
+        " durationMs=" + engageStats.durationMs +
+        " phaseAlign=" + phaseAlign +
+        " slave=" + slave);
+      logEvent("sync", "engage_quality", engageStats);
+      // Anchor the "ms since engage" clock for the phase-error monitor.
+      // Captured only on successful full engages (phaseAlign=true and not
+      // rate-only re-rates).
+      if (phaseAlign && engageStats.result === "ok") {
+        engageTimeMsRef.current = performance.now();
+      }
+    };
     const srcBPM = bpm.results[slave]?.bpm;
     console.log("[SYNC] triggered for deck", slave, "sourceBPM=", srcBPM, "targetBPM=", targetBPM);
     if (!srcBPM || !targetBPM) {
       console.log("[SYNC] no target BPM available, ignoring (srcBPM=", srcBPM, "targetBPM=", targetBPM, ")");
+      engageStats.result = "no_bpm";
+      emitEngageQuality();
       return;
     }
     const rate = targetBPM / srcBPM;
+    engageStats.rateDelta = Math.abs(rate - 1);
     if (Math.abs(rate-1) > 0.12) {
       console.log("[SYNC] ignored, rate", rate, "outside ±12% safety window");
+      engageStats.result = "safety_clamp";
+      emitEngageQuality();
       return;
     }
     if (slave==="A") {
@@ -7537,6 +7798,7 @@ export default function CollabMix({ initialPage = "landing", djName = null }) {
       if (phaseOffsetBeats >  0.5) phaseOffsetBeats -= 1;
       if (phaseOffsetBeats < -0.5) phaseOffsetBeats += 1;
       const phaseOffsetSeconds = phaseOffsetBeats * slaveBps;
+      engageStats.phaseSeekMs = phaseOffsetSeconds * 1000;
       console.log("[SYNC] beat phase before: master=", masterBeatFrac.toFixed(3), "slave=", slaveBeatFrac.toFixed(3), "(in beats)");
       const newSlaveTime = slaveCurTime + phaseOffsetSeconds;
       const newSlaveProg = Math.max(0, Math.min(1, newSlaveTime / slaveDur));
@@ -7612,6 +7874,7 @@ export default function CollabMix({ initialPage = "landing", djName = null }) {
           const maxCorrection = slaveBps * 2.0;            // clamp ±2 beats
           const CONFIDENCE_THRESHOLD = 2.0;
           if (peakRatio < CONFIDENCE_THRESHOLD) {
+            engageStats.xcorr = { applied: false, reason: "low_confidence", peakRatio: +peakRatio.toFixed(2), peakSec: +(peakSec*1000).toFixed(2) };
             console.log("[SYNC-XCORR] peak/RMS=" + peakRatio.toFixed(2) +
               " < threshold " + CONFIDENCE_THRESHOLD +
               " — skipped (fallback to beat-phase only)" +
@@ -7619,6 +7882,7 @@ export default function CollabMix({ initialPage = "landing", djName = null }) {
               " peakSec=" + (peakSec * 1000).toFixed(2) + "ms" +
               " fftLen=" + fftLen);
           } else if (Math.abs(peakSec) > maxCorrection) {
+            engageStats.xcorr = { applied: false, reason: "above_cap", peakRatio: +peakRatio.toFixed(2), peakSec: +(peakSec*1000).toFixed(2) };
             console.log("[SYNC-XCORR] |peakSec|=" + (Math.abs(peakSec) * 1000).toFixed(2) +
               "ms > " + (maxCorrection * 1000).toFixed(0) + "ms cap" +
               " — skipped (likely misdetection)" +
@@ -7632,11 +7896,13 @@ export default function CollabMix({ initialPage = "landing", djName = null }) {
             const correctedSlaveTime = slaveCenterTime + peakSec;
             const correctedSlaveProg = Math.max(0, Math.min(1, correctedSlaveTime / slaveDur));
             seekFnsRef.current[slave]?.(correctedSlaveProg);
+            engageStats.xcorr = { applied: true, peakRatio: +peakRatio.toFixed(2), peakSec: +(peakSec*1000).toFixed(2) };
             console.log("[SYNC-XCORR] peak/RMS=" + peakRatio.toFixed(2) +
               " applied: lag=" + peakLag + " hops, correction=" + (peakSec * 1000).toFixed(2) +
               "ms (newProg=" + correctedSlaveProg.toFixed(4) + ")");
           }
         } else {
+          engageStats.xcorr = { applied: false, reason: "window_unusable" };
           console.log("[SYNC-XCORR] window unusable, skipped" +
             " (winSec=" + xcWindowSec.toFixed(3) +
             " leftSec=" + leftSec.toFixed(3) +
@@ -7646,6 +7912,10 @@ export default function CollabMix({ initialPage = "landing", djName = null }) {
             " winLen=" + xcWinLen + ")");
         }
       } else {
+        // Critical for remote B2B audit: when slave or master is partner-
+        // driven, our local bufRef for that deck is null and xcorr ALWAYS
+        // skips. Beat-phase alignment is the entire engage in that case.
+        engageStats.xcorr = { applied: false, reason: "bufrefs_unavailable", haveSlaveBuf: !!slaveBuf, haveMasterBuf: !!masterBuf };
         console.log("[SYNC-XCORR] bufRefs not available, skipped" +
           " (haveSlaveBuf=" + !!slaveBuf + ", haveMasterBuf=" + !!masterBuf + ")");
       }
@@ -7657,6 +7927,7 @@ export default function CollabMix({ initialPage = "landing", djName = null }) {
     const k = `deck${slave}`;
     lsRef.current[k] = { ...(lsRef.current[k]||{}), rate };
     sync.send({ type:"deck_update", deckId: slave, field: "rate", value: rate });
+    emitEngageQuality();
   }, [bpm.results, sync, pA, pB, wfA, wfB]);
 
   // Global SYNC toggle. The slave is the clicked deck (or the not-master deck
@@ -8097,8 +8368,15 @@ export default function CollabMix({ initialPage = "landing", djName = null }) {
   if (page==="lobby")   return <Lobby onJoin={join} djName={djName}/>;
 
   const G = "#9CA3AF"; // gold accent — matches App.jsx landing
+  // Sync Phase 1 debug HUD — render only when ?syncdebug=1. URL params
+  // don't change without a reload, so this read-once at render is safe.
+  const showSyncDebug = (() => {
+    try { return new URLSearchParams(window.location.search).get("syncdebug") === "1"; }
+    catch { return false; }
+  })();
   return (
     <div style={{ height:"100vh", overflow:"hidden", background:"#000000", fontFamily:"'Inter',sans-serif", color:"#F5F5F7", display:"flex", flexDirection:"column" }}>
+      {showSyncDebug && <SyncDebugHUD statsRef={syncStatsRef}/>}
       <style>{`
         @keyframes blink{0%,100%{box-shadow:0 0 5px currentColor}50%{box-shadow:0 0 14px currentColor}}
         @keyframes pulse{0%,100%{opacity:1}50%{opacity:.4}}
