@@ -7039,3 +7039,169 @@ Same as prior sections.
 - **Stash:** `stash@{0}` carries the small WF Slice A WIP + `[WF-DIAG]`
   diagnostic + marker reposition — restore with `git stash pop`
 - **Dev server:** PID 76963 will be killed at end of session
+
+---
+
+## Session — June 10 evening — Small WF Slice A SHIPPED + analyzer exposes beatTimes/beatAttacks
+
+### Shipped to production
+
+- **`11a00ee` — `docs: SOCIAL_VISION + LANDING_BRIEF (June 10 strategy session)`**
+  - Two strategy docs committed at session start. Brochure-stage
+    landing brief + community/matchmaking architecture. Pure docs;
+    no production code touched.
+- **`1b0989c` — Small WF Slice A: kick-presence rendering + high-band
+  env + silhouette foundation**
+  - Slice A WIP from June 9–10 stash + tonight's kick-presence
+    rendering system + analyzer exposure for Slice C.
+  - 2 files, 371 insertions / 61 deletions. Production bundle
+    audit clean on `main-BlOaY8yI.js`: beatTimes ×8, beatAttacks
+    ×11, DIM_GAMMA 0.55 inlined ×4, core floor 0.35 inlined ×6,
+    WF-DIAG string ×0 (dead-code-eliminated).
+
+### The kick-presence rendering system — what it is, why it exists
+
+The June 9–10 finding was that bass-band magnitude saturates on
+dense electronic tracks: sustained synth-pads + sub-bass push the
+peak envelope to ~max for the entire track. Chad couldn't see the
+structural variation DJs need to read. Switching to high-band-only
+(`env = hv`) fixed the flat-bass tube — Embers spread out, no-kick
+intros dropped — but introduced a NEW problem Chad identified
+tonight:
+
+**DJs verify mix-in/out points by seeing where the KICK/BASS drops
+out.** No-kick sections of dense tracks still have hats/synths
+running, so the high band stays active through them. Bass-band
+magnitude can't show kick-out either (saturated, as above). The
+needed signal is low-band TRANSIENTS — kick presence specifically.
+
+The analyzer already had the answer. The `beatAttackSlopes`
+Float64Array (one per beat) was being computed for the Sub-cause F
+gate and discarded at worker exit. It's the half-wave-rectified
+first-difference peak of the 40-200 Hz power envelope inside a
+±50 ms window around each beat — literally the per-beat
+kick-attack strength, with 0 written when the refiner skipped the
+beat (silence/flat/edge/mono). Surfacing it cost ~5 lines on the
+worker postMessage + main-thread destructure; no DSP touch, no
+analyzer change.
+
+The same payload (`beatTimes` seconds + `beatAttacks` per-beat
+strength) is exactly what Slice C transient hairline (#37) will
+need — positions for hairline placement, strengths for dimming
+weak attacks. One exposed array, two consumers.
+
+### Iteration path (what landed in code vs what we tried)
+
+1. **hv envelope only** — visually fixed flatness; created the
+   no-kick visibility problem above.
+2. **Two-layer build** — dim hv outer + bright kick-driven inner
+   core, both buildSilhouettePath. Worked structurally but the
+   inner core showed a hazy see-through fringe of dim env around
+   it (alpha layering of two overlapping silhouettes).
+3. **Brightness gate via destination-out** — one envelope shape,
+   per-column alpha erase in kick-out columns. Read as a bright
+   envelope-tube again because the shape was wrong (kept envH
+   everywhere, dimmed alpha only).
+4. **Per-column shape select** — one silhouette path built from
+   per-column heights (coreH where kick present, envH where
+   absent), clipped silhouette + per-column fillRect with one of
+   four precomputed composite gradients. Fog gone, two structural
+   issues remained.
+5. **Beat-aliasing fix (max-over-span) + core floor + DIM_GAMMA
+   lift** — column span covers ~2-3 beats; a single refiner-
+   skipped beat was blanking columns inside kick regions. Running
+   pointer + max strength + 0.35×envH floor + DIM_GAMMA 0.55 for
+   kick-out heights = bright continuous core + lifted readable
+   breakdowns.
+6. **Run-length morphology = PASS.** Real kick-out sections are
+   ≥4 bars; shorter dim runs are noise from individually skipped
+   beats (~23/834 on Embers). Threshold in BARS via bpm+dur,
+   clamped 3–12 / 2–8 cols. Dim flip first, bright prune second.
+   Kick regions read as continuous bright blocks. Breakdowns stay
+   clean dim. Boundaries land on real musical structure.
+
+### Tunable knobs (single point each, top of WF render)
+
+- `GAMMA = 0.7` — bright envelope curve
+- `DIM_GAMMA = 0.55` — lifts kick-out / breakdown envelope heights
+- `PEAK_HEIGHT_RATIO = 0.85` — breathing room above/below silhouette
+- Core floor `0.35 × envH`, core scale `0.9 × envH`
+- `MIN_DIM_RUN_BARS = 4`, `MIN_BRIGHT_RUN_BARS = 2` (with
+  clamps 3–12 / 2–8 cols and fallbacks 5/3 when bpm unavailable)
+- `WF_DIAG = false` — gates `[WF-DIAG]` console log; flip true to
+  debug env/normalization regressions. Vite DCE strips the log
+  string from production builds when off.
+
+### Slice C — what's prewired
+
+`beatTimes` + `beatAttacks` already exposed on `bpmResult`.
+Slice C transient hairline (#37) consumes both: positions for
+hairline placement, strength for dimming weak attacks (avoids
+false hairlines in no-kick sections — the same problem Slice A
+just solved on the envelope side). No additional analyzer
+surface needed.
+
+### Process learnings (tonight)
+
+1. **When you don't have the signal, don't keep tuning the
+   gradient.** Six rendering iterations on the two-layer haze
+   problem produced incremental improvements but never solved it
+   because the architecture was wrong. The fix was structural
+   (one shape, per-column choice), not visual.
+2. **Pre-existing analyzer state is cheaper than new DSP every
+   time.** `beatAttackSlopes` already existed; exposing it cost
+   ~5 lines. Building a separate transient detector would have
+   been days.
+3. **Visual verdict beats math.** Build #N-2 (destination-out)
+   was mathematically clean and "correct" by design — Chad's eye
+   immediately read the tube. Built #N-1 also looked plausible
+   on paper. The user's eye called both correctly.
+4. **Run-length morphology is musical-time-aware now.** Pixel-
+   threshold filters would have failed on short or long tracks;
+   deriving thresholds from bpm+dur+W self-tunes per track.
+
+### Roadmap status
+
+**Closed this session:**
+
+- ✅ Bug #43 partner BPM (last night) — already shipped at session
+  open as `f48d0ea`.
+- ✅ Small WF Slice A — kick-presence rendering, env=hv,
+  beatTimes/beatAttacks exposure.
+
+**Open for next session (priority order):**
+
+- 🔄 **Slice B — big WF improvements** per VISION_5 Phase 1 spec.
+  Next active waveform work.
+- 🔄 **Self-verified sync (the #1 hard problem)** — audio + RTC
+  through headphones, end-to-end, before Jake round 2. The sync
+  deep-dive Chad has flagged as the gating risk for dogfood.
+- 📋 **Slice C — transient hairline (#37)**. Inputs prewired:
+  `beatTimes` + `beatAttacks` already on `bpmResult`.
+- 📋 **#9 — drag-and-drop library → deck.**
+- 📋 **Bug #2 — sync release rate** (Jake).
+- 📋 **Bug #10 — scrub-master-moves-slave** (Jake).
+
+**New issues logged this session:**
+
+- (None — #45 from June 9-10 still open: small WF loading state
+  visually indistinguishable from real-but-flat waveform.)
+
+### Don't-touch list (unchanged)
+
+Same as prior sections. Tonight's analyzer change was a single
+read-only surface addition (postMessage payload field) — no DSP
+math, no gate threshold, no existing output value touched.
+
+### Working state for next session
+
+- **Master HEAD:** `1b0989c` (Slice A) at write time; will advance
+  one more to this VISION_5 commit.
+- **Production:** `collabmix.vercel.app` live on bundle
+  `main-BlOaY8yI.js`. Audit confirmed analyzer + knobs present.
+- **Working tree:** clean.
+- **Stash:** none.
+- **Open in Vite dev:** http://localhost:5173/ (PID will be killed
+  at session end).
+- **Strategy docs added:** `tools/docs/SOCIAL_VISION.md` and
+  `tools/docs/LANDING_BRIEF.md` (commit `11a00ee`).
