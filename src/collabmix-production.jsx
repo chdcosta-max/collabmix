@@ -2821,6 +2821,11 @@ function useSync({ url, onMsg }) {
   const [partner, setPartner] = useState(null);
   const [ping, setPing]       = useState(null);
   const [connErr, setConnErr] = useState(null);
+  // Server-generated djId captured from the "joined" payload. Used as the
+  // authoritative IDENTITY for driver checks and the phase-error monitor —
+  // displayName collisions (two tabs auto-rejoining the same cm_session
+  // with the identical persisted name) no longer break driver routing.
+  const [djId, setDjId]       = useState(null);
   const pt=useRef(null), cb=useRef(onMsg);
   useEffect(()=>{cb.current=onMsg;},[onMsg]);
 
@@ -2847,7 +2852,11 @@ function useSync({ url, onMsg }) {
       };
       w.onmessage = (e) => {
         let m; try{m=JSON.parse(e.data);}catch{return;}
-        if(m.type==="joined"){setPartner(m.partnerName);}
+        if(m.type==="joined"){
+          setPartner(m.partnerName);
+          if(m.djId) setDjId(m.djId);
+          console.log("[WS-JOINED] djId=" + m.djId + " partner=" + (m.partnerName||"(none)"));
+        }
         if(m.type==="partner_joined"){setPartner(m.djName);send({type:"sync_request"});}
         if(m.type==="partner_left")  setPartner(null);
         if(m.type==="pong")          setPing(Date.now()-m.clientTime);
@@ -2862,11 +2871,11 @@ function useSync({ url, onMsg }) {
   }, [url, send]);
 
   const disconnect = useCallback(() => {
-    ws.current?.close(); clearInterval(pt.current); setPartner(null);
+    ws.current?.close(); clearInterval(pt.current); setPartner(null); setDjId(null);
   }, []);
 
   useEffect(()=>()=>{ ws.current?.close(); clearInterval(pt.current); },[]);
-  return { status, partner, ping, connErr, send, connect, disconnect };
+  return { status, partner, ping, connErr, djId, send, connect, disconnect };
 }
 
 // ── WebRTC ───────────────────────────────────────────────────
@@ -7170,10 +7179,19 @@ export default function CollabMix({ initialPage = "landing", djName = null }) {
     // immediately on receive, before the audio-decode-triggered deck_update
     // chain fires with the rest (waveform, duration).
     const driverName = sessionRef.current?.name || null;
+    const myDjId = syncRef.current?.djId || null;
     const wsState = syncRef.current?.status;
-    console.log('[DRIVER-SEND]', { deck, driverName, wsState, hasSync: !!syncRef.current?.send, trackTitle: track.title });
+    console.log('[DRIVER-SEND]', { deck, driverName, myDjId, wsState, hasSync: !!syncRef.current?.send, trackTitle: track.title });
     if (driverName) {
-      setDeckDrivers(prev => prev[deck] === driverName ? prev : { ...prev, [deck]: driverName });
+      // Optimistic local set so the loader sees their own driver claim
+      // immediately. Only set when djId is known — otherwise skip and rely
+      // on the server's echo broadcast (deck_driver_change comes back to
+      // sender too). Prevents accidentally nulling the driver during the
+      // brief window before the "joined" payload arrives.
+      if (myDjId) {
+        const optimistic = { id: myDjId, name: driverName };
+        setDeckDrivers(prev => prev[deck]?.id === optimistic.id ? prev : { ...prev, [deck]: optimistic });
+      }
       const trackMeta = {
         id: track.id,
         title: track.title || track.filename || null,
@@ -7183,7 +7201,7 @@ export default function CollabMix({ initialPage = "landing", djName = null }) {
         duration: track.duration || null,
       };
       syncRef.current?.send?.({ type: "deck_driver_change", deckId: deck, driverName, track: trackMeta });
-      console.log('[DRIVER-SEND] dispatched', { deck, driverName });
+      console.log('[DRIVER-SEND] dispatched', { deck, driverName, myDjId });
     } else {
       console.warn('[DRIVER-SEND] no driverName — sessionRef.current?.name was null/empty');
     }
@@ -7315,16 +7333,19 @@ export default function CollabMix({ initialPage = "landing", djName = null }) {
       if (m.deckDrivers) setDeckDrivers({ A: m.deckDrivers.A ?? null, B: m.deckDrivers.B ?? null });
     }
     if (m.type==="deck_driver_change") {
-      const { deckId, driverName, track } = m;
-      console.log('[DRIVER-RECV]', { deckId, driverName, from: m.from, myName: sessionRef.current?.name, hasTrack: !!track, trackTitle: track?.title });
+      const { deckId, driverId, driverName, track } = m;
+      const myDjId = syncRef.current?.djId;
+      console.log('[DRIVER-RECV]', { deckId, driverId, driverName, from: m.from, myDjId, hasTrack: !!track, trackTitle: track?.title });
       if (deckId === "A" || deckId === "B") {
-        setDeckDrivers(prev => prev[deckId] === (driverName ?? null) ? prev : { ...prev, [deckId]: driverName ?? null });
-        // If the broadcast carries track metadata AND it's not from me, paint
+        const next = driverId ? { id: driverId, name: driverName ?? null } : null;
+        setDeckDrivers(prev => prev[deckId]?.id === next?.id ? prev : { ...prev, [deckId]: next });
+        // If the broadcast carries track metadata AND it's not from me
+        // (id-based, NOT name-based — display-name collisions exist), paint
         // it into partner state immediately. Maps the trackMeta fields onto
         // the same pA/pB shape that the Deck's existing remote.* fallback
         // reads, so the partner deck shows title/artist/bpm/key without
         // waiting for the loader's decode-triggered deck_update broadcasts.
-        if (track && m.from !== sessionRef.current?.name) {
+        if (track && driverId && driverId !== myDjId) {
           const setter = deckId === "A" ? setPA : setPB;
           setter(p => ({
             ...(p||{}),
@@ -7563,13 +7584,15 @@ export default function CollabMix({ initialPage = "landing", djName = null }) {
       return;
     }
     const sample = () => {
-      const myName = sessionRef.current?.name;
-      const drivers = deckDrivers; // {A, B}
+      const myDjId = syncRef.current?.djId;
+      const drivers = deckDrivers; // {A, B} of {id, name}|null
       // Phase-error monitor only meaningful in remote B2B: I drive exactly
       // one deck, partner drives the other. Local two-deck mode (I drive
-      // both) needs no cross-machine measurement.
-      const myDecks = ["A","B"].filter(d => drivers[d] === myName);
-      const partnerDecks = ["A","B"].filter(d => drivers[d] && drivers[d] !== myName);
+      // both) needs no cross-machine measurement. Identity check is djId,
+      // NOT display name — name collisions otherwise pinned us to
+      // not_remote_b2b even in real remote B2B.
+      const myDecks = ["A","B"].filter(d => drivers[d]?.id && drivers[d].id === myDjId);
+      const partnerDecks = ["A","B"].filter(d => drivers[d]?.id && drivers[d].id !== myDjId);
       if (myDecks.length !== 1 || partnerDecks.length !== 1) {
         syncStatsRef.current = { ...syncStatsRef.current,
           phaseErrorMs: null, monitorReason: "not_remote_b2b" };
@@ -8288,10 +8311,12 @@ export default function CollabMix({ initialPage = "landing", djName = null }) {
     // Driver-only broadcast (audio source state). Skips the gate for SHARED
     // control fields so the mixer stays bidirectional. Empty-deck case (no
     // driver yet) also broadcasts — preserves solo + pre-load behavior.
+    // Identity is djId, NOT display name — two tabs with identical persisted
+    // names from a shared cm_session would otherwise both pass the gate.
     if (!SHARED_FIELDS.has(field)) {
       const driver = deckDriversRef.current?.[id];
-      const myName = sessionRef.current?.name;
-      if (driver && myName && driver !== myName) return;
+      const myDjId = syncRef.current?.djId;
+      if (driver?.id && myDjId && driver.id !== myDjId) return;
     }
     sync.send({ type:"deck_update", deckId:id, field, value });
   };
@@ -8654,7 +8679,7 @@ export default function CollabMix({ initialPage = "landing", djName = null }) {
           <div style={{ flex:1, display:"flex", alignItems:"flex-start", gap:10, padding:"10px 0 10px 10px", overflow:"hidden", minHeight:0 }}>
             <DeckArt artwork={libLoadA?.track?.artwork} fallback="A" color="#2E86DE"/>
             <div style={{ flex:1, overflow:"hidden", minHeight:0 }}>
-            <Deck id="A" ch={eng.current?.A} ctx={eng.current?.ctx} color="#2E86DE" local remote={pA} onChange={dh("A")} midi={midiEvt} bpmResult={bpm.results["A"]} bpmAnalyze={bpm.analyze} eqHi={eqA.hi} eqMid={eqA.mid} eqLo={eqA.lo} chanVol={eqA.vol} loadFromLibrary={libLoadA} onTrackInfo={handleTrackInfo} onSync={()=>handleSyncToggle("A")} syncReady={!!(bpm.results["B"]?.bpm || pB?.bpm)} syncRole={syncLocked ? (lastSlaveDeck === "A" ? "slave" : "master") : null} isMaster={masterDeck === "A"} onMasterToggle={handleMasterToggle} onLibraryTrackDrop={(trackId)=>{const t=lib.library.find(x=>x.id===trackId);if(t)handleLibLoad(t,"A");}} onProgUpdate={handleProgA} onWaveform={setWfA} onSeekReady={onDeckASeekReady} onToggleReady={onDeckAToggleReady} onCueReady={onDeckACueReady} onNudgeReady={onDeckANudgeReady} onTransportFire={handleTransportFire} isDriver={!deckDrivers.A || deckDrivers.A === session.name} acNowRef={acNowRef} onBufferReady={onDeckABufferReady} barOneOffsetSec={barOneA * (bpm.results["A"]?.beatPeriodSec || 0)} onGridEdit={(fields) => libLoadA?.track?.id && lib.setGridEdit?.(libLoadA.track.id, fields)} hasOverride={!!userGridA} userGridOverride={userGridA} onPitchInteract={handlePitchInteract}/>
+            <Deck id="A" ch={eng.current?.A} ctx={eng.current?.ctx} color="#2E86DE" local remote={pA} onChange={dh("A")} midi={midiEvt} bpmResult={bpm.results["A"]} bpmAnalyze={bpm.analyze} eqHi={eqA.hi} eqMid={eqA.mid} eqLo={eqA.lo} chanVol={eqA.vol} loadFromLibrary={libLoadA} onTrackInfo={handleTrackInfo} onSync={()=>handleSyncToggle("A")} syncReady={!!(bpm.results["B"]?.bpm || pB?.bpm)} syncRole={syncLocked ? (lastSlaveDeck === "A" ? "slave" : "master") : null} isMaster={masterDeck === "A"} onMasterToggle={handleMasterToggle} onLibraryTrackDrop={(trackId)=>{const t=lib.library.find(x=>x.id===trackId);if(t)handleLibLoad(t,"A");}} onProgUpdate={handleProgA} onWaveform={setWfA} onSeekReady={onDeckASeekReady} onToggleReady={onDeckAToggleReady} onCueReady={onDeckACueReady} onNudgeReady={onDeckANudgeReady} onTransportFire={handleTransportFire} isDriver={!deckDrivers.A || deckDrivers.A?.id === sync.djId} acNowRef={acNowRef} onBufferReady={onDeckABufferReady} barOneOffsetSec={barOneA * (bpm.results["A"]?.beatPeriodSec || 0)} onGridEdit={(fields) => libLoadA?.track?.id && lib.setGridEdit?.(libLoadA.track.id, fields)} hasOverride={!!userGridA} userGridOverride={userGridA} onPitchInteract={handlePitchInteract}/>
             </div>
           </div>
         </div>
@@ -8756,7 +8781,7 @@ export default function CollabMix({ initialPage = "landing", djName = null }) {
           <div style={{ flex:1, display:"flex", alignItems:"flex-start", gap:10, padding:"10px 0 10px 10px", overflow:"hidden", minHeight:0 }}>
             <DeckArt artwork={libLoadB?.track?.artwork} fallback="B" color="#A855F7"/>
             <div style={{ flex:1, overflow:"hidden", minHeight:0 }}>
-            <Deck id="B" ch={eng.current?.B} ctx={eng.current?.ctx} color="#A855F7" local remote={pB} onChange={dh("B")} midi={midiEvt} bpmResult={bpm.results["B"]} bpmAnalyze={bpm.analyze} eqHi={eqB.hi} eqMid={eqB.mid} eqLo={eqB.lo} chanVol={eqB.vol} loadFromLibrary={libLoadB} onTrackInfo={handleTrackInfo} onSync={()=>handleSyncToggle("B")} syncReady={!!(bpm.results["A"]?.bpm || pA?.bpm)} syncRole={syncLocked ? (lastSlaveDeck === "B" ? "slave" : "master") : null} isMaster={masterDeck === "B"} onMasterToggle={handleMasterToggle} onLibraryTrackDrop={(trackId)=>{const t=lib.library.find(x=>x.id===trackId);if(t)handleLibLoad(t,"B");}} onProgUpdate={handleProgB} onWaveform={setWfB} onSeekReady={onDeckBSeekReady} onToggleReady={onDeckBToggleReady} onCueReady={onDeckBCueReady} onNudgeReady={onDeckBNudgeReady} onTransportFire={handleTransportFire} isDriver={!deckDrivers.B || deckDrivers.B === session.name} acNowRef={acNowRef} onBufferReady={onDeckBBufferReady} barOneOffsetSec={barOneB * (bpm.results["B"]?.beatPeriodSec || 0)} onGridEdit={(fields) => libLoadB?.track?.id && lib.setGridEdit?.(libLoadB.track.id, fields)} hasOverride={!!userGridB} userGridOverride={userGridB} onPitchInteract={handlePitchInteract}/>
+            <Deck id="B" ch={eng.current?.B} ctx={eng.current?.ctx} color="#A855F7" local remote={pB} onChange={dh("B")} midi={midiEvt} bpmResult={bpm.results["B"]} bpmAnalyze={bpm.analyze} eqHi={eqB.hi} eqMid={eqB.mid} eqLo={eqB.lo} chanVol={eqB.vol} loadFromLibrary={libLoadB} onTrackInfo={handleTrackInfo} onSync={()=>handleSyncToggle("B")} syncReady={!!(bpm.results["A"]?.bpm || pA?.bpm)} syncRole={syncLocked ? (lastSlaveDeck === "B" ? "slave" : "master") : null} isMaster={masterDeck === "B"} onMasterToggle={handleMasterToggle} onLibraryTrackDrop={(trackId)=>{const t=lib.library.find(x=>x.id===trackId);if(t)handleLibLoad(t,"B");}} onProgUpdate={handleProgB} onWaveform={setWfB} onSeekReady={onDeckBSeekReady} onToggleReady={onDeckBToggleReady} onCueReady={onDeckBCueReady} onNudgeReady={onDeckBNudgeReady} onTransportFire={handleTransportFire} isDriver={!deckDrivers.B || deckDrivers.B?.id === sync.djId} acNowRef={acNowRef} onBufferReady={onDeckBBufferReady} barOneOffsetSec={barOneB * (bpm.results["B"]?.beatPeriodSec || 0)} onGridEdit={(fields) => libLoadB?.track?.id && lib.setGridEdit?.(libLoadB.track.id, fields)} hasOverride={!!userGridB} userGridOverride={userGridB} onPitchInteract={handlePitchInteract}/>
             </div>
           </div>
         </div>
