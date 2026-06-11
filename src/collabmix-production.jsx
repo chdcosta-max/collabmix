@@ -2840,13 +2840,19 @@ function useSync({ url, onMsg }) {
   }, []);
 
   const connect = useCallback((roomId, djName) => {
+    const hadOpenSocket = !!ws.current;
+    console.log('[JOIN-DIAG] connect() roomId="'+roomId+'" djName="'+djName+'" (closing prior socket='+hadOpenSocket+')');
     if (ws.current) ws.current.close();
     setStatus("connecting"); setConnErr(null);
     try {
       const w = new WebSocket(url); ws.current = w;
       w.onopen = () => {
+        // Guard against a torn-down socket (StrictMode double-mount / rapid
+        // reconnect) winning a late onopen and sending join on a stale ws.
+        if (ws.current !== w) { console.warn('[JOIN-DIAG] onopen on STALE socket roomId="'+roomId+'" — ignoring'); try{w.close();}catch{} return; }
         setStatus("connected");
         logEvent("ws", "connected", { roomCode: roomId });
+        console.log('[JOIN-DIAG] WS open → send join roomId="'+roomId+'" djName="'+djName+'"');
         w.send(JSON.stringify({ type:"join", roomId, djName }));
         pt.current = setInterval(() => send({ type:"ping", clientTime:Date.now() }), 3000);
       };
@@ -2855,7 +2861,7 @@ function useSync({ url, onMsg }) {
         if(m.type==="joined"){
           setPartner(m.partnerName);
           if(m.djId) setDjId(m.djId);
-          console.log("[WS-JOINED] djId=" + m.djId + " partner=" + (m.partnerName||"(none)"));
+          console.log("[WS-JOINED] djId=" + m.djId + " room=\"" + (m.roomId||m.room||"?") + "\" partner=" + (m.partnerName||"(none)"));
         }
         if(m.type==="partner_joined"){setPartner(m.djName);send({type:"sync_request"});}
         if(m.type==="partner_left")  setPartner(null);
@@ -2863,8 +2869,20 @@ function useSync({ url, onMsg }) {
         if(m.type==="error")         setConnErr(m.msg);
         cb.current?.(m);
       };
-      w.onerror = () => { setStatus("error"); setConnErr("Could not connect to server. Check the URL."); };
-      w.onclose = (ev) => { logEvent("ws", "disconnected", { roomCode: roomId, reason: ev?.reason || null, code: ev?.code ?? null }); setStatus("disconnected"); clearInterval(pt.current); };
+      w.onerror = () => {
+        // Only surface a connection error for the CURRENT socket — a stale
+        // socket erroring during a reconnect must not paint "Could not connect"
+        // over a healthy live connection (the contradictory CONNECTED + error
+        // banner Chad saw on restore came from a torn-down first socket).
+        if (ws.current !== w) { console.warn('[JOIN-DIAG] onerror on STALE socket — suppressed'); return; }
+        console.warn('[JOIN-DIAG] WS error roomId="'+roomId+'"');
+        setStatus("error"); setConnErr("Could not connect to server. Check the URL.");
+      };
+      w.onclose = (ev) => {
+        console.warn('[JOIN-DIAG] WS closed roomId="'+roomId+'" code='+(ev?.code ?? '?')+' reason="'+(ev?.reason||'')+'" wasCurrent='+(ws.current===w));
+        logEvent("ws", "disconnected", { roomCode: roomId, reason: ev?.reason || null, code: ev?.code ?? null });
+        if (ws.current === w) { setStatus("disconnected"); clearInterval(pt.current); }
+      };
     } catch(e) {
       setStatus("error"); setConnErr("Invalid server URL.");
     }
