@@ -8435,3 +8435,55 @@ e. **stale `collabmix-server/` dir cleanup** (non-repo working copy; real server
 
 play-start glide (fixed), post-load partner-waveform jumpiness, Safari
 waveform jitter (diagnosed: per-frame shadowBlur at dpr in WebKit).
+
+## ✅ BEAT-GRID UNIFICATION — BUILT (June 11, 2026) — behind ?beatsv2=1, NOT yet pushed
+
+Implemented the unification plan from the previous addendum. All five pieces
+landed behind `?beatsv2=1` so the legacy LINEAR path stays intact for A/B
+ear-verification. Build passes; headless smoke asserts the engage math.
+
+### What was built (commit pending — awaiting Chad's push approval)
+
+1. **Shared helpers** (`nearestBeatTime`, `refinedBeatPhase`) at module scope.
+   The seek-quantize now calls `nearestBeatTime` (was an inline binary search) —
+   one definition of "nearest beat" for quantize + engage + grid.
+2. **Engage** (`syncDecks`, beatsv2 branch): aligns slave→master on the REFINED
+   `beatTimes` local phase instead of the linear single-period model. Iterates
+   the minimal (≤0.5-beat) phase nudge to a fixed point so repeat-engage is
+   IDEMPOTENT, and seeks with a new `noQuantize` flag so the smart-quantize does
+   NOT re-snap the engage's own seek (that re-snap was the wander). Path C
+   cross-correlation is SKIPPED under beatsv2 (it patched the linear
+   mis-anchoring; refined beats already sit on the kicks, and its quantizing
+   seek would break idempotency).
+3. **Big-WF grid** (`AnimatedZoomedWF`): now takes `beatTimes` + `beatsV2` props
+   and renders gridlines AT the refined beats (downbeat/phrase tiers still
+   labeled from the linear downbeat anchor). Grid now matches kicks + quantize.
+4. **Play-while-synced**: broadened so ANY deck starting under sync re-aligns to
+   the other (the canonical mix-in), except the explicit master. Legacy only
+   re-aligned the designated `lastSlaveDeck`.
+5. **Linear model** is no longer consulted for alignment/grid under beatsv2 —
+   `beatPhaseSec/Frac/PeriodSec` still broadcast for display/telemetry only.
+
+### Verification
+
+- `npm run build` — PASS.
+- `npm run smoke:engage` (`tools/smoke/engage_align.smoke.mjs`, pure-logic,
+  deterministic): REFINED engage lands **0.00ms** off-grid and **0.00ms**
+  repeat-move (idempotent) across 4 BPM/jitter scenarios; LEGACY shown for
+  contrast at **59–93ms** off-grid (the diagnosed regression). The smoke
+  duplicates the two helpers verbatim — keep in sync if either changes.
+- `npm run lint` — BROKEN PROJECT-WIDE (ESLint 9 has no `eslint.config.js`;
+  pre-existing, not from this change). Needs a separate config-migration pass.
+- NOT verified: real two-client audio engage in the browser (ear/eye A/B with
+  `?beatsv2=1`). That is the next required step before promoting beatsv2 to
+  default.
+
+### Known edges / follow-ups
+
+- Play-start broadening with NO explicit master lets either deck re-align on
+  play (only the explicit M-deck is protected) — intended for mix-in, but worth
+  an ear-check that restarting an implicit master doesn't tug.
+- Promotion path: once A/B confirms, flip `beatsv2` default-on with a
+  `?beatsv2=0` kill-switch (mirror the planned delaycomp promotion).
+- ESLint config migration is now on the board (blocks the lint half of the
+  verification protocol).
