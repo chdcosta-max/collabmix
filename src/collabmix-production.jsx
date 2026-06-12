@@ -61,6 +61,15 @@ const LIB_WIZARD = URL_FLAGS.get("libwizard") === "1";
 // the mirror misbehaves because the DRAW is starved (main-thread budget) vs the
 // interp being wrong vs packets absent. Off by default — pure logging.
 const MIRROR_DIAG = URL_FLAGS.get("mirrordiag") === "1";
+// ?smoothdiag=1 — "why isn't the scroll glass?" instrumentation. Per deck, once
+// a second, logs over the last second: scroll-delta stats (mean / stddev / max
+// px the playhead moved per frame) to quantify motion smoothness; zeroFrames
+// (frames where the playhead did NOT move — high = STEPPED position updates, the
+// classic judder source; low = per-frame interpolation); frame cadence (fps,
+// dropped frames, worst frame gap); and per-frame DRAW cost (mean/max ms) to
+// catch hitches from de-smear / band rendering. Tagged role=local|mirror so the
+// driver deck and the partner-mirrored deck are compared directly. Pure logging.
+const SMOOTH_DIAG = URL_FLAGS.get("smoothdiag") === "1";
 // Delay compensation — PROMOTED default-on June 11 2026 after the 30-min
 // production endurance soak (comp held 55.3–55.9ms for the full run, survived 3
 // track-ends + re-engages, zero errors/disconnects). Kill switch: ?delaycomp=0.
@@ -69,6 +78,19 @@ const DELAY_COMP = URL_FLAGS.get("delaycomp") !== "0";
 // dev server) or with ?smoke=1 against a build. NEVER on for a plain production
 // load, so real users never get the hook.
 const TEST_HOOKS = (import.meta.env && import.meta.env.DEV) || URL_FLAGS.get("smoke") === "1";
+// ?wfpulse=<0..1> — scales the big-WF beat-pulse emphasis: the centerline weight
+// band that thickens on each kick + the amplitude-driven brightness overlay.
+// These are what make the playing waveform appear to "breathe/pulse" at the
+// playhead (vs Rekordbox's constant-velocity glass). The base amplitude SHAPE is
+// untouched (Rekordbox shows that too) — only the per-kick emphasis scales.
+//   absent / =1 → current look   ·   0.5 → half   ·   0 → truly static (no pulse)
+// For an A/B against the Rekordbox reference. Default unchanged.
+const WF_PULSE = (() => {
+  const v = URL_FLAGS.get("wfpulse");
+  if (v == null || v === "") return 1;
+  const n = parseFloat(v);
+  return isFinite(n) ? Math.max(0, Math.min(1, n)) : 1;
+})();
 
 // ── Server Configuration ─────────────────────────────────────
 // After deploying to Railway, replace this URL with your Railway server URL.
@@ -4235,7 +4257,7 @@ function renderSilhouetteGlow(ctx,path,dr,dg,db,alpha){
   ctx.fill(path);
 }
 
-function AnimatedZoomedWF({ bands, dur, progRef, onSeek, h=96, windowSec=8, beatPhaseFrac=null, beatPeriodSec=null, gridOffsetMs=0, barOneOffsetSec=0, deckColor="#FFFFFF", rate=1, beatTimes=null, beatsV2=false, desmear=false }) {
+function AnimatedZoomedWF({ bands, dur, progRef, onSeek, h=96, windowSec=8, beatPhaseFrac=null, beatPeriodSec=null, gridOffsetMs=0, barOneOffsetSec=0, deckColor="#FFFFFF", rate=1, beatTimes=null, beatsV2=false, desmear=false, isDriver=true, deckId=null }) {
   // Path A glow tuning. Lower canvas renders a single solid-fill silhouette
   // and gets CSS filter:blur applied via inline style; the browser composites
   // the blur on the GPU. Tune visually by adjusting these three values.
@@ -4299,6 +4321,11 @@ function AnimatedZoomedWF({ bands, dur, progRef, onSeek, h=96, windowSec=8, beat
   useEffect(()=>{gridOffsetMsRef.current=gridOffsetMs;},[gridOffsetMs]);
   useEffect(()=>{barOneOffsetSecRef.current=barOneOffsetSec;},[barOneOffsetSec]);
   useEffect(()=>{deckColorRef.current=deckColor;},[deckColor]);
+  // role (local|mirror) + deck label for the smoothdiag log.
+  const isDriverRef=useRef(isDriver);
+  const deckIdRef=useRef(deckId);
+  useEffect(()=>{isDriverRef.current=isDriver;},[isDriver]);
+  useEffect(()=>{deckIdRef.current=deckId;},[deckId]);
 
   useEffect(()=>{
     const upper=ref.current;
@@ -4323,8 +4350,13 @@ function AnimatedZoomedWF({ bands, dur, progRef, onSeek, h=96, windowSec=8, beat
     // worst frame gap spikes — which makes BOTH this deck's and the mirror's
     // waveforms stutter even when the interp output (progRef) is correct.
     let _fLast=0,_fN=0,_fAcc=0,_fWorst=0,_fLogAt=0;
+    // smoothdiag accumulators (last-second window, reset on each log).
+    let _sLast=0,_sPrevProg=null,_sFrames=0,_sDtSum=0,_sDtMax=0,_sDropped=0,
+        _sScrollSum=0,_sScrollSqSum=0,_sScrollMax=0,_sZero=0,_sMove=0,
+        _sDrawSum=0,_sDrawMax=0,_sLogAt=0;
     const draw=()=>{
       raf.current=requestAnimationFrame(draw);
+      const _sT0=SMOOTH_DIAG?performance.now():0;
       if(MIRROR_DIAG){
         const _tn=performance.now();
         if(_fLast){ const _dt=_tn-_fLast; _fN++; _fAcc+=_dt; if(_dt>_fWorst)_fWorst=_dt; }
@@ -4560,11 +4592,16 @@ function AnimatedZoomedWF({ bands, dur, progRef, onSeek, h=96, windowSec=8, beat
         colGrad.addColorStop(0.95, `rgba(${dr},${dg},${db},0.95)`);
         colGrad.addColorStop(1,    `rgba(${peakR},${peakG},${peakB},1.0)`);
         ctx.fillStyle=colGrad;
+        // Brightness overlay: bars brighten with amplitude. WF_PULSE dials the
+        // amplitude-driven part toward a flat alpha so ?wfpulse=0 stops the
+        // per-kick brightness pulse at the playhead (constant-glass A/B).
+        const FLAT_A=0.92; // the mid color-stop alpha (constant base)
         for(let dx=0;dx<physW;dx++){
           const h=heights[dx];
           if(h<=0) continue;
           const env=envs[dx];
-          ctx.globalAlpha=Math.min(1,Math.pow(env,0.55)*0.95);
+          const dynA=Math.min(1,Math.pow(env,0.55)*0.95);
+          ctx.globalAlpha=WF_PULSE>=1?dynA:(FLAT_A+(dynA-FLAT_A)*WF_PULSE);
           ctx.fillRect(dx,center-h,1,h*2+1);
         }
         ctx.globalAlpha=1;
@@ -4573,18 +4610,22 @@ function AnimatedZoomedWF({ bands, dur, progRef, onSeek, h=96, windowSec=8, beat
         // the centerline whose height scales 0..10 css px with amplitude,
         // drawn in a brightened version of the deck color. The "bass weight"
         // — visually obvious thicker pulse under loud drops.
-        const cr=Math.min(255,dr+40), cg=Math.min(255,dg+40), cb=Math.min(255,db+40);
-        ctx.fillStyle=`rgb(${cr},${cg},${cb})`;
-        const bandMaxPx=Math.round(10*dpr);
-        for(let dx=0;dx<physW;dx++){
-          const env=envs[dx];
-          if(env<0.05) continue; // skip near-silence
-          const tPx=Math.max(1,Math.min(bandMaxPx,Math.round(env*10*dpr)));
-          const tHalf=tPx>>1;
-          ctx.globalAlpha=Math.min(1,Math.pow(env,0.5));
-          ctx.fillRect(dx,center-tHalf,1,tPx);
+        // WF_PULSE scales the band's amplitude (its "bass weight" pulse). At 0 the
+        // band is suppressed entirely → no per-kick centerline thickening.
+        if(WF_PULSE>0){
+          const cr=Math.min(255,dr+40), cg=Math.min(255,dg+40), cb=Math.min(255,db+40);
+          ctx.fillStyle=`rgb(${cr},${cg},${cb})`;
+          const bandMaxPx=Math.round(10*dpr*WF_PULSE);
+          for(let dx=0;dx<physW;dx++){
+            const env=envs[dx];
+            if(env<0.05) continue; // skip near-silence
+            const tPx=Math.max(1,Math.min(bandMaxPx,Math.round(env*10*dpr*WF_PULSE)));
+            const tHalf=tPx>>1;
+            ctx.globalAlpha=Math.min(1,Math.pow(env,0.5));
+            ctx.fillRect(dx,center-tHalf,1,tPx);
+          }
+          ctx.globalAlpha=1;
         }
-        ctx.globalAlpha=1;
       }
 
       // ── Premium beat grid — three-tier edge markers with downbeat + phrase emphasis.
@@ -4754,6 +4795,49 @@ function AnimatedZoomedWF({ bands, dur, progRef, onSeek, h=96, windowSec=8, beat
       ctx.shadowBlur=16;
       ctx.fillRect(cx-1,0,3,physH);
       ctx.shadowBlur=0;
+
+      // ── smoothdiag finalize: account this frame, log once a second ──────────
+      if(SMOOTH_DIAG){
+        const _tn=performance.now();
+        if(_sLast){
+          const dt=_tn-_sLast;
+          _sFrames++; _sDtSum+=dt; if(dt>_sDtMax)_sDtMax=dt;
+          if(dt>28) _sDropped++;                // missed ≥1 vsync at 60Hz (~16.7ms)
+        }
+        _sLast=_tn;
+        // Playhead scroll this frame, in screen px. scrollPx = dProg·dur·(px per
+        // buffer-sec). pxPerBufSec = physW / (windowSec·rate). Measures how far
+        // the waveform actually moved — constant = glass, variance = judder.
+        const _r=rateRef.current||1; const _vbs=Math.max(1e-6,windowSec*_r);
+        if(_sPrevProg!=null && dur2>0){
+          const scrollPx=Math.abs(prog2-_sPrevProg)*dur2*(physW/_vbs);
+          _sScrollSum+=scrollPx; _sScrollSqSum+=scrollPx*scrollPx;
+          if(scrollPx>_sScrollMax)_sScrollMax=scrollPx;
+          if(scrollPx<0.01)_sZero++; else _sMove++;   // zeroFrames → stepped position
+        }
+        _sPrevProg=prog2;
+        const drawMs=_tn-_sT0;                  // full draw-body cost this frame
+        _sDrawSum+=drawMs; if(drawMs>_sDrawMax)_sDrawMax=drawMs;
+
+        if(_tn-_sLogAt>1000 && _sFrames>0){
+          const movef=_sMove+_sZero;
+          const mean=movef>0?_sScrollSum/movef:0;
+          const variance=movef>0?Math.max(0,_sScrollSqSum/movef-mean*mean):0;
+          const sd=Math.sqrt(variance);
+          const fps=Math.round(_sFrames*1000/(_sDtSum||1));
+          const role=isDriverRef.current?'local':'mirror';
+          console.log('[SMOOTH-DIAG] deck='+(deckIdRef.current||deckColorRef.current||'?')+' role='+role+
+            ' fps='+fps+' frames='+_sFrames+
+            ' scrollPx/f{mean='+mean.toFixed(2)+' sd='+sd.toFixed(2)+' max='+_sScrollMax.toFixed(2)+'}'+
+            ' zeroFrames='+_sZero+'/'+movef+
+            ' frameMs{mean='+(_sDtSum/Math.max(1,_sFrames)).toFixed(1)+' max='+_sDtMax.toFixed(0)+'} dropped='+_sDropped+
+            ' drawMs{mean='+(_sDrawSum/Math.max(1,_sFrames)).toFixed(2)+' max='+_sDrawMax.toFixed(2)+'}'+
+            ' desmear='+(desmearRef.current?1:0)+' hidden='+(typeof document!=="undefined"?document.hidden:'?')+
+            ' prog='+prog2.toFixed(4));
+          _sLogAt=_tn; _sFrames=0; _sDtSum=0; _sDtMax=0; _sDropped=0;
+          _sScrollSum=0; _sScrollSqSum=0; _sScrollMax=0; _sZero=0; _sMove=0; _sDrawSum=0; _sDrawMax=0;
+        }
+      }
     };
 
     draw();
@@ -9819,7 +9903,7 @@ export default function CollabMix({ initialPage = "landing", djName = null }) {
                   } catch {}
                 }}
                 style={{ minHeight:wfH, flexShrink:0 }}>
-                <AnimatedZoomedWF bands={wfA} dur={wfA?.dur||0} progRef={progRefA} onSeek={seekDeckA} h={wfH} windowSec={WF_WINDOWS[wfZoom]} beatPhaseFrac={bpm.results["A"]?.beatPhaseFrac ?? pA?.beatPhaseFrac ?? null} beatPeriodSec={bpm.results["A"]?.beatPeriodSec ?? pA?.beatPeriodSec ?? null} gridOffsetMs={gridOffsetA} barOneOffsetSec={barOneA * (bpm.results["A"]?.beatPeriodSec || pA?.beatPeriodSec || 0)} deckColor="#2E86DE" rate={rateA} beatTimes={bpm.results["A"]?.beatTimes ?? pA?.beatTimes ?? null} beatsV2={beatsV2On} desmear={onsetGridOn && bpm.results["A"]?.gridSource !== "rekordbox"}/>
+                <AnimatedZoomedWF bands={wfA} dur={wfA?.dur||0} progRef={progRefA} onSeek={seekDeckA} h={wfH} windowSec={WF_WINDOWS[wfZoom]} beatPhaseFrac={bpm.results["A"]?.beatPhaseFrac ?? pA?.beatPhaseFrac ?? null} beatPeriodSec={bpm.results["A"]?.beatPeriodSec ?? pA?.beatPeriodSec ?? null} gridOffsetMs={gridOffsetA} barOneOffsetSec={barOneA * (bpm.results["A"]?.beatPeriodSec || pA?.beatPeriodSec || 0)} deckColor="#2E86DE" rate={rateA} beatTimes={bpm.results["A"]?.beatTimes ?? pA?.beatTimes ?? null} beatsV2={beatsV2On} desmear={onsetGridOn && bpm.results["A"]?.gridSource !== "rekordbox"} deckId="A" isDriver={!deckDrivers.A || deckDrivers.A?.id === sync.djId}/>
               </div>
             )}
             {hasB && (
@@ -9836,7 +9920,7 @@ export default function CollabMix({ initialPage = "landing", djName = null }) {
                   } catch {}
                 }}
                 style={{ minHeight:wfH, flexShrink:0 }}>
-                <AnimatedZoomedWF bands={wfB} dur={wfB?.dur||0} progRef={progRefB} onSeek={seekDeckB} h={wfH} windowSec={WF_WINDOWS[wfZoom]} beatPhaseFrac={bpm.results["B"]?.beatPhaseFrac ?? pB?.beatPhaseFrac ?? null} beatPeriodSec={bpm.results["B"]?.beatPeriodSec ?? pB?.beatPeriodSec ?? null} gridOffsetMs={gridOffsetB} barOneOffsetSec={barOneB * (bpm.results["B"]?.beatPeriodSec || pB?.beatPeriodSec || 0)} deckColor="#A855F7" rate={rateB} beatTimes={bpm.results["B"]?.beatTimes ?? pB?.beatTimes ?? null} beatsV2={beatsV2On} desmear={onsetGridOn && bpm.results["B"]?.gridSource !== "rekordbox"}/>
+                <AnimatedZoomedWF bands={wfB} dur={wfB?.dur||0} progRef={progRefB} onSeek={seekDeckB} h={wfH} windowSec={WF_WINDOWS[wfZoom]} beatPhaseFrac={bpm.results["B"]?.beatPhaseFrac ?? pB?.beatPhaseFrac ?? null} beatPeriodSec={bpm.results["B"]?.beatPeriodSec ?? pB?.beatPeriodSec ?? null} gridOffsetMs={gridOffsetB} barOneOffsetSec={barOneB * (bpm.results["B"]?.beatPeriodSec || pB?.beatPeriodSec || 0)} deckColor="#A855F7" rate={rateB} beatTimes={bpm.results["B"]?.beatTimes ?? pB?.beatTimes ?? null} beatsV2={beatsV2On} desmear={onsetGridOn && bpm.results["B"]?.gridSource !== "rekordbox"} deckId="B" isDriver={!deckDrivers.B || deckDrivers.B?.id === sync.djId}/>
               </div>
             )}
             {/* Zoom selector — floats in the top-right corner of the waveform
