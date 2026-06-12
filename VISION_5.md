@@ -8984,3 +8984,27 @@ the partner-mirror arc. INSTRUMENT already in place: ?smoothdiag=1
 NEXT: Cowork foreground capture → if zeroFrames is material at 60fps, schedule the
 pipeline-collapse as its own change with the mirror-path regression net (e2e-mirror,
 e2e-mirror-coast) as the guard.
+
+## TICKET-WF-STEPPING — CLOSED, NO DEFECT (June 11, 2026)
+
+Cowork FOREGROUNDED smoothdiag capture resolves it: under genuine tab visibility
+the local driver deck's playhead is per-frame SMOOTH, not stepped.
+- scrollPx/f: mean 3.168, sd 0.376 (tight, glass).
+- zeroFrames: 1 / 7629 = 0.013% (vs my headless 19/122 ≈ 15%).
+- frameMs 16.69 (clean 60fps), 1 dropped frame in 90s.
+ROOT of the earlier signal: my headless measurement ran with the tab effectively
+backgrounded → the position-source RAF was throttle-desynced from the draw RAF, a
+HEADLESS ARTIFACT. The 3-stage RAF pipeline (acNowRef → tick/progRef → WF draw) is
+fine in the foreground. Do NOT pursue the invasive playhead-pipeline rewire.
+
+SMOOTHNESS ARC — FINAL STATE:
+- Shimmer = PARITY with Rekordbox (TICKET-WF-SHIMMER parked for the record only).
+- Stepping = never existed (this closure).
+- Frame pacing = clean (paused sd ~1.1ms, playing 16.69ms / 1 drop in 90s).
+The LOCAL waveform is verified at-reference-quality by eyes + pixels + math.
+The one remaining UNMEASURABLE is MIRROR-role smoothness (headless mirror tab is
+hidden=true by env limitation) — it folds into the two already-queued checks:
+Chad's foregrounded-mirror eye-check + the iPad shakedown. No further build.
+Lesson logged: smoothdiag/zeroFrames numbers are only trustworthy from a
+FOREGROUNDED tab — a hidden/headless tab throttles the position RAF and
+manufactures false stepping. Tag captures with hidden= (already in the log line).
