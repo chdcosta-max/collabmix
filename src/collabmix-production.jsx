@@ -2884,6 +2884,18 @@ function useSync({ url, onMsg }) {
   const [djId, setDjId]       = useState(null);
   const pt=useRef(null), cb=useRef(onMsg);
   useEffect(()=>{cb.current=onMsg;},[onMsg]);
+  // ── Auto-reconnect state ─────────────────────────────────────
+  // A mid-session WS drop (network blip, server restart) used to set status
+  // "disconnected" and silently die. Now we re-dial with backoff and re-join
+  // the room for up to RECONNECT_WINDOW_MS, then re-pull partner state. The
+  // [RECONNECT] log family confesses reason/phase/outcome.
+  const lastJoinRef = useRef(null);          // {roomId, djName} for rejoin
+  const deliberateRef = useRef(false);       // true = disconnect() asked, suppress reconnect
+  const reconnectTimerRef = useRef(null);
+  const reconnectAttemptsRef = useRef(0);
+  const reconnectStartRef = useRef(0);
+  const connectRef = useRef(null);
+  const RECONNECT_WINDOW_MS = 30000;         // give up after ~30s of trying
 
   // All outbound WS payloads carry t_send (performance.now() at queue time).
   // Receivers ignore unknown fields today (handlers destructure specific
@@ -2895,11 +2907,15 @@ function useSync({ url, onMsg }) {
     }
   }, []);
 
-  const connect = useCallback((roomId, djName) => {
+  const connect = useCallback((roomId, djName, isReconnect=false) => {
     const hadOpenSocket = !!ws.current;
-    console.log('[JOIN-DIAG] connect() roomId="'+roomId+'" djName="'+djName+'" (closing prior socket='+hadOpenSocket+')');
-    if (ws.current) ws.current.close();
-    setStatus("connecting"); setConnErr(null);
+    console.log('[JOIN-DIAG] connect() roomId="'+roomId+'" djName="'+djName+'" (closing prior socket='+hadOpenSocket+' reconnect='+isReconnect+')');
+    lastJoinRef.current = { roomId, djName };
+    deliberateRef.current = false;
+    clearTimeout(reconnectTimerRef.current);
+    if (!isReconnect) { reconnectAttemptsRef.current = 0; reconnectStartRef.current = 0; }
+    if (ws.current) { try { ws.current.onclose = null; } catch {} ws.current.close(); } // suppress the prior socket's close → no spurious reconnect
+    setStatus(isReconnect ? "reconnecting" : "connecting"); setConnErr(null);
     try {
       const w = new WebSocket(url); ws.current = w;
       w.onopen = () => {
@@ -2908,8 +2924,15 @@ function useSync({ url, onMsg }) {
         if (ws.current !== w) { console.warn('[JOIN-DIAG] onopen on STALE socket roomId="'+roomId+'" — ignoring'); try{w.close();}catch{} return; }
         setStatus("connected");
         logEvent("ws", "connected", { roomCode: roomId });
+        if (isReconnect || reconnectAttemptsRef.current > 0) {
+          console.log('[RECONNECT] phase=success roomId="'+roomId+'" afterAttempts='+reconnectAttemptsRef.current+' elapsedMs='+(reconnectStartRef.current?Date.now()-reconnectStartRef.current:0));
+          logEvent("ws", "reconnected", { roomCode: roomId, attempts: reconnectAttemptsRef.current });
+        }
+        reconnectAttemptsRef.current = 0; reconnectStartRef.current = 0;
         console.log('[JOIN-DIAG] WS open → send join roomId="'+roomId+'" djName="'+djName+'"');
         w.send(JSON.stringify({ type:"join", roomId, djName }));
+        // After a reconnect, re-pull the partner's full current state.
+        if (isReconnect) { try { w.send(JSON.stringify({ type:"sync_request", t_send: performance.now() })); } catch {} }
         pt.current = setInterval(() => send({ type:"ping", clientTime:Date.now() }), 3000);
       };
       w.onmessage = (e) => {
@@ -2937,19 +2960,45 @@ function useSync({ url, onMsg }) {
       w.onclose = (ev) => {
         console.warn('[JOIN-DIAG] WS closed roomId="'+roomId+'" code='+(ev?.code ?? '?')+' reason="'+(ev?.reason||'')+'" wasCurrent='+(ws.current===w));
         logEvent("ws", "disconnected", { roomCode: roomId, reason: ev?.reason || null, code: ev?.code ?? null });
-        if (ws.current === w) { setStatus("disconnected"); clearInterval(pt.current); }
+        if (ws.current !== w) return;        // a superseded socket closed — ignore
+        clearInterval(pt.current);
+        if (deliberateRef.current) { setStatus("disconnected"); return; }
+        // Unexpected drop → re-dial with backoff and re-join, up to the window.
+        if (!reconnectStartRef.current) reconnectStartRef.current = Date.now();
+        const elapsed = Date.now() - reconnectStartRef.current;
+        if (elapsed > RECONNECT_WINDOW_MS) {
+          console.warn('[RECONNECT] phase=gaveup roomId="'+roomId+'" elapsedMs='+elapsed+' attempts='+reconnectAttemptsRef.current);
+          logEvent("ws", "reconnect_gaveup", { roomCode: roomId, attempts: reconnectAttemptsRef.current });
+          setStatus("disconnected"); return;
+        }
+        const attempt = ++reconnectAttemptsRef.current;
+        const delay = Math.min(8000, 500 * Math.pow(2, attempt - 1)); // 0.5,1,2,4,8s…
+        console.warn('[RECONNECT] phase=schedule roomId="'+roomId+'" attempt='+attempt+' delayMs='+delay+' code='+(ev?.code ?? '?'));
+        setStatus("reconnecting");
+        clearTimeout(reconnectTimerRef.current);
+        reconnectTimerRef.current = setTimeout(() => {
+          console.warn('[RECONNECT] phase=attempt roomId="'+roomId+'" attempt='+attempt);
+          connectRef.current?.(roomId, djName, true);
+        }, delay);
       };
     } catch(e) {
       setStatus("error"); setConnErr("Invalid server URL.");
     }
   }, [url, send]);
+  connectRef.current = connect;
 
   const disconnect = useCallback(() => {
+    deliberateRef.current = true;            // suppress auto-reconnect on this close
+    clearTimeout(reconnectTimerRef.current);
     ws.current?.close(); clearInterval(pt.current); setPartner(null); setDjId(null);
+    setStatus("disconnected");
   }, []);
 
-  useEffect(()=>()=>{ ws.current?.close(); clearInterval(pt.current); },[]);
-  return { status, partner, ping, connErr, djId, send, connect, disconnect };
+  useEffect(()=>()=>{ deliberateRef.current = true; clearTimeout(reconnectTimerRef.current); ws.current?.close(); clearInterval(pt.current); },[]);
+  // Test-only: drop the socket as if the network blipped (NOT deliberate, so
+  // the auto-reconnect path runs). Exposed via the smoke hook behind TEST_HOOKS.
+  const forceDrop = useCallback(() => { console.warn('[RECONNECT] phase=forced-drop (test)'); try { ws.current?.close(); } catch {} }, []);
+  return { status, partner, ping, connErr, djId, send, connect, disconnect, forceDrop };
 }
 
 // ── WebRTC ───────────────────────────────────────────────────
@@ -7620,6 +7669,7 @@ export default function CollabMix({ initialPage = "landing", djName = null }) {
     window.__seekDeck = (deck, value) => { seekFnsRef.current[deck === "B" ? "B" : "A"]?.(value); return true; };
     window.__cueDeck = (deck) => { cueFnsRef.current[deck === "B" ? "B" : "A"]?.(); return true; };
     window.__syncDeck = (deck) => { handleSyncToggle(deck === "B" ? "B" : "A"); return true; };
+    window.__dropWS = () => { syncRef.current?.forceDrop?.(); return true; };   // simulate a network blip
     window.__smokeReady = true;
     console.log("[SMOKE-HOOK] window.__loadTestTrack installed");
     return () => { try { delete window.__loadTestTrack; delete window.__smokeReady; } catch {} };

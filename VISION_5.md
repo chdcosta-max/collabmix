@@ -8707,3 +8707,20 @@ Deferred to the display-path family (ticket 4c): the partner-deck READOUT
 freezes at the last position at track-end (cosmetic mirror, not operability).
 
 Full suite 12/12 green (added e2e-trackend).
+
+## 🛡️ ROBUSTNESS CAMPAIGN — Phase 2a: WS auto-reconnect (June 11, 2026)
+
+INVESTIGATION confirmed the gap: WS onclose just set status="disconnected" and
+stopped the ping — a mid-session network blip / server restart silently killed
+the session, no recovery.
+
+FIX: on an UNEXPECTED close (not a deliberate disconnect()), re-dial with
+exponential backoff (0.5/1/2/4/8s) and re-join the room for up to a 30s window,
+then re-pull partner state (sync_request) on success. Deliberate disconnect()
+and component-unmount suppress reconnect. New [RECONNECT] log family confesses
+phase=schedule/attempt/success/gaveup with reason + elapsed.
+
+Verified (e2e-reconnect smoke): drop B's WS → [RECONNECT] schedule (attempt=1,
+500ms) → success (632ms) → partner restored. Full suite 13/13 green.
+
+Phase 2b (RTC renegotiation on network change) + 2c (sleep/wake) — next.
