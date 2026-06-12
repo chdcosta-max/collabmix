@@ -55,6 +55,12 @@ const BEATS_V2 = URL_FLAGS.get("beatsv2") !== "0";
 // Library Import V2 (first-run wizard + Door 1/5 + mix detection). Default OFF —
 // gated so existing LIB-PHASE behavior is unchanged until promotion.
 const LIB_WIZARD = URL_FLAGS.get("libwizard") === "1";
+// ?mirrordiag=1 — partner-mirror / render-starvation diagnostics. Per-deck draw
+// RAF logs effective fps + worst frame gap + drawn position (1/sec), and the
+// non-driver interp logs output vs last-packet vs packet-age. Reveals whether
+// the mirror misbehaves because the DRAW is starved (main-thread budget) vs the
+// interp being wrong vs packets absent. Off by default — pure logging.
+const MIRROR_DIAG = URL_FLAGS.get("mirrordiag") === "1";
 // Delay compensation — PROMOTED default-on June 11 2026 after the 30-min
 // production endurance soak (comp held 55.3–55.9ms for the full run, survived 3
 // track-ends + re-engages, zero errors/disconnects). Kill switch: ?delaycomp=0.
@@ -4258,8 +4264,22 @@ function AnimatedZoomedWF({ bands, dur, progRef, onSeek, h=96, windowSec=8, beat
     });
     ro.observe(upper);
 
+    // Render-starvation diagnostic (?mirrordiag=1). Measures the draw RAF's own
+    // cadence: if the main thread is starved (the load theory), fps drops + the
+    // worst frame gap spikes — which makes BOTH this deck's and the mirror's
+    // waveforms stutter even when the interp output (progRef) is correct.
+    let _fLast=0,_fN=0,_fAcc=0,_fWorst=0,_fLogAt=0;
     const draw=()=>{
       raf.current=requestAnimationFrame(draw);
+      if(MIRROR_DIAG){
+        const _tn=performance.now();
+        if(_fLast){ const _dt=_tn-_fLast; _fN++; _fAcc+=_dt; if(_dt>_fWorst)_fWorst=_dt; }
+        _fLast=_tn;
+        if(_tn-_fLogAt>1000 && _fN>0){
+          console.log('[MIRROR-DIAG] deck='+(deckColorRef.current||'?')+' drawFps='+Math.round(_fN*1000/(_fAcc||1))+' worstFrameGapMs='+_fWorst.toFixed(0)+' drawnProg='+((progRef.current||0)).toFixed(4));
+          _fLogAt=_tn; _fN=0; _fAcc=0; _fWorst=0;
+        }
+      }
 
       const sz=sizeRef.current;
       if(sz.dirty||physW===0){
@@ -5063,6 +5083,7 @@ function Deck({ id, ch, ctx:ac, color, local, remote, onChange, midi:mt, bpmResu
   const remProgRef=useRef(0),remTimeRef=useRef(0),remRateRef=useRef(0),remRaf=useRef(null),remSlewRef=useRef(0);
   const remPktRef=useRef(0);          // performance.now() of the last progress packet (staleness)
   const remStaleLoggedRef=useRef(false);
+  const remDiagAtRef=useRef(0);       // throttle for [MIRROR-DIAG] interp log
   const lastProgBroadcastRef=useRef(0);
   // Drag telemetry timestamp. applyRate skips logEvent when method==="drag" and
   // the last drag log was <DRAG_TELEMETRY_DEBOUNCE_MS ago. Hold, scroll, button,
@@ -5189,6 +5210,12 @@ function Deck({ id, ch, ctx:ac, color, local, remote, onChange, midi:mt, bpmResu
           interp=Math.min(1,Math.max(0,modeled+slew));
         }
         setProg(interp); progRef.current=interp; onProgUpdate?.(interp);
+        if(MIRROR_DIAG && tnow-remDiagAtRef.current>1000){
+          remDiagAtRef.current=tnow;
+          // interp = what the interp OUTPUTS this frame; anchor = last packet value;
+          // pktAgeMs = how long since a packet arrived; rafLive proves the interp RAF is running.
+          console.log('[MIRROR-DIAG] deck '+id+' interp='+interp.toFixed(4)+' anchorPkt='+(remProgRef.current||0).toFixed(4)+' pktAgeMs='+Math.round(sincePkt)+' rate='+(remRateRef.current*1e6).toFixed(2)+'e-6 rafLive=1');
+        }
         remRaf.current=requestAnimationFrame(animate);
       };
       remRaf.current=requestAnimationFrame(animate);
