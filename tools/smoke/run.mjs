@@ -38,6 +38,7 @@ const TESTS = [
   { name: "e2e-sync",         file: "e2e-sync.smoke.mjs",         kind: "e2e",   gates: "engage end-to-end: nearest-beat <10ms; repeat identical" },
   { name: "e2e-comp",         file: "e2e-comp.smoke.mjs",         kind: "e2e",   gates: "delaycomp measures nonzero on live audio; survives partner reload" },
   { name: "e2e-drift",        file: "e2e-drift.smoke.mjs",        kind: "e2e",   gates: "[SYNC-DRIFT] emits during locked remote B2B" },
+  { name: "e2e-trackend",     file: "e2e-trackend.smoke.mjs",     kind: "e2e",   gates: "deck parked at end stays operable (play replays, no inert flip-flop)" },
 ];
 
 // ── args

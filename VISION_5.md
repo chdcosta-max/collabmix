@@ -8682,3 +8682,28 @@ c. Partner-deck mirror freezes at track-end (stuck at last position; doesn't
 d. Cold re-engage after track-end: large first step then iterative refine
    (223→−97, 231→−102) — convergence working as designed; watch whether the
    residual relates to the per-kick onset variance ticket.
+
+## 🛡️ ROBUSTNESS CAMPAIGN — Phase 1: track-end state machine (June 11, 2026)
+
+REPRODUCED the inert-transport family headlessly. Root cause: a deck parked at
+its end (off.current == buf.duration — from a seek-to-end, a paused-near-end, or
+a re-engage that landed near the end; NOT a natural end, which already resets to
+0) → pressing play calls play_(buf.duration) → AudioBufferSourceNode starts at
+the end → 0 samples → instant onended → play flips true→false with no audio. The
+FIRST press is eaten (looks dead); the second works (onended reset off to 0).
+Matches Chad's soak evidence (flip-flop true/false, no audio, waveform stuck).
+
+FIX: play-press-at-end wraps to the start (off.current=0) before playing, so the
+deck replays instead of going inert. Runs on the driver, so it covers both a
+local press and a partner's toggle_request.
+
+CONTRACT verified (e2e-trackend smoke, 5 checks):
+- natural end → resets to 0, buf retained, operable ✓
+- parked at end + NON-OWNER play → wraps + plays (no flip-flop) ✓
+- parked at end + OWNER play → plays ✓
+- play from start → normal ✓
+- remote toggle round-trip after end works (driver executes) ✓
+Deferred to the display-path family (ticket 4c): the partner-deck READOUT
+freezes at the last position at track-end (cosmetic mirror, not operability).
+
+Full suite 12/12 green (added e2e-trackend).

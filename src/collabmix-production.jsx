@@ -4902,10 +4902,21 @@ function Deck({ id, ch, ctx:ac, color, local, remote, onChange, midi:mt, bpmResu
       // User has now interacted with this track — auto-position should
       // not override their action even if BPM analysis is still pending.
       userMovedRef.current=true;
+      // Parked-at-end guard: if the playhead sits at/past the buffer end (a
+      // track left at its end, a seek-to-end, or a re-engage that landed near
+      // the end), play_(off.current) would start a source at buf.duration → 0
+      // samples → instant onended → a dead flip-flop with no audio (the
+      // "transport inert after a long session" report). Wrap to the start so
+      // pressing play replays instead of going inert. Works for both a local
+      // press and a partner's toggle_request (the driver runs this path).
+      if (off.current >= buf.duration - 0.05) {
+        console.log('[PLAY-STATE] deck',id,'parked-at-end → wrapping to start before play');
+        off.current=0; setProg(0); progRef.current=0; onProgUpdate?.(0); onChange?.("progress",0);
+      }
       play_(off.current);setPlay(true);onChange?.("playing",true);
       logEvent("deck", "play_toggled", { deck: id, isPlaying: true });
     }
-  },[buf,play,ac,rate,id,onTransportFire,isDriver]);
+  },[buf,play,ac,rate,id,onTransportFire,isDriver,onProgUpdate]);
   // Latest analyzed beat times (seconds), via ref so `seek`'s quantize reads
   // fresh data without re-creating the callback. Driver uses its own analysis;
   // remote.beatTimes is the fallback.
