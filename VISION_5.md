@@ -8603,3 +8603,38 @@ c. **smoke-suite build** in tools/smoke/ — fold the seeds + the new engage /
 d. **Slice B render quality** — the "blocky" fix (layered band silhouettes,
    higher edge resolution) + band-color design decision + per-kick residual
    re-look.
+
+## ✅ TWO-CLIENT SMOKE SUITE BUILT (June 11, 2026) — the permanent regression net
+
+tools/smoke/ — one command (`npm run smoke`), per-test PASS/FAIL/SKIP, CI exit
+code. Now the STANDARD PRE-PUSH GATE (added to CLAUDE.md Verification Protocol).
+
+11 tests, three kinds:
+- unit (pure logic): engage idempotency, interp sawtooth, comp re-baseline.
+- audio (real analyzer worker on a bundled synthetic fixture): onset-anchor
+  <4ms, render de-smear closes the gap.
+- e2e (two-client playwright/system-Chrome, driving the real app via a
+  test-only load+transport hook): join-by-code+paste / distinct djIds; track
+  mirror (ANALYZER-BROADCAST→RECV, counts match); play/pause both ways + seek
+  SEND→RECV→EXEC; engage idempotent (no wander); delaycomp nonzero on LIVE
+  fixture audio + survives partner reload; [SYNC-DRIFT] in locked B2B.
+
+Key wins: window.__loadTestTrack runs a fixture through the NORMAL load path
+(real analysis + mirror), and the fixture playing through WebRTC gave the comp
+test a real live stream (the old seeds had only a silent master, untestable).
+Added symmetric receive-side markers [ANALYZER-RECV] / [TRANSPORT-RECV] for B2B
+debugging. Hardened the URL flags (capture at module load) so onsetgrid/beatsv2
+kill-switches survive the post-join query-string strip.
+
+Flake-check: two full cold-start runs, 11/11 green, ~92s each. e2e-sync bound is
+30ms (live 10Hz-packet jitter; exact math proven by the unit test). e2e-comp
+~45s, SKIPs if RTC can't connect. Superseded seeds folded; four _*_probe.mjs
+diagnostics kept.
+
+### TOMORROW'S ORDER (updated — smoke suite ✅ done)
+
+a. **comp 30-min endurance soak** via Cowork (?delaycomp=1, full HUD protocol).
+b. **promote delaycomp default-on** with kill-switch (via URL_FLAGS capture).
+c. **Slice B render quality** — layered translucent band silhouettes (bass<mids
+   <highs), smooth non-blocky contours + band-color design decision (warm-fill
+   ban vs Rekordbox orange mids) + per-kick onset residual re-look.
