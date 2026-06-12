@@ -5710,8 +5710,18 @@ function Deck({ id, ch, ctx:ac, color, local, remote, onChange, midi:mt, bpmResu
     onChange?.("key", trackMeta?.key || null);
     // Extract key from metadata or ID3
     setDeckKey(trackMeta?.key||null);
-    // Reset hot cues + loop on new track load
-    setHotCues([null,null,null,null]);
+    // Reset hot cues + loop on new track load. Door 3: seed imported rekordbox
+    // hot cues (time sec → prog fraction, placed by slot Num). Memory cues are
+    // data-only until Slice B.
+    {
+      const seeded=[null,null,null,null];
+      const imported=trackMeta?.hotCues;
+      if(Array.isArray(imported)&&d.duration>0){
+        for(const c of imported){ if(c&&c.num>=0&&c.num<seeded.length&&isFinite(c.time)) seeded[c.num]=Math.min(1,Math.max(0,c.time/d.duration)); }
+        console.log('[REKORDBOX] deck',id,'seeded',imported.filter(c=>c.num>=0&&c.num<4).length,'imported hot cues');
+      }
+      setHotCues(seeded);
+    }
     setLoopActive(false);setLoopStart(null);setLoopEnd(null);
     loopRef.current={active:false,start:null,end:null};
     bpmAnalyze?.(d, id);
@@ -7923,7 +7933,24 @@ export default function CollabMix({ initialPage = "landing", djName = null }) {
   //   • PQTZ is absent for that track (rare; ~1-2% of Rekordbox libraries).
   // NOTE: must live AFTER libLoadA/libLoadB declarations — the deps array
   // evaluates at render time and would hit a TDZ if hoisted above.
+  // Door 3: build the rekordbox-grid override from the LOADED TRACK RECORD when
+  // it was imported from rekordbox.xml (carries beatTimes + gridSource). Carries
+  // beatTimes so the unified path (grid/engage/quantize) consumes it; the linear
+  // fields are derived for legacy fallback. Higher precedence than the analyzer.
+  const rkGridFromRecord = (track) => {
+    if (!track || track.gridSource !== "rekordbox" || !Array.isArray(track.beatTimes) || track.beatTimes.length < 2) return null;
+    const period = track.beatPeriodSec || (track.bpm ? 60 / track.bpm : null);
+    const anchor = track.firstBar1AnchorSec ?? track.gridAnchorSec ?? track.beatTimes[0];
+    return {
+      bpm: track.bpm || null, beatTimes: track.beatTimes, beatPeriodSec: period, firstBar1AnchorSec: anchor,
+      beatPhaseSec: (period > 0 && anchor != null) ? anchor % period : null,
+      beatPhaseFrac: (period > 0 && anchor != null) ? anchor / period : null,
+      gridSource: "rekordbox",
+    };
+  };
   useEffect(() => {
+    const rec = rkGridFromRecord(libLoadA?.track);
+    if (rec) { console.log("[REKORDBOX-A] imported xml grid:", rec.beatTimes.length, "beats, anchor", rec.firstBar1AnchorSec); setRkGridA(rec); return; }
     if (!rkLib || !libLoadA?.file) { setRkGridA(null); return; }
     let cancelled = false;
     (async () => {
@@ -7936,6 +7963,8 @@ export default function CollabMix({ initialPage = "landing", djName = null }) {
     return () => { cancelled = true; setRkGridA(null); };
   }, [rkLib, libLoadA]);
   useEffect(() => {
+    const rec = rkGridFromRecord(libLoadB?.track);
+    if (rec) { console.log("[REKORDBOX-B] imported xml grid:", rec.beatTimes.length, "beats, anchor", rec.firstBar1AnchorSec); setRkGridB(rec); return; }
     if (!rkLib || !libLoadB?.file) { setRkGridB(null); return; }
     let cancelled = false;
     (async () => {
@@ -8129,13 +8158,15 @@ export default function CollabMix({ initialPage = "landing", djName = null }) {
   // TEST_HOOKS (dev server or ?smoke=1); absent for production users.
   useEffect(() => {
     if (!TEST_HOOKS || typeof window === "undefined") return;
-    window.__loadTestTrack = async (deck, url) => {
+    window.__loadTestTrack = async (deck, url, overrides) => {
       const d = deck === "B" ? "B" : "A";
       const resp = await fetch(url);
       if (!resp.ok) throw new Error("fixture fetch failed: " + resp.status);
       const file = new File([await resp.blob()], "kick120.wav", { type: "audio/wav" });
       const id = "smoketest-" + d;
-      const track = { id, title: "Smoke Kick 120", artist: "smoke-fixture", filename: "kick120.wav", analyzed: false };
+      // overrides lets a test inject an imported-grid track (gridSource:'rekordbox',
+      // beatTimes, hotCues, analyzed:true) to exercise Door 3.
+      const track = { id, title: "Smoke Kick 120", artist: "smoke-fixture", filename: "kick120.wav", analyzed: false, ...(overrides || {}) };
       lib.setFile?.(id, file);            // so handleLibLoad's getFile resolves it
       await handleLibLoad(track, d);
       console.log("[SMOKE-HOOK] loaded test track on deck " + d + " from " + url);
@@ -9748,7 +9779,7 @@ export default function CollabMix({ initialPage = "landing", djName = null }) {
                   } catch {}
                 }}
                 style={{ minHeight:wfH, flexShrink:0 }}>
-                <AnimatedZoomedWF bands={wfA} dur={wfA?.dur||0} progRef={progRefA} onSeek={seekDeckA} h={wfH} windowSec={WF_WINDOWS[wfZoom]} beatPhaseFrac={bpm.results["A"]?.beatPhaseFrac ?? pA?.beatPhaseFrac ?? null} beatPeriodSec={bpm.results["A"]?.beatPeriodSec ?? pA?.beatPeriodSec ?? null} gridOffsetMs={gridOffsetA} barOneOffsetSec={barOneA * (bpm.results["A"]?.beatPeriodSec || pA?.beatPeriodSec || 0)} deckColor="#2E86DE" rate={rateA} beatTimes={bpm.results["A"]?.beatTimes ?? pA?.beatTimes ?? null} beatsV2={beatsV2On} desmear={onsetGridOn}/>
+                <AnimatedZoomedWF bands={wfA} dur={wfA?.dur||0} progRef={progRefA} onSeek={seekDeckA} h={wfH} windowSec={WF_WINDOWS[wfZoom]} beatPhaseFrac={bpm.results["A"]?.beatPhaseFrac ?? pA?.beatPhaseFrac ?? null} beatPeriodSec={bpm.results["A"]?.beatPeriodSec ?? pA?.beatPeriodSec ?? null} gridOffsetMs={gridOffsetA} barOneOffsetSec={barOneA * (bpm.results["A"]?.beatPeriodSec || pA?.beatPeriodSec || 0)} deckColor="#2E86DE" rate={rateA} beatTimes={bpm.results["A"]?.beatTimes ?? pA?.beatTimes ?? null} beatsV2={beatsV2On} desmear={onsetGridOn && bpm.results["A"]?.gridSource !== "rekordbox"}/>
               </div>
             )}
             {hasB && (
@@ -9765,7 +9796,7 @@ export default function CollabMix({ initialPage = "landing", djName = null }) {
                   } catch {}
                 }}
                 style={{ minHeight:wfH, flexShrink:0 }}>
-                <AnimatedZoomedWF bands={wfB} dur={wfB?.dur||0} progRef={progRefB} onSeek={seekDeckB} h={wfH} windowSec={WF_WINDOWS[wfZoom]} beatPhaseFrac={bpm.results["B"]?.beatPhaseFrac ?? pB?.beatPhaseFrac ?? null} beatPeriodSec={bpm.results["B"]?.beatPeriodSec ?? pB?.beatPeriodSec ?? null} gridOffsetMs={gridOffsetB} barOneOffsetSec={barOneB * (bpm.results["B"]?.beatPeriodSec || pB?.beatPeriodSec || 0)} deckColor="#A855F7" rate={rateB} beatTimes={bpm.results["B"]?.beatTimes ?? pB?.beatTimes ?? null} beatsV2={beatsV2On} desmear={onsetGridOn}/>
+                <AnimatedZoomedWF bands={wfB} dur={wfB?.dur||0} progRef={progRefB} onSeek={seekDeckB} h={wfH} windowSec={WF_WINDOWS[wfZoom]} beatPhaseFrac={bpm.results["B"]?.beatPhaseFrac ?? pB?.beatPhaseFrac ?? null} beatPeriodSec={bpm.results["B"]?.beatPeriodSec ?? pB?.beatPeriodSec ?? null} gridOffsetMs={gridOffsetB} barOneOffsetSec={barOneB * (bpm.results["B"]?.beatPeriodSec || pB?.beatPeriodSec || 0)} deckColor="#A855F7" rate={rateB} beatTimes={bpm.results["B"]?.beatTimes ?? pB?.beatTimes ?? null} beatsV2={beatsV2On} desmear={onsetGridOn && bpm.results["B"]?.gridSource !== "rekordbox"}/>
               </div>
             )}
             {/* Zoom selector — floats in the top-right corner of the waveform
