@@ -8813,3 +8813,26 @@ display-path + session-persistence pass:
    quirks.
 These are display/telemetry quality, not operability — the decks WORK; the
 readouts lag. Bundle with the Slice B render-quality work.
+
+## 🛡️ ROBUSTNESS TICKETS — chaos-run evidence (June 11, 2026)
+
+From Chad's manual chaos run (two new items for the robustness/display queue):
+
+1. STALE-SESSION RESURRECTION (bug). Tabs auto-rejoined room fade-beam-467 —
+   the soak room from HOURS earlier (partner identity DJ Flux 80b7 persisted via
+   cm_session). Auto-rejoin (Path 2, cm_session) has no freshness limit. FIX
+   (cheap): timestamp cm_session on write; on auto-rejoin, if older than ~1-2h
+   don't silently resurrect — offer "rejoin or start fresh?" (or just drop to
+   Landing). Queued for the robustness pass.
+
+2. PARTNER-MIRROR DISPLAY bounce/freeze (best evidence yet for the ticketed
+   display-path family). On the stale session, Tab 2's mirror of Deck A bounced
+   back multiple bars / skipped, then froze entirely — WHILE audio responded
+   correctly to transport clicks. Control path PROVEN healthy in the log
+   (TRANSPORT-RECV round trips clean, comp steady 48.2ms, zero errors); the
+   DISPLAY path is the broken layer (progress-mirror interpolation: stale
+   partnerProgressMeta + the long-session/throttle staleness). Retest on clean
+   state: [CHAD TO FILL: persists / gone]. This is the same family as the
+   partner-mirror-freeze-at-track-end + live-position-re-track tickets — likely
+   one root cause in the non-driver progress interpolation. Prioritize in the
+   display pass; the control path is fine, so this is purely visual-trust.
