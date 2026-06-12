@@ -42,6 +42,7 @@ const TESTS = [
   { name: "e2e-reconnect",    file: "e2e-reconnect.smoke.mjs",    kind: "e2e",   gates: "mid-session WS drop auto-reconnects + re-joins + restores partner" },
   { name: "e2e-rejoin",       file: "e2e-rejoin.smoke.mjs",       kind: "e2e",   gates: "client reload mid-blend rebuilds full partner view (grid+BPM) within 5s" },
   { name: "e2e-chaos",        file: "e2e-chaos.smoke.mjs",        kind: "e2e",   gates: "app survives transport/seek/load storms (no crash, stays responsive)" },
+  { name: "e2e-mirror",       file: "e2e-mirror.smoke.mjs",       kind: "e2e",   gates: "partner-deck waveform mirror advances forward (no backward skip / freeze)" },
 ];
 
 // ── args

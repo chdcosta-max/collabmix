@@ -5047,6 +5047,8 @@ function Deck({ id, ch, ctx:ac, color, local, remote, onChange, midi:mt, bpmResu
   useEffect(()=>{ isDriverRef.current=isDriver; console.log('[PLAY-STATE] deck',id,'isDriver changed to '+isDriver); },[isDriver,id]);
   // EQ is now passed as props: eqHi, eqMid, eqLo, chanVol
   const remProgRef=useRef(0),remTimeRef=useRef(0),remRateRef=useRef(0),remRaf=useRef(null),remSlewRef=useRef(0);
+  const remPktRef=useRef(0);          // performance.now() of the last progress packet (staleness)
+  const remStaleLoggedRef=useRef(false);
   const lastProgBroadcastRef=useRef(0);
   // Drag telemetry timestamp. applyRate skips logEvent when method==="drag" and
   // the last drag log was <DRAG_TELEMETRY_DEBOUNCE_MS ago. Hold, scroll, button,
@@ -5114,9 +5116,12 @@ function Deck({ id, ch, ctx:ac, color, local, remote, onChange, midi:mt, bpmResu
     // actual rate; remSlew = a visual offset (set so the screen never JUMPS on a
     // correction) that decays to 0, easing the playhead onto truth.
     const SLEW_TAU_MS=220;     // slew half-life feel — eases a correction over ~½s
-    const SEEK_SNAP_SEC=3;     // discrepancy beyond this = a genuine seek → hard snap
+    const FWD_SNAP_SEC=3;      // forward jump beyond this = a genuine seek → hard snap
+    const BACK_SNAP_SEC=8;     // ONLY a large backward jump (a genuine rewind) hard-snaps
+    const STALE_HOLD_MS=2500;  // no packet for this long → hold position, don't run to the end
     if(remote.progress!=null){
       const now=performance.now();
+      remPktRef.current=now; remStaleLoggedRef.current=false;   // fresh packet → staleness clears
       const trackDurSec=remote.duration||dur;
       // Rate-aware: extrapolate at the driver's ACTUAL playback rate, not a fixed
       // 1×. A synced/pitched driver deck (rate≠1, the norm in a beatmatched set)
@@ -5131,14 +5136,20 @@ function Deck({ id, ch, ctx:ac, color, local, remote, onChange, midi:mt, bpmResu
       const modeledNow=remProgRef.current+(remRateRef.current||0)*since;
       const slewNow=remSlewRef.current*Math.exp(-since/SLEW_TAU_MS);
       const visibleNow=(remTimeRef.current>0)?(modeledNow+slewNow):remote.progress;
-      const driftSec=Math.abs(remote.progress-visibleNow)*(trackDurSec||1);
-      if(remTimeRef.current===0||driftSec>SEEK_SNAP_SEC){
-        // First packet, or a genuine seek (large jump either direction): hard snap.
+      const signedDriftSec=(remote.progress-visibleNow)*(trackDurSec||1); // + = truth AHEAD of us
+      const isFirst=remTimeRef.current===0;
+      const fwdSeek=signedDriftSec>FWD_SNAP_SEC;       // driver jumped ahead (cue/seek)
+      const bigRewind=-signedDriftSec>BACK_SNAP_SEC;   // driver genuinely rewound a long way
+      if(isFirst||fwdSeek||bigRewind){
+        if(bigRewind) console.warn('[MIRROR-SNAP] deck',id,'large rewind '+signedDriftSec.toFixed(1)+'s — hard snap');
         remProgRef.current=remote.progress; remTimeRef.current=now; remSlewRef.current=0;
       } else {
-        // Sub-seek drift (either direction): re-anchor the model to truth but
-        // CARRY the current visible offset into slew so there is NO visible jump —
-        // it then decays to 0, easing onto truth. This never snaps backward.
+        // Sub-seek drift (incl. moderate backward from packet starvation/jitter):
+        // re-anchor the model to truth but CARRY the current visible offset into
+        // slew so there is NEVER a visible backward jump — it decays to 0, easing
+        // onto truth as the partner advances. This is the fix for the "mirror
+        // skips back multiple bars" report under real-network jitter.
+        if(signedDriftSec<-0.5) console.log('[MIRROR-SNAP] deck',id,'absorbed backward drift '+signedDriftSec.toFixed(2)+'s via slew (no jump)');
         remProgRef.current=remote.progress; remTimeRef.current=now;
         remSlewRef.current=visibleNow-remote.progress;
       }
@@ -5148,10 +5159,21 @@ function Deck({ id, ch, ctx:ac, color, local, remote, onChange, midi:mt, bpmResu
     cancelAnimationFrame(remRaf.current);
     if(nowPlaying){
       const animate=()=>{
-        const since=performance.now()-remTimeRef.current;
-        const modeled=remProgRef.current+remRateRef.current*since;
-        const slew=remSlewRef.current*Math.exp(-since/SLEW_TAU_MS);
-        const interp=Math.min(1,Math.max(0,modeled+slew));
+        const tnow=performance.now();
+        const sincePkt=tnow-remPktRef.current;
+        let interp;
+        if(sincePkt>STALE_HOLD_MS){
+          // Starved of packets: HOLD near the last known position instead of
+          // extrapolating all the way to the end (the "freeze at 1.0" failure).
+          if(!remStaleLoggedRef.current){ console.warn('[MIRROR-STALE] deck',id,'no progress packet for '+Math.round(sincePkt)+'ms — holding position'); remStaleLoggedRef.current=true; }
+          const cappedSince=Math.min(tnow-remTimeRef.current, STALE_HOLD_MS);
+          interp=Math.min(1,Math.max(0,remProgRef.current+(remRateRef.current||0)*cappedSince));
+        } else {
+          const since=tnow-remTimeRef.current;
+          const modeled=remProgRef.current+remRateRef.current*since;
+          const slew=remSlewRef.current*Math.exp(-since/SLEW_TAU_MS);
+          interp=Math.min(1,Math.max(0,modeled+slew));
+        }
         setProg(interp); progRef.current=interp; onProgUpdate?.(interp);
         remRaf.current=requestAnimationFrame(animate);
       };
@@ -7956,6 +7978,7 @@ export default function CollabMix({ initialPage = "landing", djName = null }) {
     window.__cueDeck = (deck) => { cueFnsRef.current[deck === "B" ? "B" : "A"]?.(); return true; };
     window.__syncDeck = (deck) => { handleSyncToggle(deck === "B" ? "B" : "A"); return true; };
     window.__dropWS = () => { syncRef.current?.forceDrop?.(); return true; };   // simulate a network blip
+    window.__deckProg = (deck) => (deck === "B" ? progRefB : progRefA).current;  // displayed playhead 0..1 (mirror-motion test)
     window.__smokeReady = true;
     console.log("[SMOKE-HOOK] window.__loadTestTrack installed");
     return () => { try { delete window.__loadTestTrack; delete window.__smokeReady; } catch {} };
