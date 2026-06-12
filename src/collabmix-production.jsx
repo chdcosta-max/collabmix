@@ -3797,7 +3797,7 @@ function renderSilhouetteGlow(ctx,path,dr,dg,db,alpha){
   ctx.fill(path);
 }
 
-function AnimatedZoomedWF({ bands, dur, progRef, onSeek, h=96, windowSec=8, beatPhaseFrac=null, beatPeriodSec=null, gridOffsetMs=0, barOneOffsetSec=0, deckColor="#FFFFFF", rate=1, beatTimes=null, beatsV2=false }) {
+function AnimatedZoomedWF({ bands, dur, progRef, onSeek, h=96, windowSec=8, beatPhaseFrac=null, beatPeriodSec=null, gridOffsetMs=0, barOneOffsetSec=0, deckColor="#FFFFFF", rate=1, beatTimes=null, beatsV2=false, desmear=false }) {
   // Path A glow tuning. Lower canvas renders a single solid-fill silhouette
   // and gets CSS filter:blur applied via inline style; the browser composites
   // the blur on the GPU. Tune visually by adjusting these three values.
@@ -3854,8 +3854,10 @@ function AnimatedZoomedWF({ bands, dur, progRef, onSeek, h=96, windowSec=8, beat
   useEffect(()=>{beatPeriodSecRef.current=beatPeriodSec;},[beatPeriodSec]);
   const beatTimesRef=useRef(beatTimes);
   const beatsV2Ref=useRef(beatsV2);
+  const desmearRef=useRef(desmear);
   useEffect(()=>{beatTimesRef.current=beatTimes;},[beatTimes]);
   useEffect(()=>{beatsV2Ref.current=beatsV2;},[beatsV2]);
+  useEffect(()=>{desmearRef.current=desmear;},[desmear]);
   useEffect(()=>{gridOffsetMsRef.current=gridOffsetMs;},[gridOffsetMs]);
   useEffect(()=>{barOneOffsetSecRef.current=barOneOffsetSec;},[barOneOffsetSec]);
   useEffect(()=>{deckColorRef.current=deckColor;},[deckColor]);
@@ -4018,6 +4020,43 @@ function AnimatedZoomedWF({ bands, dur, progRef, onSeek, h=96, windowSec=8, beat
           let h=Math.pow(env,GAMMA)*maxH;
           if(env>LIFT_TH) h+=maxH*LIFT_AMT*(env-LIFT_TH)/(1-LIFT_TH);
           heights[dx]=h<maxH?h:maxH;
+        }
+
+        // ── Phase 2 hybrid: sharp kick leading edges from re-anchored onsets ──
+        // The 24000-bucket peak-hold bleeds each kick's energy ~1 bucket
+        // BACKWARD, so the drawn blob starts ~14ms before the true onset — a
+        // correct (onset-anchored) grid line then reads as sitting "inside" the
+        // blob. Using the onset beatTimes, snap each kick's leading edge to its
+        // onset: in the short smear window just before each onset, clamp the
+        // drawn env/height DOWN to the pre-smear baseline so the rise lands ON
+        // the onset column (a crisp vertical front). Only the kick's own
+        // backward bleed above the baseline is removed — real pre-kick content
+        // is preserved. Body resolution (24000) + broadcast payload unchanged.
+        // Gated by `desmear` (?onsetgrid=1) so it always pairs with onset beats.
+        const dsOnsets = desmearRef.current ? beatTimesRef.current : null;
+        if(dsOnsets && dsOnsets.length>1 && spp>0 && dur2>0){
+          const bucketSec=dur2/len;                                 // = dur/WF_W
+          const SMEAR_SEC=Math.min(0.025,Math.max(0.008,bucketSec*1.5));
+          const tLeft=(srcX/len)*dur2;
+          const tRight=((srcX+viewPx)/len)*dur2;
+          let lo=0,hi=dsOnsets.length-1; const tMin=tLeft-SMEAR_SEC; // first onset ≥ tMin
+          while(lo<hi){ const mid=(lo+hi)>>1; if(dsOnsets[mid]<tMin) lo=mid+1; else hi=mid; }
+          for(let oi=lo;oi<dsOnsets.length&&dsOnsets[oi]<=tRight;oi++){
+            const t=dsOnsets[oi];
+            const xOnset=((t/dur2)*len-srcX)/spp;
+            const xStart=(((t-SMEAR_SEC)/dur2)*len-srcX)/spp;
+            const c0=Math.max(0,Math.ceil(xStart));
+            const c1=Math.min(physW-1,Math.floor(xOnset)-1);        // columns strictly before the onset
+            if(c1<c0) continue;
+            const baseline=envs[c0];                                // pre-smear level at the window's left edge
+            for(let dx=c0;dx<=c1;dx++){
+              if(envs[dx]>baseline){
+                envs[dx]=baseline;
+                if(baseline<=0.01){ heights[dx]=0; }
+                else { let h2=Math.pow(baseline,GAMMA)*maxH; if(baseline>LIFT_TH) h2+=maxH*LIFT_AMT*(baseline-LIFT_TH)/(1-LIFT_TH); heights[dx]=h2<maxH?h2:maxH; }
+              }
+            }
+          }
         }
 
         // Parse deck color → rgb for all three passes below.
@@ -7773,6 +7812,11 @@ export default function CollabMix({ initialPage = "landing", djName = null }) {
   // switch: ?beatsv2=0 restores the legacy LINEAR engage + grid.
   const beatsV2On = new URLSearchParams(window.location.search).get("beatsv2") !== "0";
   const beatsV2Ref = useRef(beatsV2On); beatsV2Ref.current = beatsV2On;
+  // ?onsetgrid=1 — full Phase-1+2 stack: worker anchors beatTimes on the kick
+  // ONSET (analysis-time, threaded into the worker message) AND the big-WF
+  // de-smears each kick's drawn leading edge onto that onset (render-time,
+  // below). One flag so the A/B is full-stack-on vs current production.
+  const onsetGridOn = new URLSearchParams(window.location.search).get("onsetgrid") === "1";
   useEffect(() => {
     const iv = setInterval(() => {
       const e = eng.current; if (!e?.ctx || !e.monitorDelay) return;
@@ -9047,7 +9091,7 @@ export default function CollabMix({ initialPage = "landing", djName = null }) {
                   } catch {}
                 }}
                 style={{ minHeight:wfH, flexShrink:0 }}>
-                <AnimatedZoomedWF bands={wfA} dur={wfA?.dur||0} progRef={progRefA} onSeek={seekDeckA} h={wfH} windowSec={WF_WINDOWS[wfZoom]} beatPhaseFrac={bpm.results["A"]?.beatPhaseFrac ?? pA?.beatPhaseFrac ?? null} beatPeriodSec={bpm.results["A"]?.beatPeriodSec ?? pA?.beatPeriodSec ?? null} gridOffsetMs={gridOffsetA} barOneOffsetSec={barOneA * (bpm.results["A"]?.beatPeriodSec || pA?.beatPeriodSec || 0)} deckColor="#2E86DE" rate={rateA} beatTimes={bpm.results["A"]?.beatTimes ?? pA?.beatTimes ?? null} beatsV2={beatsV2On}/>
+                <AnimatedZoomedWF bands={wfA} dur={wfA?.dur||0} progRef={progRefA} onSeek={seekDeckA} h={wfH} windowSec={WF_WINDOWS[wfZoom]} beatPhaseFrac={bpm.results["A"]?.beatPhaseFrac ?? pA?.beatPhaseFrac ?? null} beatPeriodSec={bpm.results["A"]?.beatPeriodSec ?? pA?.beatPeriodSec ?? null} gridOffsetMs={gridOffsetA} barOneOffsetSec={barOneA * (bpm.results["A"]?.beatPeriodSec || pA?.beatPeriodSec || 0)} deckColor="#2E86DE" rate={rateA} beatTimes={bpm.results["A"]?.beatTimes ?? pA?.beatTimes ?? null} beatsV2={beatsV2On} desmear={onsetGridOn}/>
               </div>
             )}
             {hasB && (
@@ -9064,7 +9108,7 @@ export default function CollabMix({ initialPage = "landing", djName = null }) {
                   } catch {}
                 }}
                 style={{ minHeight:wfH, flexShrink:0 }}>
-                <AnimatedZoomedWF bands={wfB} dur={wfB?.dur||0} progRef={progRefB} onSeek={seekDeckB} h={wfH} windowSec={WF_WINDOWS[wfZoom]} beatPhaseFrac={bpm.results["B"]?.beatPhaseFrac ?? pB?.beatPhaseFrac ?? null} beatPeriodSec={bpm.results["B"]?.beatPeriodSec ?? pB?.beatPeriodSec ?? null} gridOffsetMs={gridOffsetB} barOneOffsetSec={barOneB * (bpm.results["B"]?.beatPeriodSec || pB?.beatPeriodSec || 0)} deckColor="#A855F7" rate={rateB} beatTimes={bpm.results["B"]?.beatTimes ?? pB?.beatTimes ?? null} beatsV2={beatsV2On}/>
+                <AnimatedZoomedWF bands={wfB} dur={wfB?.dur||0} progRef={progRefB} onSeek={seekDeckB} h={wfH} windowSec={WF_WINDOWS[wfZoom]} beatPhaseFrac={bpm.results["B"]?.beatPhaseFrac ?? pB?.beatPhaseFrac ?? null} beatPeriodSec={bpm.results["B"]?.beatPeriodSec ?? pB?.beatPeriodSec ?? null} gridOffsetMs={gridOffsetB} barOneOffsetSec={barOneB * (bpm.results["B"]?.beatPeriodSec || pB?.beatPeriodSec || 0)} deckColor="#A855F7" rate={rateB} beatTimes={bpm.results["B"]?.beatTimes ?? pB?.beatTimes ?? null} beatsV2={beatsV2On} desmear={onsetGridOn}/>
               </div>
             )}
             {/* Zoom selector — floats in the top-right corner of the waveform
