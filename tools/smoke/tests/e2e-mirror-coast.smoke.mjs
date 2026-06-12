@@ -54,6 +54,30 @@ try {
   // floor (~100-150ms here; ~10-30ms on a real LAN). The regression was 920ms
   // median + 2.8s snaps, so <220ms median proves the coast tracks truth.
   t.check("coast tracks driver truth (median < 220ms — latency floor)", medErr < 220, `median ${medErr?.toFixed(0)}ms, max ${maxErr?.toFixed(0)}ms (one-way latency floor)`);
+
+  // ── Transition seam: pause→play from the NON-OWNER (B controls deck A) must
+  // not jump the mirror. The old play-start reset (remTimeRef=0) coasted from a
+  // huge elapsed → jump to the END for the ~100-200ms before the first packet.
+  // Tested at NORMAL packet rate (the seam is independent of sparseness; the
+  // 2.5s throttle above would inflate the post-await catch-up unrealistically).
+  await A.evaluate(() => { window.__progressThrottleMs = 100; });
+  await B.waitForTimeout(600);
+  await B.evaluate(() => window.__toggleDeck("A"));   // pause deck A (remote)
+  await B.waitForTimeout(900);
+  const prePlay = await B.evaluate(() => window.__deckProg("A"));
+  await B.evaluate(() => window.__toggleDeck("A"));   // play deck A (remote)
+  let maxJump = 0; let prev = prePlay;
+  for (let i = 0; i < 12; i++) {   // sample fast through the transition (~1.2s)
+    await B.waitForTimeout(100);
+    const v = await B.evaluate(() => window.__deckProg("A"));
+    if (typeof v === "number" && typeof prev === "number") maxJump = Math.max(maxJump, Math.abs(v - prev));
+    prev = v;
+  }
+  // The jump-to-end bug produced a step toward 1.0 (huge). A clean restart steps
+  // by at most a small latency-snap. <0.04 (~480ms of the 12s fixture) catches
+  // the bug (~1.0) with margin while tolerating the first-packet snap.
+  t.check("pause→play from non-owner does not jump the mirror", maxJump < 0.04, `max transition step=${(maxJump * FIXTURE_DUR_SEC * 1000).toFixed(0)}ms equiv`);
+
   t.check("no page errors", sA.errors().length === 0 && sB.errors().length === 0, [...sA.errors(), ...sB.errors()].slice(0, 2).join(" | ") || "clean");
   void FIXTURE_BPM;
 } catch (e) {

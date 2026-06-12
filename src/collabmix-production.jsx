@@ -5120,6 +5120,7 @@ function Deck({ id, ch, ctx:ac, color, local, remote, onChange, midi:mt, bpmResu
   const remStaleLoggedRef=useRef(false);
   const remDiagAtRef=useRef(0);       // throttle for [MIRROR-DIAG] interp log
   const lastRemProgRef=useRef(null);  // last remote.progress we re-anchored on (skip non-progress re-runs)
+  const remAwaitPktRef=useRef(false); // play just started → hold at paused pos until first fresh packet
   const lastProgBroadcastRef=useRef(0);
   // Drag telemetry timestamp. applyRate skips logEvent when method==="drag" and
   // the last drag log was <DRAG_TELEMETRY_DEBOUNCE_MS ago. Hold, scroll, button,
@@ -5167,12 +5168,19 @@ function Deck({ id, ch, ctx:ac, color, local, remote, onChange, midi:mt, bpmResu
     if(!remote||buf)return;
     const wasPlaying=play; const nowPlaying=remote.playing||false;
     setPlay(nowPlaying);
-    // On play-START, the extrapolated playhead is running off stale paused state.
-    // Force the next progress packet to HARD-SNAP to truth (re-anchor) instead of
-    // slewing — otherwise the never-snap-backward slew turns the correction into a
-    // visible glide backward over a few bars. Reset the anchor so the packet block
-    // below takes its first-packet (hard-snap) path.
-    if(nowPlaying && !wasPlaying){ remTimeRef.current=0; remSlewRef.current=0; }
+    // On play-START, HOLD at the paused position until the first genuinely-new
+    // progress packet arrives, then hard-snap to the partner's restart position
+    // and coast. Previously this reset remTimeRef=0, which made the RAF coast
+    // from performance.now() (a huge elapsed) → the playhead jumped to the END
+    // for the ~100-200ms gap before the first packet — the visible per-press
+    // jump on remote pause→play. The await flag suppresses the coast in that gap.
+    if(nowPlaying && !wasPlaying){
+      remAwaitPktRef.current=true;
+      // Anchor the model to WHAT'S CURRENTLY DISPLAYED (progRef), so the hold and
+      // the first-packet slew both start from the visible position — no jump in
+      // either direction. The first fresh packet then eases (slews) onto truth.
+      remProgRef.current=progRef.current; remTimeRef.current=performance.now(); remSlewRef.current=0;
+    }
     // EQ values now come from parent props when remote is true
     if(remote.trackName)setName(remote.trackName);
     if(remote.duration)setDur(remote.duration);
@@ -5214,6 +5222,7 @@ function Deck({ id, ch, ctx:ac, color, local, remote, onChange, midi:mt, bpmResu
       const slewNow=remSlewRef.current*Math.exp(-since/SLEW_TAU_MS);
       const visibleNow=(remTimeRef.current>0)?(modeledNow+slewNow):remote.progress;
       const signedDriftSec=(remote.progress-visibleNow)*(trackDurSec||1); // + = truth AHEAD of us
+      remAwaitPktRef.current=false;   // a fresh packet → stop holding, resume coasting
       const isFirst=remTimeRef.current===0;
       const fwdSeek=signedDriftSec>FWD_SNAP_SEC;       // driver jumped ahead (cue/seek)
       const bigRewind=-signedDriftSec>BACK_SNAP_SEC;   // driver genuinely rewound a long way
@@ -5243,10 +5252,17 @@ function Deck({ id, ch, ctx:ac, color, local, remote, onChange, midi:mt, bpmResu
         // ~1Hz). The audio is genuinely advancing at this rate, so coasting
         // tracks truth; an arriving packet just nudges via slew. (The earlier
         // "hold after 2.5s" caused the freeze — a playing deck must not stop.)
-        const since=tnow-remTimeRef.current;
-        const modeled=remProgRef.current+remRateRef.current*since;
-        const slew=remSlewRef.current*Math.exp(-since/SLEW_TAU_MS);
-        const interp=Math.min(1,Math.max(0,modeled+slew));
+        let interp;
+        if(remAwaitPktRef.current){
+          // Play just started — HOLD at the paused position until the first fresh
+          // packet anchors the restart (prevents the per-press jump-to-end).
+          interp=Math.min(1,Math.max(0,remProgRef.current));
+        } else {
+          const since=tnow-remTimeRef.current;
+          const modeled=remProgRef.current+remRateRef.current*since;
+          const slew=remSlewRef.current*Math.exp(-since/SLEW_TAU_MS);
+          interp=Math.min(1,Math.max(0,modeled+slew));
+        }
         if(sincePkt>1500 && !remStaleLoggedRef.current){ console.warn('[MIRROR-STALE] deck',id,'packets sparse ('+Math.round(sincePkt)+'ms) — coasting at true rate'); remStaleLoggedRef.current=true; }
         setProg(interp); progRef.current=interp; onProgUpdate?.(interp);
         if(MIRROR_DIAG && tnow-remDiagAtRef.current>1000){
