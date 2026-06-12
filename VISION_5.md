@@ -8521,3 +8521,17 @@ line still sits ~a few px inside the drawn blob front at max zoom — the eye ma
 read it as "late." Threshold pick by eye is therefore confounded by the render
 smear; Phase 2 (hybrid: 24000 body + sharp attack edges drawn from the
 re-anchored onsets) likely needs to land before the threshold is finally locked.
+
+## ✅ Phase 2 hybrid de-smear BUILT — gated ?onsetgrid=1 (default OFF) (June 11, 2026)
+
+Big-WF keeps the 24000-bucket body but snaps each kick's drawn leading edge onto
+the re-anchored onset beatTimes (clamp the backward smear down to the pre-smear
+baseline → crisp vertical front). Zero extra broadcast (no WF_W bump). Gated by
+the same ?onsetgrid=1 as Phase 1 → one flag, full stack vs production; default-
+off render is byte-identical. Verify: pooled drawn-edge-vs-onset -18.7ms →
+-6.0ms (68% closer); line-vs-blob gap ~21ms → ~6ms. Worker untouched → harness
+regression unchanged.
+
+PENDING: Chad zoom-tests ?onsetgrid=1 (full stack) and locks ONSET_FRAC 0.15 vs
+0.30 against the honest (de-smeared) blob, then we promote the whole stack
+(onsetgrid default-on) together.
