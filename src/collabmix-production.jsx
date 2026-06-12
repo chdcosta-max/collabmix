@@ -197,8 +197,12 @@ function useBPM() {
     setResults(prev => ({ ...prev, [id]: { ...(prev[id] || {}), bpm: null, beatPhaseFrac: null, beatPeriodSec: null, beatPhaseSec: null, firstBar1AnchorSec: null, beatTimes: null, beatAttacks: null, analyzing: true } }));
     const cd = [];
     for (let c = 0; c < buf.numberOfChannels; c++) cd.push(buf.getChannelData(c).slice());
+    // Phase 1 grid re-anchor: ?onsetgrid=1 tells the worker to anchor beatTimes
+    // on the kick ONSET (leading edge) instead of the diff-argmax mid-attack
+    // point. Default OFF for A/B (zoom the grid vs kicks); promote once verified.
+    const onsetAnchor = new URLSearchParams(window.location.search).get("onsetgrid") === "1";
     // Transfer ArrayBuffers (O(1) vs O(n) structured clone) — avoids 10-30s stall on large tracks
-    worker.current.postMessage({ cd, sr: buf.sampleRate, id }, cd.map(a => a.buffer));
+    worker.current.postMessage({ cd, sr: buf.sampleRate, id, onsetAnchor }, cd.map(a => a.buffer));
   }, []);
   return { results, analyze };
 }

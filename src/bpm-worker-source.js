@@ -98,7 +98,7 @@ function dphase(mono,sr,bpm){
   return{beatPhaseSec,beatPeriodSec};
 }
 self.onmessage=function(e){
-  const{cd,sr,id}=e.data;const len=cd[0].length,nc=cd.length;
+  const{cd,sr,id,onsetAnchor}=e.data;const len=cd[0].length,nc=cd.length;
   const mono=new Float32Array(len);for(let c=0;c<nc;c++){const d=cd[c];for(let i=0;i<len;i++)mono[i]+=d[i]/nc;}
   // BPM detection: 100-400Hz bandpass captures kick + snare transients for autocorrelation
   const f=bp(mono,sr,100,400);for(let i=0;i<f.length;i++)f[i]=f[i]>0?f[i]:0;
@@ -403,7 +403,54 @@ self.onmessage=function(e){
             // 1+ already work well with argmax and changing them risks
             // breaking the ~234 currently on-grid tracks.
             let subAFired = false;
-            if (i === 0 && argmaxIdx > edgeMargin) {
+            let onsetWalkFired = false;
+            // ── Onset re-anchor (Phase 1, gated by onsetAnchor / ?onsetgrid=1) ─
+            // argmax(dE/dt) lands on the steepest-slope point (mid-attack), which
+            // measures ~+8ms LATE of the kick's leading edge (see grid-anchor-
+            // diagnostic). When onsetAnchor is set, re-anchor EVERY beat to the
+            // attack onset: from the steepest-slope point, find the local power
+            // peak just ahead, a pre-attack floor just behind, and walk BACK to
+            // the first sample crossing floor+15%·(peak−floor) — the leading
+            // edge. Uniform across the whole track (no beat-0 special-casing →
+            // the per-kick inconsistency Chad sees goes away). Capped at 35ms of
+            // retreat so it can never cross into the prior beat. Supersedes the
+            // sub-cause A/B beat-0 fixes, which only existed to nudge the anchor
+            // and pull in opposite directions.
+            if (onsetAnchor && argmaxIdx > edgeMargin) {
+              const fwdLimit = Math.min(winLen - 1, argmaxIdx + Math.round(sr * 0.030));
+              let peakVal = smoothed[argmaxIdx];
+              for (let j = argmaxIdx + 1; j <= fwdLimit; j++) {
+                if (smoothed[j] > peakVal) peakVal = smoothed[j];
+              }
+              const backFloorLimit = Math.max(edgeMargin, argmaxIdx - Math.round(sr * 0.050));
+              let floorVal = smoothed[argmaxIdx];
+              for (let j = argmaxIdx; j >= backFloorLimit; j--) {
+                if (smoothed[j] < floorVal) floorVal = smoothed[j];
+              }
+              // Gate in AMPLITUDE space: smoothed[] is POWER (squared), so a
+              // 15%-of-peak leading edge must be taken on sqrt, else the gate
+              // sits ~39% up the amplitude attack and the walk-back undershoots
+              // (Rocket Jam stayed +15ms late before this). gate(power) =
+              // (floorAmp + frac·(peakAmp−floorAmp))².
+              // ── THRESHOLD KNOB (the only line to change for the A/B) ──────
+              // 0.15 = leading edge (visually on the kick front, can read early).
+              // 0.30 = between edge and mid-attack (closer to Rekordbox bar-1 on
+              //        some tracks). Flip this one number, rebuild, re-zoom.
+              const ONSET_FRAC = 0.15;   // ← 0.30 = the prepped "reads-too-early" fallback
+              const peakAmp = Math.sqrt(peakVal), floorAmp = Math.sqrt(floorVal);
+              const gateAmp = floorAmp + ONSET_FRAC * (peakAmp - floorAmp);
+              const gate = gateAmp * gateAmp;
+              const walkCap = Math.max(edgeMargin, argmaxIdx - Math.round(sr * 0.045));
+              let j = argmaxIdx;
+              while (j > walkCap && smoothed[j] > gate) j--;
+              if (j >= edgeMargin && j < argmaxIdx) { argmaxIdx = j; onsetWalkFired = true; }
+            }
+            // Sub-cause A (Class 1, Step 3): beat 0 ONLY. argmax(dE/dt) lands on
+            // the steepest-slope point (mid-attack); Rekordbox anchors earlier,
+            // on a secondary peak at 60-80% of the argmax amplitude. Prefer it
+            // if present. Disabled under onsetAnchor (the walk-back above owns
+            // beat 0 too, uniformly). Beats 1+ keep argmax in legacy mode.
+            if (!onsetAnchor && i === 0 && argmaxIdx > edgeMargin) {
               const EARLY_PEAK_THRESHOLD = 0.75;
               const minDiff = diff[argmaxIdx] * EARLY_PEAK_THRESHOLD;
               for (let j = edgeMargin; j < argmaxIdx; j++) {
@@ -432,7 +479,7 @@ self.onmessage=function(e){
             // - walk capped so a flat-top envelope can't drag the anchor by
             //   more than WALK_FORWARD_MS
             let walkForwardFired = false;
-            if (i === 0 && !subAFired && argmaxIdx >= edgeMargin) {
+            if (!onsetAnchor && i === 0 && !subAFired && argmaxIdx >= edgeMargin) {
               const WALK_FORWARD_MS = 20;
               const walkLimitSamples = Math.round(sr * WALK_FORWARD_MS / 1000);
               const walkLimit = Math.min(winLen - edgeMargin - 1,
@@ -456,9 +503,10 @@ self.onmessage=function(e){
               reason = 'edge'; refineSkipEdge++;
             } else {
               // Parabolic interpolation for sub-sample precision.
-              // Skip when walk-forward fired: argmaxIdx is the envelope peak,
-              // not the diff peak, so parabolic interp on diff[] is invalid.
-              if (!walkForwardFired) {
+              // Skip when walk-forward OR onset-walk fired: argmaxIdx is then a
+              // power-envelope position, not the diff peak, so parabolic interp
+              // on diff[] is invalid.
+              if (!walkForwardFired && !onsetWalkFired) {
                 const yL = diff[argmaxIdx - 1], yC = diff[argmaxIdx], yR = diff[argmaxIdx + 1];
                 const denom = yL - 2 * yC + yR;
                 if (denom < 0) {
