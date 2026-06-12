@@ -8499,3 +8499,25 @@ param away if a regression surfaces. Build + smoke green.
 
 NEXT: grid-anchors-to-kick-attack precision pass (see investigation below) —
 gridlines currently land mid-kick-blob, not on the onset (the Rekordbox bar).
+
+## ✅ Phase 1 grid re-anchor BUILT — gated ?onsetgrid=1 (default OFF) (June 11, 2026)
+
+beatTimes re-anchored from diff-argmax (mid-attack, ~+8ms late of the kick
+onset) to the attack leading edge: REFINE walks each beat back to the first
+sample crossing floor+15%·(peak−floor), gated in amplitude space, uniform
+across all beats. Threaded via worker message + ?onsetgrid=1, default OFF for
+A/B. ONSET_FRAC is a one-line knob (0.15 shipped; 0.30 prepped fallback if it
+reads too early). Because the grid is unified, this moves engage + grid +
+quantize onto the true onset together — sync correctness, not just looks.
+
+Verification: onset-anchor smoke median |beatTime−onset| 2.21ms (<4ms). Local
+272-harness subset (11 graded) 0 regressed, BPM untouched. Caveat: 2 passing
+tracks' bar-1 anchor ate ~10ms margin vs Rekordbox (still PASS) — Rekordbox's
+anchor doesn't map cleanly to the 15% leading edge; threshold is a by-eye call.
+
+OPEN COUPLING: after Phase 1 the grid line sits on the TRUE onset, but the
+drawn blob's leading edge is still ~14ms early (render smear). So a correct 15%
+line still sits ~a few px inside the drawn blob front at max zoom — the eye may
+read it as "late." Threshold pick by eye is therefore confounded by the render
+smear; Phase 2 (hybrid: 24000 body + sharp attack edges drawn from the
+re-anchored onsets) likely needs to land before the threshold is finally locked.
