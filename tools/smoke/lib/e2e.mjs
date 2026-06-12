@@ -76,9 +76,12 @@ export const djIdOf = (sink) => {
 };
 
 // Wait until the test hook is installed (Mix view mounted), then load a fixture.
-export async function loadTestTrack(page, deck, url = FIXTURE_URL) {
+// `overrides` (optional) is merged onto the track record — used by the Door 3
+// smoke to inject an imported-grid track (gridSource:'rekordbox', beatTimes,
+// hotCues, analyzed:true).
+export async function loadTestTrack(page, deck, url = FIXTURE_URL, overrides = null) {
   await page.waitForFunction(() => !!window.__smokeReady, null, { timeout: 12000 });
-  return page.evaluate(async ([d, u]) => window.__loadTestTrack(d, u), [deck, url]);
+  return page.evaluate(async ([d, u, o]) => window.__loadTestTrack(d, u, o), [deck, url, overrides]);
 }
 
 // Click a control on a given deck by visible text (e.g. PLAY, SYNC). Deck panels

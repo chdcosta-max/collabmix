@@ -1,0 +1,43 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Door 3 smoke fixture: a minimal but realistic rekordbox.xml.
+     3 tracks (single-tempo grid + cues, multi-tempo grid, no-cue track),
+     2 playlists inside one folder. Parsed by the library app's
+     parseRekordboxXML via window.__parseRekordboxXML in rekordbox-import.smoke.mjs. -->
+<DJ_PLAYLISTS Version="1.0.0">
+  <PRODUCT Name="rekordbox" Version="6.7.0" Company="AlphaTheta"/>
+  <COLLECTION Entries="3">
+    <TRACK TrackID="101" Name="Smoke Single 120" Artist="Smoke Fixture" Album="Door 3"
+           Genre="House" AverageBpm="120.00" TotalTime="120" Tonality="9B" Year="2026"
+           PlayCount="4" Location="file://localhost/Users/smoke/Music/single120.wav">
+      <TEMPO Inizio="0.025" Bpm="120.00" Metro="4/4" Battito="1"/>
+      <POSITION_MARK Name="Intro"    Type="0" Start="0.025" Num="0"/>
+      <POSITION_MARK Name="Drop"     Type="0" Start="30.000" Num="1"/>
+      <POSITION_MARK Name="Breakdown" Type="0" Start="60.000" Num="-1"/>
+    </TRACK>
+    <TRACK TrackID="102" Name="Smoke Multi 120-140" Artist="Smoke Fixture" Album="Door 3"
+           Genre="Techno" AverageBpm="130.00" TotalTime="8" Tonality="8A" Year="2026"
+           PlayCount="1" Location="file://localhost/Users/smoke/Music/multi.wav">
+      <TEMPO Inizio="0.000" Bpm="120.00" Metro="4/4" Battito="1"/>
+      <TEMPO Inizio="4.000" Bpm="140.00" Metro="4/4" Battito="1"/>
+      <POSITION_MARK Name="Start" Type="0" Start="0.000" Num="0"/>
+    </TRACK>
+    <TRACK TrackID="103" Name="Smoke Single 128" Artist="Smoke Fixture" Album="Door 3"
+           Genre="Tech House" AverageBpm="128.00" TotalTime="100" Tonality="5A" Year="2026"
+           PlayCount="0" Location="file://localhost/Users/smoke/Music/single128.wav">
+      <TEMPO Inizio="0.100" Bpm="128.00" Metro="4/4" Battito="1"/>
+    </TRACK>
+  </COLLECTION>
+  <PLAYLISTS>
+    <NODE Type="0" Name="ROOT" Count="1">
+      <NODE Type="0" Name="Smoke" Count="2">
+        <NODE Type="1" Name="Warmup" KeyType="0" Entries="2">
+          <TRACK Key="101"/>
+          <TRACK Key="103"/>
+        </NODE>
+        <NODE Type="1" Name="Peak" KeyType="0" Entries="1">
+          <TRACK Key="102"/>
+        </NODE>
+      </NODE>
+    </NODE>
+  </PLAYLISTS>
+</DJ_PLAYLISTS>

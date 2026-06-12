@@ -469,6 +469,17 @@ function parseRekordboxXML(xmlText) {
   return { tracks, playlists };
 }
 
+// Smoke hook: expose the rekordbox parser so the Door 3 e2e can parse a fixture
+// XML on the real library page (DOMParser is browser-only — can't node-test the
+// DOM path; the pure beat math is covered by rekordbox-grid.smoke.mjs). ON in
+// dev or with ?smoke=1.
+try {
+  if (typeof window !== "undefined" &&
+      (import.meta.env?.DEV || new URLSearchParams(location.search).get("smoke") === "1")) {
+    window.__parseRekordboxXML = parseRekordboxXML;
+  }
+} catch {}
+
 // ── Recursive folder scanner ───────────────────────────────────
 async function* scanDir(dirHandle, path="") {
   for await (const [name, handle] of dirHandle.entries()) {

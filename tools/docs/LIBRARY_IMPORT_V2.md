@@ -86,10 +86,16 @@ Music folder → import playlists intact.
   logic from `rekordbox-library.js:298 matchTrack`.
 - **New:** plist parser, playlist model, the export walkthrough + screenshot, the
   streaming-only classifier + per-track messaging.
+- **Placement (decided, matches Door 3):** build the iTunes `Library.xml` parser
+  in the **library app** (one parser, one truth) and have the mixer wizard's
+  iTunes card *route* there — the same two-UI-over-one-IDB pattern Door 3 used.
 - **Effort:** **M (~8–12h).** The old strategy doc's "low 5–7h" under-counted the
-  export-walkthrough UX + streaming-DRM handling.
+  export-walkthrough UX + streaming-DRM handling. Door 3 shipping de-risks the
+  shared-record + unified-grid plumbing iTunes will reuse, so the grid/cue side is
+  now mostly precedent; the remaining cost is the plist parse + export walkthrough
+  + streaming-DRM classifier.
 
-### DOOR 3 — rekordbox.xml  (the documented interchange: playlists, cues, grids)
+### DOOR 3 — rekordbox.xml  (the documented interchange: playlists, cues, grids) — ✅ BUILT (see BUILD STATUS)
 
 Import = playlists + cues + grids attached to matched files. **Positioning
 weapon:** "your library, your cues, your grids — nothing to rebuild."
@@ -247,8 +253,35 @@ Permission "Reconnect library" graceful moment folds into B (step 3).
 - ✅ **Item 2 — mix/recording detection** — BUILT behind `?libwizard=1` (commit
   9c5271e). Duration-probe classify (<12 track / >20 mix / 12-20 marker + votes),
   Tracks/Mixes section toggle, reversible per-row move, "N moved" note.
-- Doors 2/3/4 (iTunes / rekordbox.xml / USB-PDB) + cross-cutting B (source
-  presence) remain per the build order below.
+- ✅ **Door 3 — rekordbox.xml (playlists + grids + cues)** — BUILT behind
+  `?libwizard=1`. The **library app** (`src/library-app.jsx`) is the one importer:
+  its `parseRekordboxXML` now also reads `<TEMPO>` → piecewise `beatTimes` (single
+  + multi-tempo, via the node-tested `src/rekordbox-grid.js`) and `<POSITION_MARK>`
+  → hot cues (Num ≥ 0) + memory cues (Num = -1). Imported tracks carry
+  `gridSource:'rekordbox'` + `beatTimes` on the shared record. The **mixer**
+  consumes that record through the SAME unified `bpm.results` path the analyzer
+  uses (`rkGridFromRecord` → `rkGridA/B` → `effectiveBpmResults`), so deck /
+  engage / quantize / grid-render read imported beats through one `nearestBeatTime`.
+  Onset re-anchoring is gated off for imported grids (`skipOnsetAnchor`, analyzer
+  still runs for `beatAttacks`/broadcast) and de-smear is gated off (`gridSource`
+  check on the WF prop). Imported hot cues seed the deck's 4-slot `hotCues`.
+  Wizard's rekordbox door is now **live** and routes to the library importer.
+  Memory cues are imported data-only (render deferred to Slice B). Verified by
+  `tools/smoke/tests/e2e-rekordbox.smoke.mjs` (16/16: parse → playlists intact →
+  imported grid consumed by deck → engage idempotent <10ms → onset/de-smear
+  SKIPPED) + the `rekordbox-grid` unit smoke (11/11).
+- **ARCHITECTURE FACT (known + intentional): two library UIs over one shared
+  IDB.** The mixer (`src/collabmix-production.jsx`) and the library app
+  (`src/library-app.jsx`, served at `/library.html`) are separate React entries
+  that read/write the SAME IndexedDB/OPFS store. The heavy importers (rekordbox,
+  iTunes) live in the **library app** so there is **one parser, one truth**; the
+  mixer's wizard doors *route* to it rather than re-implementing them. Trade-off
+  to remember: a change made in `/library.html` is visible to an already-open
+  mixer tab only after the mixer re-reads the store (reload / next library read) —
+  the two tabs don't live-sync. This applies to **Door 2 (iTunes)** the same way:
+  build its parser in the library app and route the wizard card there.
+- Doors 2/4 (iTunes / USB-PDB) + cross-cutting B (source presence) remain per the
+  build order below.
 
 ## §5 — DESIGN ANSWERS + OPEN QUESTIONS
 

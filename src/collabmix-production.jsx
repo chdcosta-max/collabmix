@@ -221,7 +221,7 @@ function useBPM() {
     worker.current.onerror = (e) => { console.error('[BPM Worker onerror]', e.message, e.lineno); };
     return () => worker.current?.terminate();
   }, []);
-  const analyze = useCallback((buf, id) => {
+  const analyze = useCallback((buf, id, opts) => {
     if (!buf || !worker.current) return;
     console.log('[BPM] analysis started for deck', id, '(track loaded)');
     // CLEAR stale fields from the previous track's analysis. Previously this
@@ -236,8 +236,12 @@ function useBPM() {
     // Phase 1 grid re-anchor: ?onsetgrid=1 (captured at module load — the URL
     // query is stripped after join, so a late read here would always be false)
     // tells the worker to anchor beatTimes on the kick ONSET instead of the
-    // diff-argmax mid-attack point.
-    const onsetAnchor = ONSET_GRID;
+    // diff-argmax mid-attack point. SKIPPED for tracks carrying an imported
+    // (rekordbox) grid — that grid is authoritative and overrides the analyzer's
+    // beatTimes downstream, so onset re-anchoring would be wasted/irrelevant
+    // work. The analyzer still RUNS (its beatAttacks feed the B2B broadcast);
+    // only the onset-anchor refinement of beatTimes is gated off.
+    const onsetAnchor = ONSET_GRID && !opts?.skipOnsetAnchor;
     console.log("[ONSET-GRID] deck " + id + " analysis dispatch — onsetAnchor=" + onsetAnchor);
     // Transfer ArrayBuffers (O(1) vs O(n) structured clone) — avoids 10-30s stall on large tracks
     worker.current.postMessage({ cd, sr: buf.sampleRate, id, onsetAnchor }, cd.map(a => a.buffer));
@@ -1899,7 +1903,7 @@ function LibraryWizard({ lib, onClose }) {
   const DOORS = [
     { id: "scan", title: "Scan my computer", sub: "Music, Downloads, Desktop, Documents", live: true },
     { id: "itunes", title: "iTunes or Apple Music", sub: "Bring your playlists across", live: false },
-    { id: "rekordbox", title: "rekordbox", sub: "Your cues and grids, intact", live: false },
+    { id: "rekordbox", title: "rekordbox", sub: "Your cues and grids, intact", live: true },
     { id: "usb", title: "USB drive", sub: "DJ with a stick? Plug it in", live: false },
     { id: "drop", title: "Drop anything", sub: "Drag files or folders here", live: true },
   ];
@@ -1970,6 +1974,21 @@ function LibraryWizard({ lib, onClose }) {
                       <input type="file" multiple accept="audio/*,.mp3,.wav,.flac,.aac,.ogg,.m4a" style={{ display: "none" }} onChange={e => onFiles(e.target.files)} />
                     </label>
                   </div>
+                </div>
+              )}
+
+              {d.id === "rekordbox" && door === "rekordbox" && (
+                <div style={{ marginTop: 12, display: "flex", flexDirection: "column", gap: 8 }} onClick={e => e.stopPropagation()}>
+                  {/* The rekordbox importer (database + XML, with the grid/cue
+                      parser) lives in the dedicated library app — one parser, one
+                      truth. The wizard routes there rather than duplicating it. */}
+                  <div style={{ fontSize: 11.5, color: M, lineHeight: 1.45 }}>
+                    Bring your rekordbox collection — BPM, beat grids and hot cues import intact and feed the decks directly. The importer opens in your library.
+                  </div>
+                  <button onClick={() => { console.log("[LIB-V2-METRIC] door-open=rekordbox route=library.html"); window.location.href = "library.html"; }}
+                    style={{ padding: "9px 13px", borderRadius: 7, border: `1px solid ${LINE}`, background: "rgba(255,255,255,0.05)", color: W, fontSize: 12.5, fontWeight: 600, cursor: "pointer", fontFamily: "inherit", textAlign: "left" }}>
+                    Open the rekordbox importer →
+                  </button>
                 </div>
               )}
             </div>
@@ -5724,7 +5743,7 @@ function Deck({ id, ch, ctx:ac, color, local, remote, onChange, midi:mt, bpmResu
     }
     setLoopActive(false);setLoopStart(null);setLoopEnd(null);
     loopRef.current={active:false,start:null,end:null};
-    bpmAnalyze?.(d, id);
+    bpmAnalyze?.(d, id, { skipOnsetAnchor: trackMeta?.gridSource === "rekordbox" });
     // If from library, report track info for recommendations
     if(trackMeta) onTrackInfo?.(id, trackMeta);
     else onTrackInfo?.(id, null);
@@ -7744,6 +7763,11 @@ export default function CollabMix({ initialPage = "landing", djName = null }) {
     ...bpmRaw,
     results: effectiveBpmResults,
   }), [bpmRaw, effectiveBpmResults]);
+  // Mirror the effective per-deck grid into a ref so the smoke __deckGrid hook
+  // can read what the deck ACTUALLY consumes (analyzer vs imported rekordbox)
+  // at call time, not the stale value captured when the hook effect mounted.
+  const effGridRef = useRef(null);
+  effGridRef.current = effectiveBpmResults;
   const connectRekordbox = useCallback(async () => {
     setRkStatus({ phase: "connecting" });
     try {
@@ -8181,9 +8205,25 @@ export default function CollabMix({ initialPage = "landing", djName = null }) {
     window.__syncDeck = (deck) => { handleSyncToggle(deck === "B" ? "B" : "A"); return true; };
     window.__dropWS = () => { syncRef.current?.forceDrop?.(); return true; };   // simulate a network blip
     window.__deckProg = (deck) => (deck === "B" ? progRefB : progRefA).current;  // displayed playhead 0..1 (mirror-motion test)
+    // What the deck ACTUALLY consumes through the unified grid path — used by the
+    // Door 3 smoke to prove imported rekordbox beatTimes flow into bpm.results and
+    // that the desmear gate (the SAME expression the WF prop uses) is off for them.
+    window.__deckGrid = (deck) => {
+      const g = (effGridRef.current || {})[deck === "B" ? "B" : "A"] || null;
+      if (!g) return null;
+      const gridSource = g.gridSource || "analyzer";
+      return {
+        gridSource,
+        bpm: g.bpm ?? null,
+        beatCount: Array.isArray(g.beatTimes) ? g.beatTimes.length : 0,
+        firstBeatSec: Array.isArray(g.beatTimes) ? g.beatTimes[0] : null,
+        beatPeriodSec: g.beatPeriodSec ?? null,
+        desmearOn: ONSET_GRID && gridSource !== "rekordbox", // mirrors the WF desmear prop
+      };
+    };
     window.__smokeReady = true;
     console.log("[SMOKE-HOOK] window.__loadTestTrack installed");
-    return () => { try { delete window.__loadTestTrack; delete window.__smokeReady; } catch {} };
+    return () => { try { delete window.__loadTestTrack; delete window.__smokeReady; delete window.__deckGrid; } catch {} };
   }, [handleLibLoad, lib]);
 
   // Delete track from local library (in-memory + IDB)
