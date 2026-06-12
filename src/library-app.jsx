@@ -11,6 +11,7 @@ import {
   ensurePersistentStorage,
   runHandleMigration,
 } from "./utils/storage.js";
+import { beatTimesFromAnchors } from "./rekordbox-grid.js";
 
 // ═══════════════════════════════════════════════════════════════
 //  COLLAB//MIX — MUSIC LIBRARY
@@ -343,6 +344,36 @@ function parseiTunesXML(xmlText) {
   return { tracks, playlists };
 }
 
+// ── Rekordbox grid + cue extraction (Door 3) ─────────────────────────────────
+// TEMPO nodes are tempo ANCHORS: { Inizio (start sec), Bpm, Battito (beat-of-bar)
+// }. rekordbox supports tempo changes → MULTIPLE anchors. Build beatTimes
+// piecewise: within each anchor's segment, step by that segment's period.
+// Single anchor: anchor + k·period across the whole track. Source of truth is
+// the rekordbox grid — these beatTimes flow through the mixer's UNIFIED
+// nearestBeatTime path (engage/quantize/grid), bypassing our onset-anchoring.
+function buildBeatTimesFromTempo(trackEl, durationSec) {
+  const anchors = Array.from(trackEl.querySelectorAll(":scope > TEMPO"))
+    .map(t => ({ inizio: parseFloat(t.getAttribute("Inizio") || "0"), bpm: parseFloat(t.getAttribute("Bpm") || "0") }));
+  return beatTimesFromAnchors(anchors, durationSec);   // pure math (node-testable)
+}
+// POSITION_MARK: Type 0 = cue point. Num ≥ 0 → hot cue (slot); Num = -1 → memory
+// cue. Import both; the mixer renders hot cues now, memory cues are data-only
+// until Slice B. Start in seconds.
+function parsePositionMarks(trackEl) {
+  const hotCues = [], memoryCues = [];
+  for (const m of trackEl.querySelectorAll(":scope > POSITION_MARK")) {
+    if (m.getAttribute("Type") !== "0") continue; // 0 = cue; ignore loops (Type 4) for now
+    const time = parseFloat(m.getAttribute("Start") || "0");
+    if (!isFinite(time)) continue;
+    const num = parseInt(m.getAttribute("Num") ?? "-1", 10);
+    const cue = { time: +time.toFixed(3), num, name: m.getAttribute("Name") || "" };
+    if (num >= 0) hotCues.push(cue); else memoryCues.push(cue);
+  }
+  hotCues.sort((a, b) => a.num - b.num);
+  memoryCues.sort((a, b) => a.time - b.time);
+  return { hotCues, memoryCues };
+}
+
 // ── Parse Rekordbox XML ───────────────────────────────────────
 function parseRekordboxXML(xmlText) {
   const parser = new DOMParser();
@@ -372,6 +403,10 @@ function parseRekordboxXML(xmlText) {
     // Convert Camelot → musical key (e.g. "9B" → "G") so our key filter works
     const key = CAMELOT_TO_KEY[tonality] || tonality || null;
 
+    // Door 3: import the rekordbox beat grid (TEMPO) + cues (POSITION_MARK).
+    const grid = buildBeatTimesFromTempo(el, duration);
+    const { hotCues, memoryCues } = parsePositionMarks(el);
+
     const track = {
       id:         `rb_${trackId}`,
       rbTrackId:  trackId,
@@ -393,6 +428,16 @@ function parseRekordboxXML(xmlText) {
       source:     "rekordbox",
       playCount:  parseInt(el.getAttribute("PlayCount") || "0", 10) || 0,
       addedAt:    Date.now(),
+      // Imported grid — flows through the mixer's unified beatTimes path and
+      // bypasses onset-anchoring/de-smear (gridSource gate). null when the XML
+      // carried no TEMPO (e.g. an un-analyzed track) → falls back to analyzer.
+      gridSource:        grid ? "rekordbox" : undefined,
+      beatTimes:         grid ? grid.beatTimes : undefined,
+      gridAnchorSec:     grid ? grid.firstBar1AnchorSec : undefined,
+      beatPeriodSec:     grid ? grid.beatPeriodSec : undefined,
+      firstBar1AnchorSec: grid ? grid.firstBar1AnchorSec : undefined,
+      hotCues:           hotCues.length ? hotCues : undefined,
+      memoryCues:        memoryCues.length ? memoryCues : undefined,
     };
 
     tracks.push(track);

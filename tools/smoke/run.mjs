@@ -32,6 +32,7 @@ const TESTS = [
   { name: "comp-rebaseline",  file: "comp-rebaseline.smoke.mjs",  kind: "unit",  gates: "delay-comp re-converges after a transport interruption" },
   { name: "onset-anchor",     file: "onset-anchor.smoke.mjs",     kind: "audio", gates: "beatTimes anchored on the kick onset (<4ms)" },
   { name: "desmear-render",   file: "desmear.smoke.mjs",          kind: "audio", gates: "drawn kick leading edge sits on the onset" },
+  { name: "rekordbox-grid",   file: "rekordbox-grid.smoke.mjs",   kind: "unit",  gates: "rekordbox.xml TEMPO→beatTimes (single + multi-tempo, piecewise)" },
   { name: "e2e-entry",        file: "e2e-entry.smoke.mjs",        kind: "e2e",   gates: "two clients join one room (code + paste); distinct djIds; partners crossed" },
   { name: "e2e-track-mirror", file: "e2e-track-mirror.smoke.mjs", kind: "e2e",   gates: "driver load → partner mirrors title/BPM/waveform/beatTimes" },
   { name: "e2e-transport",    file: "e2e-transport.smoke.mjs",    kind: "e2e",   gates: "play/pause both ways; seek SEND→RECV→EXEC round-trip" },
