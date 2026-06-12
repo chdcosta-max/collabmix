@@ -8795,3 +8795,21 @@ Confession logs throughout: [RECONNECT] [RTC-RECOVER] [REJOIN-REPLAY]
 [ANALYZER-RECV] [TRANSPORT-RECV] [PLAY-STATE]. Manual chaos script for the
 physical-layer breaks. Remaining: local-track restore-on-reload + display-path
 live-position re-track — ticketed for the display pass.
+
+## 📋 DISPLAY / SESSION PASS — consolidated queued tickets (June 11, 2026)
+
+Gathered in one place (some appear in earlier sections). For a future
+display-path + session-persistence pass:
+1. Rejoiner's OWN loaded track is NOT auto-restored on reload — the rejoiner
+   rebuilds the PARTNER view fully (Phase 3) but must re-drag their own deck's
+   track. Fix: persist + restore the local deck's loaded track across reload.
+2. Partner live-position re-track after a long tab-background — on foreground,
+   the partner-deck readout should resume tracking the partner's live position
+   (timer-throttling staleness).
+3. Partner-deck mirror freezes at track-end (readout stuck at last position;
+   doesn't follow the partner's live position) — same display-path family.
+4. Telemetry/HUD asymmetries (cosmetic): slave HUD sinceEngageMs "—" / state
+   "sampling" all run; master "no_recent_progress"; engage-timer freeze/reset
+   quirks.
+These are display/telemetry quality, not operability — the decks WORK; the
+readouts lag. Bundle with the Slice B render-quality work.
