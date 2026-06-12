@@ -8860,3 +8860,48 @@ slew on play-start, paused-position transfer, hidden-tab refocus re-anchor.
 Guards: e2e-mirror (continuous) + e2e-mirror-coast (sparse + pause/play transfer).
 Instrument: ?mirrordiag=1 ([MIRROR-DIAG] with hidden=, [MIRROR-SNAP], [MIRROR-STALE]).
 STATUS: closed pending Chad's foregrounded-mirror eye-check.
+
+## ✅ LIBRARY DOOR 3 (rekordbox.xml) — BUILT + WF SMOOTHNESS TOOLKIT (June 11, 2026)
+
+Two threads, all pushed to production (commits d7f23fd, 16a1dcf, 1ee6e3b, e54ceee).
+
+DOOR 3 — rekordbox.xml import (playlists + grids + cues), behind ?libwizard=1.
+Decision honored: ONE parser, ONE truth. The library app (src/library-app.jsx,
+/library.html) owns the rekordbox parser; the mixer wizard's rekordbox door is
+now LIVE and ROUTES there (no duplicate importer). Two library UIs over one
+shared IDB is now a recorded architecture fact (LIBRARY_IMPORT_V2.md); Door 2
+(iTunes) will follow the same route pattern.
+- Parse: parseRekordboxXML now reads <TEMPO> → piecewise beatTimes (single +
+  multi-tempo, via node-tested src/rekordbox-grid.js) and <POSITION_MARK> → hot
+  cues (Num≥0) + memory cues (Num=-1). Imported tracks carry gridSource:'rekordbox'
+  + beatTimes on the shared record.
+- Consume (HARD REQ MET): the mixer reads that record through the SAME unified
+  bpm.results path the analyzer uses (rkGridFromRecord → rkGridA/B →
+  effectiveBpmResults), so deck / engage / quantize / grid-render all hit one
+  nearestBeatTime. Onset re-anchor SKIPPED for imported grids (skipOnsetAnchor —
+  analyzer still runs for beatAttacks/broadcast); de-smear SKIPPED (gridSource
+  gate on the WF prop). Imported hot cues seed the deck's 4-slot hotCues.
+- Verify: tools/smoke/tests/e2e-rekordbox.smoke.mjs (16/16) — parse on the real
+  library page → 3 tracks / 2 playlists intact → single+multi-tempo grids →
+  hot/memory cues → mixer consumes imported grid → de-smear off → onset-anchor
+  skipped (active on a normal deck) → engage idempotent <10ms. + rekordbox-grid
+  unit (11/11). Full suite 19/19.
+- Memory cues import data-only (render deferred to Slice B).
+
+WF SMOOTHNESS TOOLKIT (for the "why isn't our scroll glass like Rekordbox" hunt):
+- ?wfpulse=<0..1> (default 1, unchanged): dials the big-WF per-kick emphasis
+  (centerline weight band + amplitude brightness overlay) — what the eye reads as
+  breathing/pulse at the fixed playhead. wfpulse=0 = static glass for an A/B vs
+  Rekordbox; 0.5 = half. Base amplitude shape untouched.
+- ?smoothdiag=1 (pure logging): per deck, 1/s, last-second [SMOOTH-DIAG] —
+  scrollPx/frame {mean,sd,max} (motion smoothness), zeroFrames (STEPPED vs
+  interpolated position updates), fps/dropped/frameMs (cadence), drawMs {mean,max}
+  (de-smear/band hitch cost), role=local|mirror, desmear flag.
+- Early headless read: local driver deck shows scroll sd ~40% of mean + bursts of
+  zeroFrames (19/122 one window) → position source updates slower than the draw
+  RAF (stepped-motion signature). Cowork to run the FOREGROUNDED capture next.
+
+PENDING: (1) Chad's foregrounded-mirror eye-check (carried from the mirror arc).
+(2) Cowork smoothdiag foreground capture → pin the judder root cause with numbers.
+(3) Chad A/B wfpulse 0 / 0.5 / default by eye. (4) Door 3 memory-cue render
+(Slice B). (5) Doors 2/4 (iTunes / USB-PDB) per LIBRARY_IMPORT_V2 build order.
