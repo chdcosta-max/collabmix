@@ -7592,6 +7592,13 @@ export default function CollabMix({ initialPage = "landing", djName = null }) {
       console.log("[SMOKE-HOOK] loaded test track on deck " + d + " from " + url);
       return true;
     };
+    // Programmatic transport so the e2e suite drives play/seek/cue/sync without
+    // flaky canvas clicks. These call the deck's REAL fns (same as the UI), so
+    // the driver gate, seek_request round-trip, and sync engage all run for real.
+    window.__toggleDeck = (deck) => { toggleFnsRef.current[deck === "B" ? "B" : "A"]?.(); return true; };
+    window.__seekDeck = (deck, value) => { seekFnsRef.current[deck === "B" ? "B" : "A"]?.(value); return true; };
+    window.__cueDeck = (deck) => { cueFnsRef.current[deck === "B" ? "B" : "A"]?.(); return true; };
+    window.__syncDeck = (deck) => { handleSyncToggle(deck === "B" ? "B" : "A"); return true; };
     window.__smokeReady = true;
     console.log("[SMOKE-HOOK] window.__loadTestTrack installed");
     return () => { try { delete window.__loadTestTrack; delete window.__smokeReady; } catch {} };
@@ -7752,6 +7759,10 @@ export default function CollabMix({ initialPage = "landing", djName = null }) {
     if (m.type==="deck_update")    {
       // 1) Mirror partner's deck state for visuals
       (m.deckId==="A"?setPA:setPB)(p=>({...(p||{}),[m.field]:m.value}));
+      // Symmetric counterpart to [ANALYZER-BROADCAST] — proves the partner
+      // actually RECEIVED the refined beat grid (B2B mirror debugging + smoke).
+      if (m.field === "beatTimes" && Array.isArray(m.value)) console.log("[ANALYZER-RECV] " + m.deckId + " beats=" + m.value.length);
+      if (m.field === "playing") console.log("[TRANSPORT-RECV] " + m.deckId + " playing=" + m.value);
       // Partner play/pause interrupts the stream I receive — re-baseline delay
       // comp. Only on "playing" (NOT every 10Hz "progress" packet).
       if (m.field==="playing") rtcRef.current?.markTransportEvent?.();
