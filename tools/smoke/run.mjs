@@ -41,6 +41,7 @@ const TESTS = [
   { name: "e2e-trackend",     file: "e2e-trackend.smoke.mjs",     kind: "e2e",   gates: "deck parked at end stays operable (play replays, no inert flip-flop)" },
   { name: "e2e-reconnect",    file: "e2e-reconnect.smoke.mjs",    kind: "e2e",   gates: "mid-session WS drop auto-reconnects + re-joins + restores partner" },
   { name: "e2e-rejoin",       file: "e2e-rejoin.smoke.mjs",       kind: "e2e",   gates: "client reload mid-blend rebuilds full partner view (grid+BPM) within 5s" },
+  { name: "e2e-chaos",        file: "e2e-chaos.smoke.mjs",        kind: "e2e",   gates: "app survives transport/seek/load storms (no crash, stays responsive)" },
 ];
 
 // ── args

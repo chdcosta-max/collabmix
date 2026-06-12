@@ -8763,3 +8763,35 @@ the SAME verified [ANALYZER-BROADCAST]→[ANALYZER-RECV] path as an initial load
 
 Verified (e2e-rejoin smoke): B reloads mid-blend → re-paired, [ANALYZER-RECV] A
 beats=24, BPM + title mirrored, all within 1.1s (budget 5s). Full suite 14/14.
+
+## 🛡️ ROBUSTNESS CAMPAIGN — Phase 4: chaos hardening + chaos script (June 11, 2026)
+
+Headless chaos (e2e-chaos smoke): rapid transport+sync spam during engage, seek
+storm while syncing, track (re)load during engage, BOTH sides loading the same
+deck simultaneously. RESULT: app survives all four — zero unhandled page errors,
+stays responsive after each storm. No cheap breaks found headlessly (the engage/
+seek/load paths are already guarded). 6/6.
+
+Manual CHAOS SCRIPT (tools/smoke/CHAOS_SCRIPT.md) for the breaks a browser can't
+fake — wifi off, ethernet yank, laptop sleep, server restart, wifi→cellular
+handover, 10-min tab background, frantic dual-press during a drop, parked-at-end
+play. Expected vs Actual columns + the confession logs to watch
+([RECONNECT]/[RTC-RECOVER]/[PLAY-STATE]). For Chad's two-laptop session.
+
+Tickets surfaced (not cheap, logged): rejoiner's OWN loaded track isn't
+auto-restored on reload (persist+restore local deck track); the partner-position
+LIVE re-track after a long background (display-path family).
+
+### CAMPAIGN SUMMARY — Friday-night survival
+
+Full suite now 15/15 green (~129s): 3 unit + 2 audio + 10 e2e. Robustness added:
+- track-end deck stays operable (no inert flip-flop)
+- WS auto-reconnect (backoff + rejoin, 30s window)
+- RTC ICE-failure → initiator-gated renegotiation
+- sleep/wake re-dial
+- reload/rejoin rebuilds the FULL partner view (grid + state)
+- survives transport/seek/load storms
+Confession logs throughout: [RECONNECT] [RTC-RECOVER] [REJOIN-REPLAY]
+[ANALYZER-RECV] [TRANSPORT-RECV] [PLAY-STATE]. Manual chaos script for the
+physical-layer breaks. Remaining: local-track restore-on-reload + display-path
+live-position re-track — ticketed for the display pass.
