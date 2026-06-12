@@ -7970,7 +7970,20 @@ export default function CollabMix({ initialPage = "landing", djName = null }) {
     if (m.type==="cue_request")    cueFnsRef.current[m.deckId]?.(true);
     if (m.type==="xfade_update")   { setXf(m.value); applyXF(m.value); }
     if (m.type==="chat")           setChat(p=>[...p,m]);
-    if (m.type==="partner_joined") setChat(p=>[...p,{type:"system",msg:`${m.djName} joined the session`}]);
+    if (m.type==="partner_joined") {
+      setChat(p=>[...p,{type:"system",msg:`${m.djName} joined the session`}]);
+      // A partner (re)joined — rebuild their view completely. Re-broadcast my
+      // driven deck's full analyzer payload (refined grid) via the verified
+      // path, and re-push my lsRef snapshot. Covers reload/rejoin mid-blend so
+      // the late-joiner doesn't just get forward deltas. Small delay so their
+      // join + RTC settle and their deck_update handler is mounted.
+      setTimeout(() => {
+        console.log("[REJOIN-REPLAY] partner joined → re-broadcasting analyzer + state");
+        broadcastAnalyzerRef.current?.("A");
+        broadcastAnalyzerRef.current?.("B");
+        try { syncRef.current?.send?.({ type:"sync_response", state: lsRef.current }); } catch {}
+      }, 700);
+    }
     if (m.type==="partner_left")   { setChat(p=>[...p,{type:"system",msg:`${m.djName} left`}]); setPA(null); setPB(null); setPartnerLibrary([]); }
     if (m.type==="library_sync")   setPartnerLibrary(m.tracks||[]);
     if (m.type==="sync_request")   sync.send({type:"sync_response",state:lsRef.current});
@@ -9004,21 +9017,33 @@ export default function CollabMix({ initialPage = "landing", djName = null }) {
   // the existing waveformBass/Mid/High pattern. Float32Arrays converted
   // to JS arrays for JSON; receiver lands them in pA/pB.
   const analyzerBroadcastedRef = useRef({ A: null, B: null });
+  // Broadcast a deck's full analyzer payload. dh's driver gate means only the
+  // deck I actually drive goes on the wire. Stored in a ref so the partner
+  // (re)join handler can re-fire it — a rejoiner/late-joiner then rebuilds the
+  // refined grid via the SAME verified [ANALYZER-BROADCAST]→[ANALYZER-RECV] path
+  // as an initial load, not just the lsRef snapshot.
+  const broadcastAnalyzerRef = useRef(null);
+  broadcastAnalyzerRef.current = (deck) => {
+    const r = bpm.results[deck];
+    if (!r?.beatTimes || !r?.beatAttacks) return false;
+    const send = dh(deck);
+    send("beatTimes",          Array.from(r.beatTimes));
+    send("beatAttacks",        Array.from(r.beatAttacks));
+    if (r.beatPhaseSec    != null) send("beatPhaseSec",    r.beatPhaseSec);
+    if (r.beatPeriodSec   != null) send("beatPeriodSec",   r.beatPeriodSec);
+    if (r.beatPhaseFrac   != null) send("beatPhaseFrac",   r.beatPhaseFrac);
+    if (r.firstBar1AnchorSec != null) send("firstBar1AnchorSec", r.firstBar1AnchorSec);
+    if (r.bpm             != null) send("bpm",             r.bpm);
+    console.log("[ANALYZER-BROADCAST]", deck, "beats=" + r.beatTimes.length);
+    return true;
+  };
   useEffect(() => {
     for (const deck of ["A", "B"]) {
       const r = bpm.results[deck];
       if (!r?.beatTimes || !r?.beatAttacks) continue;
       if (analyzerBroadcastedRef.current[deck] === r.beatTimes) continue;
       analyzerBroadcastedRef.current[deck] = r.beatTimes;
-      const send = dh(deck);
-      send("beatTimes",          Array.from(r.beatTimes));
-      send("beatAttacks",        Array.from(r.beatAttacks));
-      if (r.beatPhaseSec    != null) send("beatPhaseSec",    r.beatPhaseSec);
-      if (r.beatPeriodSec   != null) send("beatPeriodSec",   r.beatPeriodSec);
-      if (r.beatPhaseFrac   != null) send("beatPhaseFrac",   r.beatPhaseFrac);
-      if (r.firstBar1AnchorSec != null) send("firstBar1AnchorSec", r.firstBar1AnchorSec);
-      if (r.bpm             != null) send("bpm",             r.bpm);
-      console.log("[ANALYZER-BROADCAST]", deck, "beats=" + r.beatTimes.length);
+      broadcastAnalyzerRef.current(deck);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [bpm.results.A?.beatTimes, bpm.results.B?.beatTimes]);

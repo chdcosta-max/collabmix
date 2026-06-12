@@ -8747,3 +8747,19 @@ ICE connection or suspend the OS), so they're wired + instrumented + reuse the
 verified recovery path, but need manual chaos-script verification (wifi kill
 mid-blend, sleep laptop). Full suite 13/13 green (comp-reload path intact proves
 no regression). The CHAOS SCRIPT (Phase 4 deliverable) will cover these.
+
+## 🛡️ ROBUSTNESS CAMPAIGN — Phase 3: late-joiner / re-joiner state replay (June 11, 2026)
+
+INVESTIGATION: the sync_request/sync_response replay carried lsRef (deck fields,
+xfade) so a rejoiner recovered BPM + title, but the refined beat GRID never
+replayed — the analyzer broadcast only fires on a beatTimes CHANGE, so a
+reload/rejoin got no [ANALYZER-RECV] (grid stale, the soak's mirror-staleness).
+
+FIX: extracted the analyzer broadcast into broadcastAnalyzerRef; on partner
+(re)join the driver re-fires it (dh's driver gate = only my driven deck goes on
+the wire) + re-pushes the lsRef snapshot. The rejoiner now rebuilds the grid via
+the SAME verified [ANALYZER-BROADCAST]→[ANALYZER-RECV] path as an initial load.
+[REJOIN-REPLAY] log marks it.
+
+Verified (e2e-rejoin smoke): B reloads mid-blend → re-paired, [ANALYZER-RECV] A
+beats=24, BPM + title mirrored, all within 1.1s (budget 5s). Full suite 14/14.
