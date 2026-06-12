@@ -52,6 +52,10 @@ const ONSET_GRID = URL_FLAGS.get("onsetgrid") !== "0";
 // ?beatsv2=0 kill-switch (default on). Read from the captured flags so the
 // kill-switch also survives the query-string strip.
 const BEATS_V2 = URL_FLAGS.get("beatsv2") !== "0";
+// Test hooks (window.__loadTestTrack) — ON in dev (the smoke suite runs the vite
+// dev server) or with ?smoke=1 against a build. NEVER on for a plain production
+// load, so real users never get the hook.
+const TEST_HOOKS = (import.meta.env && import.meta.env.DEV) || URL_FLAGS.get("smoke") === "1";
 
 // ── Server Configuration ─────────────────────────────────────
 // After deploying to Railway, replace this URL with your Railway server URL.
@@ -7567,6 +7571,31 @@ export default function CollabMix({ initialPage = "landing", djName = null }) {
       lib.queueAnalysis(track.id, file);
     }
   }, [lib]);
+
+  // ── Test-only load hook for the two-client smoke suite ───────────────────
+  // window.__loadTestTrack(deck, url) fetches a bundled audio fixture and runs
+  // it through the EXACT normal load path (inject File → handleLibLoad → decode
+  // → analysis → ANALYZER-BROADCAST → driver-send → waveform), not a bypass —
+  // so the suite exercises real analysis + mirror + transport. Gated by
+  // TEST_HOOKS (dev server or ?smoke=1); absent for production users.
+  useEffect(() => {
+    if (!TEST_HOOKS || typeof window === "undefined") return;
+    window.__loadTestTrack = async (deck, url) => {
+      const d = deck === "B" ? "B" : "A";
+      const resp = await fetch(url);
+      if (!resp.ok) throw new Error("fixture fetch failed: " + resp.status);
+      const file = new File([await resp.blob()], "kick120.wav", { type: "audio/wav" });
+      const id = "smoketest-" + d;
+      const track = { id, title: "Smoke Kick 120", artist: "smoke-fixture", filename: "kick120.wav", analyzed: false };
+      lib.setFile?.(id, file);            // so handleLibLoad's getFile resolves it
+      await handleLibLoad(track, d);
+      console.log("[SMOKE-HOOK] loaded test track on deck " + d + " from " + url);
+      return true;
+    };
+    window.__smokeReady = true;
+    console.log("[SMOKE-HOOK] window.__loadTestTrack installed");
+    return () => { try { delete window.__loadTestTrack; delete window.__smokeReady; } catch {} };
+  }, [handleLibLoad, lib]);
 
   // Delete track from local library (in-memory + IDB)
   const handleDeleteTrack = useCallback(async (trackId) => {
