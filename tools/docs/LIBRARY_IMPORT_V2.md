@@ -223,14 +223,29 @@ Permission "Reconnect library" graceful moment folds into B (step 3).
 
 ---
 
-## §5 — OPEN DESIGN QUESTIONS FOR CHAD
+## BUILD STATUS (per-door green-lights)
 
-1. **Grid-conflict policy (Door 3/4).** When a rekordbox grid is imported AND our
-   analyzer has a grid: which wins, when, and is it user-visible? *Proposal:*
-   **theirs wins when present** (they tuned it), **ours fills gaps** (tracks with
-   no rekordbox grid), with a small per-deck "grid: rekordbox / analyzer" toggle
-   so a DJ can override. Needs your call — it touches the onset/de-smear work we
-   just shipped (our refined grid vs their PQTZ grid).
+- ✅ **Item 1 — first-run wizard + Door 1 + Door 5 + metrics** — BUILT behind
+  `?libwizard=1` (commit ffa94f7). LibraryWizard ("Where's your music?", five
+  doors, scan + drop live, rest soon), Door 1 four-folder flow (startIn hints),
+  Door 5 drop/browse, skippable, re-entrant via "Add music", console metrics
+  (door choice, time-to-first-track, skip). Default off → existing behavior.
+- ✅ **Item 2 — mix/recording detection** — BUILT behind `?libwizard=1` (commit
+  9c5271e). Duration-probe classify (<12 track / >20 mix / 12-20 marker + votes),
+  Tracks/Mixes section toggle, reversible per-row move, "N moved" note.
+- Doors 2/3/4 (iTunes / rekordbox.xml / USB-PDB) + cross-cutting B (source
+  presence) remain per the build order below.
+
+## §5 — DESIGN ANSWERS + OPEN QUESTIONS
+
+1. **Grid-conflict policy (Door 3/4) — ANSWERED (Chad).** Imported **rekordbox
+   grid WINS when present**; our analyzer **fills the gaps** (tracks with no
+   rekordbox grid). A pro's hand-corrected grid is their ground truth.
+   *Display subtlety to honor when Door 3 builds:* imported grids are absolute
+   beat positions — they **bypass our onset-anchoring + de-smear** (that pipeline
+   refines OUR detected beats; it must not re-shift an imported grid). So the
+   big-WF grid render needs a per-deck "grid source = imported | analyzer" flag,
+   and the onset re-anchor / de-smear only applies in analyzer mode.
 2. **Wizard placement / force.** Is first-run wizard **mandatory** (block the
    mixer until ≥1 door done, since it's the pair-activation gate) or
    **skippable** (land in an empty library with a persistent "Add music")?
