@@ -4311,7 +4311,7 @@ function AnimatedZoomedWF({ bands, dur, progRef, onSeek, h=96, windowSec=8, beat
         if(_fLast){ const _dt=_tn-_fLast; _fN++; _fAcc+=_dt; if(_dt>_fWorst)_fWorst=_dt; }
         _fLast=_tn;
         if(_tn-_fLogAt>1000 && _fN>0){
-          console.log('[MIRROR-DIAG] deck='+(deckColorRef.current||'?')+' drawFps='+Math.round(_fN*1000/(_fAcc||1))+' worstFrameGapMs='+_fWorst.toFixed(0)+' drawnProg='+((progRef.current||0)).toFixed(4));
+          console.log('[MIRROR-DIAG] deck='+(deckColorRef.current||'?')+' drawFps='+Math.round(_fN*1000/(_fAcc||1))+' worstFrameGapMs='+_fWorst.toFixed(0)+' drawnProg='+((progRef.current||0)).toFixed(4)+' hidden='+(typeof document!=="undefined"?document.hidden:'?'));
           _fLogAt=_tn; _fN=0; _fAcc=0; _fWorst=0;
         }
       }
@@ -5228,6 +5228,7 @@ function Deck({ id, ch, ctx:ac, color, local, remote, onChange, midi:mt, bpmResu
       const bigRewind=-signedDriftSec>BACK_SNAP_SEC;   // driver genuinely rewound a long way
       if(isFirst||fwdSeek||bigRewind){
         if(bigRewind) console.warn('[MIRROR-SNAP] deck',id,'large rewind '+signedDriftSec.toFixed(1)+'s — hard snap');
+        else if(fwdSeek) console.warn('[MIRROR-SNAP] deck',id,'forward seek/catch-up +'+signedDriftSec.toFixed(1)+'s — hard snap');   // triage c: forward snaps now confess too
         remProgRef.current=remote.progress; remTimeRef.current=now; remSlewRef.current=0;
       } else {
         // Sub-seek drift (incl. moderate backward from packet starvation/jitter):
@@ -5243,6 +5244,13 @@ function Deck({ id, ch, ctx:ac, color, local, remote, onChange, midi:mt, bpmResu
     }
     // Start/stop smooth interpolation RAF
     cancelAnimationFrame(remRaf.current);
+    if(!nowPlaying && remote.progress!=null){
+      // PAUSED: no RAF runs, so snap the displayed playhead to the delivered
+      // (frozen) truth here — otherwise the mirror keeps showing its last
+      // coasted position and lurches on the next play.
+      const fp=Math.min(1,Math.max(0,remote.progress));
+      remProgRef.current=fp; setProg(fp); progRef.current=fp; onProgUpdate?.(fp);
+    }
     if(nowPlaying){
       const animate=()=>{
         const tnow=performance.now();
@@ -5269,7 +5277,7 @@ function Deck({ id, ch, ctx:ac, color, local, remote, onChange, midi:mt, bpmResu
           remDiagAtRef.current=tnow;
           // interp = what the interp OUTPUTS this frame; anchor = last packet value;
           // pktAgeMs = how long since a packet arrived; rafLive proves the interp RAF is running.
-          console.log('[MIRROR-DIAG] deck '+id+' interp='+interp.toFixed(4)+' anchorPkt='+(remProgRef.current||0).toFixed(4)+' pktAgeMs='+Math.round(sincePkt)+' rate='+(remRateRef.current*1e6).toFixed(2)+'e-6 rafLive=1');
+          console.log('[MIRROR-DIAG] deck '+id+' interp='+interp.toFixed(4)+' anchorPkt='+(remProgRef.current||0).toFixed(4)+' pktAgeMs='+Math.round(sincePkt)+' rate='+(remRateRef.current*1e6).toFixed(2)+'e-6 rafLive=1 hidden='+(typeof document!=="undefined"?document.hidden:'?'));
         }
         remRaf.current=requestAnimationFrame(animate);
       };
@@ -5277,6 +5285,24 @@ function Deck({ id, ch, ctx:ac, color, local, remote, onChange, midi:mt, bpmResu
     }
     return()=>cancelAnimationFrame(remRaf.current);
   },[remote,local,buf]);
+
+  // Root Cause 2 — hidden-tab refocus. While the tab is hidden the RAF is
+  // paused (the mirror needn't draw — fine), but on returning to VISIBLE the
+  // interp RAF resumes from a possibly-huge elapsed (remTimeRef stale) → it
+  // would coast to the end (jump). Re-anchor TIME to now + hold at the last
+  // known position until the next packet repaints truth — an immediate, clean
+  // redraw at current truth, no lingering stutter.
+  useEffect(()=>{
+    if(local) return;   // only the mirror (non-local) deck interps remote progress
+    const onVis=()=>{
+      if(typeof document!=="undefined" && document.visibilityState==="visible"){
+        remTimeRef.current=performance.now(); remSlewRef.current=0;
+        remAwaitPktRef.current=true; remStaleLoggedRef.current=false;
+      }
+    };
+    document.addEventListener("visibilitychange",onVis);
+    return()=>document.removeEventListener("visibilitychange",onVis);
+  },[local]);
 
   // MIDI routing — EQ now handled by parent component when local
   const sfx=`DECK_${id}`;
@@ -5389,7 +5415,13 @@ function Deck({ id, ch, ctx:ac, color, local, remote, onChange, midi:mt, bpmResu
     }
     if(play){
       off.current=Math.min(buf.duration,off.current+(ac.currentTime-st.current));
-      stop_();setPlay(false);onChange?.("playing",false);
+      stop_();setPlay(false);
+      // Deliver the EXACT frozen position WITH the pause — the worker heartbeat
+      // stops on pause, so without this the partner's mirror is stuck at its
+      // last coasted position (behind truth) and lurches forward on the next
+      // play. progress first so the mirror anchors before it sees playing=false.
+      onChange?.("progress",Math.min(1,off.current/buf.duration));
+      onChange?.("playing",false);
       logEvent("deck", "play_toggled", { deck: id, isPlaying: false });
     } else {
       // User has now interacted with this track — auto-position should
@@ -5406,6 +5438,9 @@ function Deck({ id, ch, ctx:ac, color, local, remote, onChange, midi:mt, bpmResu
         console.log('[PLAY-STATE] deck',id,'parked-at-end → wrapping to start before play');
         off.current=0; setProg(0); progRef.current=0; onProgUpdate?.(0); onChange?.("progress",0);
       }
+      // Deliver the exact start position WITH the play, so the mirror anchors
+      // its restart there (no lurch) before coasting.
+      onChange?.("progress",Math.min(1,off.current/buf.duration));
       play_(off.current);setPlay(true);onChange?.("playing",true);
       logEvent("deck", "play_toggled", { deck: id, isPlaying: true });
     }

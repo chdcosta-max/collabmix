@@ -55,28 +55,35 @@ try {
   // median + 2.8s snaps, so <220ms median proves the coast tracks truth.
   t.check("coast tracks driver truth (median < 220ms — latency floor)", medErr < 220, `median ${medErr?.toFixed(0)}ms, max ${maxErr?.toFixed(0)}ms (one-way latency floor)`);
 
-  // ── Transition seam: pause→play from the NON-OWNER (B controls deck A) must
-  // not jump the mirror. The old play-start reset (remTimeRef=0) coasted from a
-  // huge elapsed → jump to the END for the ~100-200ms before the first packet.
-  // Tested at NORMAL packet rate (the seam is independent of sparseness; the
-  // 2.5s throttle above would inflate the post-await catch-up unrealistically).
-  await A.evaluate(() => { window.__progressThrottleMs = 100; });
-  await B.waitForTimeout(600);
+  // ── Pause/play from the NON-OWNER under SPARSE packets (the real failure: a
+  // paused deck stops broadcasting, so the mirror was stuck behind truth and
+  // lurched forward on play). The fix delivers the exact frozen position WITH
+  // the pause/play transport change. Throttle stays sparse — the position must
+  // transfer regardless of the heartbeat rate.
   await B.evaluate(() => window.__toggleDeck("A"));   // pause deck A (remote)
-  await B.waitForTimeout(900);
-  const prePlay = await B.evaluate(() => window.__deckProg("A"));
+  await B.waitForTimeout(1200);                        // sit in pause (no heartbeat)
+  // During pause: the mirror must match the OWNER's frozen truth (position transferred).
+  const [ownerPaused, mirrorPaused] = await Promise.all([A.evaluate(() => window.__deckProg("A")), B.evaluate(() => window.__deckProg("A"))]);
+  const pauseErr = Math.abs(ownerPaused - mirrorPaused) * FIXTURE_DUR_SEC * 1000;
+  t.check("paused mirror matches owner truth (position transferred)", pauseErr < 100, `owner=${ownerPaused?.toFixed(3)} mirror=${mirrorPaused?.toFixed(3)} (${pauseErr.toFixed(0)}ms)`);
+
   await B.evaluate(() => window.__toggleDeck("A"));   // play deck A (remote)
-  let maxJump = 0; let prev = prePlay;
-  for (let i = 0; i < 12; i++) {   // sample fast through the transition (~1.2s)
-    await B.waitForTimeout(100);
-    const v = await B.evaluate(() => window.__deckProg("A"));
-    if (typeof v === "number" && typeof prev === "number") maxJump = Math.max(maxJump, Math.abs(v - prev));
-    prev = v;
+  let prev = mirrorPaused, tBackward = 0; const tErr = [];
+  for (let i = 0; i < 14; i++) {   // sample through + past the transition
+    await B.waitForTimeout(150);
+    const [o, m] = await Promise.all([A.evaluate(() => window.__deckProg("A")), B.evaluate(() => window.__deckProg("A"))]);
+    if (typeof o === "number" && typeof m === "number") {
+      tErr.push(Math.abs(o - m) * FIXTURE_DUR_SEC * 1000);
+      if (m - prev < -1e-4) tBackward++;
+      prev = m;
+    }
   }
-  // The jump-to-end bug produced a step toward 1.0 (huge). A clean restart steps
-  // by at most a small latency-snap. <0.04 (~480ms of the 12s fixture) catches
-  // the bug (~1.0) with margin while tolerating the first-packet snap.
-  t.check("pause→play from non-owner does not jump the mirror", maxJump < 0.04, `max transition step=${(maxJump * FIXTURE_DUR_SEC * 1000).toFixed(0)}ms equiv`);
+  const tMed = tErr.length ? [...tErr].sort((a, b) => a - b)[tErr.length >> 1] : Infinity;
+  // No BACKWARD lurch, and the mirror tracks owner truth through the restart.
+  // The lurch bug put the mirror 8-10 bars off (>800ms); <250ms is the
+  // latency-tolerant floor (the position-transfer above is the strict 0ms proof).
+  t.check("no backward lurch on play from non-owner", tBackward === 0, `${tBackward} backward steps`);
+  t.check("mirror tracks owner through pause→play (median < 250ms)", tMed < 250, `median ${tMed.toFixed(0)}ms vs owner truth`);
 
   t.check("no page errors", sA.errors().length === 0 && sB.errors().length === 0, [...sA.errors(), ...sB.errors()].slice(0, 2).join(" | ") || "clean");
   void FIXTURE_BPM;
