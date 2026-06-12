@@ -52,6 +52,9 @@ const ONSET_GRID = URL_FLAGS.get("onsetgrid") !== "0";
 // ?beatsv2=0 kill-switch (default on). Read from the captured flags so the
 // kill-switch also survives the query-string strip.
 const BEATS_V2 = URL_FLAGS.get("beatsv2") !== "0";
+// Library Import V2 (first-run wizard + Door 1/5 + mix detection). Default OFF —
+// gated so existing LIB-PHASE behavior is unchanged until promotion.
+const LIB_WIZARD = URL_FLAGS.get("libwizard") === "1";
 // Delay compensation — PROMOTED default-on June 11 2026 after the 30-min
 // production endurance soak (comp held 55.3–55.9ms for the full run, survived 3
 // track-ends + re-engages, zero errors/disconnects). Kill switch: ?delaycomp=0.
@@ -465,6 +468,50 @@ function tracksMatch(t1, t2) {
       && normalizeForDedupe(t1.title) === normalizeForDedupe(t2.title);
 }
 
+// ── Mix/recording detection (Library V2 Item 2) ─────────────────────────────
+// Cheap duration via the audio element's metadata (no full decode), then
+// classify: <12min = track, >20min = a long recording auto-shelved to "Mixes &
+// Recordings", 12-20min = track + long marker. Filename/genre votes refine the
+// gray zone and cover the duration-unknown case. Reversible per-file later.
+const MIX_TRACK_MAX_SEC = 12 * 60;   // below this is always a track
+const MIX_SHELVE_SEC    = 20 * 60;   // above this auto-shelves to Mixes & Recordings
+function getAudioDuration(file) {
+  return new Promise((resolve) => {
+    let settled = false;
+    const finish = (v) => { if (settled) return; settled = true; try { URL.revokeObjectURL(url); } catch {} resolve(v); };
+    let url;
+    try {
+      url = URL.createObjectURL(file);
+      const a = new Audio();
+      a.preload = "metadata";
+      a.onloadedmetadata = () => finish(isFinite(a.duration) && a.duration > 0 ? a.duration : null);
+      a.onerror = () => finish(null);
+      a.src = url;
+      setTimeout(() => finish(null), 6000);   // safety — don't hang the import
+    } catch { finish(null); }
+  });
+}
+function mixVoteCount(filename, genre) {
+  const n = (filename || "").toLowerCase(), g = (genre || "").toLowerCase();
+  let v = 0;
+  if (/\b(mix|set|liveset|live set|dj ?set|podcast|episode|mixtape|continuous)\b/.test(n)) v++;
+  if (/\bep\.?\s?\d|ep\d|\bvol\.?\s?\d/.test(n)) v++;
+  if (n.includes("@")) v++;
+  if (/dj ?mix|mixtape|continuous|live ?set/.test(g)) v++;
+  return v;
+}
+// → { section: "tracks"|"mixes", long: bool }. durSec may be null (unknown).
+function classifyLibrarySection(durSec, filename, genre) {
+  const votes = mixVoteCount(filename, genre);
+  if (durSec != null) {
+    if (durSec >= MIX_SHELVE_SEC) return { section: "mixes", long: true };
+    if (durSec >= MIX_TRACK_MAX_SEC) return { section: "tracks", long: true }; // 12-20 gray → track + marker
+    return { section: "tracks", long: false };
+  }
+  // Duration unknown: lean on votes (2+ strong signals → treat as a mix).
+  return votes >= 2 ? { section: "mixes", long: true } : { section: "tracks", long: false };
+}
+
 // ── useLibrary hook — reads from shared cm_music_library IDB ─────────────────
 function useLibrary(){
   const [library,setLibrary]=useState([]);
@@ -501,6 +548,7 @@ function useLibrary(){
   // this is plumbing-only state that the settings UI reads/writes.
   const [watchedFolders,setWatchedFolders]=useState([]);
   const [libraryMode,setLibraryModeState]=useState(LIBRARY_MODE_DEFAULT);
+  const [lastImportSummary,setLastImportSummary]=useState(null); // V2 wizard payoff {imported,skipped,shelved,at}
   // Phase 2 — scan-driven import pipeline. pendingNewTracks holds the
   // dedup-filtered scanner output between scan completion and user decision
   // (Import / Skip / Review-first). scanning gates re-entry while a scan is
@@ -797,6 +845,7 @@ function useLibrary(){
     setImporting(true);
     let importedCount=0;
     let skippedCount=0;
+    let shelvedMixCount=0; // long recordings auto-shelved to Mixes & Recordings (V2)
     const batchAdded=[]; // tracks added in THIS batch — used for in-batch dedupe
     for(let i=0;i<audio.length;i++){
       const file=audio[i];
@@ -833,7 +882,17 @@ function useLibrary(){
       // SHA-256 work, not in scope here. Existing 136 tracks remain untouched
       // per P1-Q1 (no backfill — only NEW track records get the new fields).
       const p2=phase2ByFile?.get(file)||null;
-      const track={id,filename:file.name.replace(/\.[^.]+$/,""),title,artist,album:tags.album||"",genre:tags.genre||"",label:tags.label||"",bpm:tags.bpm?parseFloat(tags.bpm):null,key:tags.key||null,duration:null,energy:null,analyzed:false,error:false,addedAt:Date.now(),artwork:tags.artwork||null,artworkVersion:tags.artwork?ARTWORK_PARSER_VERSION:undefined,folderId:p2?.folderId||null,sourcePath:p2?.sourcePath||null,hash:null};
+      // Library V2 mix detection (gated). Probe duration cheaply + classify so
+      // long DJ sets/recordings auto-shelve to "Mixes & Recordings" instead of
+      // polluting the track list. Sets duration early as a bonus. Off → untouched.
+      let librarySection="tracks", longTrack=false, probedDur=null;
+      if (LIB_WIZARD) {
+        probedDur = await getAudioDuration(file);
+        const cls = classifyLibrarySection(probedDur, file.name, tags.genre);
+        librarySection = cls.section; longTrack = cls.long;
+        if (librarySection==="mixes") shelvedMixCount++;
+      }
+      const track={id,filename:file.name.replace(/\.[^.]+$/,""),title,artist,album:tags.album||"",genre:tags.genre||"",label:tags.label||"",bpm:tags.bpm?parseFloat(tags.bpm):null,key:tags.key||null,duration:probedDur,energy:null,analyzed:false,error:false,addedAt:Date.now(),artwork:tags.artwork||null,artworkVersion:tags.artwork?ARTWORK_PARSER_VERSION:undefined,folderId:p2?.folderId||null,sourcePath:p2?.sourcePath||null,hash:null,librarySection,longTrack};
       // Don't pin File in fileMap or queue for analysis — both retained the File
       // reference for the whole session, and 300+ pinned blobs caused OOM. getFile
       // will hit OPFS first; analysis is deferred to handleLibLoad → queueAnalysis.
@@ -878,9 +937,13 @@ function useLibrary(){
       // the manual import paths, so they pay zero cost.
       try{opts.onProgress?.({filename:file.name,index:i,total:audio.length});}catch{}
     }
-    console.log('[IMPORT-DONE]',{importedCount,skippedCount,totalCandidates:audio.length,ms:Math.round(performance.now()-tImport0)});
+    console.log('[IMPORT-DONE]',{importedCount,skippedCount,shelvedMixCount,totalCandidates:audio.length,ms:Math.round(performance.now()-tImport0)});
     if(skippedCount>0){
       console.log(`[library] Imported ${importedCount} tracks, skipped ${skippedCount} duplicate${skippedCount===1?"":"s"}`);
+    }
+    if(LIB_WIZARD){
+      setLastImportSummary({imported:importedCount,skipped:skippedCount,shelved:shelvedMixCount,at:Date.now()});
+      if(shelvedMixCount>0) console.log(`[LIB-V2] ${shelvedMixCount} long recording${shelvedMixCount===1?"":"s"} moved to Mixes & Recordings`);
     }
     // Seed progress for the bottom-of-library indicator, then kick processQ.
     const pending=queueRef.current.length+(activeRef.current?1:0);
@@ -1672,7 +1735,13 @@ function useLibrary(){
 
   const fsaSupported=isFSASupported();
 
-  return{library,queue,crates,importing,importFiles,importFromPicker,previewImport,commitImport,queueAnalysis,reanalyze,reExtractArtwork,setGridEdit,getFile,clear,reload,setLibrary,fileMap,setFile,removeFile,analyzing,progress,analyzeAll,extractArtworkForTrack,artworkCache,reconnectFromFolder,scanArtwork,exportLibrary,importLibraryJson,watchedFolders,libraryMode,addWatchedFolder,removeWatchedFolder,setWatchedFolderEnabled,requestPermissionForFolder,changeLibraryMode,fsaSupported,pendingNewTracks,scanning,scanProgress,importProgress,runLibraryScan,dismissPendingNewTracks,commitPendingNewTracks};
+  // V2 mix detection: move a track between Tracks ↔ Mixes & Recordings (reversible).
+  const setTrackSection=useCallback(async(id,section)=>{
+    const sec=section==="mixes"?"mixes":"tracks";
+    setLibrary(prev=>prev.map(t=>t.id===id?{...t,librarySection:sec}:t));
+    try{const t=(library||[]).find(x=>x.id===id); if(t) await cmDbPut("tracks",{...t,librarySection:sec});}catch{}
+  },[library]);
+  return{library,queue,crates,importing,importFiles,importFromPicker,previewImport,commitImport,queueAnalysis,reanalyze,reExtractArtwork,setGridEdit,getFile,clear,reload,setLibrary,fileMap,setFile,removeFile,analyzing,progress,analyzeAll,extractArtworkForTrack,artworkCache,reconnectFromFolder,scanArtwork,exportLibrary,importLibraryJson,watchedFolders,libraryMode,addWatchedFolder,removeWatchedFolder,setWatchedFolderEnabled,requestPermissionForFolder,changeLibraryMode,fsaSupported,pendingNewTracks,scanning,scanProgress,importProgress,runLibraryScan,dismissPendingNewTracks,commitPendingNewTracks,lastImportSummary,setTrackSection};
 }
 
 // ── Library Panel UI ──────────────────────────────────────────
@@ -1784,7 +1853,12 @@ function LibraryPanelV2({ lib, onLoad, playingTrack, deckATrackId:deckATrackIdPr
   // Mock library disabled — empty state CTA renders instead. MOCK_* constants
   // above are kept in place for easy re-enable during testing.
   const useMock = false;
-  const allTracks = realTracks;
+  // Library V2: split Tracks vs Mixes & Recordings. Off → one combined list.
+  const [sectionView, setSectionView] = useState("tracks");
+  const mixesCount = LIB_WIZARD ? realTracks.filter(t => t.librarySection === "mixes").length : 0;
+  const allTracks = LIB_WIZARD
+    ? realTracks.filter(t => (t.librarySection === "mixes") === (sectionView === "mixes"))
+    : realTracks;
   const crates    = realCrates;
   const queueIds  = realQueue;
   // Mock "loaded on deck" state so the row indicator can be visually demonstrated
@@ -2254,6 +2328,26 @@ function LibraryPanelV2({ lib, onLoad, playingTrack, deckATrackId:deckATrackIdPr
           })}
         </div>
 
+        {/* V2 section toggle — Tracks vs Mixes & Recordings (long DJ sets/recordings
+            auto-shelved out of the track list). Only shown when mixes exist. */}
+        {LIB_WIZARD && mixesCount > 0 && (
+          <div style={{ display: "flex", gap: 6, padding: "8px 14px 0", alignItems: "center" }}>
+            {[{ id: "tracks", label: "Tracks" }, { id: "mixes", label: `Mixes & recordings (${mixesCount})` }].map(s => {
+              const active = sectionView === s.id;
+              return (
+                <div key={s.id} onClick={() => setSectionView(s.id)} style={{
+                  padding: "4px 11px", cursor: "pointer", borderRadius: 13,
+                  fontSize: 11, fontFamily: "'Inter',sans-serif", letterSpacing: 0.3,
+                  color: active ? TEXT : MUTED,
+                  background: active ? "rgba(255,255,255,0.09)" : "transparent",
+                  border: `1px solid ${active ? "rgba(255,255,255,0.18)" : "transparent"}`,
+                  transition: "color .12s, background .12s",
+                }}>{s.label}</div>
+              );
+            })}
+          </div>
+        )}
+
         {/* Context header — breadcrumb path + count. */}
         <div style={{ padding: "10px 14px 0", display: "flex", alignItems: "baseline", gap: 8 }}>
           {headerParts.map((p, i) => {
@@ -2530,6 +2624,14 @@ function LibraryPanelV2({ lib, onLoad, playingTrack, deckATrackId:deckATrackIdPr
                 </div>
                 <div onClick={() => { onLoad(t, "A"); setRowCtxMenu(null); }} onMouseEnter={onHover} onMouseLeave={onLeave} style={itemStyle}>Load to Deck A</div>
                 <div onClick={() => { onLoad(t, "B"); setRowCtxMenu(null); }} onMouseEnter={onHover} onMouseLeave={onLeave} style={itemStyle}>Load to Deck B</div>
+                {LIB_WIZARD && lib.setTrackSection && (
+                  <>
+                    <div style={{ height: 1, background: "rgba(255,255,255,0.06)", margin: "4px 0" }}/>
+                    <div onClick={() => { lib.setTrackSection(t.id, t.librarySection === "mixes" ? "tracks" : "mixes"); setRowCtxMenu(null); }} onMouseEnter={onHover} onMouseLeave={onLeave} style={itemStyle}>
+                      {t.librarySection === "mixes" ? "Move to Tracks" : "Move to Mixes & recordings"}
+                    </div>
+                  </>
+                )}
                 {/* Re-analyze and Re-extract artwork items removed — auto-
                     maintenance handles both cases on app mount + on import.
                     lib.reanalyze and lib.reExtractArtwork remain callable
