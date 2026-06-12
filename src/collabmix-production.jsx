@@ -409,6 +409,15 @@ async function downscaleArtwork(dataUrl) {
 }
 
 // ── Library analysis worker ───────────────────────────────────
+// Background-immune heartbeat. A backgrounded tab PAUSES requestAnimationFrame
+// and throttles main-thread setInterval, so a RAF/setInterval-driven progress
+// broadcast starves (~0.4Hz) and the partner's mirror starves. A Worker timer
+// is far less throttled when the page is hidden, so it keeps the heartbeat
+// flowing; the main thread computes the live position from ac.currentTime (the
+// audio clock keeps running in background) on each beat. cmd 'start'{ms} / 'stop'.
+const TIMER_WORKER = `let iv=null;self.onmessage=function(e){var d=e.data||{};if(d.cmd==='start'){if(iv)clearInterval(iv);iv=setInterval(function(){self.postMessage(1);},d.ms||100);}else if(d.cmd==='stop'){if(iv)clearInterval(iv);iv=null;}};`;
+function createTimerWorker(){ try{ return new Worker(URL.createObjectURL(new Blob([TIMER_WORKER],{type:"application/javascript"}))); }catch{ return null; } }
+
 const LIB_WORKER=`
 function bpf(s,sr,lo,hi){const o=new Float32Array(s.length);const rL=1/(2*Math.PI*hi/sr+1),rH=1/(2*Math.PI*lo/sr+1);let pi=0,po=0;const hp=new Float32Array(s.length);for(let i=0;i<s.length;i++){hp[i]=rH*(po+s[i]-pi);pi=s[i];po=hp[i];}let pv=0;for(let i=0;i<hp.length;i++){pv=o[i]=pv+(1-rL)*(hp[i]-pv);}return o;}
 function dbpm(mono,sr){const ar=200,hop=Math.floor(sr/ar),nf=Math.floor(mono.length/hop);const f=bpf(mono,sr,100,400);for(let i=0;i<f.length;i++)f[i]=f[i]>0?f[i]:0;const env=new Float32Array(nf);for(let i=0;i<nf;i++){let s=0;const st=i*hop,en=Math.min(st+hop,mono.length);for(let j=st;j<en;j++)s+=f[j]*f[j];env[i]=Math.sqrt(s/(en-st));}const on=new Float32Array(nf);for(let i=1;i<nf;i++){const d=env[i]-env[i-1];on[i]=d>0?d:0;}const mn=on.reduce((s,v)=>s+v,0)/nf;const sd=Math.sqrt(on.reduce((s,v)=>s+(v-mn)**2,0)/nf)||1;for(let i=0;i<nf;i++)on[i]=(on[i]-mn)/sd;const ml=Math.floor(60/200*ar),xl=Math.ceil(ar),al=xl-ml+1;const ac=new Float32Array(al);for(let li=0;li<al;li++){const lag=li+ml;let s=0;for(let i=0;i<nf-lag;i++)s+=on[i]*on[i+lag];ac[li]=s/(nf-lag);}let best=0,bi=0;for(let i=0;i<ac.length;i++)if(ac[i]>best){best=ac[i];bi=i;}if(!best)return null;const raw=(60/(bi+ml))*ar;let b=raw;while(b<100)b*=2;while(b>175)b/=2;return Math.round(b*10)/10;}
@@ -5110,6 +5119,7 @@ function Deck({ id, ch, ctx:ac, color, local, remote, onChange, midi:mt, bpmResu
   const remPktRef=useRef(0);          // performance.now() of the last progress packet (staleness)
   const remStaleLoggedRef=useRef(false);
   const remDiagAtRef=useRef(0);       // throttle for [MIRROR-DIAG] interp log
+  const lastRemProgRef=useRef(null);  // last remote.progress we re-anchored on (skip non-progress re-runs)
   const lastProgBroadcastRef=useRef(0);
   // Drag telemetry timestamp. applyRate skips logEvent when method==="drag" and
   // the last drag log was <DRAG_TELEMETRY_DEBOUNCE_MS ago. Hold, scroll, button,
@@ -5179,8 +5189,14 @@ function Deck({ id, ch, ctx:ac, color, local, remote, onChange, midi:mt, bpmResu
     const SLEW_TAU_MS=220;     // slew half-life feel — eases a correction over ~½s
     const FWD_SNAP_SEC=3;      // forward jump beyond this = a genuine seek → hard snap
     const BACK_SNAP_SEC=8;     // ONLY a large backward jump (a genuine rewind) hard-snaps
-    const STALE_HOLD_MS=2500;  // no packet for this long → hold position, don't run to the end
-    if(remote.progress!=null){
+    // Re-anchor ONLY on a genuinely NEW progress value. This effect re-runs on
+    // ANY `remote` (pA/pB) field change — analyzer re-broadcast, rate, waveform,
+    // etc. — and re-anchoring to the (unchanged, now-stale) progress on those
+    // would reset the coast backward to a stale position. When progress is
+    // sparse (a backgrounded driver) but other fields update, that was the
+    // residual bounce + lag. Coast continues undisturbed between real packets.
+    if(remote.progress!=null && remote.progress!==lastRemProgRef.current){
+      lastRemProgRef.current=remote.progress;
       const now=performance.now();
       remPktRef.current=now; remStaleLoggedRef.current=false;   // fresh packet → staleness clears
       const trackDurSec=remote.duration||dur;
@@ -5222,19 +5238,16 @@ function Deck({ id, ch, ctx:ac, color, local, remote, onChange, midi:mt, bpmResu
       const animate=()=>{
         const tnow=performance.now();
         const sincePkt=tnow-remPktRef.current;
-        let interp;
-        if(sincePkt>STALE_HOLD_MS){
-          // Starved of packets: HOLD near the last known position instead of
-          // extrapolating all the way to the end (the "freeze at 1.0" failure).
-          if(!remStaleLoggedRef.current){ console.warn('[MIRROR-STALE] deck',id,'no progress packet for '+Math.round(sincePkt)+'ms — holding position'); remStaleLoggedRef.current=true; }
-          const cappedSince=Math.min(tnow-remTimeRef.current, STALE_HOLD_MS);
-          interp=Math.min(1,Math.max(0,remProgRef.current+(remRateRef.current||0)*cappedSince));
-        } else {
-          const since=tnow-remTimeRef.current;
-          const modeled=remProgRef.current+remRateRef.current*since;
-          const slew=remSlewRef.current*Math.exp(-since/SLEW_TAU_MS);
-          interp=Math.min(1,Math.max(0,modeled+slew));
-        }
+        // Coast at the driver's TRUE rate the WHOLE time the partner is playing —
+        // even across sparse packets (a backgrounded driver tab broadcasting at
+        // ~1Hz). The audio is genuinely advancing at this rate, so coasting
+        // tracks truth; an arriving packet just nudges via slew. (The earlier
+        // "hold after 2.5s" caused the freeze — a playing deck must not stop.)
+        const since=tnow-remTimeRef.current;
+        const modeled=remProgRef.current+remRateRef.current*since;
+        const slew=remSlewRef.current*Math.exp(-since/SLEW_TAU_MS);
+        const interp=Math.min(1,Math.max(0,modeled+slew));
+        if(sincePkt>1500 && !remStaleLoggedRef.current){ console.warn('[MIRROR-STALE] deck',id,'packets sparse ('+Math.round(sincePkt)+'ms) — coasting at true rate'); remStaleLoggedRef.current=true; }
         setProg(interp); progRef.current=interp; onProgUpdate?.(interp);
         if(MIRROR_DIAG && tnow-remDiagAtRef.current>1000){
           remDiagAtRef.current=tnow;
@@ -5254,6 +5267,48 @@ function Deck({ id, ch, ctx:ac, color, local, remote, onChange, midi:mt, bpmResu
   useEffect(()=>{ if(!mt||!local)return; const{actionKey:ak,value:v}=mt; if(ak===`${sfx}_PLAY`&&v===true)toggle(); if(ak===`${sfx}_CUE`&&v===true)cue(); },[mt]);
 
   const stop_=()=>{ console.log('[PLAY-STATE] deck',id,'stop_() called, destroying source (hadSrc='+!!src.current+')'); if(src.current){src.current.onended=null;try{src.current.stop();}catch{}src.current.disconnect();src.current=null;}cancelAnimationFrame(raf.current); };
+
+  // Broadcast the driver's progress computed from the AUDIO CLOCK (ac.currentTime),
+  // self-throttled to 10Hz. Driven from BOTH the RAF tick (foreground) AND the
+  // Worker heartbeat below (background-immune). Using ac.currentTime — not the
+  // parent RAF snapshot (acNowRef, which FREEZES when the tab is backgrounded) —
+  // means even a throttled/sparse send carries the LIVE position, so the
+  // partner's mirror never gets a stale anchor to snap backward to.
+  const broadcastProgress=useCallback(()=>{
+    if(!isDriverRef.current||!playRef.current||!src.current||!ac) return;
+    const b=bufRef.current; if(!b) return;
+    const nowMs=performance.now();
+    // 10Hz cap. Test-only: __progressThrottleMs simulates a backgrounded tab's
+    // sparse send so the smoke can measure receiver coast accuracy.
+    const capMs=(TEST_HOOKS&&typeof window!=="undefined"&&window.__progressThrottleMs)||100;
+    if(nowMs-lastProgBroadcastRef.current<capMs) return;
+    lastProgBroadcastRef.current=nowMs;
+    const elapsedBuf=(ac.currentTime-st.current)*rateRef.current;
+    const lr2=loopRef.current;
+    let p;
+    if(lr2.active&&lr2.start!=null&&lr2.end!=null){
+      const lDur=(lr2.end-lr2.start)*b.duration;
+      const pos=(off.current-lr2.start*b.duration+elapsedBuf);
+      p=lr2.start+(pos%lDur)/b.duration;
+    } else { p=Math.min(1,(off.current+elapsedBuf)/b.duration); }
+    onChange?.("progress",p);
+  },[ac,onChange]);
+  const broadcastProgressRef=useRef(broadcastProgress);
+  useEffect(()=>{broadcastProgressRef.current=broadcastProgress;},[broadcastProgress]);
+  // Worker heartbeat — keeps progress flowing when the tab is backgrounded
+  // (RAF paused + main-thread setInterval throttled to ~1/min). One per local
+  // deck; started/stopped with play below.
+  const timerWorkerRef=useRef(null);
+  useEffect(()=>{
+    if(!local) return;
+    const w=createTimerWorker();
+    if(w){ w.onmessage=()=>broadcastProgressRef.current?.(); timerWorkerRef.current=w; }
+    return()=>{ try{w?.postMessage({cmd:"stop"});w?.terminate();}catch{} timerWorkerRef.current=null; };
+  },[local]);
+  useEffect(()=>{
+    const w=timerWorkerRef.current; if(!w) return;
+    if(isDriver&&play) w.postMessage({cmd:"start",ms:100}); else w.postMessage({cmd:"stop"});
+  },[isDriver,play]);
 
   const play_=(o)=>{ if(!buf||!ch||!ac){console.log('[PLAY-STATE] deck',id,'play_() bailed early: hasBuf='+!!buf+' hasCh='+!!ch+' hasAc='+!!ac); return;} console.log('[PLAY-STATE] deck',id,'play_() creating source at offset',o); stop_();
     // ── one-shot audio diagnostics (booth-silence investigation) ──
@@ -5290,12 +5345,10 @@ function Deck({ id, ch, ctx:ac, color, local, remote, onChange, midi:mt, bpmResu
         p=Math.min(1,(off.current+elapsedBuf)/buf.duration);
       }
       setProg(p); progRef.current=p; onProgUpdate?.(p);
-      // Throttle progress broadcasts to 10Hz to reduce network jitter on partner side
-      const nowMs=performance.now();
-      if(nowMs-lastProgBroadcastRef.current>=100){
-        onChange?.("progress",p);
-        lastProgBroadcastRef.current=nowMs;
-      }
+      // Wire broadcast moved to broadcastProgress() (computes from ac.currentTime,
+      // also driven by the background-immune worker heartbeat). The self-throttle
+      // to 10Hz lives there, so foreground RAF + worker can't double-send.
+      broadcastProgress();
       if(elapsed<buf.duration||lr2.active) raf.current=requestAnimationFrame(tick);
     }; tick(); };
 
