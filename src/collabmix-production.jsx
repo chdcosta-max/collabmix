@@ -4443,6 +4443,13 @@ function AnimatedZoomedWF({ bands, dur, progRef, onSeek, h=96, windowSec=8, beat
 
         // ── Pass 1: MAX amplitude per column. For sub-sample zoom (spp<1),
         // nearest-neighbor replication keeps the source peaks visible. ──
+        // NOTE: the MAX + floor re-evaluates as the view scrolls sub-pixel each
+        // frame, so a transient's drawn height/width subtly swells/shrinks as it
+        // slides ("breathing in some spots"). Side-by-side review found this is
+        // ENDEMIC to scrolling-waveform renderers (Rekordbox shimmers comparably
+        // up close) — acceptance is PARITY, not perfection, so this is left as-is.
+        // A linear-interp rigid resampler was prototyped + measured and did NOT
+        // reduce the jitter; parked in TICKET-WF-SHIMMER, not built.
         for(let dx=0;dx<physW;dx++){
           const f0=srcX+dx*spp;
           const f1=f0+spp;

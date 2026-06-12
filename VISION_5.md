@@ -8905,3 +8905,82 @@ PENDING: (1) Chad's foregrounded-mirror eye-check (carried from the mirror arc).
 (2) Cowork smoothdiag foreground capture → pin the judder root cause with numbers.
 (3) Chad A/B wfpulse 0 / 0.5 / default by eye. (4) Door 3 memory-cue render
 (Slice B). (5) Doors 2/4 (iTunes / USB-PDB) per LIBRARY_IMPORT_V2 build order.
+
+## WF SMOOTHNESS — RESOLUTION + TWO TICKETS (June 11, 2026)
+
+Recalibration from Chad's side-by-side: examined as closely as he'd been
+examining ours, **Rekordbox shows comparable shimmer**. So the scroll artifact is
+ENDEMIC to scrolling-waveform renderers, not a Mix//Sync defect — the bar is
+PARITY (confirmed), not perfection. Two distinct contributors were separated:
+
+- **Shimmer (amplitude "breathing in some spots")** = scroll-resampling, ENDEMIC.
+  Verdict: PARITY with Rekordbox by side-by-side. Not fixing now. → TICKET below.
+- **Stepping (zeroFrames / sub-pixel scroll granularity)** = genuinely ours, but
+  the contained fix is invasive. → TICKET below; revisit with Cowork's
+  FOREGROUNDED smoothdiag numbers.
+
+`?wfpulse` reverted to a pure beat-pulse EMPHASIS dial (centerline weight band +
+amplitude brightness overlay). It is NOT an anti-shimmer control. A linear-interp
+"rigid resampler" was prototyped under wfpulse=0 and MEASURED — it did NOT reduce
+the canvas jitter (wfpulse=0 jerkNorm 0.155 vs wfpulse=1 0.125) — so it was
+reverted, not shipped. The wfpulse taste A/B (0 / 0.5 / default) remains OPEN for
+Chad, post-stepping decision.
+
+### TICKET-WF-SHIMMER — scroll-resampling shimmer (PARKED, parity-acceptable)
+STATUS: parked. Do NOT build without a product reason — Rekordbox parity confirmed.
+SYMPTOM: with the per-kick emphasis OFF (wfpulse=0), faint localized amplitude
+oscillation remains — regions subtly swell/shrink ("a stomach breathing in/out
+IN SOME SPOTS") only while PLAYING (scrolling); paused is perfectly static.
+COWORK FORENSIC LOCALIZATION (half-day, done):
+- Paused = 0.000px residual across 24 frames (perfect glass).
+- Playing = ~1.9px RMS / 4.1px max after scroll-alignment.
+- All suspects ruled out EXCEPT scroll-resampling in the big-WF audio→pixel
+  binning + quadratic-fill path, plus desmear reshaping bins near boundaries.
+- Component: the rAF/fill block of AnimatedZoomedWF (props windowSec/progRef/etc).
+- Frame pacing is HEALTHY (paused frameMs sd ~1.1ms) — this is render math, not perf.
+ROOT CAUSE (matches the in-code note at Pass 1): heights come from a per-column
+MAX over a FLOORED integer source window [f0|0 .. f1|0] that re-evaluates every
+frame as srcX (=prog·len − viewPx/2) slides sub-pixel; the window straddles
+different source buckets frame-to-frame, so a transient's drawn height/width
+oscillates as it slides. De-smear compounds it by re-clamping bins just before
+each onset relative to the (sliding) CANVAS position rather than the audio offset.
+COWORK'S PROPOSED FIX SHAPE (verbatim): "stable-bin rendering — quantize the
+resample grid so a given audio offset always maps to the same drawn height
+regardless of scroll position; make desmear deterministic w.r.t. audio offset not
+canvas position." (i.e. snap the bin grid to integer source-bucket boundaries and
+translate the prebinned heights by the sub-pixel remainder, instead of re-maxing
+a sliding floored window every frame.)
+EVIDENCE the naive rigid-interp ISN'T the answer: a linear-interp center-sample
+resampler was tried and measured no jitter improvement — a proper fix needs the
+STABLE-BIN approach (fixed grid + sub-pixel translate), not point interpolation.
+
+### TICKET-WF-STEPPING — sub-pixel scroll granularity (in scope, deferred-pending-numbers)
+STATUS: deferred. In scope per rescope ("smooth sub-pixel scroll is mathematically
+better than stepped") but the contained fix is invasive; awaiting Cowork's
+FOREGROUNDED smoothdiag numbers to confirm materiality at 60fps before building.
+SYMPTOM: ?smoothdiag=1 on the LOCAL driver deck shows bursts of zeroFrames (frames
+where the playhead px did not advance — e.g. 19/122 one window, 0/121 another;
+headless 120fps). High zeroFrames = the scroll position steps rather than moving
+every frame. Per Chad: if it shows foregrounded, it's position-source granularity,
+not render perf (paused frameMs sd ~1.1ms = healthy pacing).
+ROOT CAUSE (code analysis): the playhead flows through a THREE-stage RAF pipeline,
+each loop an independent requestAnimationFrame:
+  (1) acNowRef updater (top-level): acNowRef.current = ctx.currentTime  [~line 7929]
+  (2) Deck tick(): p = (off + (acNowRef − st)·rate)/dur; progRef.current = p  [~5499]
+  (3) WF draw(): reads progRef.current, renders  [~4339]
+The local position IS already computed per-frame from the audio clock — so any
+residual stepping is DESYNC between these three RAF loops (a draw frame landing
+between position updates sees an unadvanced progRef), not a coarse source.
+WHY NOT A ONE-LINER: the acNowRef indirection is load-bearing — both decks read
+ONE identical clock snapshot per frame so their grids stay locked (reading
+ctx.currentTime directly per deck reintroduced sub-ms A/B grid oscillation, the
+reason it exists). The clean fix is to COLLAPSE the pipeline: derive the playhead
+from the audio clock INSIDE the WF draw() at draw time (zero pipeline latency,
+true per-frame sub-pixel motion). That requires threading the audio-clock +
+off/st/rate refs into AnimatedZoomedWF and re-validating the just-stabilized
+mirror / drag-scrub / pause / seek / parked-at-end paths — invasive right after
+the partner-mirror arc. INSTRUMENT already in place: ?smoothdiag=1
+([SMOOTH-DIAG] scrollPx{mean,sd,max} + zeroFrames + frameMs + drawMs, role=local|mirror).
+NEXT: Cowork foreground capture → if zeroFrames is material at 60fps, schedule the
+pipeline-collapse as its own change with the mirror-path regression net (e2e-mirror,
+e2e-mirror-coast) as the guard.
