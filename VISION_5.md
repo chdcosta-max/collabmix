@@ -8836,3 +8836,27 @@ From Chad's manual chaos run (two new items for the robustness/display queue):
    partner-mirror-freeze-at-track-end + live-position-re-track tickets — likely
    one root cause in the non-driver progress interpolation. Prioritize in the
    display pass; the control path is fine, so this is purely visual-trust.
+
+## ✅ PARTNER-MIRROR ARC — CLOSED (pending one eye-check) (June 11, 2026)
+
+Four rounds of capture-driven fixes; Cowork Round-4 verification verdict:
+1. Non-owner pause/play JUMP — FIXED. 5 transitions, baseline 0.068/0.052/0.061
+   → ~0.000 every time; mirror resumes at exactly the held position. The fix:
+   broadcast the exact frozen position WITH the pause/play transport change +
+   paused mirror snaps to it; coast-at-true-rate absorbs 18-30s pktAge (STALE
+   fires, position holds, no snap).
+2. Owner-side pause/play — clean throughout.
+3. Triage (a) CLOSED — owner drawnProg matches displayed timecode within
+   rounding across all samples; the baseline 0.3705 reading was the
+   partner-MIRRORED deck (deck= color), not an owner divergence.
+4. Continuous-motion smoothness — UNVERIFIED by Cowork (its mirror tab is
+   hidden=true throughout, draw throttled BY DESIGN — correct, not a bug, now
+   labelled via the hidden= diag field). Chad eye-verifies on a FOREGROUNDED
+   mirror tab; if stutter persists there, that's the one remaining thread.
+
+Fixes across the arc: worker-timer broadcast from the audio clock (background-
+immune), true-rate coast, re-anchor-on-new-progress-only, hold-at-displayed +
+slew on play-start, paused-position transfer, hidden-tab refocus re-anchor.
+Guards: e2e-mirror (continuous) + e2e-mirror-coast (sparse + pause/play transfer).
+Instrument: ?mirrordiag=1 ([MIRROR-DIAG] with hidden=, [MIRROR-SNAP], [MIRROR-STALE]).
+STATUS: closed pending Chad's foregrounded-mirror eye-check.
