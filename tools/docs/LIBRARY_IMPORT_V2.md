@@ -54,6 +54,20 @@ then **DEDUPE before showing the count.** Payoff: "Found 1,243 tracks."
 - **Reuse (✅):** watched-folder add/scan/dedupe/banner pipeline (#1–4, #7), metadata/artwork (#5–6). Builds directly on LIB-PHASE2.
 - **New:** the wizard step that requests the four standard dirs in sequence (each `showDirectoryPicker` needs its own user gesture — four buttons, not one); the "dedupe-then-count" payoff screen; honoring per-dir skip.
 - **Effort:** **S–M (~6–10h)** — mostly UX assembly over existing engine.
+- **HARD CONSTRAINT (do not re-litigate):** scanning **cannot be fully automatic.**
+  The File System Access API requires a **user-gesture permission grant per
+  folder** — the browser will not hand a web app a directory handle without an
+  explicit picker click. So Door 1 is inherently "one click per folder," not a
+  silent background scan. The UX answer is to make the four clicks feel guided
+  and one-time, not friction: (a) intro line — "Your browser asks permission for
+  each folder — one click apiece, about 30 seconds, one time only"; (b) each
+  picker opens AT that folder via `startIn: 'music'|'downloads'|'desktop'|
+  'documents'` so a grant is a single click (verified — FSA well-known dirs);
+  (c) scan + count immediately after each grant ("Music ✓ 842 tracks") so every
+  click pays off before the next; (d) handle persistence means **re-launches
+  never re-ask** — already-granted folders are remembered (IDB handles) and
+  re-scans dedupe. The ONE-TIME framing is the lever: users tolerate 30s of
+  setup they never repeat. (Implemented in Item 1, commit pending.)
 
 ### DOOR 2 — iTunes / Apple Music  (guided XML export)
 

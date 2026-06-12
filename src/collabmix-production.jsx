@@ -1831,7 +1831,8 @@ function LibraryWizard({ lib, onClose }) {
   const W = "rgba(255,255,255,0.92)", M = "rgba(255,255,255,0.6)", F = "rgba(255,255,255,0.32)";
   const PANEL = "rgba(20,20,24,0.97)", LINE = "rgba(255,255,255,0.1)";
   const [door, setDoor] = useState(null);                 // null | 'scan' | 'drop'
-  const [folderState, setFolderState] = useState({});     // {music:'scanning'|'done', …}
+  const [folderState, setFolderState] = useState({});     // {music:{status,added}, …}
+  const folderBeforeRef = useRef({});                     // library count when each folder's scan started
   const [dropActive, setDropActive] = useState(false);
   const openedAtRef = useRef(performance.now());
   const firstTrackRef = useRef(false);
@@ -1860,10 +1861,25 @@ function LibraryWizard({ lib, onClose }) {
   const scanFolder = async (f) => {
     doorUsedRef.current = "scan";
     console.log(`[LIB-V2-METRIC] door-open=scan folder=${f.key}`);
-    setFolderState(s => ({ ...s, [f.key]: "scanning" }));
-    try { const rec = await lib.addWatchedFolder?.({ startIn: f.startIn }); setFolderState(s => ({ ...s, [f.key]: rec ? "done" : "skipped" })); }
-    catch { setFolderState(s => ({ ...s, [f.key]: "skipped" })); }
+    folderBeforeRef.current[f.key] = (lib.library || []).length;
+    setFolderState(s => ({ ...s, [f.key]: { status: "scanning" } }));
+    try { const rec = await lib.addWatchedFolder?.({ startIn: f.startIn }); if (!rec) setFolderState(s => ({ ...s, [f.key]: { status: "skipped" } })); }
+    catch { setFolderState(s => ({ ...s, [f.key]: { status: "skipped" } })); }
+    // The per-folder count is filled in by the settle effect when the scan +
+    // auto-commit finishes (so each click pays off visibly before the next).
   };
+  // When a scan settles, mark any scanning folder done with its track delta.
+  useEffect(() => {
+    if (lib.scanning || (lib.pendingNewTracks || []).length > 0) return;
+    const now = (lib.library || []).length;
+    setFolderState(s => {
+      let changed = false; const next = { ...s };
+      for (const k of Object.keys(s)) {
+        if (s[k]?.status === "scanning") { next[k] = { status: "done", added: Math.max(0, now - (folderBeforeRef.current[k] ?? now)) }; changed = true; }
+      }
+      return changed ? next : s;
+    });
+  }, [lib.scanning, lib.pendingNewTracks, lib.library]);
   const onFiles = (files) => {
     if (!files || !files.length) return;
     doorUsedRef.current = "drop";
@@ -1903,20 +1919,30 @@ function LibraryWizard({ lib, onClose }) {
 
               {d.id === "scan" && door === "scan" && (
                 <div style={{ marginTop: 12, display: "flex", flexDirection: "column", gap: 6 }} onClick={e => e.stopPropagation()}>
+                  {/* One-time framing — users tolerate 30s of setup they never repeat. */}
+                  <div style={{ fontSize: 11.5, color: M, marginBottom: 2, lineHeight: 1.45 }}>
+                    Your browser asks permission for each folder — one click apiece, about 30 seconds, one time only.
+                  </div>
                   {STD.map(f => {
-                    const st = folderState[f.key];
+                    const st = folderState[f.key]?.status;
+                    const added = folderState[f.key]?.added;
+                    const right = st === "scanning" ? "scanning…"
+                      : st === "done" ? `✓ ${added ?? 0} track${added === 1 ? "" : "s"}`
+                      : st === "skipped" ? "—" : "grant";
                     return (
                       <button key={f.key} onClick={() => scanFolder(f)} disabled={st === "scanning"} style={{
                         display: "flex", justifyContent: "space-between", alignItems: "center",
-                        padding: "8px 11px", borderRadius: 7, border: `1px solid ${LINE}`, cursor: "pointer",
-                        background: "rgba(255,255,255,0.03)", color: W, fontSize: 12, fontFamily: "inherit",
+                        padding: "8px 11px", borderRadius: 7, border: `1px solid ${LINE}`, cursor: st === "scanning" ? "default" : "pointer",
+                        background: st === "done" ? "rgba(255,255,255,0.06)" : "rgba(255,255,255,0.03)", color: W, fontSize: 12, fontFamily: "inherit",
                       }}>
-                        <span>Scan {f.label}</span>
-                        <span style={{ color: M, fontSize: 11 }}>{st === "scanning" ? "scanning…" : st === "done" ? "added" : st === "skipped" ? "—" : "grant"}</span>
+                        <span>{st === "done" ? f.label : `Scan ${f.label}`}</span>
+                        <span style={{ color: st === "done" ? W : M, fontSize: 11 }}>{right}</span>
                       </button>
                     );
                   })}
-                  <div style={{ fontSize: 11, color: F, marginTop: 2 }}>One grant each — skip any you don't want scanned.</div>
+                  {(lib.watchedFolders || []).length > 0 && (
+                    <div style={{ fontSize: 11, color: F, marginTop: 2 }}>{(lib.watchedFolders || []).length} folder{(lib.watchedFolders || []).length === 1 ? "" : "s"} already connected — re-scans are deduped, never re-granted.</div>
+                  )}
                 </div>
               )}
 

@@ -55,12 +55,13 @@ try {
   await A.waitForTimeout(500);
   const q2 = sA.all("[SYNC-ENGAGE-QUALITY]")[beforeReeng] || sA.last("[SYNC-ENGAGE-QUALITY]");
   const seek2 = phaseSeekMs(q2);
-  // Bound = 30ms. The WANDER regression walked ~a full beat (250-500ms) per
-  // re-press; 30ms catches that with margin while tolerating live jitter (the
-  // master phase comes from 10Hz partner progress packets, so a 2-client
-  // re-engage offset jitters a few ms run-to-run). The exact <0.5ms idempotency
-  // of the math is proven by the unit `engage` test.
-  const IDEMP_MS = 30;
+  // Bound = 45ms. The WANDER regression walked ~a full beat (250-500ms) per
+  // re-press; 45ms catches that with wide margin while tolerating live jitter
+  // (master phase comes from 10Hz partner progress packets, so a 2-client
+  // re-engage offset jitters run-to-run — observed range ~-9 to +31ms; 30ms
+  // sat right on the edge and flaked). The exact <0.5ms idempotency of the math
+  // is proven by the unit `engage` test.
+  const IDEMP_MS = 45;
   t.check(`re-engage idempotent (|phaseSeek| < ${IDEMP_MS}ms — no wander)`, seek2 != null && Math.abs(seek2) < IDEMP_MS, `re-engage phaseSeekMs=${seek2}`);
   t.check("re-engage also result=ok", /result=ok/.test(q2 || ""), (q2 || "").replace(/.*\[SYNC-ENGAGE-QUALITY\]/, "").slice(0, 70));
 
