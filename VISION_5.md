@@ -8535,3 +8535,71 @@ regression unchanged.
 PENDING: Chad zoom-tests ?onsetgrid=1 (full stack) and locks ONSET_FRAC 0.15 vs
 0.30 against the honest (de-smeared) blob, then we promote the whole stack
 (onsetgrid default-on) together.
+
+## ✅ FULL ARC PROMOTED — beat-grid unification + onset re-anchor + de-smear (June 11, 2026)
+
+Today's complete arc, all live in production:
+
+1. **beatsv2 unification** (default-on, ?beatsv2=0 kill-switch) — SYNC engage,
+   seek-quantize, and the big-WF grid all read ONE source of truth (refined
+   beatTimes). Killed the post-quantize sync regression (engage wander, off-grid
+   kicks). Verified by ear + the engage idempotency smoke.
+
+2. **Onset re-anchor** (Phase 1) — beatTimes moved from diff-argmax (mid-attack,
+   ~+8ms late of the kick onset) to the attack leading edge (amplitude-space 15%
+   walk-back, uniform across all beats). median |beatTime−onset| 8→2ms. Because
+   the grid is unified, this moved engage + grid + quantize onto the true onset
+   together (sync correctness, not just looks).
+
+3. **Render de-smear** (Phase 2, hybrid) — big-WF keeps the 24000-bucket body
+   but snaps each kick's drawn leading edge onto the re-anchored onset (clamp the
+   backward bucket-bleed to the pre-smear baseline). Zero extra broadcast. Drawn
+   edge vs onset 19→6ms; line-vs-blob gap ~21ms → ~6ms.
+
+4. **Threshold LOCKED at 15%** after full-stack zoom A/B — gridlines ride the
+   kick fronts. ONSET_FRAC is the single knob (worker module scope).
+
+5. **Promoted** the onsetgrid stack default-on (?onsetgrid=0 kill-switch).
+   Hardened all URL flags against the post-join query-string strip (capture at
+   module load). Added '[ONSET-GRID] active/inactive' worker log for provable
+   flag participation.
+
+Net effect: line on the true onset, blob front on the onset, grid/engage/quantize
+all coherent. The Rekordbox "attached to the kick" bar — substantially met.
+
+### FOLLOW-UP TICKET — per-kick onset residual variance (not now)
+
+Some individual kicks still read slightly off after the 15% re-anchor — e.g.,
+certain track openers (Chad's screenshots). Likely soft-attack / layered-bass
+kicks where the leading edge is genuinely fuzzy (Aliens residual ~10ms in the
+diagnostic corroborates). Candidate fixes when we tune: per-kick ADAPTIVE
+threshold (scale ONSET_FRAC by attack sharpness), or fold the correction into
+the Slice B render pass. Revisit alongside Slice B.
+
+### SLICE B — render quality spec (Rekordbox zoomed-WF reference)
+
+Bar (from Chad's reference screenshot): layered frequency-band silhouettes —
+bass UNDER mids UNDER highs as stacked translucent shapes — with smooth,
+non-blocky contours and fine edge detail (no "blocky" steps). Current big-WF is
+bass-weighted single silhouette + bucket-blocky at zoom.
+
+- DATA is NOT the gap: waveformBass/Mid/High already broadcast. The gap is
+  RESOLUTION (24000 buckets → blocky at max zoom) + RENDERING CRAFT (stacked
+  translucent band contours vs one weighted silhouette).
+- BAND COLORS need a design decision: DESIGN_PHILOSOPHY bans warm fills, but
+  Rekordbox uses orange mids. Reconcile in the design session (don't pick by
+  training-data instinct).
+- The per-kick onset residual (ticket above) gets another look here — sharper
+  band edges may resolve the fuzzy-attack cases visually.
+
+### TOMORROW'S ORDER (updated)
+
+a. **comp 30-min endurance soak** via Cowork (?delaycomp=1, full HUD protocol).
+b. **promote delaycomp default-on** with kill-switch (delayCompOn = get != "0",
+   via the URL_FLAGS capture so the kill-switch survives the query strip).
+c. **smoke-suite build** in tools/smoke/ — fold the seeds + the new engage /
+   onset-anchor / desmear-verify assertions; promote playwright-core to a saved
+   devDependency.
+d. **Slice B render quality** — the "blocky" fix (layered band silhouettes,
+   higher edge resolution) + band-color design decision + per-kick residual
+   re-look.
