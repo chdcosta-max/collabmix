@@ -8638,3 +8638,47 @@ b. **promote delaycomp default-on** with kill-switch (via URL_FLAGS capture).
 c. **Slice B render quality** — layered translucent band silhouettes (bass<mids
    <highs), smooth non-blocky contours + band-color design decision (warm-fill
    ban vs Rekordbox orange mids) + per-kick onset residual re-look.
+
+## ✅ DELAYCOMP PROMOTED default-on (June 11, 2026) — full flag stack now default
+
+30-min production endurance soak PASSED (Cowork, room fade-beam-467, ?delaycomp=1,
+A=Shadow Work 120 / B=Home In The Sky 121, 3 track-ends + 3 re-engages):
+- comp appl held 55.3–55.9ms (0.6ms band) the FULL 30 min — never zeroed, never
+  wandered, measured==applied (jb≈37.4, playout≈18.2, target≈20.0).
+- Survived all 3 track-ends + re-engages; audio streaming throughout; zero
+  console errors; zero disconnects; no rebinds after initial setup; rtt 95–100ms,
+  conf 0.72–0.92.
+- Drift: bounded sawtooth (~±240ms, mean-reverting, no slope); offset flat.
+- Engage T0: result=ok rateDelta=0.0083 phaseSeekMs=10.54 xcorr=beatsv2_refined.
+
+Promoted delayCompOn default-on (?delaycomp=0 kill-switch) via the URL_FLAGS
+module-load capture (survives the post-join query strip).
+
+🏁 MILESTONE: the full flag stack — beatsv2 + onsetgrid + delaycomp — is now
+production default. Unified refined-beat sync, onset-anchored grid + de-smear,
+and delay compensation all ON by default, each with a ?flag=0 kill-switch.
+
+### FIX shipped with the promotion — [SYNC-DRIFT] log firehose
+
+The phase-error monitor effect re-runs on every pA/pB progress packet and calls
+sample() immediately each time → 400–600 [SYNC-DRIFT] lines/sec on the slave
+(drowned every other console event). Throttled the console.log + telemetry to
+≤2/sec (driftLogTsRef); the HUD (syncStatsRef) still updates every sample.
+[Deeper: the effect's per-packet re-run also recomputes the drift math at that
+rate — a perf item for the robustness pass, separate from the log spam.]
+
+### TRIAGE TICKETS (from the soak)
+
+a. [ONSET-GRID] wording — TWO logs exist, same meaning (flag reached the
+   worker): app-side "[ONSET-GRID] deck A analysis dispatch — onsetAnchor=true"
+   (the send) + worker-side "[ONSET-GRID] active ONSET_FRAC=0.15" (worker
+   confirms). Verification specs can assert either; not a bug.
+b. Telemetry/HUD asymmetries (cosmetic, one ticket): slave HUD sinceEngageMs
+   stays "—", state "sampling" all run; master state "no_recent_progress";
+   master engage timer froze at 171.7s → "—" → ~6s instead of counting up.
+c. Partner-deck mirror freezes at track-end (stuck at last position; doesn't
+   track partner's live position) — display-path ticket family; overlaps the
+   track-end state-machine work (robustness Phase 1) + rejoin replay (Phase 3).
+d. Cold re-engage after track-end: large first step then iterative refine
+   (223→−97, 231→−102) — convergence working as designed; watch whether the
+   residual relates to the per-kick onset variance ticket.

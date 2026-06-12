@@ -52,6 +52,10 @@ const ONSET_GRID = URL_FLAGS.get("onsetgrid") !== "0";
 // ?beatsv2=0 kill-switch (default on). Read from the captured flags so the
 // kill-switch also survives the query-string strip.
 const BEATS_V2 = URL_FLAGS.get("beatsv2") !== "0";
+// Delay compensation — PROMOTED default-on June 11 2026 after the 30-min
+// production endurance soak (comp held 55.3–55.9ms for the full run, survived 3
+// track-ends + re-engages, zero errors/disconnects). Kill switch: ?delaycomp=0.
+const DELAY_COMP = URL_FLAGS.get("delaycomp") !== "0";
 // Test hooks (window.__loadTestTrack) — ON in dev (the smoke suite runs the vite
 // dev server) or with ?smoke=1 against a build. NEVER on for a plain production
 // load, so real users never get the hook.
@@ -7088,6 +7092,12 @@ export default function CollabMix({ initialPage = "landing", djName = null }) {
   // - tSend) × rate. Engage timestamp for "ms since engage" telemetry.
   const partnerProgressMetaRef = useRef({ A: null, B: null });
   const engageTimeMsRef        = useRef(null);
+  // Throttle the [SYNC-DRIFT] console log + telemetry. The monitor effect
+  // re-runs on every pA/pB progress packet (and calls sample() immediately each
+  // time), so unthrottled it emitted 400-600 lines/sec on the slave — a log
+  // firehose that drowned every other event over an hour-long session. The HUD
+  // (syncStatsRef) still updates every sample; only the logging is gated.
+  const driftLogTsRef          = useRef(0);
   // Latest computed sync stats — drives the debug HUD without triggering
   // re-renders on every monitor tick.
   const syncStatsRef = useRef({
@@ -7866,7 +7876,7 @@ export default function CollabMix({ initialPage = "landing", djName = null }) {
   // local, never speed up). Measured by useRTC's getStats poll; applied only
   // when ?delaycomp=1. Slewed slowly (never clicks), clamped 0–400ms. Measure +
   // telemetry run regardless so the HUD shows numbers even with the flag off.
-  const delayCompOn = new URLSearchParams(window.location.search).get("delaycomp") === "1";
+  const delayCompOn = DELAY_COMP;   // default-on, ?delaycomp=0 kill-switch (module-load capture)
   // Beat-grid unification: SYNC engage, seek-quantize, and the big-waveform
   // grid all read the REFINED beatTimes[] (one source of truth). PROMOTED
   // default-on June 11 2026 after the 7-point A/B passed by ear + eye. Kill
@@ -8106,21 +8116,26 @@ export default function CollabMix({ initialPage = "landing", djName = null }) {
       const msSinceEngage = engageTimeMsRef.current
         ? performance.now() - engageTimeMsRef.current
         : null;
-      console.log("[SYNC-DRIFT]" +
-        " phaseMs=" + phaseErrorMs.toFixed(2) +
-        " offsetMs=" + clk.offset.toFixed(2) +
-        " rttMs=" + (clk.rttMedian ?? 0).toFixed(0) +
-        " conf=" + clk.confidence.toFixed(2) +
-        " sinceEngageMs=" + (msSinceEngage != null ? msSinceEngage.toFixed(0) : "—") +
-        " myDeck=" + myDeck + " partnerDeck=" + partnerDeck);
-      logEvent("sync", "drift_sample", {
-        phaseMs: +phaseErrorMs.toFixed(2),
-        offsetMs: +clk.offset.toFixed(2),
-        rttMedian: clk.rttMedian != null ? +clk.rttMedian.toFixed(0) : null,
-        confidence: +clk.confidence.toFixed(2),
-        msSinceEngage: msSinceEngage != null ? +msSinceEngage.toFixed(0) : null,
-        myDeck, partnerDeck,
-      });
+      // Throttle log + telemetry to ≤2/sec (the HUD update below is every call).
+      const nowTs = performance.now();
+      if (nowTs - driftLogTsRef.current > 500) {
+        driftLogTsRef.current = nowTs;
+        console.log("[SYNC-DRIFT]" +
+          " phaseMs=" + phaseErrorMs.toFixed(2) +
+          " offsetMs=" + clk.offset.toFixed(2) +
+          " rttMs=" + (clk.rttMedian ?? 0).toFixed(0) +
+          " conf=" + clk.confidence.toFixed(2) +
+          " sinceEngageMs=" + (msSinceEngage != null ? msSinceEngage.toFixed(0) : "—") +
+          " myDeck=" + myDeck + " partnerDeck=" + partnerDeck);
+        logEvent("sync", "drift_sample", {
+          phaseMs: +phaseErrorMs.toFixed(2),
+          offsetMs: +clk.offset.toFixed(2),
+          rttMedian: clk.rttMedian != null ? +clk.rttMedian.toFixed(0) : null,
+          confidence: +clk.confidence.toFixed(2),
+          msSinceEngage: msSinceEngage != null ? +msSinceEngage.toFixed(0) : null,
+          myDeck, partnerDeck,
+        });
+      }
       syncStatsRef.current = {
         ...clk, phaseErrorMs, msSinceEngage,
         monitorReason: "sampling", myDeck, partnerDeck,
