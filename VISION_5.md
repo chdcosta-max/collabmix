@@ -9008,3 +9008,73 @@ Chad's foregrounded-mirror eye-check + the iPad shakedown. No further build.
 Lesson logged: smoothdiag/zeroFrames numbers are only trustworthy from a
 FOREGROUNDED tab — a hidden/headless tab throttles the position RAF and
 manufactures false stepping. Tag captures with hidden= (already in the log line).
+
+## ═══ SESSION HANDOFF — June 11, 2026 ═══
+
+The per-task arcs above carry the detail; this is the session-level state for the
+next Claude Code to inherit.
+
+### MILESTONES TONIGHT
+- **Partner-mirror regression — CLOSED** (Cowork-diff-verified). Three root
+  causes fixed: (1) paused-deck broadcast gap (paused decks stopped emitting →
+  mirror fell behind → lurch on resume; fixed by broadcasting the exact frozen
+  position WITH the pause/play transport change + paused mirror snaps to it),
+  (2) hidden-tab RAF death (background draw loop dead; fixed via worker-timer
+  broadcast off the audio clock + true-rate coast + hidden= labelling),
+  (3) transition seam (play-start coasted from a huge elapsed → jump-to-end;
+  fixed by anchoring to the displayed position + slew). Two PERMANENT smoke
+  guards added: e2e-mirror (continuous) + e2e-mirror-coast (sparse + pause/play
+  transfer).
+- **Library Door 3 (rekordbox.xml) — SHIPPED** behind ?libwizard=1. Grids + cues
+  + playlists, ONE parser in the library app (the mixer wizard routes to it),
+  imported grids consumed through the SAME unified nearestBeatTime path; engage
+  measured 0.06ms idempotent on an imported-grid track; onset-anchor + de-smear
+  correctly skipped for imported grids. Fixture + e2e (16/16) + grid-math unit
+  (11/11). Two-UI-over-one-IDB recorded as an architecture fact.
+- **WF smoothness arc — CLOSED.** Shimmer = PARITY-verified vs Rekordbox (Chad
+  side-by-side; ticketed for the record, not built). Stepping = MEASUREMENT
+  ARTIFACT (headless background-RAF throttle; foreground 1/7629 zeroFrames =
+  clean). Scroll math verified at-reference by eyes + pixels + math. ?wfpulse
+  kept as a pure emphasis taste-dial; ?smoothdiag=1 instrument retained.
+- **Onboarding walkthrough — COMPLETE.** Top-10 friction list produced; fix batch
+  PENDING (prompt ready for tomorrow).
+- **Suite: 19/19 green** (5 unit/audio + 14 e2e).
+
+### WORKFLOW DOCTRINE (permanent — how this project runs)
+Codifies what worked tonight. Applies to all future sessions unless Chad overrides.
+- **(a) Division of labor.** Cowork owns EVIDENCE — logs, numbers, timing,
+  repetition, multi-client capture. Chad owns EARS / EYES / TASTE / chaos-hands
+  (the unmeasurables + adversarial use). TRIGGER: the moment a task needs a
+  SECOND manual console capture, it converts to a Cowork mission — stop asking
+  Chad to paste console output by hand.
+- **(b) Calibrate against the reference BEFORE declaring a quality gap.** The
+  Rekordbox side-by-side turned a "fix our defect" hunt into "we're at parity" —
+  saved days. Always compare to the gold-standard tool before assuming a flaw is
+  ours.
+- **(c) Measure prototypes before shipping.** The anti-shimmer resampler was
+  built, MEASURED (no jitter improvement), and DISCARDED — never shipped on
+  faith. Build → measure → keep-or-revert.
+- **(d) Escalate model effort only while the MECHANISM is unknown.** Spend the
+  heavy reasoning on diagnosis; de-escalate to straightforward execution once the
+  cause is pinned.
+- **(e) Routing.** build / fix / deploy → Claude Code. watch / capture / measure
+  → Cowork.
+
+### TOMORROW'S QUEUE (in order)
+1. Chad's foregrounded-mirror eye-check (~60s) — the one unmeasurable left from
+   the mirror arc (headless mirror tab is hidden=true by env limitation).
+2. Chad's REAL rekordbox.xml through Door 3 (first live-data exercise of the
+   importer — synthetic fixture passed; real export is the true test).
+3. Onboarding fix batch (prompt ready).
+4. iPad shakedown (protocol ready).
+5. Jake recon text.
+6. wfpulse taste A/B (0 / 0.5 / default).
+7. THEN: the engage-precision session.
+
+### CARRIED-FORWARD TICKETS
+- TICKET-WF-SHIMMER — parked (parity-acceptable; Cowork evidence + stable-bin fix
+  shape on file).
+- TICKET-WF-STEPPING — CLOSED no-defect.
+- Door 3 memory-cue RENDER (Slice B) — imported as data now, not yet drawn.
+- Doors 2/4 (iTunes / USB-PDB) — per LIBRARY_IMPORT_V2 build order; Door 2 follows
+  Door 3's library-app-parser + wizard-route pattern.
