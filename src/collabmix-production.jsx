@@ -34,6 +34,25 @@ import {
 //  All bugs fixed. Landing page. Full app.
 // ═══════════════════════════════════════════════════════════════
 
+// ── URL feature flags, captured ONCE at module load ──────────────
+// The app strips the query string via history.replaceState during
+// auto-rejoin / leave (see ~line 8857/8878), so reading
+// window.location.search LATER (e.g. when a deck analyzes a track)
+// returns empty and the flag is lost. Capture at module evaluation —
+// which runs before React mounts and before the strip — so the flags
+// survive. This is the fix for ?onsetgrid not reaching the analyzer.
+const URL_FLAGS = (() => {
+  try { return new URLSearchParams(window.location.search); }
+  catch { return new URLSearchParams(); }
+})();
+// Full Phase-1+2 stack (onset-anchored beatTimes + de-smear). PROMOTED
+// default-on June 11 2026 after the full-stack zoom A/B (threshold locked 15%);
+// gridlines ride the kick fronts. Kill switch: ?onsetgrid=0.
+const ONSET_GRID = URL_FLAGS.get("onsetgrid") !== "0";
+// ?beatsv2=0 kill-switch (default on). Read from the captured flags so the
+// kill-switch also survives the query-string strip.
+const BEATS_V2 = URL_FLAGS.get("beatsv2") !== "0";
+
 // ── Server Configuration ─────────────────────────────────────
 // After deploying to Railway, replace this URL with your Railway server URL.
 // It should look like: wss://collabmix-server-production.up.railway.app
@@ -197,10 +216,12 @@ function useBPM() {
     setResults(prev => ({ ...prev, [id]: { ...(prev[id] || {}), bpm: null, beatPhaseFrac: null, beatPeriodSec: null, beatPhaseSec: null, firstBar1AnchorSec: null, beatTimes: null, beatAttacks: null, analyzing: true } }));
     const cd = [];
     for (let c = 0; c < buf.numberOfChannels; c++) cd.push(buf.getChannelData(c).slice());
-    // Phase 1 grid re-anchor: ?onsetgrid=1 tells the worker to anchor beatTimes
-    // on the kick ONSET (leading edge) instead of the diff-argmax mid-attack
-    // point. Default OFF for A/B (zoom the grid vs kicks); promote once verified.
-    const onsetAnchor = new URLSearchParams(window.location.search).get("onsetgrid") === "1";
+    // Phase 1 grid re-anchor: ?onsetgrid=1 (captured at module load — the URL
+    // query is stripped after join, so a late read here would always be false)
+    // tells the worker to anchor beatTimes on the kick ONSET instead of the
+    // diff-argmax mid-attack point.
+    const onsetAnchor = ONSET_GRID;
+    console.log("[ONSET-GRID] deck " + id + " analysis dispatch — onsetAnchor=" + onsetAnchor);
     // Transfer ArrayBuffers (O(1) vs O(n) structured clone) — avoids 10-30s stall on large tracks
     worker.current.postMessage({ cd, sr: buf.sampleRate, id, onsetAnchor }, cd.map(a => a.buffer));
   }, []);
@@ -7810,13 +7831,13 @@ export default function CollabMix({ initialPage = "landing", djName = null }) {
   // grid all read the REFINED beatTimes[] (one source of truth). PROMOTED
   // default-on June 11 2026 after the 7-point A/B passed by ear + eye. Kill
   // switch: ?beatsv2=0 restores the legacy LINEAR engage + grid.
-  const beatsV2On = new URLSearchParams(window.location.search).get("beatsv2") !== "0";
+  const beatsV2On = BEATS_V2;   // captured at module load (survives query-string strip)
   const beatsV2Ref = useRef(beatsV2On); beatsV2Ref.current = beatsV2On;
   // ?onsetgrid=1 — full Phase-1+2 stack: worker anchors beatTimes on the kick
-  // ONSET (analysis-time, threaded into the worker message) AND the big-WF
-  // de-smears each kick's drawn leading edge onto that onset (render-time,
-  // below). One flag so the A/B is full-stack-on vs current production.
-  const onsetGridOn = new URLSearchParams(window.location.search).get("onsetgrid") === "1";
+  // ONSET (analysis-time) AND the big-WF de-smears each kick's drawn leading
+  // edge onto that onset (render-time). Captured at module load so it survives
+  // the post-join query-string strip.
+  const onsetGridOn = ONSET_GRID;
   useEffect(() => {
     const iv = setInterval(() => {
       const e = eng.current; if (!e?.ctx || !e.monitorDelay) return;

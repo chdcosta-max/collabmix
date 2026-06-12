@@ -97,8 +97,16 @@ function dphase(mono,sr,bpm){
 
   return{beatPhaseSec,beatPeriodSec};
 }
+// Onset re-anchor leading-edge threshold (Phase 1). THE knob: 0.15 = kick
+// front; 0.30 = between front and mid-attack (the prepped "reads-too-early"
+// fallback). One number to change.
+const ONSET_FRAC = 0.15;
 self.onmessage=function(e){
   const{cd,sr,id,onsetAnchor}=e.data;const len=cd[0].length,nc=cd.length;
+  // Unmistakable participation proof — printed at analysis start for EVERY
+  // track so the ?onsetgrid flag crossing the page→worker boundary is provable,
+  // never assumed.
+  console.log('[ONSET-GRID] '+(onsetAnchor?('active ONSET_FRAC='+ONSET_FRAC):'inactive')+' (deck/id='+id+')');
   const mono=new Float32Array(len);for(let c=0;c<nc;c++){const d=cd[c];for(let i=0;i<len;i++)mono[i]+=d[i]/nc;}
   // BPM detection: 100-400Hz bandpass captures kick + snare transients for autocorrelation
   const f=bp(mono,sr,100,400);for(let i=0;i<f.length;i++)f[i]=f[i]>0?f[i]:0;
@@ -432,11 +440,7 @@ self.onmessage=function(e){
               // sits ~39% up the amplitude attack and the walk-back undershoots
               // (Rocket Jam stayed +15ms late before this). gate(power) =
               // (floorAmp + frac·(peakAmp−floorAmp))².
-              // ── THRESHOLD KNOB (the only line to change for the A/B) ──────
-              // 0.15 = leading edge (visually on the kick front, can read early).
-              // 0.30 = between edge and mid-attack (closer to Rekordbox bar-1 on
-              //        some tracks). Flip this one number, rebuild, re-zoom.
-              const ONSET_FRAC = 0.15;   // ← 0.30 = the prepped "reads-too-early" fallback
+              // ONSET_FRAC is hoisted to module scope (the single knob).
               const peakAmp = Math.sqrt(peakVal), floorAmp = Math.sqrt(floorVal);
               const gateAmp = floorAmp + ONSET_FRAC * (peakAmp - floorAmp);
               const gate = gateAmp * gateAmp;
