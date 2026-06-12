@@ -11,7 +11,9 @@
     "build": "vite build",
     "lint": "eslint .",
     "preview": "vite preview",
-    "smoke:engage": "node tools/smoke/engage_align.smoke.mjs"
+    "smoke": "node tools/smoke/run.mjs",
+    "smoke:unit": "node tools/smoke/run.mjs --kind=unit,audio",
+    "smoke:e2e": "node tools/smoke/run.mjs --kind=e2e"
   },
   "dependencies": {
     "@sentry/react": "^10.53.1",
@@ -22,6 +24,8 @@
   },
   "devDependencies": {
     "@eslint/js": "^9.13.0",
+    "audio-decode": "^3.10.1",
+    "playwright-core": "^1.60.0",
     "@types/react": "^18.3.12",
     "@types/react-dom": "^18.3.1",
     "@vitejs/plugin-react": "^4.3.3",
