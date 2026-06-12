@@ -93,7 +93,8 @@ function runWorker(cd, sr, id) {
     if (typeof self.onmessage !== "function") {
       throw new Error("WORKER_SRC did not assign self.onmessage");
     }
-    self.onmessage({ data: { cd, sr, id } });
+    // ONSET_ANCHOR=1 exercises the Phase 1 onset re-anchor (?onsetgrid=1).
+    self.onmessage({ data: { cd, sr, id, onsetAnchor: process.env.ONSET_ANCHOR === "1" } });
   } finally {
     console.log = origLog;
   }
