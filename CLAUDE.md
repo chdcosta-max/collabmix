@@ -63,6 +63,16 @@ verification report answering:
 2. **Type check / lint:** Did `npm run typecheck` and `npm run lint`
    pass? (If these scripts don't exist, note that.)
 
+2b. **Smoke suite (STANDARD PRE-PUSH GATE):** Did `npm run smoke`
+   pass? This is the two-client regression net (tools/smoke/) —
+   sync engage/idempotency, onset anchor, render de-smear, join,
+   track mirror, transport, delay-comp, drift telemetry. It must
+   be GREEN before pushing to master, with any SKIPs explained
+   (SKIP = missing dep like no system Chrome, not a regression).
+   For fast iteration `npm run smoke:unit` (no browser, ~1s);
+   run the full `npm run smoke` before the push. See
+   tools/smoke/README.md.
+
 3. **Runtime check:** Did you run the dev server and load the app?
    Did the changed feature load without console errors?
 
