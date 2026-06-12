@@ -1993,6 +1993,16 @@ function LibraryPanelV2({ lib, onLoad, playingTrack, deckATrackId:deckATrackIdPr
   const allTracks = LIB_WIZARD
     ? realTracks.filter(t => (t.librarySection === "mixes") === (sectionView === "mixes"))
     : realTracks;
+  // First-run wizard (Item 1). Opens once on a fresh/empty library; re-openable
+  // via "Add music". Skippable — never blocks the booth. ~900ms grace so the
+  // IDB-loaded library doesn't flash the wizard before it populates.
+  const [wizardOpen, setWizardOpen] = useState(false);
+  const wizardSeenRef = useRef(false);
+  useEffect(() => {
+    if (!LIB_WIZARD || wizardSeenRef.current) return;
+    const t = setTimeout(() => { wizardSeenRef.current = true; if ((lib.library || []).length === 0) { console.log("[LIB-V2-METRIC] wizard-first-run-open"); setWizardOpen(true); } }, 900);
+    return () => clearTimeout(t);
+  }, []);   // eslint-disable-line react-hooks/exhaustive-deps
   const crates    = realCrates;
   const queueIds  = realQueue;
   // Mock "loaded on deck" state so the row indicator can be visually demonstrated
@@ -2129,6 +2139,7 @@ function LibraryPanelV2({ lib, onLoad, playingTrack, deckATrackId:deckATrackIdPr
   };
 
   const handleAddMusic = async () => {
+    if (LIB_WIZARD) { console.log("[LIB-V2-METRIC] wizard-reopen=add-music"); setWizardOpen(true); return; }
     try {
       if (window.showOpenFilePicker) {
         const handles = await window.showOpenFilePicker({
@@ -2319,6 +2330,8 @@ function LibraryPanelV2({ lib, onLoad, playingTrack, deckATrackId:deckATrackIdPr
   );
 
   return (
+    <>
+    {LIB_WIZARD && wizardOpen && <LibraryWizard lib={lib} onClose={() => setWizardOpen(false)} />}
     <div
       onDragOver={(e) => {
         e.preventDefault();
@@ -3060,6 +3073,7 @@ function LibraryPanelV2({ lib, onLoad, playingTrack, deckATrackId:deckATrackIdPr
       )}
 
     </div>
+    </>
   );
 }
 
