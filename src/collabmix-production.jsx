@@ -1817,6 +1817,140 @@ function AlbumArt({ src, size = 36, radius = 4, alt = "", isActive = false, onCl
   );
 }
 
+// ── Library V2 first-run wizard (Item 1) — "Where's your music?" ────────────
+// Five named doors; Door 1 (scan computer) + Door 5 (drop anything) live, the
+// rest marked soon. Skippable (never blocks the booth). Quiet-pro copy:
+// sentence case, no exclamation marks. Metrics at console level.
+function LibraryWizard({ lib, onClose }) {
+  const W = "rgba(255,255,255,0.92)", M = "rgba(255,255,255,0.6)", F = "rgba(255,255,255,0.32)";
+  const PANEL = "rgba(20,20,24,0.97)", LINE = "rgba(255,255,255,0.1)";
+  const [door, setDoor] = useState(null);                 // null | 'scan' | 'drop'
+  const [folderState, setFolderState] = useState({});     // {music:'scanning'|'done', …}
+  const [dropActive, setDropActive] = useState(false);
+  const openedAtRef = useRef(performance.now());
+  const firstTrackRef = useRef(false);
+  const doorUsedRef = useRef(null);
+  const count = (lib.library || []).length;
+
+  // Metric: time-to-first-track (the magic-moment latency we optimize for).
+  useEffect(() => {
+    if (!firstTrackRef.current && count > 0) {
+      firstTrackRef.current = true;
+      console.log(`[LIB-V2-METRIC] time-to-first-track=${Math.round(performance.now() - openedAtRef.current)}ms door=${doorUsedRef.current || "?"}`);
+    }
+  }, [count]);
+  // Auto-import what the scans find — no review-gate inside the wizard (dedupe
+  // already ran in the scanner). Only while the wizard is open.
+  useEffect(() => {
+    if ((lib.pendingNewTracks || []).length > 0 && !lib.scanning) lib.commitPendingNewTracks?.();
+  }, [lib.pendingNewTracks, lib.scanning]);
+
+  const STD = [
+    { key: "music", label: "Music", startIn: "music" },
+    { key: "downloads", label: "Downloads", startIn: "downloads" },
+    { key: "desktop", label: "Desktop", startIn: "desktop" },
+    { key: "documents", label: "Documents", startIn: "documents" },
+  ];
+  const scanFolder = async (f) => {
+    doorUsedRef.current = "scan";
+    console.log(`[LIB-V2-METRIC] door-open=scan folder=${f.key}`);
+    setFolderState(s => ({ ...s, [f.key]: "scanning" }));
+    try { const rec = await lib.addWatchedFolder?.({ startIn: f.startIn }); setFolderState(s => ({ ...s, [f.key]: rec ? "done" : "skipped" })); }
+    catch { setFolderState(s => ({ ...s, [f.key]: "skipped" })); }
+  };
+  const onFiles = (files) => {
+    if (!files || !files.length) return;
+    doorUsedRef.current = "drop";
+    console.log(`[LIB-V2-METRIC] door-open=drop files=${files.length}`);
+    lib.importFiles?.([...files]);
+  };
+
+  const DOORS = [
+    { id: "scan", title: "Scan my computer", sub: "Music, Downloads, Desktop, Documents", live: true },
+    { id: "itunes", title: "iTunes or Apple Music", sub: "Bring your playlists across", live: false },
+    { id: "rekordbox", title: "rekordbox", sub: "Your cues and grids, intact", live: false },
+    { id: "usb", title: "USB drive", sub: "DJ with a stick? Plug it in", live: false },
+    { id: "drop", title: "Drop anything", sub: "Drag files or folders here", live: true },
+  ];
+  const skip = () => { console.log(`[LIB-V2-METRIC] wizard-skip afterMs=${Math.round(performance.now() - openedAtRef.current)} tracks=${count}`); onClose(); };
+
+  const card = (active) => ({
+    textAlign: "left", padding: "16px 18px", borderRadius: 10, cursor: active ? "pointer" : "default",
+    background: active ? "rgba(255,255,255,0.04)" : "rgba(255,255,255,0.015)",
+    border: `1px solid ${active ? LINE : "rgba(255,255,255,0.05)"}`, transition: "background .12s, border-color .12s",
+  });
+
+  return (
+    <div style={{ position: "fixed", inset: 0, zIndex: 10000, background: "rgba(0,0,0,0.82)", backdropFilter: "blur(6px)", display: "flex", alignItems: "center", justifyContent: "center", padding: 24 }}>
+      <div style={{ width: 720, maxWidth: "100%", maxHeight: "92vh", overflow: "auto", background: PANEL, border: `1px solid ${LINE}`, borderRadius: 16, padding: "32px 34px", fontFamily: "'Inter',sans-serif" }}>
+        <div style={{ fontSize: 22, fontWeight: 600, color: W, letterSpacing: -0.2 }}>Where's your music?</div>
+        <div style={{ fontSize: 13, color: M, marginTop: 6 }}>Mix//Sync hunts it down. Pick a door — you can add more anytime.</div>
+
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, marginTop: 22 }}>
+          {DOORS.map(d => (
+            <div key={d.id} onClick={() => d.live && setDoor(door === d.id ? null : d.id)} style={card(d.live)}>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline" }}>
+                <span style={{ fontSize: 14, fontWeight: 600, color: d.live ? W : F }}>{d.title}</span>
+                {!d.live && <span style={{ fontSize: 10, color: F, letterSpacing: 1, textTransform: "uppercase" }}>Soon</span>}
+              </div>
+              <div style={{ fontSize: 12, color: d.live ? M : F, marginTop: 4 }}>{d.sub}</div>
+
+              {d.id === "scan" && door === "scan" && (
+                <div style={{ marginTop: 12, display: "flex", flexDirection: "column", gap: 6 }} onClick={e => e.stopPropagation()}>
+                  {STD.map(f => {
+                    const st = folderState[f.key];
+                    return (
+                      <button key={f.key} onClick={() => scanFolder(f)} disabled={st === "scanning"} style={{
+                        display: "flex", justifyContent: "space-between", alignItems: "center",
+                        padding: "8px 11px", borderRadius: 7, border: `1px solid ${LINE}`, cursor: "pointer",
+                        background: "rgba(255,255,255,0.03)", color: W, fontSize: 12, fontFamily: "inherit",
+                      }}>
+                        <span>Scan {f.label}</span>
+                        <span style={{ color: M, fontSize: 11 }}>{st === "scanning" ? "scanning…" : st === "done" ? "added" : st === "skipped" ? "—" : "grant"}</span>
+                      </button>
+                    );
+                  })}
+                  <div style={{ fontSize: 11, color: F, marginTop: 2 }}>One grant each — skip any you don't want scanned.</div>
+                </div>
+              )}
+
+              {d.id === "drop" && door === "drop" && (
+                <div onClick={e => e.stopPropagation()}
+                  onDragOver={e => { e.preventDefault(); setDropActive(true); }}
+                  onDragLeave={() => setDropActive(false)}
+                  onDrop={e => { e.preventDefault(); setDropActive(false); onFiles(e.dataTransfer.files); }}
+                  style={{ marginTop: 12, padding: "20px 12px", borderRadius: 8, textAlign: "center",
+                    border: `1px dashed ${dropActive ? "rgba(255,255,255,0.5)" : LINE}`, background: dropActive ? "rgba(255,255,255,0.05)" : "transparent",
+                    color: M, fontSize: 12 }}>
+                  Drop audio files here
+                  <div style={{ marginTop: 8 }}>
+                    <label style={{ color: W, cursor: "pointer", textDecoration: "underline", textUnderlineOffset: 3 }}>
+                      or browse
+                      <input type="file" multiple accept="audio/*,.mp3,.wav,.flac,.aac,.ogg,.m4a" style={{ display: "none" }} onChange={e => onFiles(e.target.files)} />
+                    </label>
+                  </div>
+                </div>
+              )}
+            </div>
+          ))}
+        </div>
+
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: 24, paddingTop: 18, borderTop: `1px solid ${LINE}` }}>
+          <div style={{ fontSize: 13, color: count > 0 ? W : F }}>
+            {count > 0 ? `Found ${count} track${count === 1 ? "" : "s"}` : "No music yet"}
+            {lib.lastImportSummary?.shelved > 0 && <span style={{ color: M }}>  ·  {lib.lastImportSummary.shelved} moved to mixes & recordings</span>}
+            {lib.scanning && <span style={{ color: M }}>  ·  scanning…</span>}
+          </div>
+          <div style={{ display: "flex", gap: 10 }}>
+            <button onClick={skip} style={{ padding: "9px 16px", borderRadius: 8, border: `1px solid ${LINE}`, background: "transparent", color: M, fontSize: 13, cursor: "pointer", fontFamily: "inherit" }}>Skip for now</button>
+            <button onClick={onClose} style={{ padding: "9px 18px", borderRadius: 8, border: "none", background: count > 0 ? "rgba(255,255,255,0.92)" : "rgba(255,255,255,0.14)", color: count > 0 ? "#111" : M, fontSize: 13, fontWeight: 600, cursor: "pointer", fontFamily: "inherit" }}>{count > 0 ? "Start mixing" : "Done"}</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function LibraryPanelV2({ lib, onLoad, playingTrack, deckATrackId:deckATrackIdProp=null, deckBTrackId:deckBTrackIdProp=null, previewTrackId, onPreview, onDelete, chat, onSendChat, me, rkLib=null, rkStatus={phase:"idle"}, onConnectRekordbox=null }) {
   const G = "#9CA3AF";
   const BG = "#0D0F12";
