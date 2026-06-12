@@ -8724,3 +8724,26 @@ Verified (e2e-reconnect smoke): drop B's WS → [RECONNECT] schedule (attempt=1,
 500ms) → success (632ms) → partner restored. Full suite 13/13 green.
 
 Phase 2b (RTC renegotiation on network change) + 2c (sleep/wake) — next.
+
+## 🛡️ ROBUSTNESS CAMPAIGN — Phase 2b/2c: RTC recovery + sleep/wake (June 11, 2026)
+
+2b — RTC renegotiation on network change. GAP found: oniceconnectionstatechange
+handled "failed" by only painting state (no renegotiation) and ignored
+"disconnected" entirely. FIX: "failed" → onIceRecover immediately; "disconnected"
+→ 6s grace then recover if still down. The App's handleIceRecover does an
+INITIATOR-GATED startCall() (fresh offer → ICE restart) over the auto-reconnected
+WS, reusing the rtc_hangup 3-retry budget so a flapping network can't storm. New
+[RTC-RECOVER] log family (phase=ice-failed/ice-disconnected-timeout/restart/
+exhausted). This is the connection-layer trigger that was missing — comp already
+survives the renegotiation once it fires (verified by e2e-comp's reload path).
+
+2c — sleep/wake. On wake the socket can be dead before onclose fires. Added a
+visibilitychange + online listener: if visible/online with an active room and a
+non-OPEN socket, re-dial immediately ([RECONNECT] phase=wake). Honest behavior —
+rejoin cleanly rather than pretend nothing happened.
+
+CAVEAT: 2b/2c can't be FORCED headlessly (Playwright can't kill an established
+ICE connection or suspend the OS), so they're wired + instrumented + reuse the
+verified recovery path, but need manual chaos-script verification (wifi kill
+mid-blend, sleep laptop). Full suite 13/13 green (comp-reload path intact proves
+no regression). The CHAOS SCRIPT (Phase 4 deliverable) will cover these.

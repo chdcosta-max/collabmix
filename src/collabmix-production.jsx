@@ -2995,6 +2995,28 @@ function useSync({ url, onMsg }) {
   }, []);
 
   useEffect(()=>()=>{ deliberateRef.current = true; clearTimeout(reconnectTimerRef.current); ws.current?.close(); clearInterval(pt.current); },[]);
+  // Sleep/wake + network-restore liveness. On laptop sleep the socket dies but
+  // onclose may not fire until wake; the OS may also restore the network without
+  // a clean close. When the tab becomes visible or the browser reports online,
+  // if we have an active room and the socket isn't OPEN, re-dial immediately
+  // (honest behavior: rejoin cleanly beats pretending nothing happened). The
+  // onclose backoff path covers the case where the close DID fire.
+  useEffect(() => {
+    const wake = () => {
+      if (typeof document !== "undefined" && document.visibilityState === "hidden") return;
+      const j = lastJoinRef.current;
+      if (!j || deliberateRef.current) return;
+      const open = ws.current && ws.current.readyState === WebSocket.OPEN;
+      if (!open) {
+        console.warn('[RECONNECT] phase=wake — visible/online with dead socket, re-dialing room="'+j.roomId+'"');
+        if (!reconnectStartRef.current) reconnectStartRef.current = Date.now();
+        connectRef.current?.(j.roomId, j.djName, true);
+      }
+    };
+    window.addEventListener("online", wake);
+    document.addEventListener("visibilitychange", wake);
+    return () => { window.removeEventListener("online", wake); document.removeEventListener("visibilitychange", wake); };
+  }, []);
   // Test-only: drop the socket as if the network blipped (NOT deliberate, so
   // the auto-reconnect path runs). Exposed via the smoke hook behind TEST_HOOKS.
   const forceDrop = useCallback(() => { console.warn('[RECONNECT] phase=forced-drop (test)'); try { ws.current?.close(); } catch {} }, []);
@@ -3002,13 +3024,21 @@ function useSync({ url, onMsg }) {
 }
 
 // ── WebRTC ───────────────────────────────────────────────────
-function useRTC({ engineRef, send }) {
+function useRTC({ engineRef, send, onIceRecover }) {
   const [state, setState] = useState("idle");
   const [muted, setMuted] = useState(false);
   const [remVol, setRemVol] = useState(0.85);
   const [autoplayBlocked, setAutoplayBlocked] = useState(false);
   const pc=useRef(null),dest=useRef(null),remAudio=useRef(null),pend=useRef([]),sRef=useRef(send);
   useEffect(()=>{sRef.current=send;},[send]);
+  // ICE-failure recovery: a network change (wifi switch, sleep/wake) can drop
+  // ICE to "disconnected" (often self-heals) or "failed" (dead). Previously
+  // "failed" only painted state — nothing renegotiated. Now we call onIceRecover
+  // so the App can trigger an initiator-gated ICE restart over the (auto-
+  // reconnected) WS. "disconnected" gets a grace timer first.
+  const onIceRecoverRef = useRef(onIceRecover);
+  useEffect(()=>{ onIceRecoverRef.current = onIceRecover; }, [onIceRecover]);
+  const iceDiscTimerRef = useRef(null);
 
   // ── RTC receive-delay measurement (Gap #4 monitoring compensation) ──
   // Poll the inbound audio jitter-buffer + playout delay so CollabMix can delay
@@ -3129,8 +3159,28 @@ function useRTC({ engineRef, send }) {
     p.oniceconnectionstatechange=()=>{
       const s=p.iceConnectionState;
       console.log('[RTC] ice state:', s);
-      if(s==="connected"||s==="completed")setState("connected");
-      if(s==="failed")setState("failed");
+      if(s==="connected"||s==="completed"){
+        setState("connected");
+        clearTimeout(iceDiscTimerRef.current); iceDiscTimerRef.current=null; // recovered
+      }
+      if(s==="failed"){
+        setState("failed");
+        console.warn('[RTC-RECOVER] phase=ice-failed → requesting renegotiation');
+        clearTimeout(iceDiscTimerRef.current); iceDiscTimerRef.current=null;
+        onIceRecoverRef.current?.("failed");
+      }
+      if(s==="disconnected"){
+        // Often transient — give it a grace window to self-heal before forcing
+        // a restart. If still not connected after 6s, recover.
+        clearTimeout(iceDiscTimerRef.current);
+        iceDiscTimerRef.current=setTimeout(()=>{
+          const cur=pc.current?.iceConnectionState;
+          if(cur==="disconnected"||cur==="failed"){
+            console.warn('[RTC-RECOVER] phase=ice-disconnected-timeout ('+cur+') → requesting renegotiation');
+            onIceRecoverRef.current?.("disconnected-timeout");
+          }
+        },6000);
+      }
       if(s==="closed")setState("idle");
     };
     p.onconnectionstatechange=()=>{ console.log('[RTC] connection state:', p.connectionState); logEvent("rtc", "connection_state", { state: p.connectionState }); };
@@ -7929,7 +7979,22 @@ export default function CollabMix({ initialPage = "landing", djName = null }) {
   }, [applyXF]);
 
   const sync = useSync({ url: SERVER_URL, onMsg: handleWS });
-  const rtc  = useRTC({ engineRef: eng, send: sync.send });
+  // ICE-failure recovery: when useRTC reports the connection dropped on a
+  // network change, the elected INITIATOR re-runs startCall() (a fresh offer →
+  // ICE restart) over the auto-reconnected WS; the answerer waits for it. Reuses
+  // the rtc_hangup retry budget so a flapping network can't storm. This is the
+  // CONNECTION-layer renegotiation trigger that was missing (comp already
+  // survives the renegotiation once it happens — verified by e2e-comp/reload).
+  const handleIceRecover = useCallback((reason) => {
+    if (!partnerRef.current) return;
+    if (!isInitiatorRef.current()) { console.log('[RTC-RECOVER] ('+reason+') answerer — waiting for initiator offer'); return; }
+    if (rtcReconnectAttemptsRef.current >= 3) { console.warn('[RTC-RECOVER] phase=exhausted reason='+reason); setRtcReconnectExhausted(true); return; }
+    const attempt = ++rtcReconnectAttemptsRef.current;
+    console.warn('[RTC-RECOVER] phase=restart reason='+reason+' attempt='+attempt+'/3 (initiator → new offer)');
+    clearTimeout(rtcReconnectTimerRef.current);
+    rtcReconnectTimerRef.current = setTimeout(() => { if (partnerRef.current && rtcRef.current) rtcRef.current.startCall(); }, 800);
+  }, []);
+  const rtc  = useRTC({ engineRef: eng, send: sync.send, onIceRecover: handleIceRecover });
 
   // ── Gap #4: local-monitor delay compensation ──
   // Delay the LOCAL deck monitor to land with the (jitter-buffered) partner
