@@ -9078,3 +9078,84 @@ Codifies what worked tonight. Applies to all future sessions unless Chad overrid
 - Door 3 memory-cue RENDER (Slice B) — imported as data now, not yet drawn.
 - Doors 2/4 (iTunes / USB-PDB) — per LIBRARY_IMPORT_V2 build order; Door 2 follows
   Door 3's library-app-parser + wizard-route pattern.
+
+## ═══ SESSION — June 12, 2026 — MORNING BATCH (6 tickets) ═══
+
+Six tickets from Chad's morning testing batch. Five fully shipped (local commits,
+not pushed); #5 onboarding substantially done with the rest decision-gated.
+Full smoke 20/20 green throughout (19 prior + new e2e-sync-mode). NOT pushed —
+awaiting Chad's live eye-check on #6 (the SYNC-mode feel) before deploy.
+
+### SHIPPED (committed local, unpushed)
+- **#1 Self-echo on same-machine twin tabs** (commit 1ea8338). BroadcastChannel
+  ("cm-presence") sibling-tab detection → later same-device tab defaults partner
+  audio OFF (partnerAudioOn gate on all remote playback). Persistent booth
+  Monitor switch in the master-VU header (manual backstop for the
+  two-different-browsers case the per-origin detector can't see — Chad's option 2)
+  + P2P-panel toggle. enablePartnerAudio flips the gate on explicitly.
+- **#6 SYNC as a mode (absorbs #2)** (commit 1ea8338). off → armed → locked state
+  machine. Pressable anytime incl. empty/paused decks. attemptLock() evaluator
+  locks the instant both decks loadable (BPM local OR partner) AND a deck plays;
+  master = explicit M else first-to-play; fired on arm / local play / partner
+  play / BPM-ready-while-armed. This makes #2's engage-before-play clash
+  structurally impossible (no 50ms special-case re-align). B2B: the slave's own
+  client does the lock; if the master's client arms, the partner auto-locks via
+  the armed-mirror effect. SYNC pill: always clickable, honest off/armed/locked
+  visuals (MINIMAL — full look queued for the design session).
+- **#4 Stale-room auto-rejoin** (commit 1ea8338). cm_session now stamped with
+  joinedAt; >90min (or unstamped) → StaleSessionModal "rejoin or start fresh?"
+  instead of silent resurrection.
+- **#3 Rapid-toggle mirror snaps** (commit eda1ab5). Play-start forward catch-up
+  now EASES onto truth via slew instead of a hard +6.4s/+8.7s jump; only a
+  forward jump during steady coast still hard-snaps. NOTE: the exact >3s
+  message-interleaving race couldn't be forced in the clean 2-client harness
+  (TCP-ordered, un-throttled transport positions), so the new e2e-mirror-coast
+  spam-toggle phase guards the rapid-toggle path rather than reproducing the
+  original gap. Fix justified by Chad's live log (room fade-flux-199) + the
+  play-start code path. LIVE RE-TEST RECOMMENDED.
+- **#5 onboarding (partial)** (commits 4b8c6a2, 9562624):
+  - P1.1 empty-deck click with empty library → Add-music flow (else keeps quick
+    single-file load).
+  - P1.2 resolved by decision — the "Connect your music" CTA already does the
+    chosen Add-music folder-connect; wizard intentionally not used.
+  - P1.3 truthful presence — "partner online" gated on real sync.partner
+    (muted "waiting for partner" until someone joins).
+  - P2.5 (clear half) — joiners no longer see share/copy tools.
+  - P2.6 — creator lobby code labeled "Your room is reserved — press the button
+    below to go live."
+  - P3.8 — landing "Room ID" → "Mix code" (consistency).
+
+### DECISIONS MADE (Chad, this session)
+- #1 control: auto-off + PERSISTENT booth monitor switch (option 2).
+- #4 freshness window: 90 minutes.
+- #6 arm-with-both-paused: stay armed, align on first play. Master = first to play.
+- #5 P1.1/P1.2/P4.10: route dead clicks to the EXISTING Add-music flow; keep the
+  LibraryWizard behind ?libwizard=1 (NOT default). The wizard auto-opens in the
+  mix view when flagged — it never opened "on landing" because landing has no
+  library (working as designed).
+- #5 P4.9 demo library: there is NO 146-track demo in the codebase. Fresh users
+  get a true empty state (LibraryEmptyState). The 146 tracks Chad sees are HIS
+  OWN persisted IndexedDB test library. Decision: add a "reset my library"
+  control (NOT a demo).
+
+### REMAINING (#5 — next focused pass)
+- **P4.9 reset-my-library control** (decided, not built). Needs a multi-store IDB
+  wipe (tracks/queue/crates/handles) + opfsClear + watched-folder clear + reload,
+  behind a confirm modal (destructive). Deferred from this session to avoid a
+  half-working wipe that orphans state at end-of-long-session. lib.clear() only
+  does memory+OPFS, so tracks return on reload — a real reset must clear IDB.
+- **P2.4 invite-confirm popover** — replace ShareButton's 2.5s "Link copied"
+  flash with an anchored confirm popover (link visible + mix code fallback).
+- **P2.5 (remaining)** — "[Creator] invited you to mix" framing + default mix
+  name to "[Creator]'s mix". BLOCKED on data: buildInviteLink carries room+mix
+  but NOT the inviter's DJ name; needs the creator name added to the invite link.
+- **P3.7 top-bar you-vs-partner identity** — deck rows already show you/partner;
+  the session top bar needs an explicit "you" tag / role distinction.
+
+### VERIFICATION
+- npm run build: clean (✓ ~1.1s).
+- npm run smoke: 20/20 (5 unit/audio + 15 e2e incl. new e2e-sync-mode). 0 skips.
+- npm run lint: PRE-EXISTING BROKEN (ESLint v9 wants eslint.config.js; repo has
+  old .eslintrc). Not introduced this session; separate cleanup if wanted.
+- NOT pushed. Chad to feel #6 live + re-test #3 spam-toggle (fade-flux-199) before
+  deploy.
