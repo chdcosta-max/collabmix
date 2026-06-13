@@ -3361,8 +3361,53 @@ function useRTC({ engineRef, send, onIceRecover }) {
   const [muted, setMuted] = useState(false);
   const [remVol, setRemVol] = useState(0.85);
   const [autoplayBlocked, setAutoplayBlocked] = useState(false);
+  // ── Self-echo guard (same-machine twin tabs) ──
+  // When a solo tester opens two tabs of the app on one machine, Chrome's
+  // remembered autoplay permission makes the LATER tab silently monitor the
+  // partner stream — one local deck + the same track through the partner
+  // stream = a ~50-70ms flam indistinguishable from broken sync. partnerAudioOn
+  // gates ALL remote playback; a sibling-tab detector (BroadcastChannel, below)
+  // defaults it OFF on the later same-origin tab. siblingTab drives the
+  // "(same device)" label. userOverrodeRef latches once the human flips the
+  // switch so detection never fights an explicit choice.
+  const [partnerAudioOn, setPartnerAudioOn] = useState(true);
+  const [siblingTab, setSiblingTab] = useState(false);
+  const partnerAudioOnRef = useRef(true);
+  useEffect(()=>{ partnerAudioOnRef.current = partnerAudioOn; },[partnerAudioOn]);
+  const userOverrodeRef = useRef(false);
   const pc=useRef(null),dest=useRef(null),remAudio=useRef(null),pend=useRef([]),sRef=useRef(send);
   useEffect(()=>{sRef.current=send;},[send]);
+
+  // Sibling-tab detection. Each tab announces "hello" on a shared per-origin
+  // BroadcastChannel; any already-present tab replies "present". A tab that
+  // hears a "present" knows it arrived second → it is the echo source, so it
+  // defaults partner audio OFF (unless the human already chose). Same-origin
+  // only by construction — two DIFFERENT browsers (Chrome + Safari) can't share
+  // a channel, which is exactly why the booth Monitor switch is the manual
+  // backstop for that case.
+  useEffect(()=>{
+    let bc;
+    try { bc = new BroadcastChannel("cm-presence"); } catch { return; }
+    const myId = `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+    let later = false;
+    const onMsg = (e)=>{
+      const m = e.data;
+      if(!m || m.id === myId) return;
+      if(m.type === "hello"){
+        try { bc.postMessage({ type:"present", id: myId }); } catch {}
+      } else if(m.type === "present" && !later){
+        later = true;
+        setSiblingTab(true);
+        if(!userOverrodeRef.current){
+          setPartnerAudioOn(false);
+          console.log("[SELF-ECHO-GUARD] another tab on this device is already present → partner audio defaulted OFF (toggle in the booth or P2P panel to enable)");
+        }
+      }
+    };
+    bc.addEventListener("message", onMsg);
+    try { bc.postMessage({ type:"hello", id: myId }); } catch {}
+    return ()=>{ try{ bc.removeEventListener("message", onMsg); bc.close(); }catch{} };
+  },[]);
   // ICE-failure recovery: a network change (wifi switch, sleep/wake) can drop
   // ICE to "disconnected" (often self-heals) or "failed" (dead). Previously
   // "failed" only painted state — nothing renegotiated. Now we call onIceRecover
@@ -3529,13 +3574,33 @@ function useRTC({ engineRef, send, onIceRecover }) {
       }
       remAudio.current.srcObject=streams[0];
       remAudio.current.volume=Math.min(1,remVol);
-      // Explicit play() so we can observe autoplay-policy rejections and surface them.
-      tryPlayRemote();
+      // Explicit play() so we can observe autoplay-policy rejections and surface
+      // them — but ONLY when monitoring is enabled. A later same-device tab has
+      // partnerAudioOn=false (sibling-tab guard above) and must stay silent or
+      // it double-monitors the local deck (the self-echo flam).
+      if(partnerAudioOnRef.current){ tryPlayRemote(); }
+      else { console.log("[SELF-ECHO-GUARD] partner audio is OFF on this tab — remote stream attached but not played"); }
     };
     return p;
   },[remVol,tryPlayRemote]);
 
   useEffect(()=>{ if(remAudio.current)remAudio.current.volume=Math.min(1,remVol); },[remVol]);
+
+  // React to the monitor switch flipping at runtime: ON → (re)play any attached
+  // stream; OFF → pause immediately so the echo stops the instant it's toggled.
+  useEffect(()=>{
+    const a = remAudio.current;
+    if(!a) return;
+    if(partnerAudioOn){ if(a.srcObject) tryPlayRemote(); }
+    else { try{ a.pause(); }catch{} }
+  },[partnerAudioOn, tryPlayRemote]);
+
+  // Monitor switch. Latches userOverrodeRef so sibling-tab detection won't
+  // re-disable a tab the human explicitly turned back on.
+  const toggleMonitor = useCallback(()=>{ userOverrodeRef.current = true; setPartnerAudioOn(v=>!v); },[]);
+  // Explicit "enable partner audio" (autoplay-blocked banner) implies the human
+  // wants to monitor here — flip the gate on AND play.
+  const enablePartnerAudio = useCallback(()=>{ userOverrodeRef.current = true; setPartnerAudioOn(true); tryPlayRemote(); },[tryPlayRemote]);
 
   // NOTE: deliberately NO global "any click resumes partner audio" handler.
   // It made an UNRELATED gesture (e.g. a deck pause/play click) silently start
@@ -3606,7 +3671,7 @@ function useRTC({ engineRef, send, onIceRecover }) {
   const handleRtc   = useCallback((msg)=>{ switch(msg.type){case"rtc_offer":handleOffer(msg);break;case"rtc_answer":handleAnswer(msg);break;case"rtc_ice":handleIce(msg);break;case"rtc_hangup":endCall();break;} },[handleOffer,handleAnswer,handleIce,endCall]);
 
   useEffect(()=>()=>endCall(),[]);
-  return { state, muted, remVol, setRemVol, autoplayBlocked, startCall, endCall, toggleMute, handleRtc, compRef, markTransportEvent, enablePartnerAudio: tryPlayRemote };
+  return { state, muted, remVol, setRemVol, autoplayBlocked, partnerAudioOn, siblingTab, toggleMonitor, startCall, endCall, toggleMute, handleRtc, compRef, markTransportEvent, enablePartnerAudio };
 }
 
 // ── MIDI ─────────────────────────────────────────────────────
@@ -5173,7 +5238,7 @@ function PitchReadout({ rate, nativeBpm, enabled, displayText, tooltip, color, o
   );
 }
 
-function Deck({ id, ch, ctx:ac, color, local, remote, onChange, midi:mt, bpmResult, bpmAnalyze, eqHi=0, eqMid=0, eqLo=0, chanVol=1, loadFromLibrary=null, onTrackInfo=null, onSync=null, syncReady=true, syncRole=null, isMaster=false, onMasterToggle=null, onLibraryTrackDrop=null, onProgUpdate=null, onWaveform=null, onSeekReady=null, remoteSeek=null, onToggleReady=null, onCueReady=null, remoteToggle=null, remoteCue=null, onTransportFire=null, isDriver=true, onNudgeReady=null, acNowRef=null, onBufferReady=null, barOneOffsetSec=0, onGridEdit=null, hasOverride=false, userGridOverride=null, onPitchInteract=null }) {
+function Deck({ id, ch, ctx:ac, color, local, remote, onChange, midi:mt, bpmResult, bpmAnalyze, eqHi=0, eqMid=0, eqLo=0, chanVol=1, loadFromLibrary=null, onTrackInfo=null, onSync=null, syncReady=true, syncRole=null, syncArmed=false, isMaster=false, onMasterToggle=null, onLibraryTrackDrop=null, onProgUpdate=null, onWaveform=null, onSeekReady=null, remoteSeek=null, onToggleReady=null, onCueReady=null, remoteToggle=null, remoteCue=null, onTransportFire=null, isDriver=true, onNudgeReady=null, acNowRef=null, onBufferReady=null, barOneOffsetSec=0, onGridEdit=null, hasOverride=false, userGridOverride=null, onPitchInteract=null }) {
   const [buf,setBuf]=useState(null),[name,setName]=useState(null),[play,setPlay]=useState(false);
   const [prog,setProg]=useState(0),[dur,setDur]=useState(0);
   const progRef=useRef(0); // mirror of prog for parent AnimatedZoomedWF without 60fps setState
@@ -6576,20 +6641,25 @@ function Deck({ id, ch, ctx:ac, color, local, remote, onChange, midi:mt, bpmResu
           const isSlave  = syncRole === "slave";
           const isMasterRole = syncRole === "master";
           const isLocked = isSlave || isMasterRole;
-          const clickable = isLocked || canSync;
+          const isArmed = syncArmed && !isLocked;
+          // SYNC-as-mode (ticket #6): the button is the mode toggle — pressable
+          // ANY time (empty/paused decks included) to arm. State reads honestly
+          // off / armed / locked. Visuals deliberately minimal here; the full
+          // look is queued for the design session.
+          const clickable = true;
           const tone =
             isLocked      ? { bg:"rgba(255,255,255,0.10)", border:"#FFFFFF", color:"#FFFFFF", opacity:1, glow:true }
+            : isArmed     ? { bg:"rgba(255,255,255,0.05)", border:"rgba(255,255,255,0.50)", color:"#F5F5F7", opacity:1, glow:false }
             : canSync     ? { bg:"transparent", border:"rgba(255,255,255,0.20)", color:"#F5F5F7", opacity:1, glow:false }
             : isAnalyzing ? { bg:"transparent", border:"#f59e0b55", color:"#f59e0b", opacity:1, glow:false }
-            :               { bg:"transparent", border:"rgba(255,255,255,0.06)", color:"#5A5E66", opacity:0.6, glow:false };
-          const tip = isLocked   ? "Sync engaged — click to release"
-            : !buf             ? "Load a track"
-            : isAnalyzing      ? "Analyzing BPM…"
-            : !bpmResult?.bpm  ? "Waiting for BPM"
-            : !syncReady       ? "Load a track on the other deck to enable sync"
-            :                    "Engage Sync";
+            :               { bg:"transparent", border:"rgba(255,255,255,0.12)", color:"#9CA3AF", opacity:0.85, glow:false };
+          const tip = isLocked   ? "Sync locked — click to release"
+            : isArmed          ? "Sync armed — aligns the moment both decks are loaded and one is playing. Click to turn off."
+            : isAnalyzing      ? "Analyzing BPM… press to arm sync"
+            :                    "Arm sync for the booth — aligns automatically when decks are ready";
+          const label = isArmed ? "Armed" : "Sync";
           return (
-            <button onClick={clickable ? onSync : undefined} disabled={!clickable} title={tip}
+            <button onClick={onSync} title={tip}
               style={{height:38, padding:"0 16px", minWidth:60,
                 background:tone.bg,
                 border:`1px solid ${tone.border}`,
@@ -6597,13 +6667,14 @@ function Deck({ id, ch, ctx:ac, color, local, remote, onChange, midi:mt, bpmResu
                 opacity:tone.opacity,
                 borderRadius:6,
                 fontFamily:"'Inter',sans-serif", fontSize:12, fontWeight:500, letterSpacing:.3,
-                cursor:clickable?"pointer":"default", outline:"none", flexShrink:0,
+                cursor:"pointer", outline:"none", flexShrink:0,
                 transition:"all 150ms cubic-bezier(0.4, 0, 0.2, 1)",
                 boxShadow:tone.glow?"0 0 12px rgba(255,255,255,0.30)":"none",
                 display:"flex", alignItems:"center", gap:6,
               }}>
               {isLocked && <span style={{width:5,height:5,borderRadius:"50%",background:"#FFFFFF",boxShadow:"0 0 6px rgba(255,255,255,0.7)"}}/>}
-              Sync
+              {isArmed && <span style={{width:5,height:5,borderRadius:"50%",background:"transparent",border:"1px solid rgba(255,255,255,0.7)"}}/>}
+              {label}
             </button>
           );
         })()}
@@ -6681,6 +6752,11 @@ function RTCPanel({ rtc, partner, syncOk }) {
       {live&&<div style={{display:"flex",gap:2,height:16,alignItems:"center",justifyContent:"center"}}>{Array.from({length:12}).map((_,i)=><div key={i} style={{width:3,borderRadius:2,background:"#22c55e",height:"100%",animation:`wave ${.4+(i%4)*.1}s ease-in-out ${i*.06}s infinite`,transformOrigin:"bottom"}}/>)}</div>}
       <div style={{fontSize:7,fontFamily:"'Inter',sans-serif",color:"#9CA3AF",display:"flex",justifyContent:"space-between"}}><span>Partner</span><span style={{color:partner?STATUS_OK:"#5A5E66"}}>{partner||"—"}</span></div>
       <div style={{display:"flex",flexDirection:"column",gap:2}}><div style={{display:"flex",justifyContent:"space-between",fontSize:7,fontFamily:"'Inter',sans-serif",color:"#9CA3AF"}}><span>Partner vol</span><span style={{color:"#22c55e"}}>{Math.round(rtc.remVol*100)}%</span></div><input type="range" min={0} max={1.5} step={.01} value={rtc.remVol} onChange={e=>rtc.setRemVol(Number(e.target.value))} style={{width:"100%",cursor:"pointer",accentColor:"#22c55e"}}/></div>
+      {/* Monitor (partner audio) switch — self-echo guard. Defaults OFF on a
+          second tab on the same device; flip here or in the booth header. */}
+      <button onClick={rtc.toggleMonitor} title="Whether the partner's audio plays through this tab's speakers. Off on a second tab on this device prevents the self-echo flam." style={{...sBtn(rtc.partnerAudioOn?"#9CA3AF":"#5A5E66"),justifyContent:"space-between"}}>
+        <span>Partner audio</span><span>{rtc.partnerAudioOn?"on":(rtc.siblingTab?"off (same device)":"off")}</span>
+      </button>
       <div style={{display:"flex",gap:5}}>
         {canCall&&<button onClick={rtc.startCall} style={{flex:1,...sBtn("#22c55e"),fontWeight:700}}>▶ START STREAM</button>}
         {busy&&<button disabled style={{flex:1,...sBtn("#f59e0b")}}>◌ CONNECTING...</button>}
@@ -7110,6 +7186,42 @@ function LibraryEmptyState({ lib }) {
 //     in src/utils/fsa.js and useLibrary plumbing remain — only the UI
 //     surface was redesigned, replaced by LibraryEmptyState above and the
 //     "+ Add another location" sidebar button.
+
+// ── Stale-session prompt (ticket #4) ─────────────────────────
+// Shown instead of a silent auto-rejoin when the persisted cm_session is older
+// than the freshness window (or has no timestamp). Forces an explicit choice so
+// an old room can't resurrect into a fresh session/test. Reuses the app modal
+// pattern (ReviewTracksModal). Backdrop is intentionally non-dismissing — the
+// user must pick rejoin or start fresh.
+function StaleSessionModal({ session, onRejoin, onStartFresh }) {
+  const ageLabel = session?.ageMin == null
+    ? "from an earlier session"
+    : session.ageMin >= 120 ? `from about ${Math.round(session.ageMin / 60)} hours ago`
+    : session.ageMin >= 60  ? "from over an hour ago"
+    : `from about ${session.ageMin} minutes ago`;
+  return (
+    <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.6)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 10000, fontFamily: "'Inter',sans-serif" }}>
+      <div style={{ width: "min(440px, 92vw)", background: "#0D0F12", border: "1px solid rgba(255,255,255,0.10)", borderRadius: 8, display: "flex", flexDirection: "column", boxShadow: "0 12px 48px rgba(0,0,0,0.5)" }}>
+        <div style={{ padding: "18px 20px 14px" }}>
+          <div style={{ fontSize: 15, color: "#F5F5F7", letterSpacing: 0.3, marginBottom: 6 }}>Rejoin your last mix?</div>
+          <div style={{ fontSize: 12, color: "rgba(255,255,255,0.6)", lineHeight: 1.6 }}>
+            You have a saved session for <span style={{ color: "#F5F5F7" }}>{session?.mixName || "Untitled Mix"}</span> in room <span style={{ color: "#F5F5F7", fontFamily: "'JetBrains Mono',monospace" }}>{session?.room}</span> {ageLabel}. Rejoin it, or start a fresh mix.
+          </div>
+        </div>
+        <div style={{ padding: "0 20px 18px", display: "flex", gap: 10, justifyContent: "flex-end" }}>
+          <button onClick={onStartFresh}
+            style={{ padding: "9px 16px", background: "transparent", border: "1px solid rgba(255,255,255,0.18)", color: "rgba(255,255,255,0.7)", borderRadius: 6, cursor: "pointer", fontFamily: "'Inter',sans-serif", fontSize: 12, letterSpacing: 0.3 }}>
+            Start fresh
+          </button>
+          <button onClick={onRejoin}
+            style={{ padding: "9px 16px", background: "rgba(255,255,255,0.10)", border: "1px solid rgba(255,255,255,0.9)", color: "#FFFFFF", borderRadius: 6, cursor: "pointer", fontFamily: "'Inter',sans-serif", fontSize: 12, fontWeight: 600, letterSpacing: 0.3 }}>
+            Rejoin {session?.room}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
 
 // ── LANDING PAGE ──────────────────────────────────────────────
 function Landing({ onEnter }) {
@@ -7713,6 +7825,20 @@ export default function CollabMix({ initialPage = "landing", djName = null }) {
   // old closure of syncLocked; reading via this ref bypasses the stale path.
   const syncLockedRef = useRef(false);
   useEffect(() => { syncLockedRef.current = syncLocked; }, [syncLocked]);
+  // ── SYNC AS A MODE (ticket #6) ──
+  // SYNC is no longer a command with preconditions; it's a persistent mode:
+  //   off → armed → locked.
+  // "armed" = the user pressed SYNC but the booth isn't lockable yet (decks not
+  // both loaded, or nothing playing). A lockability evaluator (attemptLock)
+  // promotes armed → locked the instant BOTH decks are loaded AND a deck is
+  // playing — including tracks loaded later (they inherit) and the play-start
+  // alignment that makes ticket #2's engage-before-play clash structurally
+  // impossible. syncLocked retains its exact old meaning (locked only), so all
+  // the locked-state machinery (drift monitor, comp, track-change re-rate,
+  // scrub-resync, B2B mirror) is untouched — only the ENTRY into locked changed.
+  const [syncArmed, setSyncArmed] = useState(false);
+  const syncArmedRef = useRef(false);
+  useEffect(() => { syncArmedRef.current = syncArmed; }, [syncArmed]);
   // Slave-deck identity needs both a ref (for stale-deps callbacks) and state
   // (so the SYNC button visual can branch master vs slave on render).
   const [lastSlaveDeck, setLastSlaveDeck] = useState(null);
@@ -7913,6 +8039,10 @@ export default function CollabMix({ initialPage = "landing", djName = null }) {
   const progRefB = useRef(0);
   const handleProgA = useCallback((p) => { progRefA.current = p; }, []);
   const handleProgB = useCallback((p) => { progRefB.current = p; }, []);
+  // Fresh-every-render durations (like effGridRef) so the test-only beat-phase
+  // probe (window.__deckPhaseFrac) never reads a stale closure value.
+  const wfDurRef = useRef({ A: null, B: null });
+  wfDurRef.current = { A: wfA?.dur ?? null, B: wfB?.dur ?? null };
 
   // Shared per-frame snapshot of audio-context time. Both decks' tick() loops
   // read this instead of calling ac.currentTime directly so they share an
@@ -8312,9 +8442,32 @@ export default function CollabMix({ initialPage = "landing", djName = null }) {
         desmearOn: ONSET_GRID && gridSource !== "rekordbox", // mirrors the WF desmear prop
       };
     };
+    // Current beat-phase fraction (0..1) a deck sits at, via the SAME refined
+    // grid + refinedBeatPhase the engage uses. The sync-before-play smoke
+    // compares A vs B to assert the play-start re-align actually lands them on
+    // the same beat phase (a clash = a large wrapped fraction difference).
+    window.__deckPhaseFrac = (deck) => {
+      const d = deck === "B" ? "B" : "A";
+      const g = (effGridRef.current || {})[d];
+      const dur = (wfDurRef.current || {})[d];
+      if (!g || !dur) return null;
+      const t = ((d === "B" ? progRefB : progRefA).current || 0) * dur;
+      const beats = g.beatTimes;
+      let frac = null, periodSec = g.beatPeriodSec ?? null;
+      if (beatsV2Ref.current && Array.isArray(beats) && beats.length > 1) {
+        const p = refinedBeatPhase(beats, t);
+        if (p) { frac = p.frac - Math.floor(p.frac); periodSec = p.period; }
+      }
+      if (frac == null && g.beatPeriodSec != null && g.beatPhaseSec != null) {
+        let f = ((t - g.beatPhaseSec) / g.beatPeriodSec) % 1; if (f < 0) f += 1; frac = f;
+      }
+      return frac == null ? null : { frac, periodSec };
+    };
+    // SYNC-as-mode state (off / armed / locked) for the sync-mode smoke.
+    window.__syncState = () => ({ armed: !!syncArmedRef.current, locked: !!syncLockedRef.current });
     window.__smokeReady = true;
     console.log("[SMOKE-HOOK] window.__loadTestTrack installed");
-    return () => { try { delete window.__loadTestTrack; delete window.__smokeReady; delete window.__deckGrid; } catch {} };
+    return () => { try { delete window.__loadTestTrack; delete window.__smokeReady; delete window.__deckGrid; delete window.__deckPhaseFrac; delete window.__syncState; } catch {} };
   }, [handleLibLoad, lib]);
 
   // Delete track from local library (in-memory + IDB)
@@ -8495,6 +8648,9 @@ export default function CollabMix({ initialPage = "landing", djName = null }) {
       // covers the case where the partner is driving the deck.
       if (m.field === "playing" && (m.deckId === "A" || m.deckId === "B")) {
         deckPlayStartRef.current[m.deckId] = m.value ? Date.now() : null;
+        // SYNC-as-mode: a partner starting a deck can make MY armed booth
+        // lockable (both loaded + now one playing). Evaluate on partner play.
+        if (m.value) setTimeout(() => attemptLockRef.current?.(m.deckId), 50);
       }
       // SHARED mixer (both users see + control every knob). Apply remote
       // EQ / vol / filter changes to MY local engine + UI state so partner's
@@ -8513,10 +8669,17 @@ export default function CollabMix({ initialPage = "landing", djName = null }) {
       // Setters/refs from useState/useRef are stable so safe from stale-deps.
       if (m.field === "syncLocked") {
         setSyncLocked(!!m.value);
+        syncLockedRef.current = !!m.value;
+        if (m.value) { setSyncArmed(false); syncArmedRef.current = false; } // locked supersedes armed
         if (m.value && (m.deckId === "A" || m.deckId === "B")) {
           lastSlaveDeckRef.current = m.deckId;
           setLastSlaveDeck(m.deckId);
         }
+      }
+      // Mirror the partner's ARMED state so this side's SYNC button reflects
+      // off/armed/locked honestly. Locked (above) supersedes armed.
+      if (m.field === "syncArmed") {
+        if (!syncLockedRef.current) { setSyncArmed(!!m.value); syncArmedRef.current = !!m.value; }
       }
       // Mirror explicit master selection across browsers. Value is "A", "B",
       // or null. m.deckId is ignored for this field — masterDeck is global.
@@ -9210,117 +9373,96 @@ export default function CollabMix({ initialPage = "landing", djName = null }) {
     emitEngageQuality();
   }, [bpm.results, sync, pA, pB, wfA, wfB]);
 
-  // Global SYNC toggle. The slave is the clicked deck (or the not-master deck
-  // when an explicit master is set). Master is whichever has M turned on,
-  // else implicit "the other deck". OFF→ON: run syncDecks(slave→masterBPM),
-  // set lock, broadcast (carrying the slave's deckId so partners know which
-  // side is being driven). ON→OFF: just clear lock, broadcast.
+  // ── attemptLock: the armed → locked evaluator (SYNC-as-mode core) ──
+  // No-op unless armed or already locked. Locks the instant the booth is
+  // lockable: BOTH decks loaded with a usable BPM AND at least one deck playing.
+  // Master = explicit M, else the deck that started playing FIRST (Chad's
+  // decision); slave = the other. Rate+phase-aligns the slave via syncDecks.
+  // Called on every arm, play-start (local AND partner), and track/BPM-ready —
+  // so later-loaded tracks inherit and a freshly-started deck aligns from beat
+  // one. While already locked it just re-aligns the slave (idempotent), which
+  // is what dissolves ticket #2's engage-before-play clash.
+  const attemptLock = useCallback((triggerDeck = null) => {
+    if (!syncArmedRef.current && !syncLockedRef.current) return;
+    // "Loaded" must use the partner-aware BPM (local analyzer OR partner
+    // broadcast) — in B2B the other deck is partner-driven and has no LOCAL
+    // analyzer result, so an effGrid (local-only) check would never see it.
+    const aBpm = getEffectiveMasterBpm("A");
+    const bBpm = getEffectiveMasterBpm("B");
+    if (!aBpm || !bBpm) return;                        // not both loadable → stay armed
+    const tA = deckPlayStartRef.current.A, tB = deckPlayStartRef.current.B;
+    if (!tA && !tB) return;                            // nothing playing → stay armed
+    const explicit = masterDeckRef.current;
+    let master;
+    if (explicit) master = explicit;
+    else if (tA && tB) master = tA <= tB ? "A" : "B";  // first to play is master
+    else master = tA ? "A" : "B";
+    const slave = master === "A" ? "B" : "A";
+    const masterBPM = master === "A" ? aBpm : bBpm;
+    const wasLocked = syncLockedRef.current;
+    // Align the slave (rate + phase). syncDecks reads live playhead positions,
+    // so when this fires from the slave's own play-start it lands from beat one.
+    syncDecks(slave, masterBPM);
+    if (lastSlaveDeckRef.current !== slave) { lastSlaveDeckRef.current = slave; setLastSlaveDeck(slave); }
+    if (!explicit && masterDeckRef.current !== master) {
+      masterDeckRef.current = master; setMasterDeck(master);
+      sync.send({ type:"deck_update", deckId: master, field: "masterDeck", value: master });
+    }
+    if (!wasLocked) {
+      syncArmedRef.current = false; setSyncArmed(false);
+      syncLockedRef.current = true; setSyncLocked(true);
+      const k = `deck${slave}`;
+      lsRef.current[k] = { ...(lsRef.current[k]||{}), syncLocked: true };
+      sync.send({ type:"deck_update", deckId: slave, field: "syncLocked", value: true });
+      // Clear armed broadcast so partners drop the "armed" pip when we lock.
+      sync.send({ type:"deck_update", deckId: slave, field: "syncArmed", value: false });
+      console.log("[SYNC] LOCKED (mode) master=" + master + " slave=" + slave + " trigger=" + (triggerDeck || "—"));
+      logEvent("sync", "mode_lock", { master, slave, trigger: triggerDeck });
+    }
+  }, [syncDecks, getEffectiveMasterBpm, sync]);
+  // Ref so earlier-defined callbacks (handleWS deck_update) and the Deck's
+  // stale-closure dh can always reach the latest attemptLock without a dep.
+  const attemptLockRef = useRef(null);
+  attemptLockRef.current = attemptLock;
+
+  // SYNC button = the mode toggle. off → armed (lock immediately if already
+  // lockable, e.g. arm-mid-play); armed/locked → off (clean release, rates
+  // persist per the DJ-correct convention below). Pressable ANY time, including
+  // empty/paused decks — that's the whole point of the mode.
   const handleSyncToggle = useCallback((clickedDeck) => {
     const now = Date.now();
-    console.log('[SYNC-STATE] entering toggle', {
-      clickedDeck,
-      syncLocked,
-      rateA, rateB,
-      masterDeck: masterDeckRef.current,
-      lastSlave: lastSlaveDeckRef.current,
-      progA: progRefA.current,
-      progB: progRefB.current,
-    });
     if (now - lastSyncToggleMsRef.current < 200) {
       console.log("[SYNC] toggle ignored: re-entry guard (<200ms since last toggle)");
       return;
     }
     lastSyncToggleMsRef.current = now;
-    if (syncLocked) {
-      console.log("[SYNC] toggle OFF");
-      setSyncLocked(false);
+    const active = syncLockedRef.current || syncArmedRef.current;
+    if (active) {
+      // RELEASE → off. On unsync rates are PRESERVED (Chad decision June 10
+      // 2026 — CDJ/Rekordbox convention; the slave stays at its synced rate and
+      // the user manages pitch manually). Sticky master/slave refs are cleared
+      // so the next arm re-detects fresh.
+      console.log("[SYNC] mode → OFF (release; was " + (syncLockedRef.current ? "locked" : "armed") + ")");
       const broadcastDeck = lastSlaveDeckRef.current || clickedDeck;
+      syncArmedRef.current = false; setSyncArmed(false);
+      syncLockedRef.current = false; setSyncLocked(false);
       const k = `deck${broadcastDeck}`;
       lsRef.current[k] = { ...(lsRef.current[k]||{}), syncLocked: false };
       sync.send({ type:"deck_update", deckId: broadcastDeck, field: "syncLocked", value: false });
-      // DJ-correct behavior: on unsync, rates are PRESERVED. The slave audibly
-      // stays at its synced rate; the user manages pitch manually from there
-      // via the pitch fader. Snapping back to natural BPM on unsync is jarring
-      // and not how Rekordbox / CDJs behave. The earlier reset (commit 2772cb9)
-      // was overreach — the actual sync-state-contamination bug it targeted is
-      // about sticky master/slave refs, NOT about rate. Clearing those refs
-      // below still prevents the contamination cleanly.
-      //
-      // Bug #2 resolution (Chad decision June 10 2026): KEEP this behavior.
-      // Intended: rate persists on release per CDJ/Rekordbox convention.
-      // Jake's expectation of snap-back is a teaching moment, not a bug.
-      // Optional settings toggle for snap-back-on-release is deferred until
-      // we see whether the same expectation surfaces from other dogfooders.
-      //
-      // Clear sticky auto-master + slave so next engage re-detects fresh.
-      // (Explicit M-button master selections clear too — user can re-set
-      //  if desired. Keeps mental model simple: "unsync = metadata clean slate,
-      //  pitch stays where you left it".)
-      masterDeckRef.current = null;
-      setMasterDeck(null);
-      lastSlaveDeckRef.current = null;
-      setLastSlaveDeck(null);
+      sync.send({ type:"deck_update", deckId: broadcastDeck, field: "syncArmed", value: false });
+      masterDeckRef.current = null; setMasterDeck(null);
+      lastSlaveDeckRef.current = null; setLastSlaveDeck(null);
       logEvent("sync", "toggle", { locked: false, slave: broadcastDeck });
       return;
     }
-    const explicitMaster = masterDeckRef.current; // "A" | "B" | null
-    let effectiveMaster, slaveDeck = clickedDeck, masterMode;
-    if (explicitMaster) {
-      effectiveMaster = explicitMaster;
-      masterMode      = "explicit";
-      // SYNC is a global toggle reachable from either deck. If the user clicks
-      // SYNC on the master deck itself, the OTHER deck becomes the slave —
-      // master designation lives entirely on the M button; the SYNC button
-      // just engages/disengages sync. (Previously this path was rejected with
-      // "can't sync a deck to itself"; reverted because the rejection forced
-      // the user to mentally model which button does what per deck.)
-      if (clickedDeck === explicitMaster) {
-        slaveDeck = clickedDeck === "A" ? "B" : "A";
-      }
-      console.log("[SYNC] explicit master: deck", effectiveMaster, ", slave=", slaveDeck);
-    } else {
-      // Auto-detect: deck that started playing FIRST is master.
-      const tA = deckPlayStartRef.current.A;
-      const tB = deckPlayStartRef.current.B;
-      let auto = null;
-      if (tA && tB)      auto = tA < tB ? "A" : "B";
-      else if (tA)       auto = "A";
-      else if (tB)       auto = "B";
-      if (auto && auto !== clickedDeck) {
-        effectiveMaster = auto;
-        masterMode      = "auto";
-        console.log("[SYNC] auto-master: deck", effectiveMaster, "(playing longer)");
-      } else {
-        // No auto signal, or user clicked the deck that's been playing longer.
-        // Fall back to implicit "other deck" rule — clicked deck is slave.
-        effectiveMaster = clickedDeck === "A" ? "B" : "A";
-        masterMode      = "implicit";
-        console.log("[SYNC] implicit master: deck", effectiveMaster, "(no auto signal or clicked auto-master)");
-      }
-    }
-    const masterBPM = getEffectiveMasterBpm(effectiveMaster);
-    if (!masterBPM) {
-      console.log("[SYNC] toggle blocked: no master BPM available (mode=" + masterMode + ", master=" + effectiveMaster + ")");
-      return;
-    }
-    console.log("[SYNC] toggle ON — slave=", slaveDeck, "master=", effectiveMaster, "mode=", masterMode, "effectiveBpm=", masterBPM);
-    syncDecks(slaveDeck, masterBPM);
-    lastSlaveDeckRef.current = slaveDeck;
-    setLastSlaveDeck(slaveDeck);
-    setSyncLocked(true);
-    const k = `deck${slaveDeck}`;
-    lsRef.current[k] = { ...(lsRef.current[k]||{}), syncLocked: true };
-    sync.send({ type:"deck_update", deckId: slaveDeck, field: "syncLocked", value: true });
-    // Light up the M indicator on the effective master so the user sees which
-    // deck is the reference. They can override with the M button at any time.
-    // Skip if already set explicitly (no need to re-broadcast).
-    if (!explicitMaster) {
-      masterDeckRef.current = effectiveMaster;
-      setMasterDeck(effectiveMaster);
-      sync.send({ type:"deck_update", deckId: effectiveMaster, field: "masterDeck", value: effectiveMaster });
-    }
-    logEvent("sync", "toggle", { locked: true, slave: slaveDeck, master: effectiveMaster, mode: masterMode });
-  }, [syncLocked, syncDecks, bpm.results, pA, pB, sync, getEffectiveMasterBpm, rateA, rateB]);
+    // OFF → ARMED. Broadcast armed so the partner's button reflects it, then
+    // try to lock right now (covers arm-mid-play: both already playing).
+    console.log("[SYNC] mode → ARMED (clicked " + clickedDeck + ")");
+    syncArmedRef.current = true; setSyncArmed(true);
+    sync.send({ type:"deck_update", deckId: clickedDeck, field: "syncArmed", value: true });
+    logEvent("sync", "arm", { clickedDeck });
+    attemptLock(clickedDeck);
+  }, [attemptLock, sync]);
 
   // Pitch nudge → sync interaction. Per design decision: nudging pitch on
   // EITHER deck while sync is engaged disengages sync. The deck's own rate
@@ -9417,6 +9559,16 @@ export default function CollabMix({ initialPage = "landing", djName = null }) {
 
   const bpmAValue = bpm.results["A"]?.bpm;
   const bpmBValue = bpm.results["B"]?.bpm;
+
+  // SYNC-as-mode: while ARMED, a track finishing analysis (or a partner's BPM
+  // arriving) can make the booth lockable if a deck is already playing — the
+  // arm-before-load path. Re-evaluate lockability whenever the usable BPMs
+  // change while armed. Locked state is driven by the play-start / arm hooks
+  // and the track-change re-rate effect below, so this only handles arming.
+  useEffect(() => {
+    if (!syncArmed) return;
+    attemptLockRef.current?.();
+  }, [syncArmed, bpmAValue, bpmBValue, pA?.bpm, pB?.bpm]);
 
   // Capture or release the session tempo on syncLocked transitions. Both
   // engagement and partner-driven mirror updates go through this single
@@ -9550,31 +9702,17 @@ export default function CollabMix({ initialPage = "landing", djName = null }) {
           console.warn('[AUDIO-DIAG] PLAY deck '+id+' but engine/ctx MISSING — eng.current='+!!e);
         }
       }
-      // When the SLAVE deck transitions to play AND sync is engaged, re-run
-      // alignment. Engaging SYNC while paused at prog=0 leaves slaveCurTime=0,
-      // so the phase-alignment seek gets clamped to [0,1] and the slave can
-      // end up off-beat by up to ±0.5 beat (clamp eats negative offsets).
-      // Re-running ~50ms after play start gives positive playback positions
-      // to work with, so the seek can move freely in either direction and
-      // beat alignment lands cleanly. No-op if BPM data not ready or sync
-      // metadata absent.
-      // Legacy: only the designated slave (lastSlaveDeck) re-aligns on play.
-      // That left the canonical mix-in unlocked — a freshly-cued deck that was
-      // never part of an engage got no alignment when its play was pressed.
-      // beatsv2 broadens the trigger: ANY deck starting under sync aligns to
-      // the other deck (syncDecks treats the started deck as slave), EXCEPT the
-      // explicit master — that deck is the reference and must not be moved.
-      if (value && syncLockedRef.current) {
-        const target = sessionTempoRef.current;
-        const shouldAlign = beatsV2Ref.current
-          ? (masterDeckRef.current !== id)
-          : (lastSlaveDeckRef.current === id);
-        if (target && shouldAlign) {
-          setTimeout(() => {
-            console.log("[SYNC] play-start re-align for deck", id, "target=", target.toFixed(2), "(beatsv2=" + beatsV2Ref.current + ")");
-            syncDecks(id, target);
-          }, 50);
-        }
+      // SYNC-as-mode play-start hook (ticket #6, absorbs #2). When a deck
+      // starts playing while sync is armed OR locked, evaluate lockability.
+      // attemptLock promotes armed → locked the instant the booth is lockable,
+      // and (when already locked) re-aligns the just-started deck against the
+      // other — EXCEPT the master, which it never moves. The 50ms defer lets
+      // the started deck's playhead advance off 0 first, so the phase seek can
+      // move in either direction rather than being clamped at track start (the
+      // old engage-before-play clash). No-op if not both loaded / nothing
+      // playing — it just stays armed.
+      if (value && (syncArmedRef.current || syncLockedRef.current)) {
+        setTimeout(() => attemptLockRef.current?.(id), 50);
       }
     }
     if (field === "rate") {
@@ -9645,6 +9783,13 @@ export default function CollabMix({ initialPage = "landing", djName = null }) {
   // it forward as masterVol for sync_response replay to new joiners.
   const setMvolLocal = (v) => { setMvol(v); lsRef.current.masterVol=v; sync.send({type:"master_vol_update",value:v}); };
 
+  // Stale-room guard (ticket #4). A persisted cm_session older than this (or one
+  // lacking a freshness stamp) no longer silently auto-rejoins — it prompts
+  // "rejoin or start fresh?" so an old room can't resurrect into a fresh test
+  // or session. 90 minutes survives a lunch break but kills yesterday's rooms.
+  const ROOM_FRESHNESS_MS = 90 * 60 * 1000;
+  const [staleSession, setStaleSession] = useState(null);
+
   const join = (info) => {
     eng.current = createEngine();
     setReady(true); setSession(info); setPage("session");
@@ -9664,6 +9809,7 @@ export default function CollabMix({ initialPage = "landing", djName = null }) {
         name: info.name,
         mixName: info.mixName || "Untitled Mix",
         isHost,
+        joinedAt: Date.now(),   // freshness stamp — see ROOM_FRESHNESS_MS auto-rejoin gate
       }));
     } catch {}
   };
@@ -9710,17 +9856,24 @@ export default function CollabMix({ initialPage = "landing", djName = null }) {
       if (saved) {
         const parsed = JSON.parse(saved);
         if (parsed?.room && parsed?.name) {
-          // No URL params present — localStorage is the source of truth
-          // for refresh-during-session. Preserve isHost from the
-          // original join (defaults to false for pre-fix cm_session
-          // payloads that lack the field — slight transitional cost,
-          // affects telemetry attribution only).
-          join({
-            room: parsed.room,
-            name: parsed.name,
-            mixName: parsed.mixName || "Untitled Mix",
-            isHost: !!parsed.isHost,
-          });
+          // No URL params present — localStorage is the source of truth for
+          // refresh-during-session. Freshness gate (#4): only auto-rejoin if the
+          // session is recent. A stale or unstamped session (older than
+          // ROOM_FRESHNESS_MS, or a pre-stamp payload) prompts instead of
+          // silently resurrecting yesterday's room.
+          const age = typeof parsed.joinedAt === "number" ? Date.now() - parsed.joinedAt : Infinity;
+          if (age <= ROOM_FRESHNESS_MS) {
+            join({
+              room: parsed.room,
+              name: parsed.name,
+              mixName: parsed.mixName || "Untitled Mix",
+              isHost: !!parsed.isHost,
+            });
+          } else {
+            const mins = Number.isFinite(age) ? Math.round(age / 60000) : null;
+            console.log("[REJOIN] stale cm_session (" + (mins == null ? "no timestamp" : mins + " min old") + ") — prompting rejoin/fresh for room", parsed.room);
+            setStaleSession({ ...parsed, ageMin: mins });
+          }
         }
       }
     } catch (err) {
@@ -9738,7 +9891,24 @@ export default function CollabMix({ initialPage = "landing", djName = null }) {
   const SC = { connected:"#22c55e", connecting:"#f59e0b", disconnected:"#5A5E66", error:"#ef4444" };
   const PANELS = [["rtc","⚡ AUDIO"],["rec","⏺ REC"],["midi","⎍ MIDI"]];
 
-  if (page==="landing") return <Landing onEnter={()=>setPage("lobby")}/>;
+  if (page==="landing") return (
+    <>
+      <Landing onEnter={()=>setPage("lobby")}/>
+      {staleSession && (
+        <StaleSessionModal
+          session={staleSession}
+          onRejoin={() => {
+            const s = staleSession; setStaleSession(null);
+            join({ room: s.room, name: s.name, mixName: s.mixName || "Untitled Mix", isHost: !!s.isHost });
+          }}
+          onStartFresh={() => {
+            try { localStorage.removeItem("cm_session"); } catch {}
+            setStaleSession(null);
+          }}
+        />
+      )}
+    </>
+  );
   if (page==="lobby")   return <Lobby onJoin={join} djName={djName}/>;
 
   const G = "#9CA3AF"; // gold accent — matches App.jsx landing
@@ -9970,7 +10140,7 @@ export default function CollabMix({ initialPage = "landing", djName = null }) {
           <div style={{ flex:1, display:"flex", alignItems:"flex-start", gap:10, padding:"10px 0 10px 10px", overflow:"hidden", minHeight:0 }}>
             <DeckArt artwork={libLoadA?.track?.artwork} fallback="A" color="#2E86DE"/>
             <div style={{ flex:1, overflow:"hidden", minHeight:0 }}>
-            <Deck id="A" ch={eng.current?.A} ctx={eng.current?.ctx} color="#2E86DE" local remote={pA} onChange={dh("A")} midi={midiEvt} bpmResult={bpm.results["A"]} bpmAnalyze={bpm.analyze} eqHi={eqA.hi} eqMid={eqA.mid} eqLo={eqA.lo} chanVol={eqA.vol} loadFromLibrary={libLoadA} onTrackInfo={handleTrackInfo} onSync={()=>handleSyncToggle("A")} syncReady={!!(bpm.results["B"]?.bpm || pB?.bpm)} syncRole={syncLocked ? (lastSlaveDeck === "A" ? "slave" : "master") : null} isMaster={masterDeck === "A"} onMasterToggle={handleMasterToggle} onLibraryTrackDrop={(trackId)=>{const t=lib.library.find(x=>x.id===trackId);if(t)handleLibLoad(t,"A");}} onProgUpdate={handleProgA} onWaveform={setWfA} onSeekReady={onDeckASeekReady} onToggleReady={onDeckAToggleReady} onCueReady={onDeckACueReady} onNudgeReady={onDeckANudgeReady} onTransportFire={handleTransportFire} isDriver={!deckDrivers.A || deckDrivers.A?.id === sync.djId} acNowRef={acNowRef} onBufferReady={onDeckABufferReady} barOneOffsetSec={barOneA * (bpm.results["A"]?.beatPeriodSec || 0)} onGridEdit={(fields) => libLoadA?.track?.id && lib.setGridEdit?.(libLoadA.track.id, fields)} hasOverride={!!userGridA} userGridOverride={userGridA} onPitchInteract={handlePitchInteract}/>
+            <Deck id="A" ch={eng.current?.A} ctx={eng.current?.ctx} color="#2E86DE" local remote={pA} onChange={dh("A")} midi={midiEvt} bpmResult={bpm.results["A"]} bpmAnalyze={bpm.analyze} eqHi={eqA.hi} eqMid={eqA.mid} eqLo={eqA.lo} chanVol={eqA.vol} loadFromLibrary={libLoadA} onTrackInfo={handleTrackInfo} onSync={()=>handleSyncToggle("A")} syncReady={!!(bpm.results["B"]?.bpm || pB?.bpm)} syncRole={syncLocked ? (lastSlaveDeck === "A" ? "slave" : "master") : null} syncArmed={syncArmed} isMaster={masterDeck === "A"} onMasterToggle={handleMasterToggle} onLibraryTrackDrop={(trackId)=>{const t=lib.library.find(x=>x.id===trackId);if(t)handleLibLoad(t,"A");}} onProgUpdate={handleProgA} onWaveform={setWfA} onSeekReady={onDeckASeekReady} onToggleReady={onDeckAToggleReady} onCueReady={onDeckACueReady} onNudgeReady={onDeckANudgeReady} onTransportFire={handleTransportFire} isDriver={!deckDrivers.A || deckDrivers.A?.id === sync.djId} acNowRef={acNowRef} onBufferReady={onDeckABufferReady} barOneOffsetSec={barOneA * (bpm.results["A"]?.beatPeriodSec || 0)} onGridEdit={(fields) => libLoadA?.track?.id && lib.setGridEdit?.(libLoadA.track.id, fields)} hasOverride={!!userGridA} userGridOverride={userGridA} onPitchInteract={handlePitchInteract}/>
             </div>
           </div>
         </div>
@@ -9980,8 +10150,19 @@ export default function CollabMix({ initialPage = "landing", djName = null }) {
 
           {/* HEADER — VU only; diagnostic text ("Master out · room") removed
               per design v5. Header strip stays as visual separator. */}
-          <div style={{ padding:"6px 8px 5px", background:"#0D0F12", borderBottom:"1px solid rgba(255,255,255,0.06)", display:"flex", flexDirection:"column", alignItems:"center", flexShrink:0 }}>
+          <div style={{ padding:"6px 8px 5px", background:"#0D0F12", borderBottom:"1px solid rgba(255,255,255,0.06)", display:"flex", flexDirection:"column", alignItems:"center", flexShrink:0, position:"relative" }}>
             <VU an={eng.current?.masterAn} color="#9CA3AF" w={80}/>
+            {/* Persistent Monitor switch — the manual backstop for the self-echo
+                flam (covers the two-different-browsers case the per-origin
+                sibling detector can't see). Shown whenever monitoring is live or
+                a same-device sibling tab was detected. */}
+            {(rtc.state==="connected" || rtc.siblingTab) && (
+              <button onClick={rtc.toggleMonitor}
+                title="Partner audio monitoring through this tab's speakers. Turn off on a second tab/browser on the same machine to avoid the self-echo flam."
+                style={{ position:"absolute", right:6, top:"50%", transform:"translateY(-50%)", background:"transparent", border:`1px solid ${rtc.partnerAudioOn?"rgba(255,255,255,0.18)":"rgba(255,255,255,0.10)"}`, borderRadius:4, padding:"2px 6px", cursor:"pointer", fontFamily:"'Inter',sans-serif", fontSize:7, letterSpacing:.5, color: rtc.partnerAudioOn?"rgba(255,255,255,0.6)":"rgba(255,255,255,0.3)", whiteSpace:"nowrap" }}>
+                {rtc.partnerAudioOn ? "Monitor on" : (rtc.siblingTab ? "Monitor off (same device)" : "Monitor off")}
+              </button>
+            )}
           </div>
 
           {/* CHANNEL STRIPS — 3-column: [CH A] [CENTER] [CH B] */}
@@ -10072,7 +10253,7 @@ export default function CollabMix({ initialPage = "landing", djName = null }) {
           <div style={{ flex:1, display:"flex", alignItems:"flex-start", gap:10, padding:"10px 0 10px 10px", overflow:"hidden", minHeight:0 }}>
             <DeckArt artwork={libLoadB?.track?.artwork} fallback="B" color="#A855F7"/>
             <div style={{ flex:1, overflow:"hidden", minHeight:0 }}>
-            <Deck id="B" ch={eng.current?.B} ctx={eng.current?.ctx} color="#A855F7" local remote={pB} onChange={dh("B")} midi={midiEvt} bpmResult={bpm.results["B"]} bpmAnalyze={bpm.analyze} eqHi={eqB.hi} eqMid={eqB.mid} eqLo={eqB.lo} chanVol={eqB.vol} loadFromLibrary={libLoadB} onTrackInfo={handleTrackInfo} onSync={()=>handleSyncToggle("B")} syncReady={!!(bpm.results["A"]?.bpm || pA?.bpm)} syncRole={syncLocked ? (lastSlaveDeck === "B" ? "slave" : "master") : null} isMaster={masterDeck === "B"} onMasterToggle={handleMasterToggle} onLibraryTrackDrop={(trackId)=>{const t=lib.library.find(x=>x.id===trackId);if(t)handleLibLoad(t,"B");}} onProgUpdate={handleProgB} onWaveform={setWfB} onSeekReady={onDeckBSeekReady} onToggleReady={onDeckBToggleReady} onCueReady={onDeckBCueReady} onNudgeReady={onDeckBNudgeReady} onTransportFire={handleTransportFire} isDriver={!deckDrivers.B || deckDrivers.B?.id === sync.djId} acNowRef={acNowRef} onBufferReady={onDeckBBufferReady} barOneOffsetSec={barOneB * (bpm.results["B"]?.beatPeriodSec || 0)} onGridEdit={(fields) => libLoadB?.track?.id && lib.setGridEdit?.(libLoadB.track.id, fields)} hasOverride={!!userGridB} userGridOverride={userGridB} onPitchInteract={handlePitchInteract}/>
+            <Deck id="B" ch={eng.current?.B} ctx={eng.current?.ctx} color="#A855F7" local remote={pB} onChange={dh("B")} midi={midiEvt} bpmResult={bpm.results["B"]} bpmAnalyze={bpm.analyze} eqHi={eqB.hi} eqMid={eqB.mid} eqLo={eqB.lo} chanVol={eqB.vol} loadFromLibrary={libLoadB} onTrackInfo={handleTrackInfo} onSync={()=>handleSyncToggle("B")} syncReady={!!(bpm.results["A"]?.bpm || pA?.bpm)} syncRole={syncLocked ? (lastSlaveDeck === "B" ? "slave" : "master") : null} syncArmed={syncArmed} isMaster={masterDeck === "B"} onMasterToggle={handleMasterToggle} onLibraryTrackDrop={(trackId)=>{const t=lib.library.find(x=>x.id===trackId);if(t)handleLibLoad(t,"B");}} onProgUpdate={handleProgB} onWaveform={setWfB} onSeekReady={onDeckBSeekReady} onToggleReady={onDeckBToggleReady} onCueReady={onDeckBCueReady} onNudgeReady={onDeckBNudgeReady} onTransportFire={handleTransportFire} isDriver={!deckDrivers.B || deckDrivers.B?.id === sync.djId} acNowRef={acNowRef} onBufferReady={onDeckBBufferReady} barOneOffsetSec={barOneB * (bpm.results["B"]?.beatPeriodSec || 0)} onGridEdit={(fields) => libLoadB?.track?.id && lib.setGridEdit?.(libLoadB.track.id, fields)} hasOverride={!!userGridB} userGridOverride={userGridB} onPitchInteract={handlePitchInteract}/>
             </div>
           </div>
         </div>

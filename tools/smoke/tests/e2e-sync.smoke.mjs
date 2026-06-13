@@ -27,33 +27,37 @@ try {
   await loadTestTrack(A, "A");
   await loadTestTrack(B, "B");
   await sA.waitFor("[BPM] analysis complete for deck A", 15000);
+  await sB.waitFor("[BPM] analysis complete for deck B", 15000);
   await sA.waitFor("bpm= 120", 4000).catch(() => {});
 
-  // Play A first (→ auto-master), then B a beat later (→ a real phase offset),
-  // let them run so positions are well past 0.
+  // Play A first (→ master, first to play), then B a beat later (→ a real phase
+  // offset), let them run so positions are well past 0.
   await A.evaluate(() => window.__toggleDeck("A"));
   await A.waitForTimeout(350);
   await B.evaluate(() => window.__toggleDeck("B"));
   await A.waitForTimeout(2500);
 
-  // First engage.
-  const firstIdx = sA.all("[SYNC-ENGAGE-QUALITY]").length;
-  await A.evaluate(() => window.__syncDeck("A"));
-  await sA.waitFor("[SYNC-ENGAGE-QUALITY]", 6000);
+  // Engage from B — the mixing-in deck. Under SYNC-as-mode the slave is the
+  // deck whose client can align it locally; B owns deck B (the later/slave),
+  // so B's client does the lock and emits the engage-quality. (A played first →
+  // A is master; B aligns to A.) Watch sB, not sA.
+  const firstIdx = sB.all("[SYNC-ENGAGE-QUALITY]").length;
+  await B.evaluate(() => window.__syncDeck("B"));
+  await sB.waitFor("[SYNC-ENGAGE-QUALITY]", 6000);
   await A.waitForTimeout(800);
-  const q1 = sA.all("[SYNC-ENGAGE-QUALITY]")[firstIdx] || sA.last("[SYNC-ENGAGE-QUALITY]");
+  const q1 = sB.all("[SYNC-ENGAGE-QUALITY]")[firstIdx] || sB.last("[SYNC-ENGAGE-QUALITY]");
   const ok1 = /result=ok/.test(q1 || "");
   t.check("first engage succeeds (result=ok)", ok1, (q1 || "").replace(/.*\[SYNC-ENGAGE-QUALITY\]/, "").slice(0, 70));
 
   // Toggle OFF then re-engage. Decks stay phase-locked (rates persist), so the
-  // 2nd engage should find them aligned and move the slave <10ms.
-  await A.evaluate(() => window.__syncDeck("A")); // off
+  // 2nd engage should find them aligned and move the slave <45ms.
+  await B.evaluate(() => window.__syncDeck("B")); // off
   await A.waitForTimeout(700);
-  const beforeReeng = sA.all("[SYNC-ENGAGE-QUALITY]").length;
-  await A.evaluate(() => window.__syncDeck("A")); // re-engage
-  await sA.waitFor("[SYNC-ENGAGE-QUALITY]", 6000);
+  const beforeReeng = sB.all("[SYNC-ENGAGE-QUALITY]").length;
+  await B.evaluate(() => window.__syncDeck("B")); // re-engage
+  await sB.waitFor("[SYNC-ENGAGE-QUALITY]", 6000);
   await A.waitForTimeout(500);
-  const q2 = sA.all("[SYNC-ENGAGE-QUALITY]")[beforeReeng] || sA.last("[SYNC-ENGAGE-QUALITY]");
+  const q2 = sB.all("[SYNC-ENGAGE-QUALITY]")[beforeReeng] || sB.last("[SYNC-ENGAGE-QUALITY]");
   const seek2 = phaseSeekMs(q2);
   // Bound = 45ms. The WANDER regression walked ~a full beat (250-500ms) per
   // re-press; 45ms catches that with wide margin while tolerating live jitter
