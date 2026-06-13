@@ -9227,3 +9227,25 @@ BUGS (priority order):
 METHOD: #1-5 are cross-connection — headless can instrument but the ear-verdict
 needs a Chad+Jake session-2 (both Chrome). Working P1 first, investigation-first,
 no push until Chad reviews the alignment logic.
+
+### P1 #1 AUDIO↔BEATGRID — FIX BUILT behind ?gridalign=1 (default OFF), June 12
+MECHANISM (confirmed, code-traced): the partner deck renders at progRef = the
+mirror's coasted SENT position (~real-time), but its audio arrives through the
+jitter buffer (compMs = jb+playout, ~120-160ms live) — so the visual LEADS the
+audible by ~one comp-delay → "kick shown, breakdown heard." The local deck has the
+same lead (delaycomp delays its audio by the same compMs).
+FIX (Chad: BOTH decks): offset BOTH decks' VISUAL timeline back by the measured
+compMs so playhead+grid sit on the AUDIBLE position — "looks lined up" = "sounds
+lined up." Render-time ONLY (prog2 in AnimatedZoomedWF; progRef/sync truth never
+touched — verified sync still locks + truth advances with the flag on). SLEWED
+(~0.4s ease) so the spiky 110-321ms comp doesn't make the grid jump. Gated on
+delaycomp (local audio only delayed when delaycomp applies it). Suppressed during
+drag; seek reads progRef so click-to-seek is unaffected.
+DEFAULT OFF (?gridalign=1 to enable) — production safe; Chad flips it on for the
+Chad+Jake session-2 ear-test before it becomes default. [GRID-ALIGN-DIAG] + rttMs
+logging kept in so session-2 shows whether a residual rtt/2 term is needed after
+the compMs offset. Full smoke 21/21 (flag off). Flag-on path verified: locks,
+sync-truth advances, 0 errors. PUSHED behind the flag.
+KNOWN CAVEATS for session-2: (1) residual network half-RTT not included (compMs
+only, per Chad). (2) on a local-deck drag-grab the displayed playhead jumps from
+offset→true position (minor; flag-gated). VERIFY: Chad+Jake session-2, both Chrome.
