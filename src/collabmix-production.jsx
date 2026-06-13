@@ -5483,6 +5483,7 @@ function Deck({ id, ch, ctx:ac, color, local, remote, onChange, midi:mt, bpmResu
     if(remote.progress!=null && remote.progress!==lastRemProgRef.current){
       lastRemProgRef.current=remote.progress;
       const now=performance.now();
+      const mnPktGapMs=remPktRef.current?(now-remPktRef.current):0;  // inter-arrival (P3/P4/P5 diag)
       remPktRef.current=now; remStaleLoggedRef.current=false;   // fresh packet → staleness clears
       const trackDurSec=remote.duration||dur;
       // Rate-aware: extrapolate at the driver's ACTUAL playback rate, not a fixed
@@ -5529,6 +5530,19 @@ function Deck({ id, ch, ctx:ac, color, local, remote, onChange, midi:mt, bpmResu
         else if(signedDriftSec<-0.5) console.log('[MIRROR-SNAP] deck',id,'absorbed backward drift '+signedDriftSec.toFixed(2)+'s via slew (no jump)');
         remProgRef.current=remote.progress; remTimeRef.current=now;
         remSlewRef.current=visibleNow-remote.progress;
+      }
+      // [MIRROR-NET-DIAG] (?mirrordiag=1) — BUG #3/#4/#5 investigation. Per-PACKET
+      // picture of mirror tracking under REAL latency: inter-arrival gap, the coast
+      // DRIFT (how far the model wandered from truth before this packet corrected
+      // it), the driver's rate, and the action taken. Lets a mirror-focused session
+      // see whether the localhost-tuned snap/slew thresholds (FWD 3s / BACK 8s /
+      // TAU 220ms) fit real cadence — e.g. sparse gaps (4034ms) producing big
+      // coast drift → backward slews (#3), or a seek's huge fwd-snap (#4).
+      if(MIRROR_DIAG){
+        const mnAction=isFirst?'first':genuineFwdSeek?'FWD-SNAP':bigRewind?'REWIND-SNAP':justStarted?'playstart-slew':'slew';
+        console.log('[MIRROR-NET-DIAG] deck '+id+' pktGapMs='+Math.round(mnPktGapMs)+
+          ' driftMs='+(signedDriftSec*1000).toFixed(0)+' rate='+driverRate.toFixed(3)+
+          ' action='+mnAction+' truthProg='+remote.progress.toFixed(4));
       }
       // DO NOT setProg here — the RAF loop below renders the smooth position.
     }

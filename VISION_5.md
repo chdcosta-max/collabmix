@@ -9311,3 +9311,40 @@ analyzer cross-propagation, so the [ANALYZER-RECV] wait timed out → engage no-
 (phaseSeekMs=null / 0 skip logs). Bumped those waits to 25s + a settle. Full smoke
 21/21. Product was never affected (standalone always green); pure test-infra
 robustness. PUSHED with the P2-P6 + grid-align-steadiness batch.
+
+### P3/P4/P5 mirror-under-latency — INVESTIGATION + PROPOSALS (instrument-only, LOCAL/unpushed)
+Code-traced the mirror coast (Deck mirror useEffect ~5450-5535). All three share the
+same root: the coast/snap/slew model (FWD_SNAP_SEC=3, BACK_SNAP_SEC=8, SLEW_TAU=220ms,
+coast at remRateRef) was tuned on LOCALHOST (flat ~30ms, dense 10Hz packets). Under
+real latency + sparse packets (MIRROR-STALE 4034ms) the assumptions break.
+
+INSTRUMENTED (this commit, behind ?mirrordiag=1): [MIRROR-NET-DIAG] — per-PACKET
+log of inter-arrival gap (pktGapMs), coast DRIFT before correction (driftMs),
+driver rate, and action (first / FWD-SNAP / REWIND-SNAP / playstart-slew / slew).
+Gives a mirror-focused session the real per-packet cadence vs the localhost tuning.
+
+- **#3 (choppy + backward slews -0.5/-0.6/-1.53s):** over a long sparse gap the
+  linear coast (remRateRef) extrapolates far; if it OVERSHOOTS truth (broadcast
+  rate slightly high, or partner audio is jitter-buffered behind the sent pos), the
+  next packet pulls it back → backward slew. Frequent = repeated overshoot.
+  PROPOSAL: (a) coast slightly CONSERVATIVELY as pktAge grows (bias toward
+  undershoot → gentler forward catch-up instead of jarring backward slew); (b)
+  scale SLEW_TAU with packet cadence (gentler corrections when sparse); (c) probe
+  whether the 4034ms gaps are WS packet loss vs send-rate (send is already 10Hz, so
+  the sparseness is receive-side — worth a WS-reliability look).
+- **#4 (seek +35.7s snap / lag):** mostly INHERENT latency, not a defect — a genuine
+  partner seek correctly hard-snaps the mirror to the seeked position; the +35.7s is
+  the seek distance and the lag is the packet's network transit. Minor improvement:
+  freeze the coast on a detected seek so it doesn't wander before the snap. Low
+  priority vs #3/#5.
+- **#5 (load slide-back):** on partner load+play the play-start anchor
+  (remProgRef = progRef.current at nowPlaying&&!wasPlaying, ~L5454) can hold the OLD
+  track's position, so the mirror shows it briefly then snaps. PROPOSAL (most clearly
+  fixable): on partner TRACK-CHANGE (remote.trackName change), reset the coast state
+  cleanly (remTimeRef=0 → force a clean first-packet snap; clear slew/await) so a new
+  track starts fresh without the slide-back.
+
+ALL THREE need the two-machine session to verify (real latency). [MIRROR-NET-DIAG]
+is committed LOCAL/unpushed — push it before a mirror-focused session (NOT needed
+for session-2, which is grid-align + jitter). Full comp jitterBufferTarget plan
+still banked for after session-2.
