@@ -9557,9 +9557,39 @@ export default function CollabMix({ initialPage = "landing", djName = null }) {
     const slaveBeats  = bpm.results[slave]?.beatTimes   ?? slavePartnerState?.beatTimes;
     const masterBeats = bpm.results[master]?.beatTimes  ?? masterPartnerState?.beatTimes;
     const slaveDur   = slave==="A"  ? wfA?.dur : wfB?.dur;
-    const slaveProg  = slave==="A"  ? progRefA.current : progRefB.current;
-    const masterProg = master==="A" ? progRefA.current : progRefB.current;
     const masterDur  = master==="A" ? wfA?.dur : wfB?.dur;
+    // IDEMPOTENCY FIX (Move #2 follow-up). For the beat-phase read, sample the
+    // STABLE last-received packet value (the anchor) of a PARTNER-DRIVEN deck —
+    // NOT the live mirror DISPLAY position. The follower's per-frame dynamics
+    // (smooth/creep/forward-clamp/catch-up) make the live display wobble run-to-run,
+    // which tipped the nearest-beat pick across a beat boundary → the ±100ms
+    // re-engage "wander". The raw packet value is deterministic, so both engages
+    // pick the same beat → idempotent. A LOCALLY driven deck keeps its precise live
+    // position (no follower in that path). This decouples the two consumers of the
+    // mirror position (the eye wants smoothness; sync wants a stable read) so they
+    // stop fighting over one number — the follower is untouched. Proven via e2e-sync
+    // through the mock: live-display = ±100ms (3/5 fail); anchor read = single-digit ms.
+    const stableProg = (d) => {
+      const drv = deckDriversRef.current?.[d];
+      const partnerDriven = !!(drv?.id && drv.id !== syncRef.current?.djId);
+      if (partnerDriven) {
+        const meta = partnerProgressMetaRef.current?.[d];
+        const durD = d==="A" ? wfA?.dur : wfB?.dur;
+        if (meta && typeof meta.value === "number" && durD > 0) {
+          // Project the STABLE anchor to NOW with a clean ramp (broadcast rate, NO
+          // follower dynamics) so the stale-anchor read lines up with the live local
+          // slave — removes the staleness bias while staying deterministic. This is
+          // the follower's clean MODELED position without its creep/clamp wobble.
+          const pr = (d==="A" ? pA : pB)?.rate;
+          const rate = (typeof pr === "number" && pr > 0) ? pr : 1;
+          const ageMs = Math.max(0, performance.now() - (meta.tRecvLocal || 0));
+          return Math.min(1, Math.max(0, meta.value + (rate/(durD*1000)) * ageMs));
+        }
+      }
+      return (d === "A" ? progRefA : progRefB).current;   // local deck: precise live position
+    };
+    const slaveProg  = stableProg(slave);
+    const masterProg = stableProg(master);
     const slaveCurTime  = (slaveProg  || 0) * (slaveDur  || 0);
     const masterCurTime = (masterProg || 0) * (masterDur || 0);
 
