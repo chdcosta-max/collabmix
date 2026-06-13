@@ -9380,3 +9380,71 @@ by ear; capture GRID-ALIGN-DIAG (offset magnitude + rtt/2 residual?); capture
 JITTER-DIAG (confirm the "BPM changing" time-stretch before tuning the buffer).
 BANKED for after session-2: comp jitterBufferTarget steadiness tuning; mirror-family
 (#3/#4/#5) fixes; the local mock-WS-server infra task above.
+
+## ═══ SESSION — June 13, 2026 — REGRESSION AUDIT + Move #1 (local mock WS server) ═══
+
+### The audit (Chad asked for a brutally honest sync regression review)
+Pulled the full bug-fix history from VISION_5 + git log and categorized it.
+VERDICT: most "sync feels off" bugs were DISTINCT root causes sharing a SYMPTOM
+(healthy), not fixes regressing each other — e.g. the "double kick" family (Gap #4
+monitoring delay / comp staleness / dead-receiver-after-reneg / the autoplay RED
+HERRING that was retracted) and the "can't pair" family (room-split URL / identity
+collision / stale socket / Railway dropped ping). TWO genuine regressions, both the
+scary cross-coupling kind: (1) the June-12 self-pause — SYNC-as-mode (#6) re-broke
+the "only re-align your OWN deck" invariant (a feature rippling into transport);
+(2) the June-11 beat-grid "regression" — the analyzer REFINE rebuild silently split
+sync onto two grid definitions (fixed structurally by beatsv2 unification).
+STRUCTURAL FINDINGS: the whole app is ONE 10,606-line file (no module boundary
+around sync); 5 live URL-flag branches (beatsv2/onsetgrid/delaycomp/gridalign/
+mirrordiag) each carry a legacy+new path. The mirror coast/snap model is the one
+genuinely fragile mechanism — patched 6× because it was tuned on localhost.
+THE WORST FINDING: the smoke gate structurally CANNOT reproduce the conditions the
+worst bugs live in (the log repeatedly admits "the clean harness can't force…" the
+stale-mirror / interleave / sparse-packet cases) — green on the easy case, blind on
+the hard case. 3-MOVE PLAN agreed (NOT a big-bang rewrite): #1 local mock WS server
+w/ injectable latency+loss (close the blind spot) → #2 mirror coast/snap refactor
+(latency-adaptive) → #3 retire promoted flags. Order matters: #1 first so #2 is
+verifiable under simulated latency.
+
+### Move #1 SHIPPED (local, unpushed — Chad to review before any push)
+Built the local mock WS server + deterministic netem so the gate can finally see
+the real-network conditions.
+- **Commit 1 (394023c)** — `tools/smoke/lib/mock-ws-server.mjs`: protocol-exact
+  stand-in for `../collabmix-server-repo/server.js` (join/identity, deck_update,
+  transport, rtc signaling, sync_ping/pong, deck_driver_change, close-cleanup).
+  App: a `?wsurl=` override gated behind TEST_HOOKS (inert in production — no socket
+  hijack risk). Runner: `--mock`/`MOCK=1` spawns+tears it down, exports MOCK_WS_URL;
+  `lib/e2e.mjs` appUrl()/gotoApp() route through it. Added `ws` devDependency.
+- **Commit 2 (7ee945d)** — seeded (mulberry32) netem layer: latencyMs / jitterMs
+  (→ reordering) / lossPct / seed / types[] filter, live via POST /netem +
+  setNetem()/resetNetem(). First test `e2e-mirror-latency.smoke.mjs` (needs --mock).
+
+### What the netem PROVED (the blind spot, quantified)
+Same mirror code, driven through the real app under the mock:
+- clean (no netem): median **4ms** ← what the production gate sees, always.
+- latency 150 + jitter 70 + 40% loss (deck_update): median **~150ms**, 0 backward.
+- harsh 200/120/70%: median ~185ms but MAX spikes to **~1.4s** (transient).
+The clean network HID all of it. The committed test asserts the invariants that
+hold today + Move #2 must keep (no backward step, keeps advancing, tracks within
+the latency floor + margin) and LOGS the harsh-profile max as a [DIAG] line — the
+number Move #2 will drive down and then assert on. NOTE: the backward-SLEW symptom
+specifically needs a rate-adjusted (synced/pitched) driver — that deliberate repro
+is the first thing to add when Move #2 starts.
+
+### VERIFICATION
+- npm run build: clean (~1.1s). npm run smoke:unit: 6/6.
+- netem standalone: determinism (same seed → identical 50/100 drop set), seed
+  sensitivity, latency (~129ms for 120 set), reorder-under-jitter — all PASS.
+- e2e-mirror-latency: 7/7 against the mock (direct + via runner --mock).
+- End-to-end: two real Chrome clients paired THROUGH the mock (distinct djIds,
+  /health=2djs/1room, 0 console errors).
+- NOT pushed. Scope kept INCREMENTAL (Chad's call): existing e2e still hit prod;
+  mock-based tests opt in. Full-suite migration onto the mock = deliberate next step.
+
+### REMAINING (next sessions)
+- Move #1 follow-ups: message-interleaving + rate-adjusted backward-slew repro
+  tests; migrate e2e-mirror-coast off the client-side __progressThrottleMs hack
+  onto real mock-induced sparsity; THEN flip the whole e2e suite onto the mock
+  (load-independent gate) with TARGET= as the escape hatch.
+- Move #2: mirror coast/snap latency-adaptive refactor (now verifiable via netem).
+- Move #3: retire promoted flags (beatsv2/onsetgrid/delaycomp dead branches).

@@ -71,6 +71,42 @@ the e2e tests SKIP. Unit + audio tests need only Node.
 Audio tests default to the fixture; set `SMOKE_TRACKS="a.mp3,b.mp3"` (files in
 `tools/bpm-test-harness/tracks/`) to run the strict gates against real tracks.
 
+## Local mock WS server + deterministic network conditions (`--mock`)
+
+By default every e2e test connects to the **shared production** WS relay, which
+during tests runs on a clean fast network — so latency, jitter, packet loss and
+reordering never happen and the partner mirror always looks perfect (~4ms). The
+mirror / stale-position bug class (backward slews, rapid-toggle snaps, near-end
+self-pause, mirror-under-latency) lives in exactly those conditions, so the
+default gate is structurally **blind** to it.
+
+`tools/smoke/lib/mock-ws-server.mjs` is a protocol-exact local stand-in for the
+production server (`../collabmix-server-repo/server.js` — keep the relay logic in
+sync) with a **seeded** network-emulation layer.
+
+```bash
+npm run smoke:e2e -- --mock      # spawn the mock; mock-aware tests route through it
+MOCK=1 npm run smoke:e2e         # same via env
+node tools/smoke/lib/mock-ws-server.mjs 8090   # run the mock standalone (manual)
+```
+
+- The runner (`--mock`) spawns the mock and exports `MOCK_WS_URL`. Tests that use
+  `gotoApp()` (instead of `page.goto(TARGET)`) route the app's sockets to it via a
+  **`?wsurl=` override gated behind `TEST_HOOKS`** — inert for real users, so a
+  crafted link can never redirect a production socket.
+- **netem conditions** (live via `setNetem()` → `POST /netem`): `latencyMs`,
+  `jitterMs` (± per message → reordering), `lossPct`, `seed`, and `types[]` (limit
+  conditions to specific message types, e.g. `["deck_update"]` to make only the
+  progress stream sparse while join/driver/transport stay crisp). **Same
+  `(seed, profile, message-sequence)` reproduces the run exactly** — no
+  `Math.random` on the path. `GET /netem` returns current conditions.
+- **Scope:** netem shapes the WS **control plane** only. Audio is P2P WebRTC
+  (browser-managed) and is unaffected — the comp/jitter-buffer tests don't change.
+  The mirror bugs ride the `deck_update` progress packets, which the mock controls.
+- **Rollout (incremental):** existing tests still hit production; mock-based tests
+  opt in. `e2e-mirror-latency` is the first. Flipping the whole suite onto the
+  mock (load-independent, deterministic gate) is the deliberate next step.
+
 ## Notes / quarantine log
 
 - `e2e-sync` idempotency bound is **30ms** (not the unit test's exact <0.5ms):
