@@ -2033,7 +2033,7 @@ function LibraryWizard({ lib, onClose }) {
   );
 }
 
-function LibraryPanelV2({ lib, onLoad, playingTrack, deckATrackId:deckATrackIdProp=null, deckBTrackId:deckBTrackIdProp=null, previewTrackId, onPreview, onDelete, chat, onSendChat, me, rkLib=null, rkStatus={phase:"idle"}, onConnectRekordbox=null }) {
+function LibraryPanelV2({ lib, onLoad, playingTrack, deckATrackId:deckATrackIdProp=null, deckBTrackId:deckBTrackIdProp=null, previewTrackId, onPreview, onDelete, chat, partnerPresent=false, onSendChat, me, rkLib=null, rkStatus={phase:"idle"}, onConnectRekordbox=null }) {
   const G = "#9CA3AF";
   const BG = "#0D0F12";
   const BG2 = "#15171A";
@@ -2947,8 +2947,11 @@ function LibraryPanelV2({ lib, onLoad, playingTrack, deckATrackId:deckATrackIdPr
         <div style={{ flex: `${1 - queueFraction} 1 0`, minHeight: 120, display: "flex", flexDirection: "column" }}>
           <div style={{ padding: "10px 14px", fontSize: 10, letterSpacing: 2, fontFamily: "'Inter',sans-serif", color: G, borderBottom: `1px solid ${BORDER}`, display: "flex", alignItems: "center", gap: 8 }}>
             <span>Chat</span>
-            <div style={{ width: 6, height: 6, borderRadius: 3, background: "#22c55e", boxShadow: "0 0 6px #22c55e88" }} />
-            <span style={{ color: MUTED, fontSize: 9, fontFamily: "'Inter',sans-serif", letterSpacing: 0, textTransform: "none" }}>partner online</span>
+            {/* Truthful presence (#5 P1.3): only claim a partner is online when
+                one has actually joined. Before that, show a muted "waiting"
+                state instead of a permanent green "partner online". */}
+            <div style={{ width: 6, height: 6, borderRadius: 3, background: partnerPresent ? "#22c55e" : "#5A5E66", boxShadow: partnerPresent ? "0 0 6px #22c55e88" : "none" }} />
+            <span style={{ color: MUTED, fontSize: 9, fontFamily: "'Inter',sans-serif", letterSpacing: 0, textTransform: "none" }}>{partnerPresent ? "partner online" : "waiting for partner"}</span>
           </div>
           <div style={{ flex: 1, overflowY: "auto", padding: "8px 12px" }}>
             {(!chat || chat.length === 0)
@@ -7374,7 +7377,7 @@ function Landing({ onEnter }) {
           <div style={{ display:"grid", gridTemplateColumns:"repeat(3,1fr)", gap:24 }}>
             {[
               { n:"01", title:"Open the App", desc:"No install. No account. Just click Launch App and you're in." },
-              { n:"02", title:"Share Room ID", desc:"Copy your Room ID and send it to your partner. They join the same room." },
+              { n:"02", title:"Share Mix code", desc:"Copy your Mix code and send it to your partner. They join the same mix." },
               { n:"03", title:"Start Mixing", desc:"Load your tracks, hit play. You're live. Your mix streams to their ears in real time." },
             ].map((s,i)=>(
               <div key={i} style={{ textAlign:"center" }}>
@@ -7538,7 +7541,9 @@ function Lobby({ onJoin, djName = null }) {
           />
         </div>
 
-        {/* Mix Code */}
+        {/* Mix Code — creator only. A joiner already has the code (they used it
+            to get here) and showing them the share tools is confusing (#5 P2.5). */}
+        {!isJoining && (
         <div style={{ background:"#0D0F12", border:`1px solid ${G}18`, borderRadius:12, padding:16, display:"flex", flexDirection:"column", gap:8 }}>
           <div style={{ fontSize:8, fontFamily:"'Inter',sans-serif", color:`${G}55`, letterSpacing:2 }}>Mix code</div>
           <div style={{ fontFamily:"'Cormorant Garamond',serif", fontWeight:700, fontSize:22, letterSpacing:1, color:"#F5F5F7" }}>{room}</div>
@@ -7549,8 +7554,11 @@ function Lobby({ onJoin, djName = null }) {
           >
             {copied ? "✓ LINK COPIED!" : "⎘ COPY MIX LINK"}
           </button>
-          <div style={{ fontSize:8, fontFamily:"'Inter',sans-serif", color:"#9CA3AF", lineHeight:1.6, fontWeight:300 }}>Send this link to your partner — they'll join the same mix instantly.</div>
+          {/* #5 P2.6: the code is reserved but you're NOT live yet — say so, so
+              the pre-generated code doesn't read as "already started". */}
+          <div style={{ fontSize:8, fontFamily:"'Inter',sans-serif", color:"#9CA3AF", lineHeight:1.6, fontWeight:300 }}>Your room is reserved — press the button below to go live, then send this link to your partner.</div>
         </div>
+        )}
 
         {/* Join button — matches App.jsx btn-gold. isHost reflects the
             mode: START MIX (no ?room= in URL → creator) vs JOIN MIX
@@ -10296,6 +10304,7 @@ export default function CollabMix({ initialPage = "landing", djName = null }) {
           onPreview={handlePreview}
           onDelete={handleDeleteTrack}
           chat={chat}
+          partnerPresent={!!sync.partner}
           onSendChat={msg=>sync.send({type:"chat",msg})}
           me={session.name}
           rkLib={rkLib}
