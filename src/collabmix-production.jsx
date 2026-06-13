@@ -75,14 +75,18 @@ const SMOOTH_DIAG = URL_FLAGS.get("smoothdiag") === "1";
 // production endurance soak (comp held 55.3–55.9ms for the full run, survived 3
 // track-ends + re-engages, zero errors/disconnects). Kill switch: ?delaycomp=0.
 const DELAY_COMP = URL_FLAGS.get("delaycomp") !== "0";
-// ?gridalign=1 — BUG #1 fix (dogfood session 1). Offset BOTH decks' VISUAL
-// timelines back by the measured comp delay (jb+playout, the same value
-// delaycomp delays the local audio by) so the playhead/grid sit on the AUDIBLE
-// position, not the source/sent position. DEFAULT OFF — render-time only (never
-// touches progRef / sync truth), slewed (compMs is spiky), so Chad can A/B it in
-// the Chad+Jake session-2 before it becomes default. Requires delaycomp on (the
+// BUG #1 fix (dogfood session 1). Offset BOTH decks' VISUAL timelines back by the
+// measured comp delay (jb+playout, the same value delaycomp delays the local audio
+// by) so the playhead/grid sit on the AUDIBLE position, not the source/sent
+// position. PROMOTED DEFAULT-ON (Move #2, June 13 2026): "grid locked to the heard
+// beat" is the product standard, not a flag — so the mirror grid is drawn at
+// (sent − compMs) by default. Kill-switch ?gridalign=0. Render-time only (never
+// touches progRef / sync truth), slewed (compMs is spiky). The displayed grid
+// stays monotonic because the follower feeding it is smooth and the comp ease is
+// slow. The audio-lock itself is verified LIVE (Chad+Jake session-3), not by the
+// smoke suite (no real jitter buffer in the mock). Requires delaycomp on (the
 // offset assumes the local audio is delayed by the same compMs).
-const GRID_ALIGN = URL_FLAGS.get("gridalign") === "1";
+const GRID_ALIGN = URL_FLAGS.get("gridalign") !== "0";
 // Browser support (dogfood session 1): Jake on EDGE was unlistenable (audio cut
 // in/out); Chrome fixed it. Warn non-Chrome users at session start. "Real" Chrome
 // = UA has Chrome but NOT Edge (Edg/) / Opera (OPR/) / Samsung Internet.
@@ -5399,7 +5403,16 @@ function Deck({ id, ch, ctx:ac, color, local, remote, onChange, midi:mt, bpmResu
   useEffect(()=>{ rateRef.current=rate; },[rate]);
   useEffect(()=>{ isDriverRef.current=isDriver; console.log('[PLAY-STATE] deck',id,'isDriver changed to '+isDriver); },[isDriver,id]);
   // EQ is now passed as props: eqHi, eqMid, eqLo, chanVol
-  const remProgRef=useRef(0),remTimeRef=useRef(0),remRateRef=useRef(0),remRaf=useRef(null),remSlewRef=useRef(0);
+  const remProgRef=useRef(0),remTimeRef=useRef(0),remRateRef=useRef(0),remRaf=useRef(null);
+  // Smoothed-follower state: displayed playhead (remDisp), prior packet
+  // (remPrevProg/remPrevTime — observed-rate slope + genuine-seek detection), last
+  // RAF frame time (remFrame — per-frame dt), and remSlew — the DECAYING step that
+  // absorbs each re-anchor so the displayed position is SMOOTH + low-variance (a
+  // stable mirror phase, which sync engage reads — jittery tracking broke its
+  // idempotency). The old model let that slew move the playhead BACKWARD (the
+  // dogfood bug); here the follower is hard-clamped FORWARD-ONLY — when the smoothing
+  // would reverse, it CREEPS forward instead. Backward motion is impossible by construction.
+  const remDispRef=useRef(0),remPrevProgRef=useRef(0),remPrevTimeRef=useRef(0),remFrameRef=useRef(0),remSlewRef=useRef(0);
   const remPktRef=useRef(0);          // performance.now() of the last progress packet (staleness)
   const remStaleLoggedRef=useRef(false);
   const remDiagAtRef=useRef(0);       // throttle for [MIRROR-DIAG] interp log
@@ -5460,10 +5473,13 @@ function Deck({ id, ch, ctx:ac, color, local, remote, onChange, midi:mt, bpmResu
     // jump on remote pause→play. The await flag suppresses the coast in that gap.
     if(nowPlaying && !wasPlaying){
       remAwaitPktRef.current=true;
-      // Anchor the model to WHAT'S CURRENTLY DISPLAYED (progRef), so the hold and
-      // the first-packet slew both start from the visible position — no jump in
-      // either direction. The first fresh packet then eases (slews) onto truth.
-      remProgRef.current=progRef.current; remTimeRef.current=performance.now(); remSlewRef.current=0;
+      // Anchor the model to WHAT'S CURRENTLY DISPLAYED (progRef) and HOLD there
+      // until the first fresh packet, so neither the hold nor the follower's
+      // catch-up starts from a stale position — no jump in either direction. Mark
+      // "no prior packet" (remPrevTime=0) so the first packet can't compute a bogus
+      // slope or read a stale-anchor seek.
+      remProgRef.current=progRef.current; remDispRef.current=progRef.current; remSlewRef.current=0;
+      remTimeRef.current=performance.now(); remPrevTimeRef.current=0; remFrameRef.current=performance.now();
     }
     // EQ values now come from parent props when remote is true
     if(remote.trackName)setName(remote.trackName);
@@ -5473,85 +5489,124 @@ function Deck({ id, ch, ctx:ac, color, local, remote, onChange, midi:mt, bpmResu
     if(remote.waveformBass)setWfBass(remote.waveformBass);
     if(remote.waveformMid)setWfMid(remote.waveformMid);
     if(remote.waveformHigh)setWfHigh(remote.waveformHigh);
-    // Non-driver playhead model — anchor + rate-aware extrapolation + slew:
-    //   visible(t) = clamp( remProg + remRate*(t-remTime) + remSlew*e^(-(t-remTime)/TAU) )
-    // remProg/remTime = truth anchor; remRate = per-ms progress at the DRIVER'S
-    // actual rate; remSlew = a visual offset (set so the screen never JUMPS on a
-    // correction) that decays to 0, easing the playhead onto truth.
-    const SLEW_TAU_MS=220;     // slew half-life feel — eases a correction over ~½s
-    const FWD_SNAP_SEC=3;      // forward jump beyond this = a genuine seek → hard snap
-    const BACK_SNAP_SEC=8;     // ONLY a large backward jump (a genuine rewind) hard-snaps
-    // Re-anchor ONLY on a genuinely NEW progress value. This effect re-runs on
-    // ANY `remote` (pA/pB) field change — analyzer re-broadcast, rate, waveform,
-    // etc. — and re-anchoring to the (unchanged, now-stale) progress on those
-    // would reset the coast backward to a stale position. When progress is
-    // sparse (a backgrounded driver) but other fields update, that was the
-    // residual bounce + lag. Coast continues undisturbed between real packets.
+    // ── Non-driver playhead: MONOTONIC RATE-LIMITED FOLLOWER ──────────────────
+    // The displayed playhead ALWAYS moves forward (never backward) except on a
+    // genuine rewind. It tracks a continuously-estimated target
+    //   target(t) = anchorProg + baseRate·(t − anchorTime)
+    // by modulating its FORWARD rate: speeding up (bounded) to catch up when
+    // behind, easing to a small forward CREEP (never a freeze, never < 0) when it
+    // has over-coasted ahead. Corrections are RATE changes, not position jumps —
+    // so a backward visual slew is impossible BY CONSTRUCTION (the dogfood bug).
+    // baseRate is OBSERVED from the packet stream's own slope, not the broadcast
+    // `rate` field (which is dropped by the same packet loss that causes the bug).
+    // A position SNAP is reserved for a genuine seek/rewind, detected on the TRUTH
+    // trajectory (a network-independent magnitude), not on coast drift.
+    // (The grid is shifted to the AUDIBLE position by the render-layer comp offset
+    // — this follower owns the SMOOTH+MONOTONIC sent timeline it rides on.)
+    const MAX_CATCHUP=3.0;     // per-frame catch-up rate ceiling. ONLY bites when recovering a
+                               // LARGE gap (post-disruption) — on a healthy link the smoothing
+                               // step is tiny so the rate sits at ~1× and this never engages. 3×
+                               // recovers a ~2s stale-pause within ~1s, smoothly (no jump).
+    const CREEP_FRAC=0.15;     // when ahead, creep forward at 15% of base — alive, not frozen, never < 0
+    const SLEW_TAU_MS=220;     // decay half-life of the re-anchor step — smooths position jitter
+                               // (stable mirror phase) without lagging the forward ramp
+    const FWD_SNAP_SEC=3;      // truth jumps forward beyond this = genuine seek/cue → hard snap
+    const REORDER_TOL_SEC=0.75;// a packet BELOW the anchor by less than this = reordering/jitter
+                               // (drop it — re-anchoring would drag the follower backward off
+                               // truth); by MORE than this = a genuine rewind/loop (hard snap).
+    // Re-anchor ONLY on a genuinely NEW progress value. This effect re-runs on ANY
+    // `remote` (pA/pB) field change — analyzer re-broadcast, rate, waveform, etc. —
+    // and re-anchoring to the (unchanged, now-stale) progress on those would
+    // corrupt the coast. The follower continues undisturbed between real packets.
     if(remote.progress!=null && remote.progress!==lastRemProgRef.current){
       lastRemProgRef.current=remote.progress;
       const now=performance.now();
-      const mnPktGapMs=remPktRef.current?(now-remPktRef.current):0;  // inter-arrival (P3/P4/P5 diag)
-      remPktRef.current=now; remStaleLoggedRef.current=false;   // fresh packet → staleness clears
-      const trackDurSec=remote.duration||dur;
-      // Rate-aware: extrapolate at the driver's ACTUAL playback rate, not a fixed
-      // 1×. A synced/pitched driver deck (rate≠1, the norm in a beatmatched set)
-      // otherwise makes our interp drift off truth; the periodic snap-back that
-      // produced was the backward sawtooth. remote.rate is broadcast on the wire.
-      const driverRate=(typeof remote.rate==="number"&&remote.rate>0)?remote.rate:1;
-      if(trackDurSec&&trackDurSec>0){
-        remRateRef.current=nowPlaying?(driverRate/(trackDurSec*1000)):0;
-      }
-      // Where the playhead is VISIBLE right now (model + decaying slew).
-      const since=now-remTimeRef.current;
-      const modeledNow=remProgRef.current+(remRateRef.current||0)*since;
-      const slewNow=remSlewRef.current*Math.exp(-since/SLEW_TAU_MS);
-      const visibleNow=(remTimeRef.current>0)?(modeledNow+slewNow):remote.progress;
-      const signedDriftSec=(remote.progress-visibleNow)*(trackDurSec||1); // + = truth AHEAD of us
-      const justStarted=remAwaitPktRef.current;   // first packet since a play-START → re-sync, not a user seek
-      remAwaitPktRef.current=false;   // a fresh packet → stop holding, resume coasting
-      const isFirst=remTimeRef.current===0;
-      const fwdSeek=signedDriftSec>FWD_SNAP_SEC;       // driver jumped ahead (cue/seek)
-      const bigRewind=-signedDriftSec>BACK_SNAP_SEC;   // driver genuinely rewound a long way
-      // #3 fix (rapid-toggle mirror snaps): a forward gap on the FIRST packet
-      // after a play-START is the mirror RE-SYNCING to a deck that advanced
-      // while we held a (possibly stale) paused anchor — under rapid non-owner
-      // pause/play the frozen-position broadcast can land late and the owner is
-      // already seconds ahead. That is NOT a user cue/seek, so EASE onto truth
-      // via slew instead of the visible hard jump (the +6.4s/+8.7s
-      // "[MIRROR-SNAP] forward" lurches Chad saw, indistinguishable from broken
-      // sync). Only a forward jump during STEADY coast (not just-started) is a
-      // genuine seek that still hard-snaps.
-      const genuineFwdSeek=fwdSeek && !justStarted;
-      if(isFirst||genuineFwdSeek||bigRewind){
-        if(bigRewind) console.warn('[MIRROR-SNAP] deck',id,'large rewind '+signedDriftSec.toFixed(1)+'s — hard snap');
-        else if(genuineFwdSeek) console.warn('[MIRROR-SNAP] deck',id,'forward seek/catch-up +'+signedDriftSec.toFixed(1)+'s — hard snap');   // triage c: forward snaps now confess too
-        remProgRef.current=remote.progress; remTimeRef.current=now; remSlewRef.current=0;
+      const trackDurSec=remote.duration||dur||1;
+      const nominal1x=1/(trackDurSec*1000);                  // fractional progress per ms at 1×
+      const havePrior=remTimeRef.current>0 && remPrevTimeRef.current>0;
+      const mnPktGapMs=remPktRef.current?(now-remPktRef.current):0;   // inter-arrival (diag)
+      remPktRef.current=now; remStaleLoggedRef.current=false;         // fresh packet → staleness clears
+      const justStarted=remAwaitPktRef.current;              // first packet since a play-START
+      remAwaitPktRef.current=false;
+
+      // REORDER GUARD (the harsh-network error killer). The driver's true position
+      // is monotonic-forward (bar genuine seeks). So a packet whose progress sits
+      // BELOW the current anchor is either (a) reordering/jitter — the network
+      // delivered an OLD packet late — or (b) a genuine rewind/loop. Discriminate by
+      // MAGNITUDE, never by trusting arrival order: a small backward step is a
+      // reorder (DROP it — re-anchoring there would drag the target, and the
+      // follower, backward off truth → multi-second lag); a large one is real (snap).
+      const backwardSec=(remProgRef.current-remote.progress)*trackDurSec; // >0 = below anchor
+      const isReorder=havePrior && !justStarted && backwardSec>0 && backwardSec<REORDER_TOL_SEC;
+      if(isReorder){
+        // Drop — keep coasting on the newer anchor. lastRemProgRef already advanced,
+        // so this stale value won't be reprocessed; the follower is undisturbed.
+        if(MIRROR_DIAG) console.log('[MIRROR-NET-DIAG] deck',id,'dropped reordered pkt prog='+remote.progress.toFixed(4)+' ('+(backwardSec*1000).toFixed(0)+'ms below anchor '+remProgRef.current.toFixed(4)+')');
       } else {
-        // Sub-seek drift (incl. moderate backward from packet starvation/jitter)
-        // AND the play-start forward catch-up above: re-anchor the model to truth
-        // but CARRY the current visible offset into slew so there is NEVER a
-        // visible jump — it decays to 0, easing onto truth as the partner
-        // advances. Fixes both the "mirror skips back multiple bars" backward
-        // report and the rapid-toggle forward-lurch (#3).
-        if(justStarted && signedDriftSec>0.5) console.log('[MIRROR-SNAP] deck',id,'play-start catch-up +'+signedDriftSec.toFixed(2)+'s eased via slew (no jump)');
-        else if(signedDriftSec<-0.5) console.log('[MIRROR-SNAP] deck',id,'absorbed backward drift '+signedDriftSec.toFixed(2)+'s via slew (no jump)');
+        // Predict where TRUTH should be NOW from the PRIOR anchor (before we move it)
+        // to tell a genuine forward seek from ordinary coast drift. The snap/smooth
+        // decision is a track-seconds magnitude — independent of network cadence.
+        const dtPktMs=now-remTimeRef.current;
+        const predictedTruth=remProgRef.current+(remRateRef.current||0)*dtPktMs;
+        const truthJumpSec=(remote.progress-predictedTruth)*trackDurSec;
+        const fwdSeek=havePrior && !justStarted && truthJumpSec>FWD_SNAP_SEC;
+        const genuineRewind=backwardSec>=REORDER_TOL_SEC;   // below anchor by a real margin = rewind/loop
+
+        // OBSERVED base rate from the packet slope (primary), low-passed. Adopt only
+        // across a clean FORWARD interval (no seek/rewind, no multi-second blackout)
+        // and a physically plausible slope; otherwise bootstrap from the broadcast
+        // rate so a sparse stream never freezes at baseRate=0.
+        // NOTE (open question for the sync-idempotency task): reverse-engineering the
+        // rate from packet slopes is noisier than the exact broadcast rate, which may
+        // be coupling into the mirror PHASE that sync engage reads. Resolve there, with
+        // a clean (mock) measurement — NOT by re-tuning this follower. See VISION_5.
+        let adopted=false;
+        if(havePrior && !fwdSeek && !genuineRewind && dtPktMs>=30 && dtPktMs<=4000){
+          const obs=(remote.progress-remProgRef.current)/dtPktMs;
+          if(obs>0.05*nominal1x && obs<4*nominal1x){
+            const RATE_SMOOTH=0.2; // filter per-packet arrival jitter; still adapts over a few packets
+            remRateRef.current = remRateRef.current>0 ? (remRateRef.current*(1-RATE_SMOOTH)+obs*RATE_SMOOTH) : obs;
+            adopted=true;
+          }
+        }
+        if(!adopted && (!havePrior || !(remRateRef.current>0))){
+          // No usable slope yet (first packet after a (re)start) or no rate established
+          // — bootstrap from the broadcast rate so the coast moves IMMEDIATELY (a frozen
+          // baseRate=0 across a sparse 2.5s gap was a multi-second lag).
+          const br=(typeof remote.rate==="number"&&remote.rate>0)?remote.rate:1;
+          remRateRef.current=br*nominal1x;
+        }
+
+        // Roll the anchor forward; remember the prior packet for the next slope.
+        remPrevProgRef.current=remProgRef.current; remPrevTimeRef.current=remTimeRef.current;
         remProgRef.current=remote.progress; remTimeRef.current=now;
-        remSlewRef.current=visibleNow-remote.progress;
+
+        if(fwdSeek||genuineRewind){
+          // Genuine transport jump — the ONLY time the displayed playhead may move
+          // discontinuously (and the only time it may move backward, for a rewind).
+          if(genuineRewind) console.warn('[MIRROR-SNAP] deck',id,'genuine rewind −'+backwardSec.toFixed(1)+'s — hard snap');
+          else console.warn('[MIRROR-SNAP] deck',id,'genuine forward seek +'+truthJumpSec.toFixed(1)+'s — hard snap');
+          remDispRef.current=remote.progress; remSlewRef.current=0;   // display jumps to truth, no residual
+        } else {
+          // Normal drift re-anchor: CARRY the current display into the slew so the
+          // smoothed position stays continuous (no jump). The slew decays to 0,
+          // easing the display onto truth — or, if it would ease BACKWARD, the RAF
+          // clamps it to a forward creep. This smoothing is what stabilises the
+          // mirror phase (sync idempotency).
+          remSlewRef.current=remDispRef.current-remote.progress;
+        }
+
+        // [MIRROR-NET-DIAG] (?mirrordiag=1). Per-PACKET picture under REAL latency:
+        // inter-arrival gap, how far TRUTH jumped vs the predicted trajectory (the
+        // snap/smooth signal), the observed base rate, and the action taken.
+        if(MIRROR_DIAG){
+          const mnAction=fwdSeek?'FWD-SNAP':genuineRewind?'REWIND-SNAP':justStarted?'playstart-follow':'follow';
+          console.log('[MIRROR-NET-DIAG] deck '+id+' pktGapMs='+Math.round(mnPktGapMs)+
+            ' truthJumpMs='+(truthJumpSec*1000).toFixed(0)+' baseRate='+(remRateRef.current*1e6).toFixed(2)+'e-6'+
+            ' action='+mnAction+' truthProg='+remote.progress.toFixed(4));
+        }
       }
-      // [MIRROR-NET-DIAG] (?mirrordiag=1) — BUG #3/#4/#5 investigation. Per-PACKET
-      // picture of mirror tracking under REAL latency: inter-arrival gap, the coast
-      // DRIFT (how far the model wandered from truth before this packet corrected
-      // it), the driver's rate, and the action taken. Lets a mirror-focused session
-      // see whether the localhost-tuned snap/slew thresholds (FWD 3s / BACK 8s /
-      // TAU 220ms) fit real cadence — e.g. sparse gaps (4034ms) producing big
-      // coast drift → backward slews (#3), or a seek's huge fwd-snap (#4).
-      if(MIRROR_DIAG){
-        const mnAction=isFirst?'first':genuineFwdSeek?'FWD-SNAP':bigRewind?'REWIND-SNAP':justStarted?'playstart-slew':'slew';
-        console.log('[MIRROR-NET-DIAG] deck '+id+' pktGapMs='+Math.round(mnPktGapMs)+
-          ' driftMs='+(signedDriftSec*1000).toFixed(0)+' rate='+driverRate.toFixed(3)+
-          ' action='+mnAction+' truthProg='+remote.progress.toFixed(4));
-      }
-      // DO NOT setProg here — the RAF loop below renders the smooth position.
+      // DO NOT setProg here — the RAF follower below renders the smooth position.
     }
     // Start/stop smooth interpolation RAF
     cancelAnimationFrame(remRaf.current);
@@ -5560,35 +5615,52 @@ function Deck({ id, ch, ctx:ac, color, local, remote, onChange, midi:mt, bpmResu
       // (frozen) truth here — otherwise the mirror keeps showing its last
       // coasted position and lurches on the next play.
       const fp=Math.min(1,Math.max(0,remote.progress));
-      remProgRef.current=fp; setProg(fp); progRef.current=fp; onProgUpdate?.(fp);
+      remProgRef.current=fp; remDispRef.current=fp; remSlewRef.current=0; setProg(fp); progRef.current=fp; onProgUpdate?.(fp);
     }
     if(nowPlaying){
+      remFrameRef.current=performance.now();
       const animate=()=>{
         const tnow=performance.now();
         const sincePkt=tnow-remPktRef.current;
-        // Coast at the driver's TRUE rate the WHOLE time the partner is playing —
-        // even across sparse packets (a backgrounded driver tab broadcasting at
-        // ~1Hz). The audio is genuinely advancing at this rate, so coasting
-        // tracks truth; an arriving packet just nudges via slew. (The earlier
-        // "hold after 2.5s" caused the freeze — a playing deck must not stop.)
-        let interp;
+        let dispNow;
         if(remAwaitPktRef.current){
-          // Play just started — HOLD at the paused position until the first fresh
-          // packet anchors the restart (prevents the per-press jump-to-end).
-          interp=Math.min(1,Math.max(0,remProgRef.current));
+          // Play just started — HOLD at the displayed position until the first
+          // fresh packet anchors the restart (prevents the per-press jump-to-end).
+          dispNow=Math.min(1,Math.max(0,remDispRef.current));
+          remFrameRef.current=tnow;
         } else {
-          const since=tnow-remTimeRef.current;
-          const modeled=remProgRef.current+remRateRef.current*since;
-          const slew=remSlewRef.current*Math.exp(-since/SLEW_TAU_MS);
-          interp=Math.min(1,Math.max(0,modeled+slew));
+          const dtMs=Math.max(0,tnow-remFrameRef.current); remFrameRef.current=tnow;
+          const baseRate=remRateRef.current||0;
+          const elapsed=tnow-remTimeRef.current;
+          // SMOOTHED position = the clean forward ramp (anchor extrapolated at the
+          // OBSERVED base rate — coasts across sparse/blacked-out packets, a playing
+          // deck must never stall) PLUS a decaying step that absorbs the re-anchor
+          // jitter. The step smooths position variance → a STABLE mirror phase (which
+          // sync engage reads) without lagging the ramp. This is the proven model.
+          const modeled=remProgRef.current+baseRate*elapsed;
+          const smoothed=modeled+remSlewRef.current*Math.exp(-elapsed/SLEW_TAU_MS);
+          const disp=remDispRef.current;
+          const maxRate=baseRate*MAX_CATCHUP, creep=baseRate*CREEP_FRAC;
+          if(smoothed>=disp){
+            // Forward: follow the smoothed position, capping the per-frame advance at
+            // the bounded catch-up rate so a large recovery eases in (never a leap).
+            dispNow=Math.min(smoothed,disp+maxRate*dtMs);
+          } else {
+            // The smoothing would move us BACKWARD (over-coasted ahead: a stale packet,
+            // or a pitched-down driver during a blackout). NEVER reverse — creep
+            // forward and let truth rise to meet us. Monotonic by construction.
+            dispNow=disp+creep*dtMs;
+          }
+          dispNow=Math.min(1,Math.max(0,dispNow));
         }
-        if(sincePkt>1500 && !remStaleLoggedRef.current){ console.warn('[MIRROR-STALE] deck',id,'packets sparse ('+Math.round(sincePkt)+'ms) — coasting at true rate'); remStaleLoggedRef.current=true; }
-        setProg(interp); progRef.current=interp; onProgUpdate?.(interp);
+        remDispRef.current=dispNow;
+        if(sincePkt>1500 && !remStaleLoggedRef.current){ console.warn('[MIRROR-STALE] deck',id,'packets sparse ('+Math.round(sincePkt)+'ms) — coasting forward at base rate'); remStaleLoggedRef.current=true; }
+        setProg(dispNow); progRef.current=dispNow; onProgUpdate?.(dispNow);
         if(MIRROR_DIAG && tnow-remDiagAtRef.current>1000){
           remDiagAtRef.current=tnow;
-          // interp = what the interp OUTPUTS this frame; anchor = last packet value;
-          // pktAgeMs = how long since a packet arrived; rafLive proves the interp RAF is running.
-          console.log('[MIRROR-DIAG] deck '+id+' interp='+interp.toFixed(4)+' anchorPkt='+(remProgRef.current||0).toFixed(4)+' pktAgeMs='+Math.round(sincePkt)+' rate='+(remRateRef.current*1e6).toFixed(2)+'e-6 rafLive=1 hidden='+(typeof document!=="undefined"?document.hidden:'?'));
+          // disp = what the follower OUTPUTS this frame; anchor = last packet value;
+          // pktAgeMs = how long since a packet arrived; rafLive proves the RAF is running.
+          console.log('[MIRROR-DIAG] deck '+id+' disp='+dispNow.toFixed(4)+' anchorPkt='+(remProgRef.current||0).toFixed(4)+' pktAgeMs='+Math.round(sincePkt)+' baseRate='+(remRateRef.current*1e6).toFixed(2)+'e-6 rafLive=1 hidden='+(typeof document!=="undefined"?document.hidden:'?'));
         }
         remRaf.current=requestAnimationFrame(animate);
       };
@@ -5607,7 +5679,10 @@ function Deck({ id, ch, ctx:ac, color, local, remote, onChange, midi:mt, bpmResu
     if(local) return;   // only the mirror (non-local) deck interps remote progress
     const onVis=()=>{
       if(typeof document!=="undefined" && document.visibilityState==="visible"){
-        remTimeRef.current=performance.now(); remSlewRef.current=0;
+        // Re-anchor time, hold the display at its last position, and mark "no prior
+        // packet" so the first packet back can't compute a bogus slope/seek.
+        remTimeRef.current=performance.now(); remFrameRef.current=performance.now();
+        remDispRef.current=progRef.current; remPrevTimeRef.current=0; remSlewRef.current=0;
         remAwaitPktRef.current=true; remStaleLoggedRef.current=false;
       }
     };
