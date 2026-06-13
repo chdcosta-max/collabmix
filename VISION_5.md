@@ -9566,3 +9566,18 @@ follower re-tunes traded one number for another; the sampling-side fix landed fi
 **Open follow-up:** e2e-mirror-slew is now XPASS — remove its `xfail:true` flag in
 `tools/smoke/run.mjs` to promote it to a hard gate (separate, trivial change). The whole
 branch still needs a final review + the live Jake audio-lock check before merge to master.
+
+### Move #2 follow-up — e2e-mirror-slew promoted to a HARD GATE (June 13) — `a965c58`
+Removed `xfail: true` from `e2e-mirror-slew` in `tools/smoke/run.mjs`; it now counts as a
+normal PASS/FAIL gate (was reporting 🎯 XPASS since the follower fix). Any future change
+that reintroduces the dogfood backward slew now FAILS the suite — the bug can't return
+silently. Full suite `npm run smoke -- --mock`: **23 passed, 0 failed, 0 skipped** (no XPASS
+line — slew is a regular ✅ PASS, 0 backward steps).
+
+**Branch `move2-mirror-slew-fix` status (master still untouched):** the Move #2 work is
+complete and green end-to-end —
+  - 9b1f7f4 monotonic forward-only follower (kills the backward slew)
+  - a2c1475 sync re-engage idempotency fixed sampling-side (projected stable anchor)
+  - a965c58 slew test promoted to a hard gate
+Remaining before merge to master: final human review + the live Jake audio-lock check
+(grid sits on the HEARD beat — the one thing the suite can't prove).
