@@ -9294,3 +9294,12 @@ HEADLESS vs SESSION-2: P2-P5 are cross-connection — instrumented here, but the
 ear-verdict + the real numbers need the Chad+Jake session-2 (both Chrome). P6 +
 browser warning are verifiable now (build clean). Full smoke not re-run for these
 (pure UI/log additions, default behavior unchanged); will run before any push.
+
+### grid-align STEADINESS (Chad's NMP principle — variance breaks sync, not latency)
+Applied to the ?gridalign offset: slew-rate-LIMIT the target to ≤15ms/poll so a
+single comp spike (197/247/321ms) shifts the grid ≤15ms and recovers, rather than
+the grid lurching to chase every comp twitch. Rock-steady offset > jumpy-exact.
+Combined with the per-frame ease in AnimatedZoomedWF, the visual offset is steady.
+NOTE: this refines the already-pushed ?gridalign fix; it's LOCAL/unpushed with the
+P2-P6 batch — needs pushing before session-2 so Jake tests the steady version.
+(Full comp jitterBufferTarget plan banked for after session-2.)

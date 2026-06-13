@@ -9026,7 +9026,20 @@ export default function CollabMix({ initialPage = "landing", djName = null }) {
       // BUG #1 grid-align: shift BOTH decks' visuals back by the SAME measured
       // comp delay the audio experiences. Gated on delaycomp (the local audio is
       // only delayed by compMs when delaycomp is applying it) + real frames.
-      gridAlignSecRef.current = (GRID_ALIGN && delayCompOn && !noFrames) ? measured / 1000 : 0;
+      // STEADINESS over minimal delay (NMP principle — variance, not latency,
+      // breaks sync): slew-rate-LIMIT the offset to ≤15ms per ~1s poll so a single
+      // comp spike (we saw 197/247/321ms) moves the grid ≤15ms and recovers,
+      // instead of the grid lurching to chase every twitch. A rock-steady offset
+      // that's slightly off beats a jumpy exact one. (Disabling snaps to 0.)
+      {
+        const tgt = (GRID_ALIGN && delayCompOn && !noFrames) ? measured / 1000 : 0;
+        if (tgt === 0) { gridAlignSecRef.current = 0; }
+        else {
+          const cur = gridAlignSecRef.current;
+          const maxStep = 0.015; // ≤15ms change per poll
+          gridAlignSecRef.current = cur + Math.max(-maxStep, Math.min(maxStep, tgt - cur));
+        }
+      }
       syncStatsRef.current = { ...syncStatsRef.current,
         compMeasuredMs: noFrames ? null : (c.compMs != null ? +c.compMs.toFixed(1) : null),
         compJbMs:       c.jbMs != null ? +c.jbMs.toFixed(1) : null,
