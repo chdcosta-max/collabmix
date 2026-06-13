@@ -9,6 +9,7 @@ import {
   dbGetAll as cmDbAll,
   dbPut as cmDbPut,
   dbDelete as cmDbDelete,
+  dbClear as cmDbClear,
   putHandle as cmDbPutHandle,
   opfsStore, opfsGet, opfsDelete, opfsClear,
   ensurePersistentStorage,
@@ -137,11 +138,14 @@ function getOrCreateRoomId() {
   return `${w1}-${w2}-${num}`;
 }
 
-function buildInviteLink(roomId, mixName) {
+function buildInviteLink(roomId, mixName, hostName) {
   const base = window.location.origin + window.location.pathname;
   const params = new URLSearchParams();
   params.set("room", roomId);
   if (mixName) params.set("mix", mixName);
+  // #5 P2.5: carry the inviter's DJ name so the joiner's lobby can frame it as
+  // "[name] invited you to mix" and default an unnamed mix to "[name]'s mix".
+  if (hostName) params.set("by", hostName);
   return `${base}?${params.toString()}`;
 }
 
@@ -1289,6 +1293,33 @@ function useLibrary(){
 
   const clear=()=>{setLibrary([]);fileMap.current={};fileMapOrder.current=[];opfsClear();};
 
+  // ── Full library reset (ticket #5 P4.9) ──
+  // clear() above only wipes in-memory + OPFS audio, so the 5s IDB poll (load
+  // effect) resurrects the tracks within seconds. A TRUE reset must delete the
+  // persisted IDB records too. Wipes every persisted store the library owns —
+  // tracks (metadata), queue, crates, handles (per-track FSA file handles) —
+  // plus the OPFS audio blobs, then resets all in-memory state + fingerprints
+  // so the UI reflects empty immediately and a future import re-renders. Watched
+  // folders are NOT persisted (session-only state), so clearing them in memory
+  // is sufficient — nothing to wipe on disk. Returns the track count removed.
+  const resetLibrary=useCallback(async()=>{
+    const removed=library.length;
+    try{
+      await Promise.all([
+        cmDbClear("tracks").catch(()=>{}),
+        cmDbClear("queue").catch(()=>{}),
+        cmDbClear("crates").catch(()=>{}),
+        cmDbClear("handles").catch(()=>{}),
+      ]);
+    }catch{}
+    try{ await opfsClear(); }catch{}
+    setLibrary([]); setQueue([]); setCrates([]); setWatchedFolders([]);
+    fileMap.current={}; fileMapOrder.current=[];
+    libFingerprintRef.current=""; queueFingerprintRef.current=""; cratesFingerprintRef.current="";
+    console.log("[LIBRARY-RESET] wiped "+removed+" tracks + queue/crates/handles + OPFS audio");
+    return removed;
+  },[library.length]);
+
   const reload=useCallback(async()=>{
     try{
       const tracks=await cmDbAll("tracks");
@@ -1782,7 +1813,7 @@ function useLibrary(){
     setLibrary(prev=>prev.map(t=>t.id===id?{...t,librarySection:sec}:t));
     try{const t=(library||[]).find(x=>x.id===id); if(t) await cmDbPut("tracks",{...t,librarySection:sec});}catch{}
   },[library]);
-  return{library,queue,crates,importing,importFiles,importFromPicker,previewImport,commitImport,queueAnalysis,reanalyze,reExtractArtwork,setGridEdit,getFile,clear,reload,setLibrary,fileMap,setFile,removeFile,analyzing,progress,analyzeAll,extractArtworkForTrack,artworkCache,reconnectFromFolder,scanArtwork,exportLibrary,importLibraryJson,watchedFolders,libraryMode,addWatchedFolder,removeWatchedFolder,setWatchedFolderEnabled,requestPermissionForFolder,changeLibraryMode,fsaSupported,pendingNewTracks,scanning,scanProgress,importProgress,runLibraryScan,dismissPendingNewTracks,commitPendingNewTracks,lastImportSummary,setTrackSection};
+  return{library,queue,crates,importing,importFiles,importFromPicker,previewImport,commitImport,queueAnalysis,reanalyze,reExtractArtwork,setGridEdit,getFile,clear,resetLibrary,reload,setLibrary,fileMap,setFile,removeFile,analyzing,progress,analyzeAll,extractArtworkForTrack,artworkCache,reconnectFromFolder,scanArtwork,exportLibrary,importLibraryJson,watchedFolders,libraryMode,addWatchedFolder,removeWatchedFolder,setWatchedFolderEnabled,requestPermissionForFolder,changeLibraryMode,fsaSupported,pendingNewTracks,scanning,scanProgress,importProgress,runLibraryScan,dismissPendingNewTracks,commitPendingNewTracks,lastImportSummary,setTrackSection};
 }
 
 // ── Library Panel UI ──────────────────────────────────────────
@@ -2079,6 +2110,7 @@ function LibraryPanelV2({ lib, onLoad, playingTrack, deckATrackId:deckATrackIdPr
   // via "Add music". Skippable — never blocks the booth. ~900ms grace so the
   // IDB-loaded library doesn't flash the wizard before it populates.
   const [wizardOpen, setWizardOpen] = useState(false);
+  const [resetConfirm, setResetConfirm] = useState(false); // #5 P4.9 library-reset confirm dialog
   const wizardSeenRef = useRef(false);
   useEffect(() => {
     if (!LIB_WIZARD || wizardSeenRef.current) return;
@@ -2414,6 +2446,7 @@ function LibraryPanelV2({ lib, onLoad, playingTrack, deckATrackId:deckATrackIdPr
   return (
     <>
     {LIB_WIZARD && wizardOpen && <LibraryWizard lib={lib} onClose={() => setWizardOpen(false)} />}
+    {resetConfirm && <ResetLibraryModal lib={lib} onClose={() => setResetConfirm(false)} />}
     <div
       onDragOver={(e) => {
         e.preventDefault();
@@ -2466,6 +2499,19 @@ function LibraryPanelV2({ lib, onLoad, playingTrack, deckATrackId:deckATrackIdPr
             onMouseEnter={e => e.currentTarget.style.color = TEXT}
             onMouseLeave={e => e.currentTarget.style.color = SUBTLE}
           >+ Add music</button>
+          {/* #5 P4.9: discreet, destructive "reset library" — only shown when
+              there's something to wipe. Confirms before touching anything. */}
+          {realTracks.length > 0 && (
+            <button onClick={() => setResetConfirm(true)} style={{
+              width: "100%", height: 24, background: "transparent", border: "none",
+              color: SUBTLE, fontSize: 10, letterSpacing: 0.2, fontFamily: "'Inter',sans-serif",
+              borderRadius: 3, cursor: "pointer", textAlign: "left", padding: "0 4px",
+              transition: "color .12s",
+            }}
+              onMouseEnter={e => e.currentTarget.style.color = "#ef4444"}
+              onMouseLeave={e => e.currentTarget.style.color = SUBTLE}
+            >Reset library…</button>
+          )}
           <input
             ref={fileInputRef}
             type="file"
@@ -6938,6 +6984,50 @@ function NewTracksBanner({ lib, onReview }) {
 // commitPendingNewTracks expects. Closes on Cancel / Escape / backdrop
 // click. Reuses module-level cleanFilename + parseArtistTitle so the
 // modal shows a parsed Title / Artist where the filename gives one.
+// ── Reset-library confirm (ticket #5 P4.9) ──────────────────
+// Destructive: wipes the entire local library (IDB tracks/queue/crates/handles
+// + OPFS audio). Confirms first, runs lib.resetLibrary, then closes. Reuses the
+// app modal pattern; Escape / backdrop cancels (the safe action).
+function ResetLibraryModal({ lib, onClose }) {
+  const [busy, setBusy] = useState(false);
+  const count = lib.library?.length || 0;
+  useEffect(() => {
+    const onKey = (e) => { if (e.key === "Escape" && !busy) onClose(); };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [onClose, busy]);
+  const doReset = async () => {
+    if (busy) return;
+    setBusy(true);
+    try { await lib.resetLibrary?.(); } catch (e) { console.warn("[LIBRARY-RESET] failed", e); }
+    onClose();
+  };
+  return (
+    <div onClick={() => { if (!busy) onClose(); }}
+      style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.6)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 10000, fontFamily: "'Inter',sans-serif" }}>
+      <div onClick={e => e.stopPropagation()}
+        style={{ width: "min(420px, 92vw)", background: "#0D0F12", border: "1px solid rgba(255,255,255,0.10)", borderRadius: 8, display: "flex", flexDirection: "column", boxShadow: "0 12px 48px rgba(0,0,0,0.5)" }}>
+        <div style={{ padding: "18px 20px 14px" }}>
+          <div style={{ fontSize: 15, color: "#F5F5F7", letterSpacing: 0.3, marginBottom: 6 }}>Reset library?</div>
+          <div style={{ fontSize: 12, color: "rgba(255,255,255,0.6)", lineHeight: 1.6 }}>
+            This permanently removes all <span style={{ color: "#F5F5F7" }}>{count}</span> track{count === 1 ? "" : "s"} from this browser — metadata, queue, crates and the imported audio. It can&rsquo;t be undone. Your original files on disk are untouched; you can re-import them with &ldquo;Add music&rdquo;.
+          </div>
+        </div>
+        <div style={{ padding: "0 20px 18px", display: "flex", gap: 10, justifyContent: "flex-end" }}>
+          <button onClick={() => { if (!busy) onClose(); }} disabled={busy}
+            style={{ padding: "9px 16px", background: "transparent", border: "1px solid rgba(255,255,255,0.18)", color: "rgba(255,255,255,0.7)", borderRadius: 6, cursor: busy ? "default" : "pointer", fontFamily: "'Inter',sans-serif", fontSize: 12, letterSpacing: 0.3 }}>
+            Cancel
+          </button>
+          <button onClick={doReset} disabled={busy}
+            style={{ padding: "9px 16px", background: "rgba(239,68,68,0.12)", border: "1px solid rgba(239,68,68,0.45)", color: "#ef4444", borderRadius: 6, cursor: busy ? "default" : "pointer", fontFamily: "'Inter',sans-serif", fontSize: 12, fontWeight: 600, letterSpacing: 0.3 }}>
+            {busy ? "Resetting…" : `Reset library`}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function ReviewTracksModal({ lib, onClose }) {
   const tracks = lib.pendingNewTracks || [];
   const keyOf = (t) => t.folderId + ":" + t.relativePath;
@@ -7416,34 +7506,63 @@ function Landing({ onEnter }) {
 }
 
 // ── Share Button (used in session top bar) ───────────────────
-function ShareButton({ room, mixName }) {
-  const [copied, setCopied] = useState(false);
-  const [hover, setHover]   = useState(false);
-  const copy = () => {
-    navigator.clipboard.writeText(buildInviteLink(room, mixName)).then(() => {
-      setCopied(true);
-      setTimeout(() => setCopied(false), 2500);
-    });
+function ShareButton({ room, mixName, me }) {
+  const [open, setOpen]   = useState(false);
+  const [hover, setHover] = useState(false);
+  const wrapRef = useRef(null);
+  const inviteLink = buildInviteLink(room, mixName, me);
+  // #5 P2.4: a real confirm moment instead of a 2s flash. Copy, then open an
+  // anchored popover with the link visible + the mix code as a verbal fallback.
+  const copyAndOpen = () => {
+    navigator.clipboard.writeText(inviteLink).catch(() => {});
+    setOpen(true);
   };
-  const bg = copied
-    ? "rgba(34,197,94,0.10)"
-    : hover ? "rgba(255,255,255,0.10)" : "rgba(255,255,255,0.05)";
-  const color = copied ? "#22c55e" : hover ? "rgba(255,255,255,0.9)" : "rgba(255,255,255,0.7)";
-  const border = copied ? "1px solid rgba(34,197,94,0.35)" : "1px solid rgba(255,255,255,0.12)";
+  useEffect(() => {
+    if (!open) return;
+    const onDown = (e) => { if (wrapRef.current && !wrapRef.current.contains(e.target)) setOpen(false); };
+    const onKey  = (e) => { if (e.key === "Escape") setOpen(false); };
+    document.addEventListener("mousedown", onDown);
+    window.addEventListener("keydown", onKey);
+    return () => { document.removeEventListener("mousedown", onDown); window.removeEventListener("keydown", onKey); };
+  }, [open]);
+  const bg = open ? "rgba(34,197,94,0.10)" : hover ? "rgba(255,255,255,0.10)" : "rgba(255,255,255,0.05)";
+  const color = open ? "#22c55e" : hover ? "rgba(255,255,255,0.9)" : "rgba(255,255,255,0.7)";
+  const border = open ? "1px solid rgba(34,197,94,0.35)" : "1px solid rgba(255,255,255,0.12)";
   return (
-    <button
-      onClick={copy}
-      onMouseEnter={() => setHover(true)}
-      onMouseLeave={() => setHover(false)}
-      style={{
-        background: bg, border, color,
-        fontFamily:"'Inter',sans-serif", fontWeight:500, fontSize:10, letterSpacing:.4,
-        height:22, padding:"0 12px", borderRadius:5,
-        cursor:"pointer", outline:"none",
-        transition:"background 150ms cubic-bezier(0.4, 0, 0.2, 1), color 150ms cubic-bezier(0.4, 0, 0.2, 1), border-color 150ms cubic-bezier(0.4, 0, 0.2, 1)",
-      }}>
-      {copied ? "Link copied" : "Invite partner"}
-    </button>
+    <div ref={wrapRef} style={{ position:"relative", display:"inline-flex" }}>
+      <button
+        onClick={copyAndOpen}
+        onMouseEnter={() => setHover(true)}
+        onMouseLeave={() => setHover(false)}
+        style={{
+          background: bg, border, color,
+          fontFamily:"'Inter',sans-serif", fontWeight:500, fontSize:10, letterSpacing:.4,
+          height:22, padding:"0 12px", borderRadius:5,
+          cursor:"pointer", outline:"none",
+          transition:"background 150ms cubic-bezier(0.4, 0, 0.2, 1), color 150ms cubic-bezier(0.4, 0, 0.2, 1), border-color 150ms cubic-bezier(0.4, 0, 0.2, 1)",
+        }}>
+        Invite partner
+      </button>
+      {open && (
+        <div style={{
+          position:"absolute", top:"calc(100% + 8px)", right:0, zIndex:9999,
+          width:300, background:"#0D0F12", border:"1px solid rgba(255,255,255,0.12)",
+          borderRadius:8, boxShadow:"0 12px 36px rgba(0,0,0,0.55)", padding:14,
+          display:"flex", flexDirection:"column", gap:10, fontFamily:"'Inter',sans-serif",
+        }}>
+          <div style={{ display:"flex", alignItems:"center", gap:7 }}>
+            <div style={{ width:6, height:6, borderRadius:3, background:"#22c55e", boxShadow:"0 0 6px #22c55e88" }}/>
+            <span style={{ fontSize:12, color:"#F5F5F7", letterSpacing:0.2 }}>Link copied — send it to your partner</span>
+          </div>
+          <div style={{ fontSize:10, color:"rgba(255,255,255,0.55)", lineHeight:1.5, wordBreak:"break-all", background:"#15171A", border:"1px solid rgba(255,255,255,0.08)", borderRadius:5, padding:"7px 9px", userSelect:"all" }}>{inviteLink}</div>
+          <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between" }}>
+            <div style={{ fontSize:10, color:"rgba(255,255,255,0.5)" }}>or share the mix code: <span style={{ color:"rgba(255,255,255,0.85)", fontFamily:"'JetBrains Mono',monospace", letterSpacing:0.3 }}>{room}</span></div>
+            <button onClick={() => navigator.clipboard.writeText(inviteLink).catch(() => {})}
+              style={{ fontSize:9, padding:"3px 8px", background:"rgba(255,255,255,0.06)", border:"1px solid rgba(255,255,255,0.16)", color:"rgba(255,255,255,0.8)", borderRadius:4, cursor:"pointer", letterSpacing:0.3 }}>Copy again</button>
+          </div>
+        </div>
+      )}
+    </div>
   );
 }
 
@@ -7474,22 +7593,34 @@ function Lobby({ onJoin, djName = null }) {
   const isJoining = useMemo(() => {
     return new URLSearchParams(window.location.search).has("room");
   }, []);
+  // #5 P2.5: the inviter's DJ name, carried in the invite link (?by=). Lets the
+  // joiner see "[name] invited you to mix" and default an unnamed mix sensibly.
+  const inviterName = useMemo(() => {
+    return (new URLSearchParams(window.location.search).get("by") || "").trim();
+  }, []);
+  // Resolve the mix name: an explicit name wins; otherwise default to
+  // "[creator]'s mix" (the inviter for a joiner, yourself for a creator) rather
+  // than a faceless "Untitled Mix".
+  const resolvedMix = () => mixName.trim()
+    || (isJoining && inviterName ? `${inviterName}'s mix`
+        : name.trim() ? `${name.trim()}'s mix`
+        : "Untitled Mix");
   const submitJoinCode = () => {
     const code = normalizeRoomCode(joinCode);
     if (!code) return;
     // JOIN BY MIX CODE is always a joiner — the user typed an existing
     // partner's mix code, they didn't create the room.
-    onJoin({ url: SERVER_URL, room: code, name, mixName: mixName || "Untitled Mix", isHost: false });
+    onJoin({ url: SERVER_URL, room: code, name, mixName: resolvedMix(), isHost: false });
   };
 
   // Auto-join immediately if a name was passed in from the landing page.
   // isJoining reflects whether the URL had ?room= at mount — that's the
   // only signal we have here for whether the user is creating or joining.
   useEffect(() => {
-    if (djName) onJoin({ url: SERVER_URL, room, name: djName, mixName: mixName || "Untitled Mix", isHost: !isJoining });
+    if (djName) onJoin({ url: SERVER_URL, room, name: djName, mixName: resolvedMix(), isHost: !isJoining });
   }, []);
 
-  const inviteLink = buildInviteLink(room, mixName);
+  const inviteLink = buildInviteLink(room, mixName, name);
 
   const copyLink = () => {
     navigator.clipboard.writeText(inviteLink).then(() => {
@@ -7514,13 +7645,19 @@ function Lobby({ onJoin, djName = null }) {
             Mix<span style={{ color:G }}>//</span>Sync
           </div>
           <div style={{ fontSize:9, fontFamily:"'Inter',sans-serif", color:`${G}55`, letterSpacing:3, marginTop:6 }}>{isJoining?"JOIN MIX":"START A MIX"}</div>
+          {/* #5 P2.5: frame the joiner's arrival around who invited them. */}
+          {isJoining && inviterName && (
+            <div style={{ fontSize:12, fontFamily:"'Inter',sans-serif", color:"rgba(255,255,255,0.7)", letterSpacing:0.2, marginTop:10 }}>
+              <span style={{ color:"#F5F5F7" }}>{inviterName}</span> invited you to mix
+            </div>
+          )}
         </div>
 
         {/* Mix Name */}
         <div style={{ display:"flex", flexDirection:"column", gap:7 }}>
           <label style={{ fontSize:8, fontFamily:"'Inter',sans-serif", color:`${G}77`, letterSpacing:2 }}>{isJoining?"JOINING MIX":"MIX NAME"}</label>
           {isJoining ? (
-            <div style={{ fontFamily:"'Cormorant Garamond',serif", fontWeight:700, fontSize:22, letterSpacing:0.5, color:"#F5F5F7", padding:"6px 0" }}>{mixName || "Untitled Mix"}</div>
+            <div style={{ fontFamily:"'Cormorant Garamond',serif", fontWeight:700, fontSize:22, letterSpacing:0.5, color:"#F5F5F7", padding:"6px 0" }}>{resolvedMix()}</div>
           ) : (
             <input
               value={mixName}
@@ -7564,7 +7701,7 @@ function Lobby({ onJoin, djName = null }) {
             mode: START MIX (no ?room= in URL → creator) vs JOIN MIX
             (?room= in URL → joiner via invite link). */}
         <button
-          onClick={() => onJoin({ url: SERVER_URL, room, name, mixName: mixName || "Untitled Mix", isHost: !isJoining })}
+          onClick={() => onJoin({ url: SERVER_URL, room, name, mixName: resolvedMix(), isHost: !isJoining })}
           style={{ background:G, border:"none", color:"#0D0F12", fontFamily:"'Inter',sans-serif", fontWeight:500, fontSize:12, letterSpacing:2, padding:"15px", borderRadius:10, cursor:"pointer", boxShadow:`0 0 32px ${G}30, 0 8px 20px rgba(0,0,0,.4)`, transition:"all .2s" }}
         >
           {isJoining?"JOIN MIX →":"START MIX →"}
@@ -10036,7 +10173,12 @@ export default function CollabMix({ initialPage = "landing", djName = null }) {
               );
             })}
           </div>
-          <span style={{ fontSize:9, fontFamily:"'Inter',sans-serif", color:"#9CA3AF", letterSpacing:.5 }}>{session.name}</span>
+          {/* #5 P3.7: label your own name explicitly so you vs partner is
+              unmistakable (partner shows as the "⟺ name" pill to the left). */}
+          <span style={{ display:"inline-flex", alignItems:"center", gap:5, fontSize:9, fontFamily:"'Inter',sans-serif", color:"#9CA3AF", letterSpacing:.5 }}>
+            {session.name}
+            <span style={{ fontSize:7, letterSpacing:1, color:"rgba(255,255,255,0.55)", background:"rgba(255,255,255,0.06)", border:"1px solid rgba(255,255,255,0.12)", borderRadius:3, padding:"1px 4px" }}>YOU</span>
+          </span>
           {/* Room code — readable at a glance so the host can say it out
               loud to a partner who only has voice contact. tabular-nums
               keeps the dash-separated digit groups aligned. */}
@@ -10045,7 +10187,7 @@ export default function CollabMix({ initialPage = "landing", djName = null }) {
             color:"rgba(255,255,255,0.6)", letterSpacing:.3,
             fontVariantNumeric:"tabular-nums",
           }}>{session.room}</span>
-          <ShareButton room={session.room} mixName={session.mixName}/>
+          <ShareButton room={session.room} mixName={session.mixName} me={session.name}/>
           <button onClick={leave} style={{ height:24, padding:"0 10px", background:"transparent", border:"1px solid #ef444433", color:"#ef4444", borderRadius:6, cursor:"pointer", fontFamily:"'Inter',sans-serif", fontSize:9, letterSpacing:.5 }}>Leave</button>
         </div>
       </div>
