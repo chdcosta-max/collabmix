@@ -36,12 +36,11 @@ try {
   await A.waitForTimeout(350);
   await B.evaluate(() => window.__toggleDeck("B"));
   await A.waitForTimeout(2500);
-  // B engages, so B needs A's grid/BPM mirrored to it first. Under full-suite
-  // load that cross-propagation lags (the shared WS server slows over a long
-  // sequential run); wait generously so the engage isn't a no-op (no_bpm →
-  // phaseSeekMs=null — the intermittent full-run flake).
-  await sB.waitFor("[ANALYZER-RECV] A", 25000);
-  await B.waitForTimeout(300);
+  // B engages, so B needs A's BPM mirrored to it first. Poll the ACTUAL
+  // precondition (not a log marker) so a slow cross-propagation under full-suite
+  // load can't make the engage a no-op (no_bpm → phaseSeekMs=null — the flake).
+  await B.waitForFunction(() => window.__partnerBpm && window.__partnerBpm("A") != null, null, { timeout: 25000 });
+  await B.waitForTimeout(200);
 
   // Engage from B — the mixing-in deck. Under SYNC-as-mode the slave is the
   // deck whose client can align it locally; B owns deck B (the later/slave),

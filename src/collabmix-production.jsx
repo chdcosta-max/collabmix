@@ -8279,6 +8279,10 @@ export default function CollabMix({ initialPage = "landing", djName = null }) {
   // decks' VISUALS shift back by so the playhead/grid match the AUDIBLE position.
   // Updated in the comp interval below; both AnimatedZoomedWF read + slew it.
   const gridAlignSecRef = useRef(0);
+  // Fresh-every-render partner state (like wfDurRef) so the test-only
+  // window.__partnerBpm probe reads a live value, not a stale effect closure.
+  const pRef = useRef({ A: null, B: null });
+  pRef.current = { A: pA, B: pB };
 
   // Shared per-frame snapshot of audio-context time. Both decks' tick() loops
   // read this instead of calling ac.currentTime directly so they share an
@@ -8701,9 +8705,13 @@ export default function CollabMix({ initialPage = "landing", djName = null }) {
     };
     // SYNC-as-mode state (off / armed / locked) for the sync-mode smoke.
     window.__syncState = () => ({ armed: !!syncArmedRef.current, locked: !!syncLockedRef.current });
+    // Partner-broadcast BPM for deck X (the value a cross-deck engage needs). Lets
+    // 2-client smokes wait on the actual precondition instead of a log marker —
+    // robust against slow cross-propagation under full-suite load.
+    window.__partnerBpm = (deck) => (pRef.current?.[deck === "B" ? "B" : "A"])?.bpm ?? null;
     window.__smokeReady = true;
     console.log("[SMOKE-HOOK] window.__loadTestTrack installed");
-    return () => { try { delete window.__loadTestTrack; delete window.__smokeReady; delete window.__deckGrid; delete window.__deckPhaseFrac; delete window.__syncState; } catch {} };
+    return () => { try { delete window.__loadTestTrack; delete window.__smokeReady; delete window.__deckGrid; delete window.__deckPhaseFrac; delete window.__syncState; delete window.__partnerBpm; } catch {} };
   }, [handleLibLoad, lib]);
 
   // Delete track from local library (in-memory + IDB)
