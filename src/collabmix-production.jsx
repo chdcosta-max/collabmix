@@ -8975,6 +8975,30 @@ export default function CollabMix({ initialPage = "landing", djName = null }) {
             "ms" + (settling ? " [settling]" : ""));
         }
       }
+      // ── [GRID-ALIGN-DIAG] — BUG #1 investigation (audio↔beatgrid offset) ──
+      // INSTRUMENTATION ONLY — changes nothing rendered. For the PARTNER deck
+      // (its audio arrives through the jitter buffer ~compMs late while its
+      // mirror playhead/grid render at the ~real-time coasted SENT position),
+      // log how far the DISPLAYED position leads the AUDIBLE position. Confirms
+      // the offset magnitude live (Chad+Jake session 2) before we offset the
+      // render. audibleProg = displayedProg − compMs (the measured jb+playout).
+      if (!noFrames && c.compMs != null) {
+        const myId = syncRef.current?.djId;
+        for (const d of ["A", "B"]) {
+          const drv = deckDriversRef.current?.[d];
+          if (!(drv && drv.id && drv.id !== myId)) continue;   // partner-driven only
+          const prog = (d === "A" ? progRefA : progRefB).current || 0;
+          const dur = (wfDurRef.current || {})[d];
+          if (!dur) continue;
+          const offProg = (c.compMs / 1000) / dur;
+          console.log("[GRID-ALIGN-DIAG] partner deck " + d +
+            " displayedProg=" + prog.toFixed(4) +
+            " compMs=" + c.compMs.toFixed(1) +
+            " rttMs=" + (c.rttMs != null ? c.rttMs.toFixed(0) : "?") +
+            " visualLeadsAudibleBy=" + c.compMs.toFixed(0) + "ms" +
+            " → audibleProg=" + Math.max(0, prog - offProg).toFixed(4));
+        }
+      }
     }, 1000);
     return () => clearInterval(iv);
     // eslint-disable-next-line react-hooks/exhaustive-deps

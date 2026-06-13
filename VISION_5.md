@@ -9204,3 +9204,26 @@ force the stale-mirror→near-end condition, so it guards the path + asserts the
 skip is taken; the fix is justified by the live bundle + the play_/onended code
 path. Also hardened e2e-sync + e2e-lock-stability against a cross-propagation
 flake (wait for [ANALYZER-RECV] before engaging). Full smoke 21/21. PUSHED.
+
+## ═══ DOGFOOD SESSION 1 — 6 bugs (Chad+Jake, room haze-neon-153, bundle 562b145) ═══
+First two-machine two-human test. WORKED (don't regress): NAT traversal across two
+homes (no relay), audio both ways, SYNC-as-mode locked, this-morning's self-pause
+fix HELD ("skipping cross-client re-seek" fired, no spontaneous pauses), Jake's
+grid analysis correct on his machine.
+
+BUGS (priority order):
+- P1 #1 AUDIO↔BEATGRID MISALIGNMENT (core promise): partner deck visual leads the
+  heard audio by ~one comp-delay (~120-160ms). See "kick shown, breakdown heard."
+- P2 #2 real-network comp/jitter (applied 110-160ms, spikes 197/247/321; jb
+  75-205ms; RTT 67-216; SYNC-DRIFT conf→0.00) + Jake "BPM changing" distortion.
+- P3 #3 partner waveform choppy on REAL two-machine (worse on 2nd track load);
+  MIRROR-SNAP A +35.7s, deck B backward slews -0.5/-0.6/-0.66/-1.53s, MIRROR-STALE
+  4034ms.
+- P4 #4 seek mirror delay (+35.7s snap after seek) + #5 load slide-back (same
+  mirror-under-latency family as #3).
+- P5 #6 library key (letters G/D) ≠ deck key (Camelot 5A) — standardize on Camelot.
+- ALSO: Chrome-required browser warning (Jake on Edge unlistenable); note
+  [STORAGE-PERSIST] denied on strict browsers.
+METHOD: #1-5 are cross-connection — headless can instrument but the ear-verdict
+needs a Chad+Jake session-2 (both Chrome). Working P1 first, investigation-first,
+no push until Chad reviews the alignment logic.
