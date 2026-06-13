@@ -38,6 +38,7 @@ const TESTS = [
   { name: "e2e-transport",    file: "e2e-transport.smoke.mjs",    kind: "e2e",   gates: "play/pause both ways; seek SEND→RECV→EXEC round-trip" },
   { name: "e2e-sync",         file: "e2e-sync.smoke.mjs",         kind: "e2e",   gates: "engage end-to-end: nearest-beat <10ms; repeat identical" },
   { name: "e2e-sync-mode",    file: "e2e-sync-mode.smoke.mjs",    kind: "e2e",   gates: "SYNC-as-mode: arm-before-load / arm-before-play (#2) / arm-mid-play all lock + align" },
+  { name: "e2e-lock-stability", file: "e2e-lock-stability.smoke.mjs", kind: "e2e", gates: "locked B2B deck never self-pauses: master skips cross-client re-seek; both decks keep advancing" },
   { name: "e2e-comp",         file: "e2e-comp.smoke.mjs",         kind: "e2e",   gates: "delaycomp measures nonzero on live audio; survives partner reload" },
   { name: "e2e-drift",        file: "e2e-drift.smoke.mjs",        kind: "e2e",   gates: "[SYNC-DRIFT] emits during locked remote B2B" },
   { name: "e2e-trackend",     file: "e2e-trackend.smoke.mjs",     kind: "e2e",   gates: "deck parked at end stays operable (play replays, no inert flip-flop)" },

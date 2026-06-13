@@ -9175,3 +9175,32 @@ Decisions used: route dead clicks to the existing Add-music flow (wizard stays
 → shipped a reset control, not a demo. Full smoke 20/20. PUSHED to production.
 All six morning tickets + the full onboarding batch are now live for tonight's
 brother session. Chad to verify the whole set on production before the session.
+
+## ═══ HOTFIX — June 12 — locked-B2B deck self-pause (anomaly) ═══
+Cowork production sweep (bundle CF3S7XMf, room drop-fade-979): a deck paused
+ITSELF mid-track in a locked B2B (Deck A 7:57, Deck B 8:02), play→false with NO
+toggle() — just "[PLAY-STATE] play prop/state changed to false" + broadcast
+playing=false, not near end, sync stayed locked.
+
+ROOT CAUSE (regression from this morning's #6): SYNC-as-mode's attemptLock fires
+on every PARTNER play-start. When the MASTER's client ran it, it re-ran syncDecks
+on the partner-driven SLAVE — issuing a cross-client seek_request computed from
+the master's OWN MIRROR of that deck (which can be stale). Landing near the track
+end made the owner's play_() start a 0-sample source → instant onended →
+setPlay(false) + onChange("playing",false). No toggle(), matches the signature.
+(The "[SYNC-DEBUG] master changed mid-lock" Cowork saw is benign — separate.)
+
+FIX (commit pending): attemptLock only RE-ALIGNS a slave THIS client drives;
+it never issues a cross-client re-seek of a partner-driven deck. The slave's OWNER
+re-aligns its own deck locally (on its play-start, and on becoming locked via the
+syncLocked mirror — added a relock there so the master-arms case still aligns).
+This restores the OLD safe "re-align only the local deck" behavior while keeping
+the sync-as-mode model.
+
+GUARD: new e2e-lock-stability smoke — locked B2B, slave re-triggers the master's
+attemptLock (pause/play), asserts the master SKIPS the cross-client re-seek and
+both decks keep advancing (no self-pause). NOTE: like #3, the clean harness can't
+force the stale-mirror→near-end condition, so it guards the path + asserts the
+skip is taken; the fix is justified by the live bundle + the play_/onended code
+path. Also hardened e2e-sync + e2e-lock-stability against a cross-propagation
+flake (wait for [ANALYZER-RECV] before engaging). Full smoke 21/21. PUSHED.

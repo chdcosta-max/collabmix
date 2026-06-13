@@ -36,6 +36,10 @@ try {
   await A.waitForTimeout(350);
   await B.evaluate(() => window.__toggleDeck("B"));
   await A.waitForTimeout(2500);
+  // B engages, so B needs A's grid/BPM mirrored to it first. Under full-suite
+  // load that cross-propagation lags; wait for it so the engage isn't a no-op
+  // (no_bpm → phaseSeekMs=null — the intermittent full-run flake).
+  await sB.waitFor("[ANALYZER-RECV] A", 12000);
 
   // Engage from B — the mixing-in deck. Under SYNC-as-mode the slave is the
   // deck whose client can align it locally; B owns deck B (the later/slave),

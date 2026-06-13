@@ -8833,6 +8833,11 @@ export default function CollabMix({ initialPage = "landing", djName = null }) {
           lastSlaveDeckRef.current = m.deckId;
           setLastSlaveDeck(m.deckId);
         }
+        // The partner just locked us. Since attemptLock only re-aligns a slave
+        // it drives, fire ours so the slave's OWNER aligns its local deck (covers
+        // the case where the MASTER's client triggered the lock and correctly
+        // skipped the cross-client seek). No-op if we don't drive the slave.
+        if (m.value) setTimeout(() => attemptLockRef.current?.("mirror-lock"), 90);
       }
       // Mirror the partner's ARMED state so this side's SYNC button reflects
       // off/armed/locked honestly. Locked (above) supersedes armed.
@@ -9558,9 +9563,21 @@ export default function CollabMix({ initialPage = "landing", djName = null }) {
     const slave = master === "A" ? "B" : "A";
     const masterBPM = master === "A" ? aBpm : bBpm;
     const wasLocked = syncLockedRef.current;
-    // Align the slave (rate + phase). syncDecks reads live playhead positions,
-    // so when this fires from the slave's own play-start it lands from beat one.
-    syncDecks(slave, masterBPM);
+    // Align the slave (rate + phase) — but ONLY a slave THIS client drives.
+    // REGRESSION FIX (spontaneous mid-lock pause): syncDecks on a partner-driven
+    // slave issues a cross-client seek_request computed from OUR mirror of that
+    // deck, which can be stale; if it lands near the track end the owner's
+    // play_() starts a 0-sample source → instant onended → the deck pauses
+    // itself and broadcasts playing=false (no toggle()). The slave's OWNER
+    // re-aligns its own deck locally with an accurate position (fired on its
+    // play-start and on becoming locked via the mirror). So skip the seek when
+    // the slave is partner-driven; still do the lock-state transition below.
+    const slaveDrivenLocally = !deckDriversRef.current?.[slave] || deckDriversRef.current?.[slave]?.id === syncRef.current?.djId;
+    if (slaveDrivenLocally) {
+      syncDecks(slave, masterBPM);
+    } else {
+      console.log("[SYNC] attemptLock: slave " + slave + " is partner-driven — skipping cross-client re-seek (owner aligns locally)");
+    }
     if (lastSlaveDeckRef.current !== slave) { lastSlaveDeckRef.current = slave; setLastSlaveDeck(slave); }
     if (!explicit && masterDeckRef.current !== master) {
       masterDeckRef.current = master; setMasterDeck(master);
