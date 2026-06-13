@@ -9479,3 +9479,53 @@ full-suite migration (separate, lower-urgency session).
   e2e-mirror-slew: post-fix checks FAIL as designed (XFAIL), repro deterministic.
 NEXT: Move #2 — mirror coast/snap latency-adaptive refactor, verified by driving
 e2e-mirror-slew from XFAIL → XPASS (and keeping e2e-mirror-latency green).
+
+### Move #2 — mirror coast/snap → monotonic forward-only follower (June 13) — ON A BRANCH, NOT master
+Committed to branch **`move2-mirror-slew-fix`** (`9b1f7f4`). **master is deliberately
+left clean/untouched** — do NOT merge until the open sync-idempotency question below
+is resolved.
+
+**WHAT shipped (on the branch):** Replaced the localhost-tuned coast/snap/slew model
+in the non-driver mirror with a **monotonic forward-only follower**. Backward motion
+is impossible BY CONSTRUCTION, not by threshold tuning:
+- Position smoothing (decaying re-anchor step) kept for smoothness, but hard-clamped
+  FORWARD-ONLY — when the smoothing would reverse, the playhead CREEPS forward
+  instead (small creep, never a freeze, never backward).
+- **Reorder guard** drops stale/late packets that sit below the anchor (reordering is
+  a real network condition — it was the harsh-profile error killer), distinguished
+  from a genuine rewind by magnitude.
+- Observed-rate coast (low-passed) + broadcast-rate bootstrap so a sparse stream
+  never freezes at baseRate=0. Genuine seeks/rewinds still hard-snap.
+- **GRID_ALIGN promoted default-ON** (audible-position lock: partner grid drawn at
+  sent − measured comp delay, so the beat you SEE = the beat you HEAR), kill-switch
+  `?gridalign=0`. The comp subtraction stays at the render layer (keeps the smoothness
+  tests measuring the raw follower; preserves click-to-seek + diagnostics).
+- e2e-mirror-latency upgraded: pace-adjustment metric + hard harsh-profile assertion.
+
+**PROVEN (deterministic mock-based tests — not the flaky prod relay):**
+- `e2e-mirror-slew`: **XFAIL → XPASS.** maxBackwardStep=0.00s, 0 backward steps, 0
+  "absorbed backward drift" logs. Jake's exact bug is dead.
+- `e2e-mirror-latency`: **10/10.** 0 backward steps in clean/realistic/harsh. **Healthy
+  pace deviation ~1% (imperceptible — indistinguishable from local).** Degraded (40%
+  loss) ~10–35% (logged, not gated → Bug #2 connection warning). Harsh error driven
+  from ~5.7s (naive) / ~1.4s (pre-fix) down to ~320ms.
+- `e2e-mirror-coast`: **11/11.** Also re-verified green: e2e-transport, e2e-mirror,
+  e2e-track-mirror, e2e-trackend, e2e-lock-stability; unit suite 6/6.
+
+**OPEN — sync idempotency regression (NOT fixed; deferred deliberately):**
+`e2e-sync` re-engage idempotency regressed (~-160ms vs the <45ms bound). Suspected
+coupling: sync engage reads the **instantaneous** mirror position (progRef,
+~line 9541), and the new follower's reading has more run-to-run variance than the old
+heavily-damped model. **Measurement is currently UNRELIABLE** — e2e-sync runs against
+the PRODUCTION relay, which degraded under repeated runs (failure magnitude climbed
+-160 → ±180ms — the flaky-gate signature the audit warned about), so real-vs-noise
+can't be separated right now. Four follower re-tunes traded one number for another;
+**that path is closed.** NEXT-SESSION focused task:
+  1. Route `e2e-sync` through the **deterministic MOCK** server (not the prod relay)
+     to find out if the regression is even real or mostly relay noise.
+  2. If real, fix on the **sync-SAMPLING side** — read the stable smoothed *anchor*
+     (remProgRef) instead of the instantaneous display — NOT by re-tuning the follower.
+
+**Process note (Chad's call):** stopped after the regression failed to converge across
+4 attempts rather than keep flailing. Lock-in-the-win-on-a-branch + tackle-the-coupled-
+regression-fresh is the pattern; don't patch a flaky-gated regression under time pressure.
