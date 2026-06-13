@@ -9529,3 +9529,40 @@ can't be separated right now. Four follower re-tunes traded one number for anoth
 **Process note (Chad's call):** stopped after the regression failed to converge across
 4 attempts rather than keep flailing. Lock-in-the-win-on-a-branch + tackle-the-coupled-
 regression-fresh is the pattern; don't patch a flaky-gated regression under time pressure.
+
+### Move #2 follow-up — sync idempotency FIXED on the sampling side (June 13) — branch `move2-mirror-slew-fix`
+Commit `a2c1475`. master still untouched. The deferred sync-idempotency regression
+is resolved — exactly per the plan above (measure first, fix sampling-side, don't
+re-tune the follower).
+
+**Measure first (the answer to "real or relay noise"):** routed `e2e-sync` through the
+DETERMINISTIC MOCK (clean netem) and ran a definitive A/B — original vs new follower,
+same harness, only the follower swapped:
+- original follower: re-engage **0.9–5.2 ms** (rock-steady)
+- new follower, reading the LIVE display: **−11 → +118 ms, 3/5 FAIL**
+→ The regression is REAL and attributable to the follower's effect on the *sampling*,
+not relay noise (the prod-relay numbers had been corrupted by the relay degrading under
+load — the flaky-gate signature). The ±100ms failures sat near the ±250ms half-beat line:
+the wobble was tipping the **nearest-beat pick** across a beat boundary.
+
+**Fix (sampling-side, follower untouched):** `syncDecks` reads a STABLE projected anchor
+for a partner-driven deck's beat phase instead of the wobbling live display. The last-
+received packet value (`partnerProgressMetaRef`) projected to "now" by a clean ramp
+(broadcast rate, NO follower dynamics) so it lines up with the live local slave. A
+locally-driven deck keeps its precise live position. Raw anchor alone killed the variance
+but left a ~37ms staleness bias near the bound; projecting removes it.
+- projected anchor: re-engage **−5.4 → +14.9 ms, 6/6 pass, centered on zero**
+
+**Full suite `npm run smoke -- --mock`: 22 passed, 0 failed, 0 skipped, 1 XPASS.**
+e2e-mirror-slew XPASS intact (0 backward); latency 10/10 (healthy pace 0.9%); coast 11/11;
+e2e-rekordbox re-engage 0.06ms (<10ms bound). The backward-slew follower is byte-for-byte
+unchanged.
+
+**Key lesson (banked):** two consumers were fighting over one number — the eye wants a
+smooth/never-backward playhead, sync wants a deterministic instantaneous read. The fix was
+DECOUPLING them (sync reads the stable anchor), not re-tuning the shared follower. Four
+follower re-tunes traded one number for another; the sampling-side fix landed first try.
+
+**Open follow-up:** e2e-mirror-slew is now XPASS — remove its `xfail:true` flag in
+`tools/smoke/run.mjs` to promote it to a hard gate (separate, trivial change). The whole
+branch still needs a final review + the live Jake audio-lock check before merge to master.
