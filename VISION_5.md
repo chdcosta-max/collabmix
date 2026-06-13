@@ -9348,3 +9348,35 @@ ALL THREE need the two-machine session to verify (real latency). [MIRROR-NET-DIA
 is committed LOCAL/unpushed — push it before a mirror-focused session (NOT needed
 for session-2, which is grid-align + jitter). Full comp jitterBufferTarget plan
 still banked for after session-2.
+
+## ═══ NEXT INFRA PRIORITY — local mock/test WS server (for a fresh session) ═══
+PROBLEM: the e2e smoke suite connects every 2-client test to the SHARED PRODUCTION
+WS server. Over a long SEQUENTIAL full-suite run the server degrades under load and
+partner PAIRING intermittently slows/fails — so e2e-sync (and occasionally
+e2e-lock-stability) flake in the FULL run (20/21) while passing 4/4 standalone every
+time. The product is sound; the GATE ITSELF is being eroded by infra, which is
+dangerous (a flaky gate trains us to ignore red).
+ROOT: shared remote dependency + cumulative sequential load (worse after a marathon
+session degrades the dev server too — restart the dev server between long runs).
+MITIGATED so far: tests poll the real precondition (window.__partnerBpm) not a log
+marker — e2e-lock-stability now solid; e2e-sync improved but still hits WS-pairing
+degradation under heavy load.
+THE FIX (dedicated task, fresh session — NOT tonight): stand up a LOCAL mock/test
+WS server the e2e suite points at (TARGET-style env), so room create/join, partner
+pairing, deck_update relay, RTC signaling, and analyzer broadcast are deterministic
+and load-independent. Then the full suite is reliably green and the gate is
+trustworthy again. Until then: a red e2e-sync in a FULL run that passes standalone
+is an infra flake, not a product regression — verify standalone before trusting it.
+
+### SESSION END — June 12, 2026 (marathon: morning batch → onboarding → anomaly → dogfood P1-P6)
+PUSHED to production today: #1 self-echo guard, #6 SYNC-as-mode (absorbs #2),
+#4 stale-room, #3 mirror-snap slew, #5 onboarding (10/10), the locked-B2B self-pause
+hotfix, P1 #1 audio↔grid fix behind ?gridalign=1 (default OFF, slew-rate-limited per
+Chad's NMP variance principle) + [GRID-ALIGN-DIAG], P2 [JITTER-DIAG], P6 key→Camelot,
+Chrome-required warning, P3/P4/P5 [MIRROR-NET-DIAG] (?mirrordiag=1) + proposals, and
+the __partnerBpm test-robustness hook.
+SESSION-2 (Chad+Jake, both Chrome) ARMED: flip ?gridalign=1 → verify kick-on-playhead
+by ear; capture GRID-ALIGN-DIAG (offset magnitude + rtt/2 residual?); capture
+JITTER-DIAG (confirm the "BPM changing" time-stretch before tuning the buffer).
+BANKED for after session-2: comp jitterBufferTarget steadiness tuning; mirror-family
+(#3/#4/#5) fixes; the local mock-WS-server infra task above.
