@@ -9249,3 +9249,48 @@ sync-truth advances, 0 errors. PUSHED behind the flag.
 KNOWN CAVEATS for session-2: (1) residual network half-RTT not included (compMs
 only, per Chad). (2) on a local-deck drag-grab the displayed playhead jumps from
 offset→true position (minor; flag-gated). VERIFY: Chad+Jake session-2, both Chrome.
+
+### P2-P6 + browser — instrument/propose pass (June 12, NOT pushed)
+Per Chad: instrument-only, no pushes, while session-2 is lined up. P1 already
+pushed behind ?gridalign=1. The rest committed LOCALLY only.
+
+- **P2 #2 comp/jitter + "BPM changing"** — INSTRUMENTED. Added [JITTER-DIAG] in the
+  comp poll: per-window NetEq accelerate (removedSamplesForAcceleration → speeds
+  up), decelerate (insertedSamplesForDeceleration → slows down), conceal
+  (concealedSamples → underrun fill), packetsLost delta, jitter, jbTarget. These
+  stretch events ARE the audible "BPM changing"/distortion — session-2 will show
+  the rate and correlate with Jake's ear. PROPOSAL (build+verify in session-2):
+  stabilize the buffer with receiver.playoutDelayHint / jitterBufferTarget (give
+  NetEq a steadier target so it stops chasing 80→104ms and stretching), and/or cap
+  the adaptation rate. Real WebRTC NetEq is browser-managed; we can hint, not
+  control. Needs the two-machine re-test to confirm it reduces the wobble.
+- **P3 #3 partner waveform choppy (real two-machine)** — root: mirror coast/snap
+  thresholds (FWD_SNAP_SEC=3, BACK_SNAP_SEC=8, slew TAU) were tuned on LOCALHOST
+  (flat 30ms, dense packets). On real latency + sparse packets (MIRROR-STALE
+  4034ms) the coast overshoots and late packets yank it back (the -0.5/-0.6/-1.53s
+  backward slews). PROPOSAL: make the slew/snap adaptive to measured RTT + packet
+  cadence; consider raising the partner progress send-rate or smoothing the coast
+  more under sparse packets. Existing MIRROR-SNAP/STALE/DIAG logs already
+  instrument it; session-2 capture + tune.
+- **P4 #4 seek mirror delay (+35.7s snap)** — the partner seek isn't re-anchored as
+  a discrete event: the mirror keeps coasting from the OLD anchor, so when the
+  seeked progress finally lands the delta is huge → a +35.7s hard snap. PROPOSAL:
+  on a partner SEEK (SEEK-RECV/seek_request for that deck), reset the mirror anchor
+  to the new position immediately (authoritative re-anchor) instead of
+  coast-then-snap. Likely shares the fix with #3/#5.
+- **P5 #5 load slide-back** — on partner load+play the mirror's first-play
+  anchor/hold slides back briefly. Same mirror-under-latency family; the play-start
+  hold (remProgRef/remAwaitPktRef) on a freshly-loaded track needs a clean reset on
+  track-change. Handle with #3/#4.
+- **P6 #6 key notation** — FIXED (local): library rows now render CAMELOT[t.key]
+  (falls back to raw if unmapped), matching the deck's Camelot. One notation
+  everywhere.
+- **Browser warning** — BUILT (local): IS_CHROME detect (UA Chrome and NOT
+  Edg//OPR//Samsung); amber "works best in Chrome" notice in the lobby for
+  non-Chrome users. Also noted [STORAGE-PERSIST] denied on strict browsers (library
+  may evict between sessions) — accept for now; a manual JSON export already exists
+  as the backup.
+HEADLESS vs SESSION-2: P2-P5 are cross-connection — instrumented here, but the
+ear-verdict + the real numbers need the Chad+Jake session-2 (both Chrome). P6 +
+browser warning are verifiable now (build clean). Full smoke not re-run for these
+(pure UI/log additions, default behavior unchanged); will run before any push.

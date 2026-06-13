@@ -83,6 +83,12 @@ const DELAY_COMP = URL_FLAGS.get("delaycomp") !== "0";
 // the Chad+Jake session-2 before it becomes default. Requires delaycomp on (the
 // offset assumes the local audio is delayed by the same compMs).
 const GRID_ALIGN = URL_FLAGS.get("gridalign") === "1";
+// Browser support (dogfood session 1): Jake on EDGE was unlistenable (audio cut
+// in/out); Chrome fixed it. Warn non-Chrome users at session start. "Real" Chrome
+// = UA has Chrome but NOT Edge (Edg/) / Opera (OPR/) / Samsung Internet.
+const IS_CHROME = typeof navigator !== "undefined" &&
+  /Chrome/.test(navigator.userAgent) &&
+  !/Edg\/|OPR\/|SamsungBrowser/.test(navigator.userAgent);
 // Test hooks (window.__loadTestTrack) — ON in dev (the smoke suite runs the vite
 // dev server) or with ?smoke=1 against a build. NEVER on for a plain production
 // load, so real users never get the hook.
@@ -2837,7 +2843,7 @@ function LibraryPanelV2({ lib, onLoad, playingTrack, deckATrackId:deckATrackIdPr
                   </div>
                   <div style={{ width: 36, display: "flex", justifyContent: "center" }}>
                     {t.key
-                      ? <span style={{ fontSize: 9, padding: "2px 5px", background: "rgba(255,255,255,0.06)", border: "1px solid rgba(255,255,255,0.12)", color: "rgba(255,255,255,0.9)", borderRadius: 3, fontFamily: "'Inter',sans-serif", letterSpacing: 0.5, fontWeight: 500 }}>{t.key}</span>
+                      ? <span style={{ fontSize: 9, padding: "2px 5px", background: "rgba(255,255,255,0.06)", border: "1px solid rgba(255,255,255,0.12)", color: "rgba(255,255,255,0.9)", borderRadius: 3, fontFamily: "'Inter',sans-serif", letterSpacing: 0.5, fontWeight: 500 }}>{CAMELOT[t.key] || t.key}</span>
                       : <span style={{ fontSize: 10, color: MUTED }}>—</span>}
                   </div>
                   <div style={{ width: 40, textAlign: "right", fontFamily: "'Inter',sans-serif", fontSize: 11, color: "rgba(255,255,255,0.6)" }}>
@@ -3115,7 +3121,7 @@ function LibraryPanelV2({ lib, onLoad, playingTrack, deckATrackId:deckATrackIdPr
                 </div>
                 <div style={{ fontSize: 10, color: G, fontFamily: "'Inter',sans-serif", textAlign: "right" }}>
                   {t.bpm ? t.bpm.toFixed(1) : "—"}
-                  {t.key && <div style={{ fontSize: 9, color: SUBTLE, marginTop: 2 }}>{t.key}</div>}
+                  {t.key && <div style={{ fontSize: 9, color: SUBTLE, marginTop: 2 }}>{CAMELOT[t.key] || t.key}</div>}
                 </div>
               </div>
             );
@@ -3482,6 +3488,11 @@ function useRTC({ engineRef, send, onIceRecover }) {
   // ?delaycomp=1 in CollabMix. compRef.compMs = jitterBuffer + playout delay.
   const compRef = useRef({ jbMs:0, playoutMs:0, targetMs:null, compMs:0, rttMs:null, settleUntil:0, ts:0 });
   const prevStatsRef = useRef(null);
+  // BUG #2 instrumentation — NetEq time-stretch + concealment counters (the
+  // mechanism behind "BPM changing while playing"). Per-window deltas logged via
+  // [JITTER-DIAG] so session-2 can correlate the distortion with the stretch rate.
+  const prevJitterRef = useRef(null);
+  const jitterLogTsRef = useRef(0);
   // A transport event (play/pause/seek/engage — local OR partner's) can interrupt
   // the inbound stream and make the jitter buffer re-converge to a new delay.
   // CollabMix calls this so the next poll RE-BASELINES instead of averaging a
@@ -3553,6 +3564,26 @@ function useRTC({ engineRef, send, onIceRecover }) {
         prevStatsRef.current = { jbd:inb.jitterBufferDelay, jbe:emitted,
           ppd:play?play.totalPlayoutDelay:0, psc:play?play.totalSamplesCount:0, ts:now };
         healthRef.current += 1;
+        // [JITTER-DIAG] (BUG #2) — NetEq accelerate (removes samples → speeds up),
+        // decelerate (inserts → slows down), conceal (underrun fill). Per-window
+        // ms of stretch IS the audible "BPM changing"/distortion under real jitter.
+        {
+          const nj = { acc: inb.removedSamplesForAcceleration||0, dec: inb.insertedSamplesForDeceleration||0,
+            conc: inb.concealedSamples||0, lost: inb.packetsLost||0, jit: inb.jitter!=null?inb.jitter*1000:null, ts: now };
+          const pj = prevJitterRef.current;
+          if (pj && now - jitterLogTsRef.current > 2000) {
+            jitterLogTsRef.current = now;
+            const accMs = ((nj.acc - pj.acc)/SAMPLE_HZ)*1000;
+            const decMs = ((nj.dec - pj.dec)/SAMPLE_HZ)*1000;
+            const concMs = ((nj.conc - pj.conc)/SAMPLE_HZ)*1000;
+            console.log("[JITTER-DIAG] accelMs=" + accMs.toFixed(0) + " decelMs=" + decMs.toFixed(0) +
+              " concealMs=" + concMs.toFixed(0) + " lostΔ=" + (nj.lost - pj.lost) +
+              " jitterMs=" + (nj.jit!=null?nj.jit.toFixed(1):"?") +
+              " jbTargetMs=" + (inb.jitterBufferTargetDelay!=null ? ((inb.jitterBufferTargetDelay/emitted)*1000).toFixed(0) : "?") +
+              " (per ~" + ((now-pj.ts)/1000).toFixed(1) + "s window)");
+          }
+          prevJitterRef.current = nj;
+        }
         // Require sustained healthy flow before trusting; a big DROP needs extra
         // confirmation so a refill transient / spurious-low never zeroes comp.
         const lastGood = compRef.current.compMs || 0;
@@ -7667,6 +7698,13 @@ function Lobby({ onJoin, djName = null }) {
             Mix<span style={{ color:G }}>//</span>Sync
           </div>
           <div style={{ fontSize:9, fontFamily:"'Inter',sans-serif", color:`${G}55`, letterSpacing:3, marginTop:6 }}>{isJoining?"JOIN MIX":"START A MIX"}</div>
+          {/* Chrome-required warning (dogfood session 1): other browsers' media
+              stacks (Edge especially) cut audio in/out. */}
+          {!IS_CHROME && (
+            <div style={{ marginTop:12, padding:"8px 12px", background:"#f59e0b14", border:"1px solid #f59e0b44", borderRadius:8, fontSize:11, fontFamily:"'Inter',sans-serif", color:"#f59e0b", lineHeight:1.5, letterSpacing:0.2 }}>
+              Mix//Sync works best in Chrome. Other browsers may have audio dropouts or choppy waveforms.
+            </div>
+          )}
           {/* #5 P2.5: frame the joiner's arrival around who invited them. */}
           {isJoining && inviterName && (
             <div style={{ fontSize:12, fontFamily:"'Inter',sans-serif", color:"rgba(255,255,255,0.7)", letterSpacing:0.2, marginTop:10 }}>
