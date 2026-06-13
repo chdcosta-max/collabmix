@@ -9159,3 +9159,19 @@ awaiting Chad's live eye-check on #6 (the SYNC-mode feel) before deploy.
   old .eslintrc). Not introduced this session; separate cleanup if wanted.
 - NOT pushed. Chad to feel #6 live + re-test #3 spam-toggle (fade-flux-199) before
   deploy.
+
+### #5 ONBOARDING — COMPLETE (June 12, afternoon)
+The 4 remaining items shipped (commit b50def6), batch now 10/10:
+- P2.4 invite-confirm popover (anchored; link + mix-code fallback).
+- P2.5 inviter framing ("[name] invited you to mix" via ?by=; unnamed mix →
+  "[creator]'s mix"; joiner share-tools already hidden).
+- P3.7 top-bar "YOU" chip on own name (partner stays the ⟺ pill).
+- P4.9 lib.resetLibrary() — correct multi-store IDB wipe (tracks/queue/crates/
+  handles + OPFS) behind a confirm modal; surfaced as a discreet "Reset library…"
+  footer link. Needed because the library load effect re-polls IDB every 5s, so a
+  memory-only clear() resurrects within seconds.
+Decisions used: route dead clicks to the existing Add-music flow (wizard stays
+?libwizard=1); no demo library exists (146 tracks were Chad's own persisted IDB)
+→ shipped a reset control, not a demo. Full smoke 20/20. PUSHED to production.
+All six morning tickets + the full onboarding batch are now live for tonight's
+brother session. Chad to verify the whole set on production before the session.
