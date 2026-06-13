@@ -44,7 +44,8 @@ try {
   // have mirrored to it; under full-suite load that propagation lags. Wait for
   // B's analysis to actually reach A so attemptLock has bBpm + a partner-driven
   // slave to skip (otherwise it returns early and the skip never logs — a flake).
-  await sA.waitFor("[ANALYZER-RECV] B", 15000);
+  await sA.waitFor("[ANALYZER-RECV] B", 25000);
+  await A.waitForTimeout(300);
 
   // A plays deck A first (→ master), B plays deck B (→ slave). Lock from B (the
   // mixing-in deck → the slave's own client aligns locally).

@@ -9303,3 +9303,11 @@ Combined with the per-frame ease in AnimatedZoomedWF, the visual offset is stead
 NOTE: this refines the already-pushed ?gridalign fix; it's LOCAL/unpushed with the
 P2-P6 batch — needs pushing before session-2 so Jake tests the steady version.
 (Full comp jitterBufferTarget plan banked for after session-2.)
+
+### smoke hardening (June 12) — sequential-load cross-propagation flake
+e2e-sync + e2e-lock-stability intermittently failed in the FULL suite (passed
+standalone): under a long sequential run the shared WS server slows the
+analyzer cross-propagation, so the [ANALYZER-RECV] wait timed out → engage no-op
+(phaseSeekMs=null / 0 skip logs). Bumped those waits to 25s + a settle. Full smoke
+21/21. Product was never affected (standalone always green); pure test-infra
+robustness. PUSHED with the P2-P6 + grid-align-steadiness batch.
