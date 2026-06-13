@@ -66,6 +66,22 @@ export async function gotoApp(page, opts = {}) {
   await page.goto(appUrl(opts.target), { waitUntil: opts.waitUntil || "domcontentloaded" });
 }
 
+// True when the runner started the local mock WS server (so netem is available).
+export const hasMock = () => !!process.env.MOCK_WS_URL;
+
+// Set the mock's network conditions live (latencyMs, jitterMs, lossPct, seed,
+// types[]). No-op + returns null when no mock is configured, so a test can guard
+// with hasMock() and SKIP. Drives the mock's HTTP control endpoint (tests run as
+// child processes; in-process netem isn't reachable from here).
+export async function setNetem(conditions) {
+  const ws = process.env.MOCK_WS_URL;
+  if (!ws) return null;
+  const httpUrl = ws.replace(/^ws/, "http") + "/netem";
+  const res = await fetch(httpUrl, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(conditions) });
+  return res.json();
+}
+export const resetNetem = () => setNetem({ latencyMs: 0, jitterMs: 0, lossPct: 0, types: null });
+
 export async function enterLobby(page) {
   await page.locator(".cta-btn").first().click();
   await page.getByText("START MIX", { exact: false }).first().waitFor({ timeout: 10000 });

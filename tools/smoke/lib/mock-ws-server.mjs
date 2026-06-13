@@ -35,11 +35,13 @@ function generateDjId() {
   return `dj_${++djCounter}_mock`;
 }
 
-export function startMockServer({ port = 8090, log = false } = {}) {
+export function startMockServer({ port = 8090, log = false, netem: netemInit = {} } = {}) {
   const rooms = new Map();
-  // netem state is a no-op in Commit 1 (installed in Commit 2). Outbound sends go
-  // through emit() so the network-emulation layer has a single seam to wrap.
-  const netem = makeNoopNetem();
+  // Deterministic network-emulation layer. Every server→client message flows
+  // through netem.send() (the single outbound seam below), so latency / jitter /
+  // loss / reordering apply at exactly one place. Reconfigurable live via the
+  // POST /netem control endpoint so a test can ramp conditions mid-run.
+  const netem = makeNetem(netemInit);
 
   function getRoomOrCreate(roomId) {
     if (!rooms.has(roomId)) {
@@ -69,7 +71,27 @@ export function startMockServer({ port = 8090, log = false } = {}) {
     if (req.url === "/health") {
       const djCount = [...rooms.values()].reduce((s, r) => s + r.djs.size, 0);
       res.writeHead(200, { "Content-Type": "application/json" });
-      res.end(JSON.stringify({ status: "ok", mock: true, rooms: rooms.size, djs: djCount, uptime: process.uptime() }));
+      res.end(JSON.stringify({ status: "ok", mock: true, rooms: rooms.size, djs: djCount, uptime: process.uptime(), netem: netem.config }));
+      return;
+    }
+    // ── netem control: GET returns current conditions; POST {latencyMs, jitterMs,
+    // lossPct, seed, types} reconfigures live (resets the seeded RNG). Tests drive
+    // this over HTTP (they run as child processes; see lib/e2e.mjs setNetem).
+    if (req.url === "/netem") {
+      if (req.method === "POST") {
+        let body = "";
+        req.on("data", (c) => (body += c));
+        req.on("end", () => {
+          let next = {}; try { next = JSON.parse(body || "{}"); } catch {}
+          netem.configure(next);
+          if (log) console.log(`[mock][netem] ${JSON.stringify(netem.config)}`);
+          res.writeHead(200, { "Content-Type": "application/json" });
+          res.end(JSON.stringify(netem.config));
+        });
+        return;
+      }
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.end(JSON.stringify(netem.config));
       return;
     }
     res.writeHead(200); res.end("COLLAB//MIX MOCK Server");
@@ -202,10 +224,11 @@ export function startMockServer({ port = 8090, log = false } = {}) {
 
   return new Promise((resolve) => {
     httpServer.listen(port, () => {
-      if (log) console.log(`[mock] WS  → ws://localhost:${port}\n[mock] HTTP → http://localhost:${port}/health`);
+      const bound = httpServer.address().port; // resolves port 0 (ephemeral) to the real one
+      if (log) console.log(`[mock] WS  → ws://localhost:${bound}\n[mock] HTTP → http://localhost:${bound}/health`);
       resolve({
-        port,
-        url: `ws://localhost:${port}`,
+        port: bound,
+        url: `ws://localhost:${bound}`,
         netem,
         close: () => new Promise((r) => { try { wss.close(); httpServer.close(() => r()); } catch { r(); } }),
       });
@@ -213,12 +236,66 @@ export function startMockServer({ port = 8090, log = false } = {}) {
   });
 }
 
-// Commit-1 placeholder: sends immediately, never drops. The network-emulation
-// layer (latency / jitter / loss / reorder, seeded) replaces this in Commit 2.
-function makeNoopNetem() {
+// ── Deterministic network emulation ─────────────────────────────────────────
+// Seeded PRNG (mulberry32) so a given (seed, profile, message-sequence) yields
+// the EXACT same drop/delay decisions every run — a reproducible gate, not a new
+// flavor of flaky. NO Math.random anywhere on the netem path.
+function mulberry32(a) {
+  return function () {
+    a |= 0; a = (a + 0x6d2b79f5) | 0;
+    let t = Math.imul(a ^ (a >>> 15), 1 | a);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+// Conditions:
+//   latencyMs — base one-way delay added to every eligible relayed message.
+//   jitterMs  — ± uniform random added to latency (independent per message →
+//               naturally REORDERS, the real-network condition the gate lacked).
+//   lossPct   — probability [0..1] an eligible message is dropped entirely.
+//               High loss on deck_update = SPARSE progress packets (the
+//               backgrounded-driver / stale-mirror condition) via the relay.
+//   seed      — RNG seed; same seed reproduces the run exactly.
+//   types     — optional array of message types the conditions apply to. null =
+//               ALL relayed messages (full real-network sim). Restricting to
+//               e.g. ["deck_update"] degrades only progress packets while leaving
+//               join / driver / transport crisp so setup isn't disrupted.
+function makeNetem(initial = {}) {
+  const normalize = (c) => ({
+    latencyMs: Math.max(0, +c.latencyMs || 0),
+    jitterMs: Math.max(0, +c.jitterMs || 0),
+    lossPct: Math.min(1, Math.max(0, +c.lossPct || 0)),
+    seed: (c.seed ?? 1) >>> 0,
+    types: Array.isArray(c.types) && c.types.length ? c.types.slice() : null,
+  });
+  let cfg = normalize(initial);
+  let typeSet = cfg.types ? new Set(cfg.types) : null;
+  let rng = mulberry32(cfg.seed);
   return {
-    send(ws, payload /*, ctx */) { try { ws.send(payload); } catch {} },
-    configure() {},
+    get config() { return { ...cfg }; },
+    configure(next) {
+      cfg = normalize({ ...cfg, ...next });
+      typeSet = cfg.types ? new Set(cfg.types) : null;
+      rng = mulberry32(cfg.seed); // re-seed on every reconfigure → deterministic from that point
+    },
+    send(ws, payload, ctx = {}) {
+      if (!ws || ws.readyState !== ws.OPEN) return;
+      // Client↔server RTT replies (ping→pong) must be immediate, like the real
+      // server — they're a measurement baseline, not part of the emulated path.
+      if (ctx.bypassNetem) { try { ws.send(payload); } catch {} return; }
+      const eligible = !typeSet || typeSet.has(ctx.type);
+      const idle = cfg.latencyMs === 0 && cfg.jitterMs === 0 && cfg.lossPct === 0;
+      if (!eligible || idle) { try { ws.send(payload); } catch {} return; }
+      // Deterministic loss (one draw per eligible message when loss is on).
+      if (cfg.lossPct > 0 && rng() < cfg.lossPct) return; // dropped
+      // Deterministic delay = latency ± jitter (one draw for jitter when on).
+      let delay = cfg.latencyMs;
+      if (cfg.jitterMs > 0) delay += (rng() * 2 - 1) * cfg.jitterMs;
+      delay = Math.max(0, delay);
+      if (delay === 0) { try { ws.send(payload); } catch {} return; }
+      setTimeout(() => { try { if (ws.readyState === ws.OPEN) ws.send(payload); } catch {} }, delay);
+    },
   };
 }
 

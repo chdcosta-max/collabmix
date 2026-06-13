@@ -48,6 +48,7 @@ const TESTS = [
   { name: "e2e-chaos",        file: "e2e-chaos.smoke.mjs",        kind: "e2e",   gates: "app survives transport/seek/load storms (no crash, stays responsive)" },
   { name: "e2e-mirror",       file: "e2e-mirror.smoke.mjs",       kind: "e2e",   gates: "partner-deck waveform mirror advances forward (no backward skip / freeze)" },
   { name: "e2e-mirror-coast", file: "e2e-mirror-coast.smoke.mjs", kind: "e2e",   gates: "mirror coasts accurately under SPARSE packets (backgrounded driver)" },
+  { name: "e2e-mirror-latency", file: "e2e-mirror-latency.smoke.mjs", kind: "e2e", gates: "mirror under DETERMINISTIC netem (latency/jitter/loss): no backward step, tracks within floor (needs --mock)" },
   { name: "e2e-rekordbox",    file: "e2e-rekordbox.smoke.mjs",    kind: "e2e",   gates: "Door 3: rekordbox.xml parse (grids+cues+playlists) + imported grid consumed by deck (unified path, de-smear off, engage idempotent)" },
 ];
 
