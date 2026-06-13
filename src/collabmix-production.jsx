@@ -5397,21 +5397,34 @@ function Deck({ id, ch, ctx:ac, color, local, remote, onChange, midi:mt, bpmResu
       const slewNow=remSlewRef.current*Math.exp(-since/SLEW_TAU_MS);
       const visibleNow=(remTimeRef.current>0)?(modeledNow+slewNow):remote.progress;
       const signedDriftSec=(remote.progress-visibleNow)*(trackDurSec||1); // + = truth AHEAD of us
+      const justStarted=remAwaitPktRef.current;   // first packet since a play-START → re-sync, not a user seek
       remAwaitPktRef.current=false;   // a fresh packet → stop holding, resume coasting
       const isFirst=remTimeRef.current===0;
       const fwdSeek=signedDriftSec>FWD_SNAP_SEC;       // driver jumped ahead (cue/seek)
       const bigRewind=-signedDriftSec>BACK_SNAP_SEC;   // driver genuinely rewound a long way
-      if(isFirst||fwdSeek||bigRewind){
+      // #3 fix (rapid-toggle mirror snaps): a forward gap on the FIRST packet
+      // after a play-START is the mirror RE-SYNCING to a deck that advanced
+      // while we held a (possibly stale) paused anchor — under rapid non-owner
+      // pause/play the frozen-position broadcast can land late and the owner is
+      // already seconds ahead. That is NOT a user cue/seek, so EASE onto truth
+      // via slew instead of the visible hard jump (the +6.4s/+8.7s
+      // "[MIRROR-SNAP] forward" lurches Chad saw, indistinguishable from broken
+      // sync). Only a forward jump during STEADY coast (not just-started) is a
+      // genuine seek that still hard-snaps.
+      const genuineFwdSeek=fwdSeek && !justStarted;
+      if(isFirst||genuineFwdSeek||bigRewind){
         if(bigRewind) console.warn('[MIRROR-SNAP] deck',id,'large rewind '+signedDriftSec.toFixed(1)+'s — hard snap');
-        else if(fwdSeek) console.warn('[MIRROR-SNAP] deck',id,'forward seek/catch-up +'+signedDriftSec.toFixed(1)+'s — hard snap');   // triage c: forward snaps now confess too
+        else if(genuineFwdSeek) console.warn('[MIRROR-SNAP] deck',id,'forward seek/catch-up +'+signedDriftSec.toFixed(1)+'s — hard snap');   // triage c: forward snaps now confess too
         remProgRef.current=remote.progress; remTimeRef.current=now; remSlewRef.current=0;
       } else {
-        // Sub-seek drift (incl. moderate backward from packet starvation/jitter):
-        // re-anchor the model to truth but CARRY the current visible offset into
-        // slew so there is NEVER a visible backward jump — it decays to 0, easing
-        // onto truth as the partner advances. This is the fix for the "mirror
-        // skips back multiple bars" report under real-network jitter.
-        if(signedDriftSec<-0.5) console.log('[MIRROR-SNAP] deck',id,'absorbed backward drift '+signedDriftSec.toFixed(2)+'s via slew (no jump)');
+        // Sub-seek drift (incl. moderate backward from packet starvation/jitter)
+        // AND the play-start forward catch-up above: re-anchor the model to truth
+        // but CARRY the current visible offset into slew so there is NEVER a
+        // visible jump — it decays to 0, easing onto truth as the partner
+        // advances. Fixes both the "mirror skips back multiple bars" backward
+        // report and the rapid-toggle forward-lurch (#3).
+        if(justStarted && signedDriftSec>0.5) console.log('[MIRROR-SNAP] deck',id,'play-start catch-up +'+signedDriftSec.toFixed(2)+'s eased via slew (no jump)');
+        else if(signedDriftSec<-0.5) console.log('[MIRROR-SNAP] deck',id,'absorbed backward drift '+signedDriftSec.toFixed(2)+'s via slew (no jump)');
         remProgRef.current=remote.progress; remTimeRef.current=now;
         remSlewRef.current=visibleNow-remote.progress;
       }

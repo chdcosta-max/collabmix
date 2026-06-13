@@ -85,6 +85,25 @@ try {
   t.check("no backward lurch on play from non-owner", tBackward === 0, `${tBackward} backward steps`);
   t.check("mirror tracks owner through pause→play (median < 250ms)", tMed < 250, `median ${tMed.toFixed(0)}ms vs owner truth`);
 
+  // ── SPAM-TOGGLE from the NON-OWNER under sparse packets (#3). Rapid pause/play
+  // must not produce forward "hard snap" lurches (Chad's repro: [MIRROR-SNAP]
+  // forward +6.4s/+8.7s on quick non-owner pause/play). Each play-start should
+  // EASE onto truth, not jump. Reset position first (phases 1-2 ran us near the
+  // 12s end), let the mirror reconcile, THEN hammer the toggle.
+  await A.evaluate(() => window.__seekDeck("A", 0.1));
+  await B.waitForTimeout(3000);                         // mirror reconciles to the seek (sparse)
+  const snapsBefore = sB.all("forward seek/catch-up").length;
+  const errBefore = sB.errors().length;
+  for (let i = 0; i < 10; i++) { await B.evaluate(() => window.__toggleDeck("A")); await B.waitForTimeout(110); } // even count → ends playing
+  await B.waitForTimeout(3500);                         // settle + ≥1 sparse packet so it reconciles
+  const fwdSnaps = sB.all("forward seek/catch-up").length - snapsBefore;
+  // Mirror sampled BACKWARD across the spam? (a lurch). And does it end on truth?
+  const [oEnd, mEnd] = await Promise.all([A.evaluate(() => window.__deckProg("A")), B.evaluate(() => window.__deckProg("A"))]);
+  const endErr = Math.abs(oEnd - mEnd) * FIXTURE_DUR_SEC * 1000;
+  t.check("spam-toggle: no forward hard-snap lurches", fwdSnaps === 0, `${fwdSnaps} forward hard-snaps during ${10}x non-owner toggle`);
+  t.check("spam-toggle: mirror converges to owner truth (< 400ms)", endErr < 400, `owner=${oEnd?.toFixed(3)} mirror=${mEnd?.toFixed(3)} (${endErr.toFixed(0)}ms)`);
+  t.check("spam-toggle: no new page errors", sB.errors().length === errBefore, sB.errors().slice(errBefore).slice(0, 2).join(" | ") || "clean");
+
   t.check("no page errors", sA.errors().length === 0 && sB.errors().length === 0, [...sA.errors(), ...sB.errors()].slice(0, 2).join(" | ") || "clean");
   void FIXTURE_BPM;
 } catch (e) {
