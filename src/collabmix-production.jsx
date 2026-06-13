@@ -110,7 +110,14 @@ const WF_PULSE = (() => {
 // ── Server Configuration ─────────────────────────────────────
 // After deploying to Railway, replace this URL with your Railway server URL.
 // It should look like: wss://collabmix-server-production.up.railway.app
-const SERVER_URL = "wss://collabmix-server-production.up.railway.app";
+const DEFAULT_SERVER_URL = "wss://collabmix-server-production.up.railway.app";
+// Test-only WS endpoint override (?wsurl=ws://localhost:8090). Gated behind
+// TEST_HOOKS (dev server or ?smoke=1) so a crafted link can NEVER redirect a real
+// user's socket to an attacker-controlled server — the override is inert for a
+// plain production load. Used by the smoke suite's local mock WS server to inject
+// deterministic latency / jitter / loss / reordering, conditions the production
+// relay can't reproduce (the stale-mirror / sparse-packet / interleave class).
+const SERVER_URL = (TEST_HOOKS && URL_FLAGS.get("wsurl")) || DEFAULT_SERVER_URL;
 
 // ── ID3 / artwork extraction parameters ──────────────────────
 // Source-file window read into memory for parseID3. 4 MB covers any

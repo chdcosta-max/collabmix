@@ -47,6 +47,25 @@ export function capture(page, tag = "") {
   };
 }
 
+// Build the app URL for goto(). When the runner started the mock WS server it
+// sets MOCK_WS_URL; we then append ?wsurl=<mock> (honored only behind TEST_HOOKS,
+// which the dev server / ?smoke=1 satisfy) so the app's sockets hit the local
+// mock instead of production. ?smoke=1 is added so the override is honored against
+// a built target too. Returns TARGET unchanged when no mock is configured.
+export function appUrl(target = process.env.TARGET || "http://localhost:5173/") {
+  const ws = process.env.MOCK_WS_URL;
+  if (!ws) return target;
+  const u = new URL(target);
+  u.searchParams.set("wsurl", ws);
+  u.searchParams.set("smoke", "1");
+  return u.toString();
+}
+
+// Navigate to the app, routing through the mock WS server when one is configured.
+export async function gotoApp(page, opts = {}) {
+  await page.goto(appUrl(opts.target), { waitUntil: opts.waitUntil || "domcontentloaded" });
+}
+
 export async function enterLobby(page) {
   await page.locator(".cta-btn").first().click();
   await page.getByText("START MIX", { exact: false }).first().waitFor({ timeout: 10000 });

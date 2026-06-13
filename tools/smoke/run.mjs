@@ -20,6 +20,7 @@ import { fileURLToPath } from "node:url";
 import { existsSync } from "node:fs";
 import http from "node:http";
 import { ensureFixture } from "./lib/gen-fixture.mjs";
+import { startMockServer } from "./lib/mock-ws-server.mjs";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const TESTS_DIR = resolve(__dirname, "tests");
@@ -55,6 +56,13 @@ const argv = process.argv.slice(2);
 const kindArg = (argv.find((a) => a.startsWith("--kind=")) || "").split("=")[1];
 const KINDS = kindArg ? new Set(kindArg.split(",").map((s) => s.trim())) : null;
 const LIST = argv.includes("--list");
+// --mock (or MOCK=1): spawn the LOCAL mock WS server and expose its URL to e2e
+// children via MOCK_WS_URL. Tests that opt in (via lib/e2e.mjs appUrl) connect the
+// app to it with ?wsurl=… so network conditions are deterministic + load-free.
+// Existing tests ignore MOCK_WS_URL → they keep hitting the production relay until
+// the deliberate full-suite migration (incremental rollout per the build plan).
+const USE_MOCK = argv.includes("--mock") || process.env.MOCK === "1";
+const MOCK_PORT = Number(process.env.MOCK_PORT) || 8090;
 const wanted = TESTS.filter((t) => !KINDS || KINDS.has(t.kind));
 
 if (LIST) {
@@ -102,8 +110,14 @@ function runOne(t) {
 // ── e2e setup: fixture + dev server (spawn vite if not already up, unless a
 // remote TARGET was provided).
 let devProc = null;
+let mockHandle = null;
 async function setupE2E() {
   ensureFixture();
+  if (USE_MOCK) {
+    mockHandle = await startMockServer({ port: MOCK_PORT, log: false });
+    process.env.MOCK_WS_URL = mockHandle.url; // inherited by child tests via runOne
+    console.log(`✓ mock WS server up at ${mockHandle.url} (deterministic netem available)`);
+  }
   if (process.env.TARGET) { // remote target — don't manage a server
     if (!(await ping(TARGET))) console.warn(`⚠ TARGET ${TARGET} not reachable — e2e tests will SKIP themselves.`);
     return;
@@ -115,7 +129,10 @@ async function setupE2E() {
   if (!up) { console.warn("⚠ dev server did not come up in 25s — e2e tests will SKIP."); }
   else console.log(`✓ dev server ready at ${DEV_URL}`);
 }
-function teardownE2E() { if (devProc) { try { devProc.kill("SIGTERM"); } catch {} devProc = null; } }
+async function teardownE2E() {
+  if (devProc) { try { devProc.kill("SIGTERM"); } catch {} devProc = null; }
+  if (mockHandle) { try { await mockHandle.close(); } catch {} mockHandle = null; }
+}
 
 // ── run
 console.log(`\n╔═ MIX//SYNC SMOKE SUITE ═╗  target=${TARGET}  tests=${wanted.length}${KINDS ? `  kinds=${[...KINDS].join(",")}` : ""}`);
@@ -123,7 +140,7 @@ if (needE2E) await setupE2E();
 
 const results = [];
 for (const t of wanted) results.push(await runOne(t));
-teardownE2E();
+await teardownE2E();
 
 // ── summary
 const pass = results.filter((r) => r.status === "PASS").length;
