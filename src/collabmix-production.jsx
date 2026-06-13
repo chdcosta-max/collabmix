@@ -5347,7 +5347,7 @@ function PitchReadout({ rate, nativeBpm, enabled, displayText, tooltip, color, o
   );
 }
 
-function Deck({ id, ch, ctx:ac, color, local, remote, onChange, midi:mt, bpmResult, bpmAnalyze, eqHi=0, eqMid=0, eqLo=0, chanVol=1, loadFromLibrary=null, onTrackInfo=null, onSync=null, syncReady=true, syncRole=null, syncArmed=false, isMaster=false, onMasterToggle=null, onAddMusic=null, libraryEmpty=false, onLibraryTrackDrop=null, onProgUpdate=null, onWaveform=null, onSeekReady=null, remoteSeek=null, onToggleReady=null, onCueReady=null, remoteToggle=null, remoteCue=null, onTransportFire=null, isDriver=true, onNudgeReady=null, acNowRef=null, onBufferReady=null, barOneOffsetSec=0, onGridEdit=null, hasOverride=false, userGridOverride=null, onPitchInteract=null }) {
+function Deck({ id, ch, ctx:ac, color, local, remote, onChange, midi:mt, bpmResult, bpmAnalyze, eqHi=0, eqMid=0, eqLo=0, chanVol=1, loadFromLibrary=null, onTrackInfo=null, onSync=null, syncReady=true, syncRole=null, syncArmed=false, isMaster=false, onMasterToggle=null, onAddMusic=null, libraryEmpty=false, onLibraryTrackDrop=null, onProgUpdate=null, onWaveform=null, onSeekReady=null, remoteSeek=null, onToggleReady=null, onCueReady=null, remoteToggle=null, remoteCue=null, onTransportFire=null, isDriver=true, onNudgeReady=null, acNowRef=null, onBufferReady=null, barOneOffsetSec=0, onGridEdit=null, hasOverride=false, userGridOverride=null, onPitchInteract=null, onRateReady=null }) {
   const [buf,setBuf]=useState(null),[name,setName]=useState(null),[play,setPlay]=useState(false);
   const [prog,setProg]=useState(0),[dur,setDur]=useState(0);
   const progRef=useRef(0); // mirror of prog for parent AnimatedZoomedWF without 60fps setState
@@ -5929,6 +5929,12 @@ function Deck({ id, ch, ctx:ac, color, local, remote, onChange, midi:mt, bpmResu
   useEffect(()=>{onSeekReady?.(seek);},[seek,onSeekReady]);
   useEffect(()=>{onToggleReady?.(toggle);},[toggle,onToggleReady]);
   useEffect(()=>{onCueReady?.(cue);},[cue,onCueReady]);
+  // Test-only: lets the smoke suite drive a pitch/rate change on the driver deck.
+  // setRate updates the live source via the [rate,ac] effect; onChange("rate")
+  // broadcasts it exactly like the pitch fader (driver-gated in dh). Used by the
+  // mirror-slew repro to make the partner mirror coast at a stale rate. No UI path.
+  const applyTestRate=useCallback((r)=>{ setRate(r); onChange?.("rate", r); },[onChange]);
+  useEffect(()=>{onRateReady?.(applyTestRate);},[applyTestRate,onRateReady]);
   useEffect(()=>{onNudgeReady?.(nudgeRate);},[nudgeRate,onNudgeReady]);
   // Path C: register THE REF (not the buffer) with the parent — so the
   // cross-correlation block in syncDecks pulls the current buffer at call
@@ -8315,6 +8321,9 @@ export default function CollabMix({ initialPage = "landing", djName = null }) {
   const toggleFnsRef = useRef({ A:null, B:null });
   const cueFnsRef = useRef({ A:null, B:null });
   const nudgeFnsRef = useRef({ A:null, B:null });
+  const rateFnsRef = useRef({ A:null, B:null });   // test-only pitch/rate setters (mirror-slew repro)
+  const onDeckARateReady = useCallback((fn) => { rateFnsRef.current.A = fn; }, []);
+  const onDeckBRateReady = useCallback((fn) => { rateFnsRef.current.B = fn; }, []);
   const onDeckASeekReady = useCallback((fn) => { seekFnsRef.current.A = fn; }, []);
   const onDeckBSeekReady = useCallback((fn) => { seekFnsRef.current.B = fn; }, []);
   const onDeckAToggleReady = useCallback((fn) => { toggleFnsRef.current.A = fn; }, []);
@@ -8671,6 +8680,10 @@ export default function CollabMix({ initialPage = "landing", djName = null }) {
     window.__seekDeck = (deck, value) => { seekFnsRef.current[deck === "B" ? "B" : "A"]?.(value); return true; };
     window.__cueDeck = (deck) => { cueFnsRef.current[deck === "B" ? "B" : "A"]?.(); return true; };
     window.__syncDeck = (deck) => { handleSyncToggle(deck === "B" ? "B" : "A"); return true; };
+    // Pitch/rate the driver deck (mirror-slew repro): changes the live audio rate
+    // AND broadcasts it like the fader, so the partner mirror coasts at a stale
+    // rate under sparse packets → overshoot → the backward slew Jake saw.
+    window.__setRateDeck = (deck, r) => { rateFnsRef.current[deck === "B" ? "B" : "A"]?.(r); return true; };
     window.__dropWS = () => { syncRef.current?.forceDrop?.(); return true; };   // simulate a network blip
     window.__deckProg = (deck) => (deck === "B" ? progRefB : progRefA).current;  // displayed playhead 0..1 (mirror-motion test)
     // What the deck ACTUALLY consumes through the unified grid path — used by the
@@ -10454,7 +10467,7 @@ export default function CollabMix({ initialPage = "landing", djName = null }) {
           <div style={{ flex:1, display:"flex", alignItems:"flex-start", gap:10, padding:"10px 0 10px 10px", overflow:"hidden", minHeight:0 }}>
             <DeckArt artwork={libLoadA?.track?.artwork} fallback="A" color="#2E86DE"/>
             <div style={{ flex:1, overflow:"hidden", minHeight:0 }}>
-            <Deck id="A" ch={eng.current?.A} ctx={eng.current?.ctx} color="#2E86DE" local remote={pA} onChange={dh("A")} midi={midiEvt} bpmResult={bpm.results["A"]} bpmAnalyze={bpm.analyze} eqHi={eqA.hi} eqMid={eqA.mid} eqLo={eqA.lo} chanVol={eqA.vol} loadFromLibrary={libLoadA} onTrackInfo={handleTrackInfo} onSync={()=>handleSyncToggle("A")} syncReady={!!(bpm.results["B"]?.bpm || pB?.bpm)} syncRole={syncLocked ? (lastSlaveDeck === "A" ? "slave" : "master") : null} syncArmed={syncArmed} isMaster={masterDeck === "A"} onMasterToggle={handleMasterToggle} onAddMusic={()=>lib.addWatchedFolder?.({}).catch(()=>{})} libraryEmpty={(lib.library?.length||0)===0} onLibraryTrackDrop={(trackId)=>{const t=lib.library.find(x=>x.id===trackId);if(t)handleLibLoad(t,"A");}} onProgUpdate={handleProgA} onWaveform={setWfA} onSeekReady={onDeckASeekReady} onToggleReady={onDeckAToggleReady} onCueReady={onDeckACueReady} onNudgeReady={onDeckANudgeReady} onTransportFire={handleTransportFire} isDriver={!deckDrivers.A || deckDrivers.A?.id === sync.djId} acNowRef={acNowRef} onBufferReady={onDeckABufferReady} barOneOffsetSec={barOneA * (bpm.results["A"]?.beatPeriodSec || 0)} onGridEdit={(fields) => libLoadA?.track?.id && lib.setGridEdit?.(libLoadA.track.id, fields)} hasOverride={!!userGridA} userGridOverride={userGridA} onPitchInteract={handlePitchInteract}/>
+            <Deck id="A" ch={eng.current?.A} ctx={eng.current?.ctx} color="#2E86DE" local remote={pA} onChange={dh("A")} midi={midiEvt} bpmResult={bpm.results["A"]} bpmAnalyze={bpm.analyze} eqHi={eqA.hi} eqMid={eqA.mid} eqLo={eqA.lo} chanVol={eqA.vol} loadFromLibrary={libLoadA} onTrackInfo={handleTrackInfo} onSync={()=>handleSyncToggle("A")} syncReady={!!(bpm.results["B"]?.bpm || pB?.bpm)} syncRole={syncLocked ? (lastSlaveDeck === "A" ? "slave" : "master") : null} syncArmed={syncArmed} isMaster={masterDeck === "A"} onMasterToggle={handleMasterToggle} onAddMusic={()=>lib.addWatchedFolder?.({}).catch(()=>{})} libraryEmpty={(lib.library?.length||0)===0} onLibraryTrackDrop={(trackId)=>{const t=lib.library.find(x=>x.id===trackId);if(t)handleLibLoad(t,"A");}} onProgUpdate={handleProgA} onWaveform={setWfA} onSeekReady={onDeckASeekReady} onToggleReady={onDeckAToggleReady} onCueReady={onDeckACueReady} onRateReady={onDeckARateReady} onNudgeReady={onDeckANudgeReady} onTransportFire={handleTransportFire} isDriver={!deckDrivers.A || deckDrivers.A?.id === sync.djId} acNowRef={acNowRef} onBufferReady={onDeckABufferReady} barOneOffsetSec={barOneA * (bpm.results["A"]?.beatPeriodSec || 0)} onGridEdit={(fields) => libLoadA?.track?.id && lib.setGridEdit?.(libLoadA.track.id, fields)} hasOverride={!!userGridA} userGridOverride={userGridA} onPitchInteract={handlePitchInteract}/>
             </div>
           </div>
         </div>
@@ -10567,7 +10580,7 @@ export default function CollabMix({ initialPage = "landing", djName = null }) {
           <div style={{ flex:1, display:"flex", alignItems:"flex-start", gap:10, padding:"10px 0 10px 10px", overflow:"hidden", minHeight:0 }}>
             <DeckArt artwork={libLoadB?.track?.artwork} fallback="B" color="#A855F7"/>
             <div style={{ flex:1, overflow:"hidden", minHeight:0 }}>
-            <Deck id="B" ch={eng.current?.B} ctx={eng.current?.ctx} color="#A855F7" local remote={pB} onChange={dh("B")} midi={midiEvt} bpmResult={bpm.results["B"]} bpmAnalyze={bpm.analyze} eqHi={eqB.hi} eqMid={eqB.mid} eqLo={eqB.lo} chanVol={eqB.vol} loadFromLibrary={libLoadB} onTrackInfo={handleTrackInfo} onSync={()=>handleSyncToggle("B")} syncReady={!!(bpm.results["A"]?.bpm || pA?.bpm)} syncRole={syncLocked ? (lastSlaveDeck === "B" ? "slave" : "master") : null} syncArmed={syncArmed} isMaster={masterDeck === "B"} onMasterToggle={handleMasterToggle} onAddMusic={()=>lib.addWatchedFolder?.({}).catch(()=>{})} libraryEmpty={(lib.library?.length||0)===0} onLibraryTrackDrop={(trackId)=>{const t=lib.library.find(x=>x.id===trackId);if(t)handleLibLoad(t,"B");}} onProgUpdate={handleProgB} onWaveform={setWfB} onSeekReady={onDeckBSeekReady} onToggleReady={onDeckBToggleReady} onCueReady={onDeckBCueReady} onNudgeReady={onDeckBNudgeReady} onTransportFire={handleTransportFire} isDriver={!deckDrivers.B || deckDrivers.B?.id === sync.djId} acNowRef={acNowRef} onBufferReady={onDeckBBufferReady} barOneOffsetSec={barOneB * (bpm.results["B"]?.beatPeriodSec || 0)} onGridEdit={(fields) => libLoadB?.track?.id && lib.setGridEdit?.(libLoadB.track.id, fields)} hasOverride={!!userGridB} userGridOverride={userGridB} onPitchInteract={handlePitchInteract}/>
+            <Deck id="B" ch={eng.current?.B} ctx={eng.current?.ctx} color="#A855F7" local remote={pB} onChange={dh("B")} midi={midiEvt} bpmResult={bpm.results["B"]} bpmAnalyze={bpm.analyze} eqHi={eqB.hi} eqMid={eqB.mid} eqLo={eqB.lo} chanVol={eqB.vol} loadFromLibrary={libLoadB} onTrackInfo={handleTrackInfo} onSync={()=>handleSyncToggle("B")} syncReady={!!(bpm.results["A"]?.bpm || pA?.bpm)} syncRole={syncLocked ? (lastSlaveDeck === "B" ? "slave" : "master") : null} syncArmed={syncArmed} isMaster={masterDeck === "B"} onMasterToggle={handleMasterToggle} onAddMusic={()=>lib.addWatchedFolder?.({}).catch(()=>{})} libraryEmpty={(lib.library?.length||0)===0} onLibraryTrackDrop={(trackId)=>{const t=lib.library.find(x=>x.id===trackId);if(t)handleLibLoad(t,"B");}} onProgUpdate={handleProgB} onWaveform={setWfB} onSeekReady={onDeckBSeekReady} onToggleReady={onDeckBToggleReady} onCueReady={onDeckBCueReady} onRateReady={onDeckBRateReady} onNudgeReady={onDeckBNudgeReady} onTransportFire={handleTransportFire} isDriver={!deckDrivers.B || deckDrivers.B?.id === sync.djId} acNowRef={acNowRef} onBufferReady={onDeckBBufferReady} barOneOffsetSec={barOneB * (bpm.results["B"]?.beatPeriodSec || 0)} onGridEdit={(fields) => libLoadB?.track?.id && lib.setGridEdit?.(libLoadB.track.id, fields)} hasOverride={!!userGridB} userGridOverride={userGridB} onPitchInteract={handlePitchInteract}/>
             </div>
           </div>
         </div>

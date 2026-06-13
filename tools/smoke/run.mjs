@@ -49,6 +49,7 @@ const TESTS = [
   { name: "e2e-mirror",       file: "e2e-mirror.smoke.mjs",       kind: "e2e",   gates: "partner-deck waveform mirror advances forward (no backward skip / freeze)" },
   { name: "e2e-mirror-coast", file: "e2e-mirror-coast.smoke.mjs", kind: "e2e",   gates: "mirror coasts accurately under SPARSE packets (backgrounded driver)" },
   { name: "e2e-mirror-latency", file: "e2e-mirror-latency.smoke.mjs", kind: "e2e", gates: "mirror under DETERMINISTIC netem (latency/jitter/loss): no backward step, tracks within floor (needs --mock)" },
+  { name: "e2e-mirror-slew",  file: "e2e-mirror-slew.smoke.mjs",   kind: "e2e",  xfail: true, gates: "[XFAIL→Move#2] rate-adjusted driver + sparse packets reproduces the dogfood BACKWARD SLEW (Jake's -0.5/-1.53s). Asserts post-fix property; fails until the coast/snap refactor (needs --mock)" },
   { name: "e2e-rekordbox",    file: "e2e-rekordbox.smoke.mjs",    kind: "e2e",   gates: "Door 3: rekordbox.xml parse (grids+cues+playlists) + imported grid consumed by deck (unified path, de-smear off, engage idempotent)" },
 ];
 
@@ -101,7 +102,13 @@ function runOne(t) {
     const child = spawn(process.execPath, [resolve(TESTS_DIR, t.file)], { stdio: "inherit", env });
     child.on("close", (code) => {
       const ms = Date.now() - t0;
-      const status = code === 0 ? "PASS" : code === 2 ? "SKIP" : "FAIL";
+      let status = code === 0 ? "PASS" : code === 2 ? "SKIP" : "FAIL";
+      // xfail: a registered KNOWN bug whose repro test asserts the POST-FIX
+      // property. It is EXPECTED to fail until the fix lands, so its failure is
+      // non-fatal (XFAIL). When the fix makes it pass, that's XPASS — a loud
+      // signal to remove the xfail flag and promote it to a hard gate.
+      if (t.xfail && status === "FAIL") status = "XFAIL";
+      else if (t.xfail && status === "PASS") status = "XPASS";
       res({ ...t, status, code, ms });
     });
     child.on("error", (e) => res({ ...t, status: "FAIL", code: -1, ms: Date.now() - t0, err: e.message }));
@@ -147,14 +154,18 @@ await teardownE2E();
 const pass = results.filter((r) => r.status === "PASS").length;
 const fail = results.filter((r) => r.status === "FAIL");
 const skip = results.filter((r) => r.status === "SKIP");
+const xfail = results.filter((r) => r.status === "XFAIL");
+const xpass = results.filter((r) => r.status === "XPASS");
 const totMs = results.reduce((a, r) => a + r.ms, 0);
 console.log("\n╔════════════════════════ SUMMARY ════════════════════════╗");
 for (const r of results) {
-  const icon = r.status === "PASS" ? "✅" : r.status === "SKIP" ? "⊘ " : "❌";
-  console.log(`  ${icon} ${r.status.padEnd(4)} [${r.kind.padEnd(5)}] ${r.name.padEnd(17)} ${(r.ms / 1000).toFixed(1)}s`);
+  const icon = r.status === "PASS" ? "✅" : r.status === "SKIP" ? "⊘ " : r.status === "XFAIL" ? "🟡" : r.status === "XPASS" ? "🎯" : "❌";
+  console.log(`  ${icon} ${r.status.padEnd(5)} [${r.kind.padEnd(5)}] ${r.name.padEnd(19)} ${(r.ms / 1000).toFixed(1)}s`);
 }
 console.log("╚══════════════════════════════════════════════════════════╝");
-console.log(`  ${pass} passed, ${fail.length} failed, ${skip.length} skipped · ${(totMs / 1000).toFixed(1)}s total`);
+console.log(`  ${pass} passed, ${fail.length} failed, ${skip.length} skipped${xfail.length ? `, ${xfail.length} xfail` : ""}${xpass.length ? `, ${xpass.length} XPASS` : ""} · ${(totMs / 1000).toFixed(1)}s total`);
 if (skip.length) console.log(`  skipped: ${skip.map((s) => s.name).join(", ")} (deps unavailable — not failures)`);
+if (xfail.length) console.log(`  xfail: ${xfail.map((x) => x.name).join(", ")} (known bug, expected to fail — Move #2 target, NOT a regression)`);
+if (xpass.length) console.log(`  🎯 XPASS: ${xpass.map((x) => x.name).join(", ")} — a known bug now PASSES; remove its xfail flag and promote it to a hard gate`);
 if (fail.length) { console.log(`  FAILED: ${fail.map((f) => f.name).join(", ")}`); process.exit(1); }
 process.exit(0);

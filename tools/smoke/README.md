@@ -107,6 +107,22 @@ node tools/smoke/lib/mock-ws-server.mjs 8090   # run the mock standalone (manual
   opt in. `e2e-mirror-latency` is the first. Flipping the whole suite onto the
   mock (load-independent, deterministic gate) is the deliberate next step.
 
+### xfail — repro tests that drive a fix
+
+A test registered with `xfail: true` in the `TESTS` array documents a **known bug**:
+it asserts the *post-fix* property and is **expected to fail** until the fix lands.
+
+- A failing xfail test reports 🟡 **XFAIL** and **does not fail the suite** (it is a
+  known bug, not a regression).
+- When the fix makes it pass, it reports 🎯 **XPASS** — the signal to remove the
+  `xfail` flag and promote it to a normal hard gate.
+
+`e2e-mirror-slew` is the first: it deterministically reproduces the dogfood
+**backward slew** (driver pitched down + blacked-out progress packets → the mirror
+coasts at a stale fast rate, overshoots, then eases backward ~0.8s — Jake's
+−0.5/−1.53s). Move #2 (the mirror coast/snap refactor) is verified by driving this
+test from XFAIL → XPASS.
+
 ## Notes / quarantine log
 
 - `e2e-sync` idempotency bound is **30ms** (not the unit test's exact <0.5ms):

@@ -9448,3 +9448,34 @@ is the first thing to add when Move #2 starts.
   (load-independent gate) with TARGET= as the escape hatch.
 - Move #2: mirror coast/snap latency-adaptive refactor (now verifiable via netem).
 - Move #3: retire promoted flags (beatsv2/onsetgrid/delaycomp dead branches).
+
+### Move #1 follow-up — the ACTUAL backward-slew reproduced (Chad's call, June 13)
+Per Chad: before the mirror refactor, reproduce the EXACT dogfood symptom (Jake's
+backward slew -0.5/-0.6/-1.53s, "DOGFOOD SESSION 1" P3), not just general lag, so
+Move #2 can prove it killed THAT bug — not merely reduced latency. Skipped the
+full-suite migration (separate, lower-urgency session).
+- **Mechanism (code-traced, ~5490-5540):** the mirror coasts the partner playhead
+  at the driver's last-known rate (remRateRef). Pitch the driver DOWN while
+  progress packets are absent → the mirror keeps coasting at the STALE FAST rate →
+  OVERSHOOTS truth → when a packet lands, signedDrift is negative → the "absorbed
+  backward drift … via slew" branch eases the playhead BACKWARD. Overshoot ≈
+  rateDrop × gap, so it's tunable + deterministic.
+- **New test hook** `__setRateDeck(deck, rate)` (TEST_HOOKS-gated): changes the
+  live audio rate AND broadcasts it like the pitch fader (driver-gated in dh).
+  Wired via onRateReady like the existing onToggle/Seek/CueReady.
+- **Repro recipe (deterministic):** baseline latency 120ms → seek+settle → BLACK
+  OUT deck_update (lossPct 1.0, total = no random drops) → pitch driver to 0.45 →
+  hold 5s → restore. Measured: maxBackwardStep **0.73s**, 6 backward steps, 5×
+  "[MIRROR-SNAP] absorbed backward drift" — squarely in Jake's 0.5–1.53s range.
+- **xfail convention added to the runner:** `e2e-mirror-slew` is registered
+  `xfail:true` and asserts the POST-FIX property (max backward step < 120ms). It
+  FAILS today → reported 🟡 **XFAIL** (non-fatal, NOT a regression). When Move #2
+  fixes the coast/snap model it flips to 🎯 **XPASS** = "remove the flag, promote to
+  a hard gate." That flip is the proof Move #2 killed this exact bug.
+
+### Move #1 — commit 4 (June 13)
+- **Commit 4** — `__setRateDeck` rate hook (app) + `e2e-mirror-slew.smoke.mjs`
+  (xfail repro) + runner xfail/XPASS handling + README xfail note. Build clean.
+  e2e-mirror-slew: post-fix checks FAIL as designed (XFAIL), repro deterministic.
+NEXT: Move #2 — mirror coast/snap latency-adaptive refactor, verified by driving
+e2e-mirror-slew from XFAIL → XPASS (and keeping e2e-mirror-latency green).
