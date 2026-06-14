@@ -122,6 +122,20 @@ const WF_PULSE = (() => {
   return isFinite(n) ? Math.max(0, Math.min(1, n)) : 1;
 })();
 
+// ── Zoomed-waveform amber/teal SHAPE knobs (live URL params; sweep by eye).
+// The amber is given its OWN render-time envelope follower over the kick energy
+// (so its shape is independent of the teal body): fast attack → steep leading
+// edge, moderate release → decays back toward baseline BETWEEN kicks (transient,
+// not a sustained bell). Gamma crushes the tail to a point; gains scale amber vs
+// the (genuinely sustained) teal bass body. Defaults lean TRANSIENT + blue-body-
+// dominant. Attack/release are independent (asymmetric follower).
+const _urlNum = (k, d) => { const v = URL_FLAGS.get(k); const n = (v == null) ? NaN : parseFloat(v); return isFinite(n) ? n : d; };
+const WF_AMBER_ATTACK  = _urlNum("wfAmberAttack", 4);    // ms — smaller = steeper leading edge
+const WF_AMBER_RELEASE = _urlNum("wfAmberRelease", 110); // ms — smaller = transient/decays between kicks; larger = sustained bell
+const WF_AMBER_GAMMA   = _urlNum("wfAmberGamma", 1.40);  // >1 crushes the tail = pointier triangle; <1 = fuller
+const WF_AMBER_GAIN    = _urlNum("wfAmberGain", 0.92);   // amber height multiplier
+const WF_TEAL_GAIN     = _urlNum("wfTealGain", 1.00);    // blue/teal body height multiplier (raise → more dominant)
+
 // ── Server Configuration ─────────────────────────────────────
 // After deploying to Railway, replace this URL with your Railway server URL.
 // It should look like: wss://collabmix-server-production.up.railway.app
@@ -4551,8 +4565,6 @@ function AnimatedZoomedWF({ bands, dur, progRef, onSeek, h=96, windowSec=8, beat
   const WF_GAMMA_MID = 1.35;   // amber ONSET transient (already spiky — light gamma)
   const WF_GAMMA_HIGH = 2.10;  // cream attack click (sharpest)
   const WF_HIGH_SCALE = 0.34;  // cap cream height — SUBTLE bright tips only, not a body
-  const WF_AMBER_INSET = 0.80; // gold SPINE fills 80% of the kick shape (dominant)
-  const WF_FRAME_ALPHA = 0.62; // blue is a pulled-back framing rim around the gold
 
   const ref=useRef(null);       // upper canvas — crisp draws + drag target
   const lowerRef=useRef(null);  // lower canvas — silhouette fill, CSS-blurred
@@ -4836,23 +4848,32 @@ function AnimatedZoomedWF({ bands, dur, progRef, onSeek, h=96, windowSec=8, beat
         }
         const {mb:maxB,mm:maxM,mh:maxH2}=envMaxRef.current;
 
-        // ── GOLD SPINE + BLUE FRAME (Rekordbox proportions). The kick ENERGY
-        // envelope (smooth attack→decay leaf from the per-band follower) is the
-        // shape. Measurement showed the low-mid ONSET fires on ~half non-kick
-        // transients (bass notes/stabs) AND ~9ms early — unreliable — so the gold
-        // is the ENERGY (reliable; its attack lands on the kick), not the onset.
-        //   BLUE  = the energy leaf at FULL height, pulled-back alpha → a thin
-        //           framing rim around the gold.
-        //   AMBER = the same leaf INSET (80%), full alpha → the DOMINANT gold
-        //           spine (the visual star).
-        //   CREAM = high click, capped → subtle bright tips.
+        // ── BLUE BODY (dominant) + GOLD TRANSIENT SPINE. Teal = the kick ENERGY
+        // envelope (genuinely sustained → the dominant mass). Amber gets its OWN
+        // render-time envelope follower over that energy so its SHAPE is
+        // independent of the body: fast attack (steep leading edge) + moderate
+        // release (decays toward baseline BETWEEN kicks = transient, not a
+        // sustained bell), then gamma to a point. Zoomed IN → bold gold triangle;
+        // zoomed OUT → gold collapses to thin spikes while the blue body
+        // dominates. All five knobs are LIVE URL params (WF_AMBER_*/WF_TEAL_GAIN).
+        // The follower runs on the already-smoothed colB (no per-cycle texture),
+        // so a fast release shapes the transient without re-introducing the
+        // bass-cycle blockiness 37bf7e6 fixed.
+        const secPerCol=Math.max(1e-6,viewBufSec/physW);
+        const aAtk=Math.exp(-secPerCol/Math.max(1e-4,WF_AMBER_ATTACK/1000));
+        const aRel=Math.exp(-secPerCol/Math.max(1e-4,WF_AMBER_RELEASE/1000));
+        let aEnv=0;
         for(let dx=0;dx<physW;dx++){
-          const nb=colB[dx]/maxB, nh=colH[dx]/maxH2;
-          const E = nb>0.004 ? Math.pow(nb,WF_GAMMA_LOW)*maxH : 0;   // kick energy leaf
-          hLow[dx]  = E;                       // BLUE frame extent (full)
-          hMid[dx]  = E*WF_AMBER_INSET;        // GOLD spine extent (inset, dominant)
-          hHigh[dx] = nh>0.004 ? Math.pow(nh,WF_GAMMA_HIGH)*maxH*WF_HIGH_SCALE : 0;
-          hEnv[dx]  = E;
+          const inp=colB[dx];                                  // kick energy (smoothed)
+          aEnv = inp>aEnv ? aAtk*aEnv+(1-aAtk)*inp : aRel*aEnv+(1-aRel)*inp;
+          colM[dx]=aEnv;                                       // amber transient envelope (supersedes the onset)
+        }
+        for(let dx=0;dx<physW;dx++){
+          const nb=colB[dx]/maxB, na=colM[dx]/maxB, nh=colH[dx]/maxH2;
+          hLow[dx]  = nb>0.004 ? Math.pow(nb,WF_GAMMA_LOW)*maxH*WF_TEAL_GAIN   : 0; // BLUE body (dominant mass)
+          hMid[dx]  = na>0.004 ? Math.pow(na,WF_AMBER_GAMMA)*maxH*WF_AMBER_GAIN: 0; // GOLD transient spine
+          hHigh[dx] = nh>0.004 ? Math.pow(nh,WF_GAMMA_HIGH)*maxH*WF_HIGH_SCALE : 0; // cream tips
+          let e=hLow[dx]; if(hMid[dx]>e)e=hMid[dx]; hEnv[dx]=e;
         }
 
         // Faint center hairline so silent sections read as a defined line.
@@ -4865,14 +4886,13 @@ function AnimatedZoomedWF({ bands, dur, progRef, onSeek, h=96, windowSec=8, beat
         const haloPath=buildSilhouettePath(hEnv,center,physW,maxH);
         renderSilhouetteGlow(lctx,haloPath,lr,lg,lb,SILHOUETTE_FILL_ALPHA);
 
-        // Crisp detail (UPPER canvas), back→front: BLUE frame (full silhouette,
-        // pulled-back alpha) → GOLD spine (inset, dominant, full alpha, on top) →
-        // CREAM tips. Gold fills the kick; blue reads as a thin frame around it.
-        ctx.globalAlpha=WF_FRAME_ALPHA; ctx.fillStyle=`rgb(${lr},${lg},${lb})`;   // BLUE frame
+        // Crisp detail (UPPER canvas), back→front: BLUE body (dominant) → GOLD
+        // transient spine (on top, spikes through at kicks) → CREAM tips.
+        ctx.fillStyle=`rgb(${lr},${lg},${lb})`;        // BLUE body (dominant mass)
         for(let dx=0;dx<physW;dx++){ const hh=hLow[dx];  if(hh>0) ctx.fillRect(dx,center-hh,1,hh*2+1); }
-        ctx.globalAlpha=1; ctx.fillStyle=`rgb(${mr},${mg},${mb2})`;               // GOLD spine (dominant)
+        ctx.fillStyle=`rgb(${mr},${mg},${mb2})`;       // GOLD transient spine
         for(let dx=0;dx<physW;dx++){ const hh=hMid[dx];  if(hh>0) ctx.fillRect(dx,center-hh,1,hh*2+1); }
-        ctx.fillStyle=`rgb(${hr},${hg},${hb})`;                                   // CREAM tips
+        ctx.fillStyle=`rgb(${hr},${hg},${hb})`;        // CREAM tips
         for(let dx=0;dx<physW;dx++){ const hh=hHigh[dx]; if(hh>0) ctx.fillRect(dx,center-hh,1,hh*2+1); }
       }
 
