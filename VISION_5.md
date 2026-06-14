@@ -9718,3 +9718,91 @@ build hash differs from local — content, not hash, is the reliable signal.
   download (belt-and-suspenders). Wiring console→Sentry Logs is a small future add.
 - Note: a deploy-skip scare during this session turned out to be a hash-naming ghost — Vercel
   builds fresh but content-hashes differently than the local build; always verify by CONTENT.
+
+### Zoomed waveform — A+B band-colour rebuild WIP + alignment measurements (June 13, 2026)
+
+Session-handoff log so a fresh planning chat CONTINUES this instead of restarting.
+**Lane rule (do not conflate):** waveform RENDERING (draws the audio — must be 100%
+accurate to the audio) is SEPARATE from grid PLACEMENT (the analyzer's job). All of
+tonight's waveform work is RENDERING ONLY.
+
+#### WIP location
+- Branch **`waveform-band-color`** (off master), commit `fab8637` —
+  "WIP: A+B 3-band waveform color scaffolding (NOT FINAL — 4 known issues)".
+  `git checkout waveform-band-color` to continue. **master is clean.**
+- Grid tune **C** is banked separately on branch `grid-attachment-tune` (commit `e5f5074`).
+
+#### What was TRIED / LEARNED (don't repeat dead-ends)
+- **Prior (May 2026, `tools/rekordbox-eval/PHASE_2_STATUS.md`):** per-column spectral
+  colour where each column got ONE blended colour from its dominant band (centroid
+  lerp). TABLED — too subtle + design pivoted to monochrome. This is NOT the same as
+  the current 3-stacked-LAYERS approach, which is better and does address flatness.
+  The band extraction pipeline (IIR 300/3500 Hz, WF_W=24000) is proven-good and reused.
+- **Tonight — C (grid line opacity tune):** bar through-line 0.22→0.55, beat 0.28, sub-beat
+  8th-note ticks; 3-tier hierarchy. Built + banked, but Chad's verdict: TOO SUBTLE on real
+  tracks to matter. Minor win, done — not worth more fiddling. Knob: `BAR_LINE`/`BEAT_LINE`.
+- **Tonight — A+B (3 stacked bands + peak→RMS):** renders 3 colours now (teal/amber/cream)
+  — the core works — BUT Chad reviewed live (HMR) and found 4 issues:
+  1. **Layer order INVERTED** — currently teal=thin centre core, amber/cream outside.
+     Target (Rekordbox-structure, MY colours): blue **lows = big OUTER body** (drawn
+     first/back), **amber mids = centre**, **cream highs = bright peaks/accents on top**.
+     Fix = switch from cumulative-proportional split to INDEPENDENT overlaid per-band
+     heights, painted back-to-front teal→amber→cream.
+  2. **Still too BLOCKY / low-res (the #1 remaining gap).** Reads as chunky rectangles
+     with ~5–10px stair-steps. Cause = WF_W=24000 buckets → at the 4s ZOOM only a few
+     hundred buckets span the view, upsampled to ~2880px. Target = dense thin spiky
+     per-column vertical lines (kill `buildSilhouettePath` smoothing for the body) AND
+     higher source resolution. Resolution plan: bump WF_W for LOCAL render only (e.g.
+     ~96–128k) and DECIMATE to 24000 for the broadcast/partner (the 24k cap exists
+     because 48k caused WebSocket backpressure ~800KB — keep broadcast small).
+  3. **peak→RMS not yet applied** — analysis in `Deck.load` still uses peak-hold MAX
+     per bucket. Switch to RMS (sum-of-squares / count, sqrt) for smoother energy.
+  4. **Zoomed WF ≠ deck overview shape** — the big zoomed `AnimatedZoomedWF` and the
+     small per-deck `WF` overview disagree for the same audio. Not yet investigated;
+     likely different env model (overview uses env=max(b,m,h)) / no de-smear. Check.
+
+#### KEY ARCHITECTURAL FACTS (proven — don't re-investigate)
+- **Grid + waveform use IDENTICAL clock / origin / scale.** Waveform column→time:
+  `srcX=prog2·len−viewPx/2`, scale `physW/viewBufSec`, centre=`prog2·dur` at screen
+  centre. Grid: `x=physW/2+(beatTime−prog2·dur)·(physW/viewBufSec)`. Same transform →
+  they CANNOT drift apart in rendering. Manual nudge knobs `gridOffsetMs` /
+  `barOneOffsetSec` both default 0; `?gridalign` shifts BOTH (no relative offset).
+- **De-smear (?onsetgrid, default ON)** is gated OFF for `gridSource==="rekordbox"`
+  tracks. Library import: Rekordbox-XML tracks WITH TEMPO nodes →
+  `gridSource:"rekordbox"` (de-smear OFF); local/iTunes/folder tracks → de-smear ON
+  (`src/library-app.jsx:434`, `collabmix-production.jsx:6173`).
+
+#### MEASUREMENTS (hard numbers — the point of tonight's diagnosis)
+**1. Rendering smear** — `tools/smoke` desmear-render (drawn kick edge vs true sample onset):
+- Synthetic kick fixture: **before −7.6 ms → after −0.3 ms** (de-smear 96% effective).
+- 4 real progressive-house tracks (Kyotto, Tantum, Michael A, Way Out West; n=96 kicks):
+  **before −23.2 ms → after −22.2 ms (de-smear only 4% effective — INEFFECTIVE on real
+  music).** So the drawn kick edge sits ~23 ms BEFORE the true onset (peak-hold smear at
+  24000 buckets), and the current de-smear does NOT fix it on real tracks. **This is the
+  dominant cause of "grid sits inside the blob," and it's present REGARDLESS of track
+  source** (de-smear barely works either way). RMS + ~4× finer local resolution should
+  shrink this directly (finer buckets → proportionally less smear).
+**2. Analyzer placement** — `tools/bpm-test-harness` vs Rekordbox ground truth (11 tracks
+  with truth, tol ±0.5 BPM / ±20 ms downbeat): **PASS 3/11, FAIL 8/11.**
+- **BPM/tempo essentially perfect** (Δbpm=0.00 on 10/11, one 0.20) — grid SPACING is right.
+- Failures are **DOWNBEAT / bar-1 phrase errors, mostly "off by WHOLE beats"** (491, 513,
+  1029, 1459, 1471, 1472, 1479 ms = 1–3 beats). Only ONE sub-beat miss (Yotam Avni, 38 ms).
+- **Interpretation:** whole-beat downbeat errors do NOT make grid lines sit inside kicks —
+  the beat grid still lands on beats (BPM correct); only WHICH line is the bright "bar 1"
+  marker is wrong (a phrasing/emphasis issue). So the "grid inside blob" symptom Chad sees
+  is the RENDERING smear lane (#1 above), NOT the analyzer lane. The analyzer's bar-1
+  phrasing accuracy is a separate, real problem (the ~72–80% lane) but a different symptom.
+
+#### Answer to "are my Rekordbox-library tracks rekordbox-imported?"
+Depends on HOW they entered the library: via Rekordbox-XML-with-TEMPO → de-smear OFF;
+as plain local/iTunes files → de-smear ON. BUT since de-smear is only ~4% effective on
+real music, the ~23 ms smear is present either way — toggling de-smear is NOT the fix;
+finer render resolution + RMS is.
+
+#### PENDING / NEXT
+- Fix A+B #1 (layer order flip → independent overlaid heights) and #2 (per-column lines +
+  higher local resolution) first; then #3 (overview match) and re-measure smear after RMS.
+- **DESIGN_PHILOSOPHY warm-palette override** (teal/amber/cream overriding "no warm
+  waveforms") is approved-in-principle but NOT yet written into the doc — hold until the
+  A+B render is final so the recorded rule matches what ships.
+- Note: a dev server may still be running on :5173 from this session (restart fresh).
