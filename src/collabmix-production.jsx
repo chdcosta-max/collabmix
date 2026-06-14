@@ -3425,6 +3425,52 @@ function useSync({ url, onMsg }) {
   return { status, partner, ping, connErr, djId, send, connect, disconnect, forceDrop };
 }
 
+// ── Opus hi-fi (BUG #2 audio quality) ─────────────────────────────────────────
+// Default WebRTC Opus is voice-grade (~mono, ~32 kbps). For a DJ app we want
+// music-grade STEREO at a high bitrate. We munge the LOCAL SDP (offer AND answer)
+// to set the Opus fmtp, and raise the audio sender's encoding maxBitrate so the
+// encoder actually pushes stereo at that rate (not just advertises willingness):
+//   stereo=1                  → I want to RECEIVE stereo
+//   sprop-stereo=1            → I will SEND stereo
+//   maxaveragebitrate=256000  → cap the REMOTE encoder to music-grade (it reads our fmtp)
+//   maxplaybackrate=48000     → full-band (no narrowband downshift)
+//   useinbandfec=1            → packet-loss resilience
+const OPUS_HIFI = { stereo: "1", "sprop-stereo": "1", maxaveragebitrate: "256000", maxplaybackrate: "48000", useinbandfec: "1" };
+const OPUS_MAX_BITRATE = 256000;
+function mungeOpusHiFi(sdp) {
+  if (!sdp) return sdp;
+  const lines = sdp.split(/\r\n/);
+  let pt = null; // Opus payload type, from its rtpmap (opus/48000/2)
+  for (const l of lines) { const m = l.match(/^a=rtpmap:(\d+)\s+opus\/48000/i); if (m) { pt = m[1]; break; } }
+  if (!pt) { console.warn("[OPUS-SDP] no opus rtpmap found — SDP unchanged"); return sdp; }
+  const fmtpRe = new RegExp("^a=fmtp:" + pt + "\\s+(.*)$");
+  let merged = false;
+  const out = lines.map((l) => {
+    const m = l.match(fmtpRe);
+    if (!m) return l;
+    merged = true;
+    const params = {};
+    for (const kv of m[1].split(";")) { const s = kv.trim(); if (!s) continue; const i = s.indexOf("="); if (i < 0) params[s] = ""; else params[s.slice(0, i)] = s.slice(i + 1); }
+    Object.assign(params, OPUS_HIFI); // override/add our hi-fi params, keep the rest
+    return `a=fmtp:${pt} ` + Object.entries(params).map(([k, v]) => (v === "" ? k : `${k}=${v}`)).join(";");
+  });
+  if (!merged) { // no fmtp line existed → insert one right after the opus rtpmap
+    const idx = out.findIndex((l) => new RegExp("^a=rtpmap:" + pt + "\\s+opus").test(l));
+    if (idx >= 0) out.splice(idx + 1, 0, `a=fmtp:${pt} ` + Object.entries(OPUS_HIFI).map(([k, v]) => `${k}=${v}`).join(";"));
+  }
+  return out.join("\r\n");
+}
+async function applySenderHiFi(p) {
+  try {
+    const sender = (p.getSenders?.() || []).find((s) => s.track && s.track.kind === "audio");
+    if (!sender) return;
+    const params = sender.getParameters();
+    if (!params.encodings || !params.encodings.length) params.encodings = [{}];
+    params.encodings[0].maxBitrate = OPUS_MAX_BITRATE; // let the encoder push music-grade, not the ~32k default
+    await sender.setParameters(params);
+  } catch (e) { console.warn("[OPUS-SDP] sender setParameters failed:", e?.message || e); }
+}
+
 // ── WebRTC ───────────────────────────────────────────────────
 function useRTC({ engineRef, send, onIceRecover }) {
   const [state, setState] = useState("idle");
@@ -3607,6 +3653,37 @@ function useRTC({ engineRef, send, onIceRecover }) {
     return ()=>{ stop=true; clearInterval(iv); };
   },[state]);
 
+  // [OPUS-SDP] one-shot PROOF that hi-fi stereo actually NEGOTIATED — reads the
+  // codec's sdpFmtpLine + channels straight from getStats (the negotiated result,
+  // not just the string we munged) plus the live bitrate over a 1s window. Fires
+  // once per connection when audio is flowing.
+  const opusLoggedRef = useRef(false);
+  useEffect(()=>{
+    if(state!=="connected"){ opusLoggedRef.current=false; return; }
+    let stop=false, timer=null;
+    const snap=async(p)=>{ const st=await p.getStats(); const c={}; let i=null,o=null;
+      st.forEach(r=>{ if(r.type==="codec")c[r.id]=r; if(r.type==="inbound-rtp"&&r.kind==="audio")i=r; if(r.type==="outbound-rtp"&&r.kind==="audio")o=r; });
+      return { c, i, o, ts:Date.now() }; };
+    const run=async()=>{
+      const p=pc.current; if(!p||stop||opusLoggedRef.current) return;
+      try{
+        const a=await snap(p);
+        if(!a.i || !(a.i.bytesReceived>0)){ if(!stop) timer=setTimeout(run,800); return; }
+        await new Promise(r=>setTimeout(r,1000)); if(stop) return;
+        const b=await snap(p);
+        const ic=b.c[b.i?.codecId], oc=b.c[b.o?.codecId];
+        const dt=(b.ts-a.ts)/1000;
+        const inK = dt>0 ? ((b.i.bytesReceived-a.i.bytesReceived)*8/1000/dt) : 0;
+        const outK = (a.o&&b.o&&dt>0) ? ((b.o.bytesSent-a.o.bytesSent)*8/1000/dt) : null;
+        console.log('[OPUS-SDP] RECV fmtp="'+(ic?.sdpFmtpLine??"?")+'" channels='+(ic?.channels??"?")+' bitrateKbps='+inK.toFixed(0));
+        console.log('[OPUS-SDP] SEND fmtp="'+(oc?.sdpFmtpLine??"?")+'" channels='+(oc?.channels??"?")+' bitrateKbps='+(outK!=null?outK.toFixed(0):"?"));
+        opusLoggedRef.current=true;
+      }catch{ /* getStats can throw mid-teardown */ }
+    };
+    timer=setTimeout(run,1500);
+    return ()=>{ stop=true; if(timer)clearTimeout(timer); };
+  },[state]);
+
   const capture = useCallback(() => {
     const eng=engineRef.current; if(!eng)throw new Error("No engine");
     const d=eng.ctx.createMediaStreamDestination(); eng.master.connect(d); dest.current=d; return d.stream;
@@ -3711,7 +3788,9 @@ function useRTC({ engineRef, send, onIceRecover }) {
       const s=capture(); const p=mkPC();
       s.getTracks().forEach(t=>p.addTrack(t,s));
       const o=await p.createOffer({offerToReceiveAudio:true});
+      o.sdp=mungeOpusHiFi(o.sdp);              // hi-fi stereo Opus (offer side)
       await p.setLocalDescription(o);
+      await applySenderHiFi(p);                // raise the send bitrate to match
       sRef.current({type:"rtc_offer",sdp:p.localDescription});
       console.log('[RTC] offer created and sent');
       setState("offering");
@@ -3727,7 +3806,9 @@ function useRTC({ engineRef, send, onIceRecover }) {
       await p.setRemoteDescription(new RTCSessionDescription(sdp));
       for(const c of pend.current){try{await p.addIceCandidate(new RTCIceCandidate(c));}catch{}} pend.current=[];
       const a=await p.createAnswer();
+      a.sdp=mungeOpusHiFi(a.sdp);              // hi-fi stereo Opus (answer side)
       await p.setLocalDescription(a);
+      await applySenderHiFi(p);                // raise the send bitrate to match
       sRef.current({type:"rtc_answer",sdp:p.localDescription});
       setState("connecting");
     } catch(e){ console.error('[RTC] handleOffer error:',e); captureHandledError(e, { operation: "rtc_handleOffer" }); setState("failed"); }
