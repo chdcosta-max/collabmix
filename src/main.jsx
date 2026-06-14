@@ -11,11 +11,14 @@ Sentry.init({
       blockAllMedia: false,
     }),
   ],
-  // Session Replay DISABLED (June 13) — its quota was exhausted (the 429s in Jake's
-  // logs). Errors/logs/performance are the priority; Replay is a bonus. Re-enable by
-  // bumping these once the Replay quota resets or the plan is upgraded.
+  // Session Replay tuned for the FREE quota (June 13): session sampling OFF (was 0.1
+  // = 10% of ALL sessions — that continuous background recording is what exhausted
+  // the Replay quota / the 429s in Jake's logs), but KEEP on-error replay so a replay
+  // is captured WHEN something breaks (rare → fits the free tier). NOTE: until the
+  // already-exhausted Replay quota resets, even on-error replays will 429 — but the
+  // ERROR itself still lands (errors are a separate quota with headroom).
   replaysSessionSampleRate: 0,
-  replaysOnErrorSampleRate: 0,
+  replaysOnErrorSampleRate: 1.0,
   // Performance: 20% (was 1.0, which was also burning the transactions quota).
   // Error capture is unaffected by this — errors are always sent.
   tracesSampleRate: 0.2,
