@@ -9806,3 +9806,69 @@ finer render resolution + RMS is.
   waveforms") is approved-in-principle but NOT yet written into the doc — hold until the
   A+B render is final so the recorded rule matches what ships.
 - Note: a dev server may still be running on :5173 from this session (restart fresh).
+
+### Analyzer / grid-on-kick ASSESSMENT — the decisive conclusions (June 13, 2026)
+
+Investigated whether the "grid sits inside the kick" problem is the analyzer or
+the rendering. Ran new measurements (tools/smoke/measure-smear.mjs,
+measure-anchor.mjs, measure-pqtz.mjs — all reuse tools/smoke/lib + the real
+bpm-test-harness tracks). **These conclusions are measurement-backed — a fresh
+session should NOT reverse them or re-open dead-ends.**
+
+**1. The analyzer is at 80.9% (±20ms vs Rekordbox), NOT 72%.** 72% was a mid-point
+in the Sub-cause A–G progression; G shipped → 80.9% (tools/sota-eval, rekordbox-eval).
+
+**2. madmom + Beat This! were ALREADY tested and REJECTED** (tools/sota-eval/):
+- Both show the SAME −20…−36ms drift as ours on the hard tracks.
+- Both BREAK currently-passing tracks (madmom broke 10/15; Beat This! lost 7–9).
+- madmom = CC-BY-NC-SA (non-commercial → license blocker); Beat This! weights
+  license ambiguous. Both Python, 4–37 s/track (ours 0.07 s/track).
+- Analysis runs ENTIRELY IN-BROWSER (Web Worker, src/bpm-worker-source.js blob).
+  No server. Python SOTA ⇒ build server-side preprocessing infra = big lift for
+  ZERO gain on this goal. **Do not re-evaluate SOTA libraries — already done.**
+
+**3. Sample-exact kick alignment is field-unsolved.** Beat trackers are benchmarked
+at ±30ms because onset placement is genuinely hard. "Every kick within 3ms" is not
+achievable from audio. Realistic ceiling ≈ 50–60% within 5ms, ~80% within 20ms.
+
+**4. The +15ms is per-track offset + per-beat SCATTER, NOT a global offset**
+(measure-anchor.mjs, 12 tracks, 9512 strong kicks): grid−trueKick median −0.2ms
+overall; per-track medians mostly ~0 with outliers (Redeemer +30, Alive +9);
+the 4 melodic tracks (Kyotto/Tantum/Michael A/Way Out West) sit at +15ms. A GLOBAL
+shift does NOT help (within-5ms stays 52% before AND after) and would BREAK the
+dead-on tracks. ⇒ a one-line offset correction is RULED OUT. This matches the
+history's "per-track perceptual offset 7–54ms, no global shift solves it."
+
+**5. ★ THE DECISIVE FINDING — Rekordbox's OWN grid is +14.4ms INSIDE the audio kick**
+(measure-pqtz.mjs: reconstruct Rekordbox's grid from its ground-truth downbeat+BPM —
+exactly what the app's PQTZ/rkGridFromRecord path builds — vs the 40-200Hz kick
+onset; 8256 beats / 11 tracks): **median +14.4ms, only 6% within ±5ms, 32% within
+±10ms** (per-track 4–42ms). So:
+- **Rekordbox does NOT put its grid on the raw kick front.** It sits ~14ms inside
+  the kick — a PERCEPTUAL downbeat. "Grid exactly on the kick" is a FALSE TARGET.
+- **Our analyzer (~+15ms) is MATCHING Rekordbox**, not failing. The analyzer is
+  NOT the problem for the kick-alignment look.
+- The visible "grid ~40ms deep inside the drawn blob" = ~14ms perceptual placement
+  (correct, matches Rekordbox) + ~12–23ms of RENDER SMEAR drawing the kick front
+  early (peak-hold at 24k buckets). **The fixable part is the render smear.**
+
+**⇒ VERDICT: This is the RENDERING lane, not the analyzer.** Do NOT spend a session
+"fixing the analyzer to land on the kick" — it already lands where Rekordbox lands.
+The lever is reducing the waveform's early-draw smear so the kick FRONT is drawn at
+the true onset; then the grid (≈Rekordbox, ~14ms inside) sits just inside a sharp
+front and reads like Rekordbox. CAVEAT measured earlier: resolution+RMS shrinks the
+smear from −23ms toward ~−8…−12ms but PLATEAUS (does not reach 0) — so expect "much
+closer to Rekordbox," not "sample-perfect." Pair with the A+B render rebuild.
+
+**6. PQTZ path is wired** (src/library-app.jsx buildBeatTimesFromTempo →
+gridSource:"rekordbox"; src/collabmix-production.jsx USE_RB_GRID + effectiveBpmResults
++ skipOnsetAnchor gate). Whether the user's imported tracks carry it depends on the
+import populating TEMPO/grid data — but since the analyzer already ≈ Rekordbox
+(+14–15ms), the PQTZ-vs-analyzer distinction barely moves the kick-alignment LOOK;
+the render smear dominates. NOT YET DONE: confirm in-app which grid the user's
+specific library tracks use, and measure on the live PQTZ path (vs reconstructed).
+
+**Net for next session:** stop chasing the analyzer. Finish the A+B waveform render
+(layer flip: blue lows = outer body; per-column thin lines; RMS; high local
+resolution) — that both fixes the blocky look AND pulls the drawn kick front back
+toward the onset, which is the real, bounded win on "grid looks on the kick."
