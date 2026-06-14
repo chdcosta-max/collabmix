@@ -4531,6 +4531,24 @@ function AnimatedZoomedWF({ bands, dur, progRef, onSeek, h=96, windowSec=8, beat
   const SILHOUETTE_FILL_ALPHA = 1.0;           // alpha of the silhouette fill (pre-blur)
   const UPPER_CANVAS_SILHOUETTE_ALPHA = 1.0;   // alpha of the crisp body on the upper canvas
 
+  // ── A+B frequency-band waveform palette (Jun 13 2026). The waveform is now
+  // three stacked, opaquely-painted bands instead of one deck-coloured
+  // silhouette: lows = deep teal-blue (core), mids = warm amber (middle),
+  // highs = soft cream (tips). This intentionally OVERRIDES the "no warm
+  // waveforms" rule (logged in DESIGN_PHILOSOPHY). NOTE: deck identity colour
+  // (#2E86DE / #A855F7) no longer appears in the waveform body — both decks
+  // share this frequency palette, Rekordbox-style; deck colour still lives on
+  // the grid-tick halo + deck card. Edit these to retune colour / contrast.
+  const WF_LOW_RGB  = [26,168,196];   // deep teal-blue — lows
+  const WF_MID_RGB  = [240,165,50];   // warm amber — mids
+  const WF_HIGH_RGB = [245,238,210];  // soft cream — highs
+  // Per-band weights for the COLOUR split (not loudness). Bass dominates most
+  // music energetically, so mids/highs are boosted to stay obviously visible —
+  // the aggressive contrast the rebuild calls for. Raise to push warmth/sparkle.
+  const WF_W_LOW = 1.0, WF_W_MID = 1.18, WF_W_HIGH = 1.5;
+  const WF_BAND_GAMMA = 1.3;                    // height curve (lower = fuller/punchier)
+  const WF_BAND_LIFT_TH = 0.7, WF_BAND_LIFT_AMT = 0.32; // extra height lift on drops
+
   const ref=useRef(null);       // upper canvas — crisp draws + drag target
   const lowerRef=useRef(null);  // lower canvas — silhouette fill, CSS-blurred
   const raf=useRef(null);
@@ -4708,27 +4726,25 @@ function AnimatedZoomedWF({ bands, dur, progRef, onSeek, h=96, windowSec=8, beat
         const srcX=prog2*len-viewPx/2;
         const spp=viewPx/physW;
 
-        if(!colBufRef.current||colBufRef.current.len<physW){
+        if(!colBufRef.current||colBufRef.current.len<physW||!colBufRef.current.hTop){
           colBufRef.current={
             bv:new Float32Array(physW+64),
             mv:new Float32Array(physW+64),
             hv:new Float32Array(physW+64),
-            heights:new Float32Array(physW+64),
-            envs:new Float32Array(physW+64),
+            hLow:new Float32Array(physW+64),   // cumulative teal height (= bass seg)
+            hMid:new Float32Array(physW+64),   // cumulative teal+amber height
+            hTop:new Float32Array(physW+64),   // total height (cream outline)
             len:physW+64,
           };
         }
-        const {bv:colB,mv:colM,hv:colH,heights,envs}=colBufRef.current;
+        const {bv:colB,mv:colM,hv:colH,hLow,hMid,hTop}=colBufRef.current;
 
-        // ── Pass 1: MAX amplitude per column. For sub-sample zoom (spp<1),
-        // nearest-neighbor replication keeps the source peaks visible. ──
-        // NOTE: the MAX + floor re-evaluates as the view scrolls sub-pixel each
-        // frame, so a transient's drawn height/width subtly swells/shrinks as it
-        // slides ("breathing in some spots"). Side-by-side review found this is
-        // ENDEMIC to scrolling-waveform renderers (Rekordbox shimmers comparably
-        // up close) — acceptance is PARITY, not perfection, so this is left as-is.
-        // A linear-interp rigid resampler was prototyped + measured and did NOT
-        // reduce the jitter; parked in TICKET-WF-SHIMMER, not built.
+        // ── Pass 1: per-column band values. Source buckets hold per-band RMS
+        // (computed in Deck.load — smooth, not peak-hold, so the body reads as
+        // texture not blocks). For sub-sample zoom (spp<1) nearest-neighbour
+        // replication keeps detail; for spp>1 a MAX over the covered buckets
+        // keeps transients visible. (Sub-pixel breathing is endemic to
+        // scrolling renderers — accepted for parity, see TICKET-WF-SHIMMER.)
         for(let dx=0;dx<physW;dx++){
           const f0=srcX+dx*spp;
           const f1=f0+spp;
@@ -4746,63 +4762,12 @@ function AnimatedZoomedWF({ bands, dur, progRef, onSeek, h=96, windowSec=8, beat
           colB[dx]=b; colM[dx]=m; colH[dx]=hh;
         }
 
-        // Compute heights + cache env per column. Env is BASS-WEIGHTED
-        // (0.7 bass + 0.2 mid + 0.1 high), then renormalized to per-track
-        // max so the loudest column maps to 1.0 (otherwise weighted sum
-        // tops out around 0.85-0.95 and drops never touch full height).
-        // envs[] is also consumed by the brightness overlay and centerline
-        // weight band, so drops also visibly brighten + thicken on the
-        // same signal.
-        //
-        // Gamma 1.4 tuned for the renormalized bass-weighted distribution:
-        // breakdowns ~5% maxH (thin line), verses ~34% maxH (medium),
-        // drops 80-100% maxH (tower with headroom). Small WF keeps
-        // env=max(b,m,h) for full detail at h=40.
-
-        // Recompute per-track bass-weighted max if bands changed (cached
-        // by bands identity; one linear pass over ~24k source columns).
-        if(envMaxRef.current.bands!==bands){
-          const srcLen=bArr.length;
-          let mx=0;
-          for(let i=0;i<srcLen;i++){
-            const v=0.7*bArr[i]+0.2*mArr[i]+0.1*hArr[i];
-            if(v>mx) mx=v;
-          }
-          envMaxRef.current={bands,maxVal:mx>0.0001?mx:1};
-        }
-        const envDivisor=envMaxRef.current.maxVal;
-
-        // Heights: gamma 1.4 base curve + strong additive lift (0.35*maxH at
-        // env=1.0) for env > 0.7. Drops at p99 saturate freely at maxH;
-        // verses and breakdowns sit at the unmodified gamma curve. No
-        // additive floor — breakdowns stay thin (~4% maxH) but remain
-        // visible via the centerline weight band that scales with env in
-        // Pass 2c. Hard silence (env ≤ 0.01) gates to zero. envs[] holds
-        // the pre-lift bass-weighted env so the brightness overlay and
-        // centerline weight band consume the same signal they did before.
-        const GAMMA=1.4;
-        const LIFT_TH=0.7, LIFT_AMT=0.35;
-        for(let dx=0;dx<physW;dx++){
-          const bv=colB[dx], mv=colM[dx], hv=colH[dx];
-          const env=(0.7*bv+0.2*mv+0.1*hv)/envDivisor;
-          envs[dx]=env;
-          if(env<=0.01){heights[dx]=0;continue;}
-          let h=Math.pow(env,GAMMA)*maxH;
-          if(env>LIFT_TH) h+=maxH*LIFT_AMT*(env-LIFT_TH)/(1-LIFT_TH);
-          heights[dx]=h<maxH?h:maxH;
-        }
-
-        // ── Phase 2 hybrid: sharp kick leading edges from re-anchored onsets ──
-        // The 24000-bucket peak-hold bleeds each kick's energy ~1 bucket
-        // BACKWARD, so the drawn blob starts ~14ms before the true onset — a
-        // correct (onset-anchored) grid line then reads as sitting "inside" the
-        // blob. Using the onset beatTimes, snap each kick's leading edge to its
-        // onset: in the short smear window just before each onset, clamp the
-        // drawn env/height DOWN to the pre-smear baseline so the rise lands ON
-        // the onset column (a crisp vertical front). Only the kick's own
-        // backward bleed above the baseline is removed — real pre-kick content
-        // is preserved. Body resolution (24000) + broadcast payload unchanged.
-        // Gated by `desmear` (?onsetgrid=1) so it always pairs with onset beats.
+        // ── De-smear (?onsetgrid=1): clamp each band DOWN to its pre-onset
+        // baseline in the short window just before each kick onset, so all
+        // three bands rise together ON the onset column (a crisp vertical
+        // front). Operates on the raw band columns BEFORE the stack is built,
+        // so the sharpening applies to teal/amber/cream alike. Same gate +
+        // window math as the prior single-envelope de-smear.
         const dsOnsets = desmearRef.current ? beatTimesRef.current : null;
         if(dsOnsets && dsOnsets.length>1 && spp>0 && dur2>0){
           const bucketSec=dur2/len;                                 // = dur/WF_W
@@ -4818,24 +4783,50 @@ function AnimatedZoomedWF({ bands, dur, progRef, onSeek, h=96, windowSec=8, beat
             const c0=Math.max(0,Math.ceil(xStart));
             const c1=Math.min(physW-1,Math.floor(xOnset)-1);        // columns strictly before the onset
             if(c1<c0) continue;
-            const baseline=envs[c0];                                // pre-smear level at the window's left edge
+            const baseB=colB[c0], baseM=colM[c0], baseH=colH[c0];   // pre-smear levels at the window's left edge
             for(let dx=c0;dx<=c1;dx++){
-              if(envs[dx]>baseline){
-                envs[dx]=baseline;
-                if(baseline<=0.01){ heights[dx]=0; }
-                else { let h2=Math.pow(baseline,GAMMA)*maxH; if(baseline>LIFT_TH) h2+=maxH*LIFT_AMT*(baseline-LIFT_TH)/(1-LIFT_TH); heights[dx]=h2<maxH?h2:maxH; }
-              }
+              if(colB[dx]>baseB) colB[dx]=baseB;
+              if(colM[dx]>baseM) colM[dx]=baseM;
+              if(colH[dx]>baseH) colH[dx]=baseH;
             }
           }
         }
 
-        // Parse deck color → rgb for all three passes below.
-        const dc=deckColorRef.current||'#FFFFFF';
-        let dr=255,dg=255,db=255;
-        if(dc.length>=7&&dc[0]==='#'){
-          dr=parseInt(dc.slice(1,3),16)|0;
-          dg=parseInt(dc.slice(3,5),16)|0;
-          db=parseInt(dc.slice(5,7),16)|0;
+        // Per-track max of the weighted band sum, cached by bands identity —
+        // drives column HEIGHT so the loudest moment maps to ~full height and
+        // drops tower. One linear pass over the ~24k source buckets.
+        if(envMaxRef.current.bands!==bands){
+          const srcLen=bArr.length;
+          let mx=0;
+          for(let i=0;i<srcLen;i++){
+            const v=WF_W_LOW*bArr[i]+WF_W_MID*mArr[i]+WF_W_HIGH*hArr[i];
+            if(v>mx) mx=v;
+          }
+          envMaxRef.current={bands,maxVal:mx>0.0001?mx:1};
+        }
+        const sumMax=envMaxRef.current.maxVal;
+
+        // ── Build the three cumulative height layers. Column HEIGHT comes from
+        // the combined weighted energy (loudness → tall, gamma + drop lift for
+        // punch); the COLOUR SPLIT within that height comes from each band's
+        // weighted proportion, so every column shows lows/mids/highs stacked as
+        // teal core → amber middle → cream tips. Because each band is
+        // per-track-normalised upstream, sparse-but-bright highs (hi-hats,
+        // cymbals) still read as obvious cream even though their raw energy is
+        // low — that is what makes the three colours pop, Rekordbox-style.
+        const GAMMA=WF_BAND_GAMMA, LIFT_TH=WF_BAND_LIFT_TH, LIFT_AMT=WF_BAND_LIFT_AMT;
+        for(let dx=0;dx<physW;dx++){
+          const pB=WF_W_LOW*colB[dx], pM=WF_W_MID*colM[dx], pH=WF_W_HIGH*colH[dx];
+          const sum=pB+pM+pH;
+          if(sum<=0.0001){ hLow[dx]=0; hMid[dx]=0; hTop[dx]=0; continue; }
+          let drive=sum/sumMax; if(drive>1) drive=1;
+          let h=Math.pow(drive,GAMMA)*maxH;
+          if(drive>LIFT_TH) h+=maxH*LIFT_AMT*(drive-LIFT_TH)/(1-LIFT_TH);
+          if(h>maxH) h=maxH;
+          const segB=h*pB/sum, segM=h*pM/sum;
+          hLow[dx]=segB;            // teal core extent
+          hMid[dx]=segB+segM;       // teal+amber extent
+          hTop[dx]=h;               // +cream = full column
         }
 
         // Faint center hairline behind the envelope so silent sections still
@@ -4843,75 +4834,37 @@ function AnimatedZoomedWF({ bands, dur, progRef, onSeek, h=96, windowSec=8, beat
         ctx.fillStyle='rgba(255,255,255,0.06)';
         ctx.fillRect(0,center,physW,1);
 
-        // Silhouette rendered TWICE per frame, sharing one Path2D:
-        //  1. Lower canvas: solid fill → CSS filter:blur(20px) on the
-        //     element produces the atmospheric halo on the GPU compositor.
-        //  2. Upper canvas: solid fill at UPPER_CANVAS_SILHOUETTE_ALPHA →
-        //     the crisp body that defines the waveform shape against the
-        //     blurred halo underneath. v5.8 had this as Pass C of the
-        //     additive shadowBlur stack at alpha 0.45; Commit 2 dropped it
-        //     by accident, leaving only the AA stroke outline on the upper
-        //     canvas — fixed here.
-        const silhouettePath=buildSilhouettePath(heights,center,physW,maxH);
-        renderSilhouetteGlow(lctx,silhouettePath,dr,dg,db,SILHOUETTE_FILL_ALPHA);
-        renderSilhouetteGlow(ctx,silhouettePath,dr,dg,db,UPPER_CANVAS_SILHOUETTE_ALPHA);
-
-        // Thin AA stroke softens the silhouette edge.
-        ctx.strokeStyle=`rgba(${dr},${dg},${db},0.55)`;
+        // ── Three stacked band silhouettes, painted OUTER→INNER (opaque), so
+        // the visible result is cream tips over amber middle over teal core.
+        // Each is also filled on the LOWER (CSS-blurred) canvas to produce a
+        // multi-colour atmospheric halo on the GPU compositor.
+        //
+        // GLOW / PERF TRADE: this replaces the old single deck-colour
+        // double-fill PLUS the two per-column passes (gradient brightness
+        // overlay + centerline weight band, each a full physW-length fillRect
+        // loop). The three band colours now carry BOTH colour and internal
+        // detail, so those two per-column loops are gone. Net per-frame work is
+        // 6 path fills + 1 stroke + 3 path builds vs the old 2 fills + 1 stroke
+        // + 1 build + 2 physW loops — comparable or cheaper. The only thing
+        // traded away is the deck-colour tint of the body (now frequency-
+        // coloured) and the per-kick brightness/centerline pulse (the band
+        // stack supplies the visual weight instead).
+        const [lr,lg,lb]=WF_LOW_RGB, [mr,mg,mb]=WF_MID_RGB, [hr,hg,hb]=WF_HIGH_RGB;
+        const pathTop=buildSilhouettePath(hTop,center,physW,maxH);  // cream extent (largest)
+        const pathMid=buildSilhouettePath(hMid,center,physW,maxH);  // teal+amber extent
+        const pathLow=buildSilhouettePath(hLow,center,physW,maxH);  // teal extent (smallest)
+        // Lower canvas — colour halo source (GPU-blurred via CSS).
+        renderSilhouetteGlow(lctx,pathTop,hr,hg,hb,SILHOUETTE_FILL_ALPHA);
+        renderSilhouetteGlow(lctx,pathMid,mr,mg,mb,SILHOUETTE_FILL_ALPHA);
+        renderSilhouetteGlow(lctx,pathLow,lr,lg,lb,SILHOUETTE_FILL_ALPHA);
+        // Upper canvas — crisp body, outer→inner so each band shows through.
+        renderSilhouetteGlow(ctx,pathTop,hr,hg,hb,UPPER_CANVAS_SILHOUETTE_ALPHA);
+        renderSilhouetteGlow(ctx,pathMid,mr,mg,mb,UPPER_CANVAS_SILHOUETTE_ALPHA);
+        renderSilhouetteGlow(ctx,pathLow,lr,lg,lb,UPPER_CANVAS_SILHOUETTE_ALPHA);
+        // Thin AA stroke on the outer (cream) edge softens the silhouette.
+        ctx.strokeStyle=`rgba(${hr},${hg},${hb},0.5)`;
         ctx.lineWidth=Math.max(0.5,0.5*dpr);
-        ctx.stroke(silhouettePath);
-
-        // ── Pass 2b: per-column amplitude overlay — crisp readable core.
-        // v5.10: gradient INVERTED from v5.8. Body of the waveform is now
-        // the deep base color across nearly the whole column height; only
-        // the very top tip (and mirrored bottom tip) gets a subtle peak
-        // brightness lift (+40 above base, was +180). Result: the waveform
-        // BODY reads as the deep saturated pigment we keep chasing, with a
-        // thin highlight at the actual amplitude peak tips of loud columns.
-        // Short columns sample only the middle deep-base stops — no
-        // accidental "near-white centerline" rendering.
-        const peakR=Math.min(255,dr+40), peakG=Math.min(255,dg+40), peakB=Math.min(255,db+40);
-        const colGrad=ctx.createLinearGradient(0,ampTop,0,ampBottom);
-        colGrad.addColorStop(0,    `rgba(${peakR},${peakG},${peakB},1.0)`);
-        colGrad.addColorStop(0.05, `rgba(${dr},${dg},${db},0.95)`);
-        colGrad.addColorStop(0.5,  `rgba(${dr},${dg},${db},0.92)`);
-        colGrad.addColorStop(0.95, `rgba(${dr},${dg},${db},0.95)`);
-        colGrad.addColorStop(1,    `rgba(${peakR},${peakG},${peakB},1.0)`);
-        ctx.fillStyle=colGrad;
-        // Brightness overlay: bars brighten with amplitude. WF_PULSE dials the
-        // amplitude-driven part toward a flat alpha so ?wfpulse=0 stops the
-        // per-kick brightness pulse at the playhead (constant-glass A/B).
-        const FLAT_A=0.92; // the mid color-stop alpha (constant base)
-        for(let dx=0;dx<physW;dx++){
-          const h=heights[dx];
-          if(h<=0) continue;
-          const env=envs[dx];
-          const dynA=Math.min(1,Math.pow(env,0.55)*0.95);
-          ctx.globalAlpha=WF_PULSE>=1?dynA:(FLAT_A+(dynA-FLAT_A)*WF_PULSE);
-          ctx.fillRect(dx,center-h,1,h*2+1);
-        }
-        ctx.globalAlpha=1;
-
-        // ── Pass 2c: centerline weight band. Per-column 1px rect centered on
-        // the centerline whose height scales 0..10 css px with amplitude,
-        // drawn in a brightened version of the deck color. The "bass weight"
-        // — visually obvious thicker pulse under loud drops.
-        // WF_PULSE scales the band's amplitude (its "bass weight" pulse). At 0 the
-        // band is suppressed entirely → no per-kick centerline thickening.
-        if(WF_PULSE>0){
-          const cr=Math.min(255,dr+40), cg=Math.min(255,dg+40), cb=Math.min(255,db+40);
-          ctx.fillStyle=`rgb(${cr},${cg},${cb})`;
-          const bandMaxPx=Math.round(10*dpr*WF_PULSE);
-          for(let dx=0;dx<physW;dx++){
-            const env=envs[dx];
-            if(env<0.05) continue; // skip near-silence
-            const tPx=Math.max(1,Math.min(bandMaxPx,Math.round(env*10*dpr*WF_PULSE)));
-            const tHalf=tPx>>1;
-            ctx.globalAlpha=Math.min(1,Math.pow(env,0.5));
-            ctx.fillRect(dx,center-tHalf,1,tPx);
-          }
-          ctx.globalAlpha=1;
-        }
+        ctx.stroke(pathTop);
       }
 
       // ── Premium beat grid — three-tier edge markers with downbeat + phrase emphasis.
