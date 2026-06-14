@@ -4864,7 +4864,11 @@ function AnimatedZoomedWF({ bands, dur, progRef, onSeek, h=96, windowSec=8, beat
         let aEnv=0;
         for(let dx=0;dx<physW;dx++){
           const inp=colB[dx];                                  // kick energy (smoothed)
-          aEnv = inp>aEnv ? aAtk*aEnv+(1-aAtk)*inp : aRel*aEnv+(1-aRel)*inp;
+          // Peak-hold with decay toward ZERO (not toward inp): instant jump UP on
+          // a rise (left wall), exponential taper DOWN independent of the energy's
+          // rounded shape → a right-triangle transient, not a bell. (toward-inp
+          // made the amber track colB and, with a slow release, hold = the blob.)
+          aEnv = inp>aEnv ? aAtk*aEnv+(1-aAtk)*inp : aEnv*aRel;
           colM[dx]=aEnv;                                       // amber transient envelope (supersedes the onset)
         }
         for(let dx=0;dx<physW;dx++){
@@ -4872,6 +4876,7 @@ function AnimatedZoomedWF({ bands, dur, progRef, onSeek, h=96, windowSec=8, beat
           hLow[dx]  = nb>0.004 ? Math.pow(nb,WF_TEAL_GAMMA)*maxH*WF_TEAL_GAIN  : 0; // BLUE body (dominant mass)
           hMid[dx]  = na>0.004 ? Math.pow(na,WF_AMBER_GAMMA)*maxH*WF_AMBER_GAIN: 0; // GOLD transient spine
           hHigh[dx] = nh>0.004 ? Math.pow(nh,WF_GAMMA_HIGH)*maxH*WF_HIGH_SCALE : 0; // cream tips
+          if(hLow[dx]>maxH)hLow[dx]=maxH; if(hMid[dx]>maxH)hMid[dx]=maxH; if(hHigh[dx]>maxH)hHigh[dx]=maxH; // gains >1 clip flat, not past the rail
           let e=hLow[dx]; if(hMid[dx]>e)e=hMid[dx]; hEnv[dx]=e;
         }
 
