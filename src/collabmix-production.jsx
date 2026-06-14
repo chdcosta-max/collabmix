@@ -130,11 +130,12 @@ const WF_PULSE = (() => {
 // the (genuinely sustained) teal bass body. Defaults lean TRANSIENT + blue-body-
 // dominant. Attack/release are independent (asymmetric follower).
 const _urlNum = (k, d) => { const v = URL_FLAGS.get(k); const n = (v == null) ? NaN : parseFloat(v); return isFinite(n) ? n : d; };
-const WF_AMBER_ATTACK  = _urlNum("wfAmberAttack", 4);    // ms — smaller = steeper leading edge
+const WF_AMBER_ATTACK  = _urlNum("wfAmberAttack", 0);    // ms — 0 = vertical left wall (clamped to a 0.1ms floor, sub-column at any zoom; edge then = colB's own ~1ms rise)
 const WF_AMBER_RELEASE = _urlNum("wfAmberRelease", 110); // ms — smaller = transient/decays between kicks; larger = sustained bell
 const WF_AMBER_GAMMA   = _urlNum("wfAmberGamma", 1.40);  // >1 crushes the tail = pointier triangle; <1 = fuller
-const WF_AMBER_GAIN    = _urlNum("wfAmberGain", 0.92);   // amber height multiplier
-const WF_TEAL_GAIN     = _urlNum("wfTealGain", 1.00);    // blue/teal body height multiplier (raise → more dominant)
+const WF_AMBER_GAIN    = _urlNum("wfAmberGain", 0.60);   // amber height — gold is the SMALLER inner element (below teal)
+const WF_TEAL_GAIN     = _urlNum("wfTealGain", 1.25);    // blue/teal body height — the DOMINANT mass (above amber)
+const WF_TEAL_GAMMA    = _urlNum("wfTealGamma", 1.30);   // teal body curve; LOWER lifts the between-kick valleys (more continuous body), higher pinches
 
 // ── Server Configuration ─────────────────────────────────────
 // After deploying to Railway, replace this URL with your Railway server URL.
@@ -4561,8 +4562,6 @@ function AnimatedZoomedWF({ bands, dur, progRef, onSeek, h=96, windowSec=8, beat
   // — sharp attack, decay tail — is preserved. Bass = the wide body (fuller);
   // mid/high = the sharp transient (steeper gamma → narrow attack spikes, valleys
   // driven toward zero) so the grid attaches to a real leading edge. Higher=sharper.
-  const WF_GAMMA_LOW = 1.30;   // teal bass BODY (smooth sustained mass)
-  const WF_GAMMA_MID = 1.35;   // amber ONSET transient (already spiky — light gamma)
   const WF_GAMMA_HIGH = 2.10;  // cream attack click (sharpest)
   const WF_HIGH_SCALE = 0.34;  // cap cream height — SUBTLE bright tips only, not a body
 
@@ -4870,7 +4869,7 @@ function AnimatedZoomedWF({ bands, dur, progRef, onSeek, h=96, windowSec=8, beat
         }
         for(let dx=0;dx<physW;dx++){
           const nb=colB[dx]/maxB, na=colM[dx]/maxB, nh=colH[dx]/maxH2;
-          hLow[dx]  = nb>0.004 ? Math.pow(nb,WF_GAMMA_LOW)*maxH*WF_TEAL_GAIN   : 0; // BLUE body (dominant mass)
+          hLow[dx]  = nb>0.004 ? Math.pow(nb,WF_TEAL_GAMMA)*maxH*WF_TEAL_GAIN  : 0; // BLUE body (dominant mass)
           hMid[dx]  = na>0.004 ? Math.pow(na,WF_AMBER_GAMMA)*maxH*WF_AMBER_GAIN: 0; // GOLD transient spine
           hHigh[dx] = nh>0.004 ? Math.pow(nh,WF_GAMMA_HIGH)*maxH*WF_HIGH_SCALE : 0; // cream tips
           let e=hLow[dx]; if(hMid[dx]>e)e=hMid[dx]; hEnv[dx]=e;
