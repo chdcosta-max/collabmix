@@ -5,7 +5,7 @@
 // alignment math is covered by the unit `engage` test; this proves the real
 // path runs and doesn't walk.
 import { Suite } from "../lib/result.mjs";
-import { launch, capture, createRoom, joinByCode, loadTestTrack } from "../lib/e2e.mjs";
+import { launch, capture, createRoom, joinByCode, loadTestTrack, gotoApp } from "../lib/e2e.mjs";
 
 const TARGET = process.env.TARGET || "http://localhost:5173/";
 const t = new Suite("e2e-sync");
@@ -16,11 +16,11 @@ const phaseSeekMs = (line) => { const m = (line || "").match(/phaseSeekMs=([\-\d
 
 try {
   const ctxA = await browser.newContext(); const A = await ctxA.newPage(); const sA = capture(A);
-  await A.goto(TARGET, { waitUntil: "domcontentloaded" });
+  await gotoApp(A);   // MEASUREMENT: route through the deterministic mock (clean netem) instead of prod relay
   const code = await createRoom(A);
   await A.waitForTimeout(1500);
   const ctxB = await browser.newContext(); const B = await ctxB.newPage(); const sB = capture(B);
-  await B.goto(TARGET, { waitUntil: "domcontentloaded" });
+  await gotoApp(B);
   await joinByCode(B, code);
   await B.waitForFunction(() => /⟺/.test(document.body.innerText), null, { timeout: 12000 }).catch(() => {});
 

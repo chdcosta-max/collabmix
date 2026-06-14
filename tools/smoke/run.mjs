@@ -49,7 +49,7 @@ const TESTS = [
   { name: "e2e-mirror",       file: "e2e-mirror.smoke.mjs",       kind: "e2e",   gates: "partner-deck waveform mirror advances forward (no backward skip / freeze)" },
   { name: "e2e-mirror-coast", file: "e2e-mirror-coast.smoke.mjs", kind: "e2e",   gates: "mirror coasts accurately under SPARSE packets (backgrounded driver)" },
   { name: "e2e-mirror-latency", file: "e2e-mirror-latency.smoke.mjs", kind: "e2e", gates: "mirror under DETERMINISTIC netem (latency/jitter/loss): no backward step, tracks within floor (needs --mock)" },
-  { name: "e2e-mirror-slew",  file: "e2e-mirror-slew.smoke.mjs",   kind: "e2e",  xfail: true, gates: "[XFAIL→Move#2] rate-adjusted driver + sparse packets reproduces the dogfood BACKWARD SLEW (Jake's -0.5/-1.53s). Asserts post-fix property; fails until the coast/snap refactor (needs --mock)" },
+  { name: "e2e-mirror-slew",  file: "e2e-mirror-slew.smoke.mjs",   kind: "e2e",  gates: "the dogfood BACKWARD SLEW stays dead: rate-adjusted driver + sparse packets must NOT slew the mirror backward (Jake's -0.5/-1.53s). HARD GATE since Move #2's monotonic forward-only follower (needs --mock)" },
   { name: "e2e-rekordbox",    file: "e2e-rekordbox.smoke.mjs",    kind: "e2e",   gates: "Door 3: rekordbox.xml parse (grids+cues+playlists) + imported grid consumed by deck (unified path, de-smear off, engage idempotent)" },
 ];
 
