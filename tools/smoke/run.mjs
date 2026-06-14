@@ -42,6 +42,7 @@ const TESTS = [
   { name: "e2e-lock-stability", file: "e2e-lock-stability.smoke.mjs", kind: "e2e", gates: "locked B2B deck never self-pauses: master skips cross-client re-seek; both decks keep advancing" },
   { name: "e2e-comp",         file: "e2e-comp.smoke.mjs",         kind: "e2e",   gates: "delaycomp measures nonzero on live audio; survives partner reload" },
   { name: "e2e-opus",         file: "e2e-opus.smoke.mjs",         kind: "e2e",   gates: "partner Opus negotiates music-grade STEREO + 256kbps (not voice-grade default) — proven via getStats fmtp" },
+  { name: "e2e-jbtarget",     file: "e2e-jbtarget.smoke.mjs",     kind: "e2e",   gates: "partner receiver jitter-buffer pinned to JB_TARGET_MS (~160) — proven via getStats jbTarget, not browser-default shallow" },
   { name: "e2e-drift",        file: "e2e-drift.smoke.mjs",        kind: "e2e",   gates: "[SYNC-DRIFT] emits during locked remote B2B" },
   { name: "e2e-trackend",     file: "e2e-trackend.smoke.mjs",     kind: "e2e",   gates: "deck parked at end stays operable (play replays, no inert flip-flop)" },
   { name: "e2e-reconnect",    file: "e2e-reconnect.smoke.mjs",    kind: "e2e",   gates: "mid-session WS drop auto-reconnects + re-joins + restores partner" },

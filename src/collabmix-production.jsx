@@ -87,6 +87,17 @@ const DELAY_COMP = URL_FLAGS.get("delaycomp") !== "0";
 // smoke suite (no real jitter buffer in the mock). Requires delaycomp on (the
 // offset assumes the local audio is delayed by the same compMs).
 const GRID_ALIGN = URL_FLAGS.get("gridalign") !== "0";
+// BUG #2 audio smoothness — jitter-buffer depth on the PARTNER's inbound audio
+// receiver. The browser default starts SHALLOW (~70ms) and HUNTS up to the depth a
+// connection actually needs (~135ms in Jake's June 13 log) over ~30s — and during
+// that shallow ramp NetEQ underruns + time-stretches (the audible wobble). Pinning
+// jitterBufferTarget makes NetEQ start deep from the first packet, skipping the ramp
+// and re-hunting after a reconnect. 160ms = the depth THIS connection proved clean
+// (realized jb ~140–165ms), reached instantly. Two-sided: applied ONLY to the partner
+// receiver (their latency is free to the listener); local Web Audio monitoring is
+// untouched/instant. Tune by ear: ?jbtarget=200 (deeper/smoother), ?jbtarget=120
+// (snappier), ?jbtarget=0 (disable → browser default, for A/B). Spec max 4000ms.
+const JB_TARGET_MS = (()=>{ const v=URL_FLAGS.get("jbtarget"); if(v==null)return 160; const n=parseInt(v,10); return (Number.isFinite(n)&&n>=0&&n<=4000)?n:160; })();
 // Browser support (dogfood session 1): Jake on EDGE was unlistenable (audio cut
 // in/out); Chrome fixed it. Warn non-Chrome users at session start. "Real" Chrome
 // = UA has Chrome but NOT Edge (Edg/) / Opera (OPR/) / Samsung Internet.
@@ -3583,6 +3594,15 @@ function useRTC({ engineRef, send, onIceRecover }) {
           prevStatsRef.current = null; healthRef.current = 0;
           compRef.current = { ...compRef.current, settleUntil: Date.now()+4000 };
           console.log("[SYNC-COMP] rebind → live receiver track=" + recv.track.id.slice(0,8));
+        }
+        // BUG #2: pin the PARTNER receiver's jitter-buffer depth so NetEQ starts deep
+        // instead of hunting up from shallow (the settling-wobble cause). Re-checked
+        // each tick so a post-reconnect NEW receiver gets it too. Partner stream ONLY;
+        // local audio is the Web Audio master mix (never buffered). ?jbtarget=0 = off.
+        if(JB_TARGET_MS>0 && recv.jitterBufferTarget!==JB_TARGET_MS){
+          const wasJb = (recv.jitterBufferTarget==null) ? "browser-default" : (recv.jitterBufferTarget+"ms");
+          try{ recv.jitterBufferTarget=JB_TARGET_MS; console.log("[JB-TARGET] partner receiver jitterBufferTarget="+JB_TARGET_MS+"ms (was "+wasJb+")"); }
+          catch(e){ console.warn("[JB-TARGET] set unsupported/failed:",e?.message||e); }
         }
         const stats=await recv.getStats();
         let inb=null, play=null, rem=null;

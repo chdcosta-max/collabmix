@@ -9620,3 +9620,38 @@ the proof; real-music throughput + the audible jump are the live check.
   - `opus-hifi-stereo` — HEAR the hi-fi stereo jump (vs phone-call-grade).
   - `move2-mirror-slew-fix` — grid locks to the HEARD beat (GRID_ALIGN) + no backward slew.
 Holding: do NOT push, do NOT merge until the live checks pass.
+
+### Bug #2 audio — jitter-buffer depth PINNED (June 13) — branch `jitter-buffer-target`, off master
+Commit `223229a`. master untouched. Independent of opus + mirror branches. Built from a
+REAL two-machine Jake log (June 13), measured before coding.
+
+**Measurement (from the log):** jitter 3–20ms, ZERO packet loss. The browser's
+jitterBufferTarget started shallow (~90→69ms) and HUNTED up to ~134–135ms over ~30s.
+The audible wobble (decel=10–20ms time-stretch + conceal bursts of 2,300–5,180ms/window)
+fired ONLY during that shallow ramp + an ICE disconnect→reconnect + the pre-play period.
+In steady playback (jbTarget ~135) it was essentially clean (conceal=0 in ~95% of windows,
+decel=0 always). Honest verdict: the wobble is a SETTLING/RAMP/RECONNECT phenomenon on a
+good connection, not ongoing — the slow ramp from a too-shallow start is the pain.
+
+**Fix:** pin `recv.jitterBufferTarget = JB_TARGET_MS` (default 160) on the PARTNER's inbound
+audio receiver in the comp poll (re-checked each tick → reconnect-safe). 160 = the depth THIS
+connection proved clean, reached from the FIRST packet so the shallow ramp (where NetEQ
+underran + stretched) never happens. URL flag `?jbtarget=<ms>` (`200` deeper, `120` snappier,
+`0` = browser default for A/B). TWO-SIDED: partner receiver ONLY; local Web Audio monitor
+untouched/instant.
+
+**PROVEN (e2e-jbtarget 5/5):** getStats jbTarget median/min/max all = 160ms (rock-steady) —
+localhost auto-targets far lower, so a held 160 proves NetEQ honours the pin at the buffer
+level, not just a constant change. `[JB-TARGET]` log confirms it overrode browser-default.
+Full suite `npm run smoke -- --mock`: 23 passed, 0 failed, 0 skipped, 1 xfail (e2e-mirror-slew
+expected on this branch). RTC tests (comp/drift/reconnect/rejoin) all pass.
+
+**Scope honesty:** kills the settling/ramp/reconnect wobble (the bulk of the log); a genuinely
+BAD connection's physics remain (→ the separate connection-warning lever, still banked). Right
+depth is a listening call — tune by ear in the dogfood; 160 is the data-anchored start.
+
+### THREE branches now staged + proven, master clean — all await a live Jake session:
+  - `move2-mirror-slew-fix` — no backward slew + grid locks to the HEARD beat (GRID_ALIGN).
+  - `opus-hifi-stereo` — HEAR the hi-fi stereo jump (vs phone-call-grade).
+  - `jitter-buffer-target` — HEAR the smoother audio (no settling wobble); tune jbtarget by ear.
+Holding: do NOT push, do NOT merge until the live checks pass. All three are independent.
