@@ -9682,3 +9682,39 @@ Build clean. The three overlapping audio/sync fixes coexist with no interaction 
 NEXT: push master → Vercel deploy → live dogfood with Jake (the audible/visual checks the
 suite can't prove: hear hi-fi stereo + smoother audio; see grid locked to the heard beat,
 no backward slew). Tune `?jbtarget` by ear if a worse connection needs deeper.
+
+### Sentry telemetry — WORKING + confirmed live (June 13)
+Goal: session data flows to Chad's dashboard automatically instead of Jake emailing logs,
+before tonight's dogfood. ASSESSED first (Sentry was already ~90% wired), then a config fix
++ a plan upgrade got it over the line. DONE.
+
+**Assessment (what was already wired):** `@sentry/react` + `@sentry/vite-plugin` installed;
+`Sentry.init` in `src/main.jsx` with a real DSN (Chad's own org `mixsync.sentry.io`),
+browserTracing, replay, ErrorBoundary, breadcrumbs/tags/context (`telemetry.js`),
+`captureHandledError` in the RTC paths, and a Cmd+Shift+E test-error trigger. The 429s in
+Jake's logs were **quota rejection, not misconfig** — the DSN was valid and reaching Sentry.
+
+**Root cause:** the **Replay** quota was exhausted (10%-of-ALL-sessions session recording
+burned the free tier), and the **error** quota was also maxed for the cycle → errors 429'd too.
+
+**Fix (commits `a9fbe25` → `18abc58`, on master, deployed):**
+- `replaysSessionSampleRate` 0.1 → **0** (stop the continuous session-recording quota bleed).
+- `replaysOnErrorSampleRate` kept at **1.0** (capture a replay only WHEN something breaks — rare).
+- `tracesSampleRate` 1.0 → **0.2** (stop burning the performance quota).
+- DSN → `import.meta.env.VITE_SENTRY_DSN || <existing>` (env-var ready, existing DSN as fallback).
+- Error capture untouched (top priority).
+- Chad **upgraded to the $29 Sentry Team plan** → cleared the exhausted error/replay quota.
+
+**PROVEN:** Cmd+Shift+E on the live app → `Sentry test error — triggered by Cmd+Shift+E`
+**landed in the Issues feed** (env=production). Verified the deploy by live-bundle CONTENT
+(`replaysSessionSampleRate:0`, `replaysOnErrorSampleRate:1`, `tracesSampleRate:.2`) since Vercel's
+build hash differs from local — content, not hash, is the reliable signal.
+
+**KNOWN GAPS (non-blocking, future):**
+- Source maps NOT uploaded (`SENTRY_AUTH_TOKEN` unset in Vercel) → stack traces are MINIFIED.
+  The vite-plugin is already wired; just needs the token in Vercel env for readable traces.
+- Standalone console-log capture not enabled — console shows only as breadcrumbs ON errors.
+  Jake's full diagnostic stream is still captured via the local **Cmd+Option+L** session-log
+  download (belt-and-suspenders). Wiring console→Sentry Logs is a small future add.
+- Note: a deploy-skip scare during this session turned out to be a hash-naming ghost — Vercel
+  builds fresh but content-hashes differently than the local build; always verify by CONTENT.
