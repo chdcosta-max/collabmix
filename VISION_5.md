@@ -9655,3 +9655,30 @@ depth is a listening call — tune by ear in the dogfood; 160 is the data-anchor
   - `opus-hifi-stereo` — HEAR the hi-fi stereo jump (vs phone-call-grade).
   - `jitter-buffer-target` — HEAR the smoother audio (no settling wobble); tune jbtarget by ear.
 Holding: do NOT push, do NOT merge until the live checks pass. All three are independent.
+
+### ALL THREE merged to master + re-verified TOGETHER (June 13)
+Per Chad: merge the three proven branches into master so the COMBINED app can be
+dogfooded live with Jake — but combined + re-verified together first, not smashed.
+Merge commits: `a811079` (move2-mirror-slew-fix) → `52aff4d` (opus-hifi-stereo) →
+`9ef76f7` (jitter-buffer-target), each `--no-ff` (revertable).
+
+**Conflicts (all mechanical, resolved keep-both):**
+- `VISION_5.md` — append-only log; kept every branch's section (both merges).
+- `tools/smoke/run.mjs` — opus + jitter both registered a test after e2e-comp; kept BOTH.
+- `src/collabmix-production.jsx` — the flags block: move2 flipped `GRID_ALIGN` default-ON
+  (`!== "0"`) while jitter added `JB_TARGET_MS` right after the old line. Kept move2's
+  default-ON GRID_ALIGN **and** jitter's JB_TARGET_MS (did NOT revert the flip).
+  The functional code (mirror follower ~5400, opus munge ~3430, jitter set ~3540) sat in
+  non-overlapping regions → auto-merged clean.
+
+**COMBINED-SUITE PROOF (`npm run smoke -- --mock`): 25 passed, 0 failed, 0 skipped, 0 xfail.**
+All four targets re-verified TOGETHER on merged master (nothing changed when combined):
+- e2e-mirror-slew: **0 backward** (maxBackwardStep 0.00s) — now a regular hard-gate PASS.
+- e2e-sync: re-engage **6.17ms** (idempotency tight, undisturbed by the audio changes).
+- e2e-opus: negotiated fmtp **stereo=1 + maxaveragebitrate=256000**.
+- e2e-jbtarget: jitter buffer **HOLDS ~160ms**.
+Build clean. The three overlapping audio/sync fixes coexist with no interaction regression.
+
+NEXT: push master → Vercel deploy → live dogfood with Jake (the audible/visual checks the
+suite can't prove: hear hi-fi stereo + smoother audio; see grid locked to the heard beat,
+no backward slew). Tune `?jbtarget` by ear if a worse connection needs deeper.
