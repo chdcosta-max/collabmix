@@ -9872,3 +9872,43 @@ specific library tracks use, and measure on the live PQTZ path (vs reconstructed
 (layer flip: blue lows = outer body; per-column thin lines; RMS; high local
 resolution) — that both fixes the blocky look AND pulls the drawn kick front back
 toward the onset, which is the real, bounded win on "grid looks on the kick."
+
+### ★ ROOT CAUSE of grid-vs-kick INCONSISTENCY — per-beat snapping vs uniform grid (June 13, 2026)
+
+Chad reframed the symptom precisely: Rekordbox puts the grid at the PINCH (envelope
+valley), energy swells AFTER each line, perfectly CONSISTENT every beat. Ours lands
+the grid mid-swell, ERRATIC kick-to-kick. Measured it (tools/smoke/measure-uniform.mjs,
+measure-structure.mjs):
+
+**Structure (measure-structure.mjs, drawn bass RMS @ 262144):**
+- Our envelope pinches DEEPLY (peak/valley 30–49×) — it is NOT a sustained-bass blob.
+  So the cause is NOT "envelope won't neck down."
+- Our grid sits at normalized ~0.50 — HALFWAY UP THE SWELL, not at the valley (0).
+  Confirms "grid in the middle of the waveform."
+
+**Consistency (measure-uniform.mjs, 34 tracks): per-beat snapping is the scatter source.**
+- SNAPPED grid (our default — onsetAnchor re-anchors EVERY beat to its detected onset,
+  bpm-worker-source.js:418; renderer draws those per-beat beatTimes, collabmix:4947):
+  within ±5ms = **42%** (median). Soft melodic kicks scatter worst.
+- UNIFORM grid (anchor + BPM, evenly spaced — what Rekordbox draws): within ±5ms = **65%**.
+- Per-track jumps going uniform: Michael A 31→84%, Februaryness 5→82%, Yulia 7→91%,
+  Tantum 20→54%, Kyotto 27→62%. Almost every track improves.
+
+**WHY ours scatters and Rekordbox doesn't:** Rekordbox draws a UNIFORM grid (constant
+period from one anchor) → consistent BY CONSTRUCTION. Ours snaps each beat independently
+to a per-beat detected onset → the detection noise (worst on soft kicks) becomes
+kick-to-kick grid jitter. The onset-anchor/beatsV2 work (added for per-beat accuracy)
+HURT consistency.
+
+**THE FIX (one coherent move, both levers RENDERING-side):**
+1. Switch the drawn grid from per-beat-snapped to the UNIFORM grid (anchor+BPM the analyzer
+   already produces). ALREADY A CODE PATH: `?beatsv2=0`. Test immediately in the app URL.
+   Keep sync on the same uniform grid so visual = audible. Caveat: needs accurate BPM or
+   it drifts on long tracks (uniStd has a drift tail; analyzer BPM is ±0.5 — verify late-track).
+2. Sharpen the render (A+B resolution + RMS) so the swell's leading edge lands at the beat →
+   line at the pinch, swell after. The residual ~14ms perceptual offset = what Rekordbox does.
+
+**Supersedes the earlier "analyzer is fine, just render smear" framing:** the render smear is
+real but SECONDARY; the PRIMARY consistency killer is per-beat onset snapping. Uniform grid +
+sharper render = Rekordbox structure across the whole library. NOT YET BUILT — Chad to test
+?beatsv2=0 first or greenlight the uniform-grid switch.
