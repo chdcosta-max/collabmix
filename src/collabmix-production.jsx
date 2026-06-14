@@ -4551,6 +4551,8 @@ function AnimatedZoomedWF({ bands, dur, progRef, onSeek, h=96, windowSec=8, beat
   const WF_GAMMA_MID = 1.35;   // amber ONSET transient (already spiky — light gamma)
   const WF_GAMMA_HIGH = 2.10;  // cream attack click (sharpest)
   const WF_HIGH_SCALE = 0.34;  // cap cream height — SUBTLE bright tips only, not a body
+  const WF_AMBER_INSET = 0.80; // gold SPINE fills 80% of the kick shape (dominant)
+  const WF_FRAME_ALPHA = 0.62; // blue is a pulled-back framing rim around the gold
 
   const ref=useRef(null);       // upper canvas — crisp draws + drag target
   const lowerRef=useRef(null);  // lower canvas — silhouette fill, CSS-blurred
@@ -4834,20 +4836,23 @@ function AnimatedZoomedWF({ bands, dur, progRef, onSeek, h=96, windowSec=8, beat
         }
         const {mb:maxB,mm:maxM,mh:maxH2}=envMaxRef.current;
 
-        // ── TWO-LAYER kick render (Rekordbox structure). INDEPENDENT heights,
-        // drawn below as per-column vertical lines (no silhouette smoothing) so
-        // each kick keeps its TRUE asymmetric shape: sharp attack, decaying tail.
-        //   BODY      = teal bass envelope (hLow) — smooth sustained mass that
-        //               ebbs/flows with the arrangement (the blue you see zoomed out).
-        //   TRANSIENT = amber low-mid ONSET (hMid) — spikes ONLY at each kick
-        //               attack, ~flat between (the sharp gold edge the GRID locks
-        //               to) — plus cream high click (hHigh) on top.
+        // ── GOLD SPINE + BLUE FRAME (Rekordbox proportions). The kick ENERGY
+        // envelope (smooth attack→decay leaf from the per-band follower) is the
+        // shape. Measurement showed the low-mid ONSET fires on ~half non-kick
+        // transients (bass notes/stabs) AND ~9ms early — unreliable — so the gold
+        // is the ENERGY (reliable; its attack lands on the kick), not the onset.
+        //   BLUE  = the energy leaf at FULL height, pulled-back alpha → a thin
+        //           framing rim around the gold.
+        //   AMBER = the same leaf INSET (80%), full alpha → the DOMINANT gold
+        //           spine (the visual star).
+        //   CREAM = high click, capped → subtle bright tips.
         for(let dx=0;dx<physW;dx++){
-          const nb=colB[dx]/maxB, nm=colM[dx]/maxM, nh=colH[dx]/maxH2;
-          hLow[dx]  = nb>0.004 ? Math.pow(nb,WF_GAMMA_LOW)*maxH  : 0;
-          hMid[dx]  = nm>0.004 ? Math.pow(nm,WF_GAMMA_MID)*maxH  : 0;
-          hHigh[dx] = nh>0.004 ? Math.pow(nh,WF_GAMMA_HIGH)*maxH*WF_HIGH_SCALE : 0;  // capped — subtle tips
-          let e=hLow[dx]; if(hMid[dx]>e)e=hMid[dx]; if(hHigh[dx]>e)e=hHigh[dx]; hEnv[dx]=e;
+          const nb=colB[dx]/maxB, nh=colH[dx]/maxH2;
+          const E = nb>0.004 ? Math.pow(nb,WF_GAMMA_LOW)*maxH : 0;   // kick energy leaf
+          hLow[dx]  = E;                       // BLUE frame extent (full)
+          hMid[dx]  = E*WF_AMBER_INSET;        // GOLD spine extent (inset, dominant)
+          hHigh[dx] = nh>0.004 ? Math.pow(nh,WF_GAMMA_HIGH)*maxH*WF_HIGH_SCALE : 0;
+          hEnv[dx]  = E;
         }
 
         // Faint center hairline so silent sections read as a defined line.
@@ -4856,23 +4861,18 @@ function AnimatedZoomedWF({ bands, dur, progRef, onSeek, h=96, windowSec=8, beat
 
         const [lr,lg,lb]=WF_LOW_RGB, [mr,mg,mb2]=WF_MID_RGB, [hr,hg,hb]=WF_HIGH_RGB;
 
-        // ── Atmospheric halo (LOWER canvas, GPU-blurred via CSS). ONE smooth
-        // outer-envelope silhouette in teal. GLOW/PERF TRADE: the halo is a single
-        // smooth teal glow, NOT per-band/per-column — after a 20px blur the detail
-        // is invisible anyway, so all the spiky detail lives on the crisp layer.
+        // Atmospheric halo (LOWER canvas, GPU-blurred): one smooth teal envelope.
         const haloPath=buildSilhouettePath(hEnv,center,physW,maxH);
         renderSilhouetteGlow(lctx,haloPath,lr,lg,lb,SILHOUETTE_FILL_ALPHA);
 
-        // ── Crisp detail (UPPER canvas): DENSE THIN PER-COLUMN LINES, back→front.
-        // teal BODY behind → amber + cream sharp TRANSIENT on top. No smoothing →
-        // the asymmetric sharp-attack/decay kick shape is preserved, giving the
-        // grid a real leading edge to attach to. Batched by colour (one fillStyle
-        // per band) to avoid per-column state changes.
-        ctx.fillStyle=`rgb(${lr},${lg},${lb})`;        // BODY — teal bass mass
+        // Crisp detail (UPPER canvas), back→front: BLUE frame (full silhouette,
+        // pulled-back alpha) → GOLD spine (inset, dominant, full alpha, on top) →
+        // CREAM tips. Gold fills the kick; blue reads as a thin frame around it.
+        ctx.globalAlpha=WF_FRAME_ALPHA; ctx.fillStyle=`rgb(${lr},${lg},${lb})`;   // BLUE frame
         for(let dx=0;dx<physW;dx++){ const hh=hLow[dx];  if(hh>0) ctx.fillRect(dx,center-hh,1,hh*2+1); }
-        ctx.fillStyle=`rgb(${mr},${mg},${mb2})`;       // TRANSIENT — amber mid
+        ctx.globalAlpha=1; ctx.fillStyle=`rgb(${mr},${mg},${mb2})`;               // GOLD spine (dominant)
         for(let dx=0;dx<physW;dx++){ const hh=hMid[dx];  if(hh>0) ctx.fillRect(dx,center-hh,1,hh*2+1); }
-        ctx.fillStyle=`rgb(${hr},${hg},${hb})`;        // TRANSIENT — cream attack click
+        ctx.fillStyle=`rgb(${hr},${hg},${hb})`;                                   // CREAM tips
         for(let dx=0;dx<physW;dx++){ const hh=hHigh[dx]; if(hh>0) ctx.fillRect(dx,center-hh,1,hh*2+1); }
       }
 
