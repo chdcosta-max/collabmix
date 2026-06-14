@@ -4550,6 +4550,7 @@ function AnimatedZoomedWF({ bands, dur, progRef, onSeek, h=96, windowSec=8, beat
   const WF_GAMMA_LOW = 1.30;   // teal bass BODY (smooth sustained mass)
   const WF_GAMMA_MID = 1.35;   // amber ONSET transient (already spiky — light gamma)
   const WF_GAMMA_HIGH = 2.10;  // cream attack click (sharpest)
+  const WF_HIGH_SCALE = 0.34;  // cap cream height — SUBTLE bright tips only, not a body
 
   const ref=useRef(null);       // upper canvas — crisp draws + drag target
   const lowerRef=useRef(null);  // lower canvas — silhouette fill, CSS-blurred
@@ -4753,23 +4754,40 @@ function AnimatedZoomedWF({ bands, dur, progRef, onSeek, h=96, windowSec=8, beat
         // so it gives a sharp, FLAT-BETWEEN transient the grid attaches to —
         // unlike the raw bass/mid envelope which stays "on" between kicks.
         const onD=Math.max(1,Math.round(0.004*len/Math.max(0.001,dur2)));
+        // When zoomed IN past 1 bucket/column (spp≤1), LINEAR-INTERPOLATE the
+        // smooth envelope at each column's centre instead of MAX-reducing. MAX +
+        // nearest-bucket slices the SAME kick differently depending on the
+        // sub-bucket phase it lands at as the view scrolls → identical kicks
+        // render with DIFFERENT shapes + "breathing". Continuous sampling of the
+        // (now smooth) envelope removes that: identical kicks render identically.
+        // Zoomed OUT (spp>1) MAX over covered buckets so peaks aren't skipped.
+        const interp = spp<=1.0;
+        const sample=(A,p)=>{ if(p<=0)return A[0]; if(p>=len-1)return A[len-1]; const i=p|0; return A[i]+(A[i+1]-A[i])*(p-i); };
         for(let dx=0;dx<physW;dx++){
-          const f0=srcX+dx*spp;
-          const f1=f0+spp;
-          const i0=f0|0, i1=f1|0;
-          const s0=i0<0?0:(i0>=len?len-1:i0);
-          const s1=i1<s0?s0:(i1>=len?len-1:i1);
           let b=0,onM=0,hh=0;
-          if(f1>=0&&f0<len){
-            for(let k=s0;k<=s1;k++){
-              const bk=bArr[k]; if(bk>b)b=bk;
-              const hk=hArr[k]; if(hk>hh)hh=hk;
-              const kD=k-onD<0?0:k-onD;                       // low-mid onset = positive rise
-              const e=bArr[k]+mArr[k], ep=bArr[kD]+mArr[kD];
-              const on=e>ep?e-ep:0; if(on>onM)onM=on;
+          if(interp){
+            const fC=srcX+dx*spp+spp*0.5;                     // column centre, source-bucket space
+            if(fC>=0&&fC<len){
+              const bv=sample(bArr,fC), mv=sample(mArr,fC); hh=sample(hArr,fC); b=bv;
+              const eNow=bv+mv, eP=sample(bArr,fC-onD)+sample(mArr,fC-onD);
+              onM=eNow>eP?eNow-eP:0;                          // low-mid onset = positive rise
+            }
+          } else {
+            const f0=srcX+dx*spp, f1=f0+spp;
+            const i0=f0|0, i1=f1|0;
+            const s0=i0<0?0:(i0>=len?len-1:i0);
+            const s1=i1<s0?s0:(i1>=len?len-1:i1);
+            if(f1>=0&&f0<len){
+              for(let k=s0;k<=s1;k++){
+                const bk=bArr[k]; if(bk>b)b=bk;
+                const hk=hArr[k]; if(hk>hh)hh=hk;
+                const kD=k-onD<0?0:k-onD;
+                const e=bArr[k]+mArr[k], ep=bArr[kD]+mArr[kD];
+                const on=e>ep?e-ep:0; if(on>onM)onM=on;
+              }
             }
           }
-          colB[dx]=b; colM[dx]=onM; colH[dx]=hh;             // colM now holds the ONSET, not raw mid
+          colB[dx]=b; colM[dx]=onM; colH[dx]=hh;             // colM holds the ONSET, not raw mid
         }
 
         // ── De-smear (?onsetgrid=1): clamp each band DOWN to its pre-onset
@@ -4828,7 +4846,7 @@ function AnimatedZoomedWF({ bands, dur, progRef, onSeek, h=96, windowSec=8, beat
           const nb=colB[dx]/maxB, nm=colM[dx]/maxM, nh=colH[dx]/maxH2;
           hLow[dx]  = nb>0.004 ? Math.pow(nb,WF_GAMMA_LOW)*maxH  : 0;
           hMid[dx]  = nm>0.004 ? Math.pow(nm,WF_GAMMA_MID)*maxH  : 0;
-          hHigh[dx] = nh>0.004 ? Math.pow(nh,WF_GAMMA_HIGH)*maxH : 0;
+          hHigh[dx] = nh>0.004 ? Math.pow(nh,WF_GAMMA_HIGH)*maxH*WF_HIGH_SCALE : 0;  // capped — subtle tips
           let e=hLow[dx]; if(hMid[dx]>e)e=hMid[dx]; if(hHigh[dx]>e)e=hHigh[dx]; hEnv[dx]=e;
         }
 
@@ -6180,26 +6198,40 @@ function Deck({ id, ch, ctx:ac, color, local, remote, onChange, midi:mt, bpmResu
     // Float step so each bucket covers exactly dur/WF_W_HI sec (renderer's
     // len/dur frames/sec stays dead-on; integer floor would drift the grid).
     const step=Math.max(1,d.length/WF_W_HI);
-    const bassSq=new Float64Array(WF_W_HI),midSq=new Float64Array(WF_W_HI),highSq=new Float64Array(WF_W_HI),cnt=new Float64Array(WF_W_HI);
+    // Asymmetric ENVELOPE FOLLOWER per band: FAST attack (keeps the sharp kick
+    // onset edge) + SLOW release (rides OVER the bass wave cycles). Without it a
+    // 1.6ms bucket is shorter than a ~60Hz bass period, so the per-bucket
+    // amplitude bobs up/down every cycle and renders as a chunky comb — THAT,
+    // not the line width, is the "blockiness". The follower turns it into a
+    // smooth attack→decay envelope; the bucket MAX keeps the attack peak.
+    const aAtkB=Math.exp(-1/(sr*0.0010)), aRelB=Math.exp(-1/(sr*0.028));
+    const aAtkM=Math.exp(-1/(sr*0.0006)), aRelM=Math.exp(-1/(sr*0.014));
+    const aAtkH=Math.exp(-1/(sr*0.0004)), aRelH=Math.exp(-1/(sr*0.008));
+    const bassArr=new Float32Array(WF_W_HI),midArr=new Float32Array(WF_W_HI),highArr=new Float32Array(WF_W_HI);
     for(let ch=0;ch<d.numberOfChannels;ch++){
       const data=d.getChannelData(ch);
-      let lpB=0,lpM=0;
+      let lpB=0,lpM=0,envB=0,envM=0,envH=0;
       for(let i=0;i<d.length;i++){
         const s=data[i];
         lpB=aB*lpB+(1-aB)*s;   // low-pass → bass only (<300Hz)
         lpM=aM*lpM+(1-aM)*s;   // low-pass → bass+mid (<3500Hz)
+        const rb=lpB<0?-lpB:lpB, m0=lpM-lpB, rm=m0<0?-m0:m0, h0=s-lpM, rh=h0<0?-h0:h0;
+        envB = rb>envB ? aAtkB*envB+(1-aAtkB)*rb : aRelB*envB+(1-aRelB)*rb;
+        envM = rm>envM ? aAtkM*envM+(1-aAtkM)*rm : aRelM*envM+(1-aRelM)*rm;
+        envH = rh>envH ? aAtkH*envH+(1-aAtkH)*rh : aRelH*envH+(1-aRelH)*rh;
         const x=Math.min(WF_W_HI-1,Math.floor(i/step));
-        const bv=lpB, mv=lpM-lpB, hv=s-lpM;   // bass / 300-3500 / >3500
-        bassSq[x]+=bv*bv; midSq[x]+=mv*mv; highSq[x]+=hv*hv; cnt[x]++;
+        if(envB>bassArr[x])bassArr[x]=envB;
+        if(envM>midArr[x])midArr[x]=envM;
+        if(envH>highArr[x])highArr[x]=envH;
       }
     }
-    // RMS per bucket → Float32, each band normalized to its own track-wide max.
-    const normHi=(sq)=>{const o=new Float32Array(WF_W_HI);let mx=0;for(let x=0;x<WF_W_HI;x++){const v=Math.sqrt(sq[x]/(cnt[x]||1));o[x]=v;if(v>mx)mx=v;}if(mx>1e-4)for(let x=0;x<WF_W_HI;x++)o[x]/=mx;return o;};
-    const bN=normHi(bassSq),mN=normHi(midSq),hN=normHi(highSq);
+    // Normalize each band to its own track-wide max (in place).
+    const normHi=(arr)=>{let mx=0;for(let x=0;x<arr.length;x++)if(arr[x]>mx)mx=arr[x];if(mx>1e-4)for(let x=0;x<arr.length;x++)arr[x]/=mx;return arr;};
+    const bN=normHi(bassArr),mN=normHi(midArr),hN=normHi(highArr);
     // Decimate to WF_W_BC for broadcast — MAX over each group keeps transients.
     const decimate=(arr)=>{const f=arr.length/WF_W_BC;const o=new Array(WF_W_BC);for(let j=0;j<WF_W_BC;j++){const s0=Math.floor(j*f),s1=Math.min(arr.length,Math.floor((j+1)*f));let mx=0;for(let k=s0;k<s1;k++)if(arr[k]>mx)mx=arr[k];o[j]=Math.round(mx*1000)/1000;}return o;};
     const bBC=decimate(bN),mBC=decimate(mN),hBC=decimate(hN);
-    console.log('[WF-BANDS] RMS hi-res extract for deck', id, '(WF_W_HI=', WF_W_HI, '→ bc', WF_W_BC, ')');
+    console.log('[WF-BANDS] envelope-follower hi-res extract for deck', id, '(WF_W_HI=', WF_W_HI, '→ bc', WF_W_BC, ')');
     setWfBass(bN);setWfMid(mN);setWfHigh(hN);              // local: Float32 high-res
     onChange?.("waveformBass",bBC);onChange?.("waveformMid",mBC);onChange?.("waveformHigh",hBC);
     onWaveform?.({bass:bBC,mid:mBC,high:hBC,dur:d.duration,name:n});
