@@ -9479,3 +9479,42 @@ full-suite migration (separate, lower-urgency session).
   e2e-mirror-slew: post-fix checks FAIL as designed (XFAIL), repro deterministic.
 NEXT: Move #2 — mirror coast/snap latency-adaptive refactor, verified by driving
 e2e-mirror-slew from XFAIL → XPASS (and keeping e2e-mirror-latency green).
+
+### Bug #2 audio — Opus HI-FI stereo (June 13) — branch `opus-hifi-stereo`, off master
+Commit `bf05ef0`. master untouched. Independent of the mirror/jitter-buffer work —
+this is the audio-FIDELITY lever (lever #3 from the Bug #2 measurement pass), shipped
+as its own clean branch.
+
+**Measurement that motivated it:** the four-lever audit found partner audio was running
+on **voice-grade Opus defaults** — no SDP munging anywhere, so Chrome negotiated ~mono,
+~32 kbps, voice-optimized — wrong for a DJ app. (The other levers: jitterBufferTarget is
+never set = browser-adaptive shallow ~80–104ms; the wobble is confirmed NetEQ
+time-stretch via the existing [JITTER-DIAG]; the partner stream IS separable from local
+audio. Those remain banked.)
+
+**What shipped:** munge the LOCAL SDP on BOTH sides (offer in `startCall`, answer in
+`handleOffer`) → Opus fmtp `stereo=1; sprop-stereo=1; maxaveragebitrate=256000;
+maxplaybackrate=48000; useinbandfec=1`, plus raise the audio sender's encoding
+maxBitrate to 256000 (`applySenderHiFi`) so the encoder actually pushes stereo at rate.
+Added a `[OPUS-SDP]` one-shot diagnostic that reads the NEGOTIATED codec
+(sdpFmtpLine + channels + live bitrate) from getStats. New `e2e-opus` smoke test + run.mjs
+registration.
+
+**PROVEN (e2e-opus 5/5):** the NEGOTIATED fmtp read from getStats — Chrome's agreed
+result, NOT the munge input — on BOTH receivers is
+`maxaveragebitrate=256000;...;sprop-stereo=1;stereo=1;useinbandfec=1`. Stereo + 256k took
+effect end-to-end. Full suite `npm run smoke -- --mock`: 23 passed, 0 failed, 0 skipped,
+1 xfail (e2e-mirror-slew XFAIL is EXPECTED on this branch — the Move #2 slew fix is on
+`move2-mirror-slew-fix`). All RTC tests (comp/drift/reconnect/rejoin) pass → the SDP munge
+doesn't break the connection.
+
+**Honesty note:** the live-throughput check read ~1kbps on the synthetic kick fixture
+(sparse + DTX + the 12s track ends before the window) — uninformative, since
+maxaveragebitrate is a CAP not a floor. Demoted it from a hard gate to a logged diagnostic
+TRANSPARENTLY (flagged in test + commit) rather than faking a pass. The fmtp negotiation is
+the proof; real-music throughput + the audible jump are the live check.
+
+**Two branches now staged + proven, master clean. Both need a live Jake session:**
+  - `opus-hifi-stereo` — HEAR the hi-fi stereo jump (vs phone-call-grade).
+  - `move2-mirror-slew-fix` — grid locks to the HEARD beat (GRID_ALIGN) + no backward slew.
+Holding: do NOT push, do NOT merge until the live checks pass.
