@@ -2,7 +2,7 @@ import * as Sentry from "@sentry/react";
 import { initSession, pushEvent, downloadSessionLog } from "./utils/sessionLog.js";
 
 Sentry.init({
-  dsn: "https://250727774480086ad89445a3d938a223@o4511385896943616.ingest.us.sentry.io/4511385926107137",
+  dsn: import.meta.env.VITE_SENTRY_DSN || "https://250727774480086ad89445a3d938a223@o4511385896943616.ingest.us.sentry.io/4511385926107137",
   integrations: [
     Sentry.browserTracingIntegration(),
     Sentry.replayIntegration({
@@ -11,9 +11,14 @@ Sentry.init({
       blockAllMedia: false,
     }),
   ],
-  replaysSessionSampleRate: 0.1,
-  replaysOnErrorSampleRate: 1.0,
-  tracesSampleRate: 1.0,
+  // Session Replay DISABLED (June 13) — its quota was exhausted (the 429s in Jake's
+  // logs). Errors/logs/performance are the priority; Replay is a bonus. Re-enable by
+  // bumping these once the Replay quota resets or the plan is upgraded.
+  replaysSessionSampleRate: 0,
+  replaysOnErrorSampleRate: 0,
+  // Performance: 20% (was 1.0, which was also burning the transactions quota).
+  // Error capture is unaffected by this — errors are always sent.
+  tracesSampleRate: 0.2,
   ignoreErrors: [
     /extension/i,
     /chrome-extension/i,
