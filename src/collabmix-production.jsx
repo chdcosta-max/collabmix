@@ -141,7 +141,10 @@ const WF_TEAL_GAMMA    = _urlNum("wfTealGamma", 1.30);   // teal body curve; LOW
 //   deckblue = low band swapped to the DECK identity colour (blue on A, purple on B); keep amber + cream
 //   mono     = whole waveform in the deck identity colour; height/brightness carries the shape (no amber/cream)
 // Does NOT touch the deck overview strip (separate WF component).
-const _urlStr = (k, d) => { const v = URL_FLAGS.get(k); return v == null ? d : v; };
+// LAST-wins on duplicate keys: appending ?wfcolor=mono to a URL that still
+// carries an earlier ?wfcolor=deckblue resolves to mono (URLSearchParams.get
+// returns the FIRST occurrence, which made the newer value appear ignored).
+const _urlStr = (k, d) => { const all = URL_FLAGS.getAll(k); return all.length ? all[all.length-1] : d; };
 const WF_COLOR_MODE = _urlStr("wfcolor", "current");
 // ── Top scrolling waveform LAYER MODEL (live ?wflayer=…) — shape + layer composition.
 //   current = today's render (independent center-anchored band heights; blue owns the outline).
@@ -4542,34 +4545,11 @@ function buildSilhouettePath(heights,center,physW,maxH){
   return path;
 }
 
-// Path A commit 2: silhouette glow source. Renders a single solid-color
-// fill of the silhouette path onto the supplied context. The caller is
-// expected to point ctx at the LOWER canvas (a separate <canvas> stacked
-// behind the crisp-detail upper canvas, with CSS filter:blur applied via
-// inline style). The browser's GPU compositor blurs the lower canvas as
-// part of paint — no per-frame JS-side blur work, no shadowBlur cost.
-//
-// Supersedes the v5.8 multi-pass additive shadowBlur approach (three
-// 'lighter'-composited fills at radii 70*dpr / 28*dpr / 0). That worked
-// but capped out atmospherically and was the heaviest cost in the draw
-// loop. CSS gaussian blur produces a more uniform halo for free.
-//
-// alpha is exposed as a tuning parameter (SILHOUETTE_FILL_ALPHA constant
-// at the call site). 1.0 = full pigment; lower values yield a more
-// translucent core after the CSS blur spreads it out.
-function renderSilhouetteGlow(ctx,path,dr,dg,db,alpha){
-  ctx.fillStyle=`rgba(${dr},${dg},${db},${alpha})`;
-  ctx.fill(path);
-}
 
 function AnimatedZoomedWF({ bands, dur, progRef, onSeek, h=96, windowSec=8, beatPhaseFrac=null, beatPeriodSec=null, gridOffsetMs=0, barOneOffsetSec=0, deckColor="#FFFFFF", rate=1, beatTimes=null, beatsV2=false, desmear=false, isDriver=true, deckId=null, gridAlignSecRef=null }) {
-  // Path A glow tuning. Lower canvas renders a single solid-fill silhouette
-  // and gets CSS filter:blur applied via inline style; the browser composites
-  // the blur on the GPU. Tune visually by adjusting these three values.
-  const LOWER_CANVAS_BLUR_PX = 20;             // CSS blur radius on the lower canvas
-  const LOWER_CANVAS_OPACITY = 0.55;           // opacity multiplier on the lower canvas
-  const SILHOUETTE_FILL_ALPHA = 1.0;           // alpha of the silhouette fill (pre-blur)
-  const UPPER_CANVAS_SILHOUETTE_ALPHA = 1.0;   // alpha of the crisp body on the upper canvas
+  // Glow layer REMOVED: the blurred lower-canvas duplicate washed the waveform
+  // out and bridged the gaps between kicks into a tube. The top waveform now
+  // renders as a single crisp layer, matching the deck-A overview strip.
 
   // ── A+B frequency-band waveform palette (Jun 13 2026). The waveform is now
   // three stacked, opaquely-painted bands instead of one deck-coloured
@@ -4591,7 +4571,6 @@ function AnimatedZoomedWF({ bands, dur, progRef, onSeek, h=96, windowSec=8, beat
   const WF_HIGH_SCALE = 0.34;  // cap cream height — SUBTLE bright tips only, not a body
 
   const ref=useRef(null);       // upper canvas — crisp draws + drag target
-  const lowerRef=useRef(null);  // lower canvas — silhouette fill, CSS-blurred
   const raf=useRef(null);
   const colBufRef=useRef(null); // {bv, mv, hv, heights: Float32Array, len} — per-column scratch
   const sizeRef=useRef({physW:0,physH:0,dirty:true});
@@ -4657,9 +4636,8 @@ function AnimatedZoomedWF({ bands, dur, progRef, onSeek, h=96, windowSec=8, beat
 
   useEffect(()=>{
     const upper=ref.current;
-    const lower=lowerRef.current;
-    if(!upper||!lower) return;
-    let physW=0,physH=0,ctx=null,lctx=null;
+    if(!upper) return;
+    let physW=0,physH=0,ctx=null;
     const dpr=window.devicePixelRatio||1;
 
     // ResizeObserver watches the upper canvas; the lower canvas always fills
@@ -4703,13 +4681,11 @@ function AnimatedZoomedWF({ bands, dur, progRef, onSeek, h=96, windowSec=8, beat
         if(newPW!==physW||newPH!==physH){
           physW=newPW; physH=newPH;
           upper.width=physW; upper.height=physH;
-          lower.width=physW; lower.height=physH;
           ctx=upper.getContext('2d');
-          lctx=lower.getContext('2d');
           colBufRef.current=null; // force realloc on next frame
         }
       }
-      if(!ctx||!lctx) return;
+      if(!ctx) return;
 
       const dur2=durRef.current;
       // Drag overlay takes precedence — see dragProgRef declaration above.
@@ -4745,11 +4721,8 @@ function AnimatedZoomedWF({ bands, dur, progRef, onSeek, h=96, windowSec=8, beat
       const maxH=Math.max(0,Math.min(center-ampTop,ampBottom-1-center));
       const bands=bandsRef.current;
 
-      // Path A commit 2: both canvases clear to TRANSPARENT each frame.
-      // The container element behind them carries the #000000 background.
-      // Lower canvas paints the silhouette glow source (CSS-blurred via
-      // inline style); upper canvas paints the crisp detail layer.
-      lctx.clearRect(0,0,physW,physH);
+      // Single crisp canvas, cleared to TRANSPARENT each frame; the container
+      // element behind it carries the #000000 background.
       ctx.clearRect(0,0,physW,physH);
 
       // Rate-aware visible-buffer-time span. windowSec is treated as WALL
@@ -4989,10 +4962,6 @@ function AnimatedZoomedWF({ bands, dur, progRef, onSeek, h=96, windowSec=8, beat
           if(WF_COLOR_MODE==='deckblue'){ lr=dcr; lg=dcg; lb=dcb; }            // low → deck colour; amber + cream kept
           else { lr=mr=hr=dcr; lg=mg=hg=dcg; lb=mb2=hb=dcb; }                  // mono → every band the deck colour
         }
-
-        // Atmospheric halo (LOWER canvas, GPU-blurred): one smooth teal envelope.
-        const haloPath=buildSilhouettePath(hEnv,center,physW,maxH);
-        renderSilhouetteGlow(lctx,haloPath,lr,lg,lb,SILHOUETTE_FILL_ALPHA);
 
         if(WF_LAYER_MODE==='column'||WF_LAYER_MODE==='hybrid'){
           // Shape = hEnv (silhouette computed above). Colour = literal per-column frequency
@@ -5306,16 +5275,10 @@ function AnimatedZoomedWF({ bands, dur, progRef, onSeek, h=96, windowSec=8, beat
       window.removeEventListener('mouseup',onUp);
     };
   },[windowSec,progRef]);
-  // Path A commit 2: two stacked canvases inside a container. The lower
-  // canvas paints the silhouette and is CSS-blurred by the browser's GPU
-  // compositor (filter:blur on its inline style). pointer-events:none on
-  // the lower lets mouse events fall through to the upper canvas, which
-  // is what the drag handler binds to (via `ref`). Container background
-  // is #000000; both canvases clear to transparent each frame.
+  // Single crisp canvas inside a #000000 container — no glow/blur layer.
   return (
     <div style={{position:'relative',width:'100%',height:h,background:'#000000',cursor:'ew-resize',display:'block',userSelect:'none'}}>
-      <canvas ref={lowerRef} style={{position:'absolute',top:0,left:0,width:'100%',height:'100%',filter:`blur(${LOWER_CANVAS_BLUR_PX}px)`,opacity:LOWER_CANVAS_OPACITY,pointerEvents:'none'}}/>
-      <canvas ref={ref}      style={{position:'absolute',top:0,left:0,width:'100%',height:'100%'}}/>
+      <canvas ref={ref} style={{position:'absolute',top:0,left:0,width:'100%',height:'100%'}}/>
     </div>
   );
 }
