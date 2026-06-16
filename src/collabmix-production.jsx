@@ -3212,7 +3212,7 @@ function LibraryPanelV2({ lib, onLoad, playingTrack, deckATrackId:deckATrackIdPr
             boxShadow: `0 40px 80px rgba(0,0,0,.7), 0 0 0 1px #1F2126`,
           }}>
             <div style={{ textAlign: "center" }}>
-              <div style={{ fontFamily: "'Cormorant Garamond',serif", fontWeight: 700, fontSize: 22, letterSpacing: -0.3, color: TEXT }}>
+              <div style={{ fontFamily: "'Inter',sans-serif", fontWeight: 700, fontSize: 22, letterSpacing: -0.3, color: TEXT }}>
                 Found {importPreview.items.length} {importPreview.items.length === 1 ? "track" : "tracks"}
               </div>
               <div style={{ fontSize: 9, fontFamily: "'Inter',sans-serif", color: `${G}55`, letterSpacing: 3, marginTop: 6 }}>Ready to import</div>
@@ -7986,7 +7986,7 @@ function Lobby({ onJoin, djName = null }) {
 
         {/* Header — matches App.jsx logo */}
         <div style={{ textAlign:"center" }}>
-          <div style={{ fontFamily:"'Cormorant Garamond',serif", fontWeight:700, fontSize:28, letterSpacing:-0.5, color:"#F5F5F7" }}>
+          <div style={{ fontFamily:"'Inter',sans-serif", fontWeight:700, fontSize:28, letterSpacing:-0.5, color:"#F5F5F7" }}>
             Mix<span style={{ color:G }}>//</span>Sync
           </div>
           <div style={{ fontSize:9, fontFamily:"'Inter',sans-serif", color:`${G}55`, letterSpacing:3, marginTop:6 }}>{isJoining?"JOIN MIX":"START A MIX"}</div>
@@ -8009,7 +8009,7 @@ function Lobby({ onJoin, djName = null }) {
         <div style={{ display:"flex", flexDirection:"column", gap:7 }}>
           <label style={{ fontSize:8, fontFamily:"'Inter',sans-serif", color:`${G}77`, letterSpacing:2 }}>{isJoining?"JOINING MIX":"MIX NAME"}</label>
           {isJoining ? (
-            <div style={{ fontFamily:"'Cormorant Garamond',serif", fontWeight:700, fontSize:22, letterSpacing:0.5, color:"#F5F5F7", padding:"6px 0" }}>{resolvedMix()}</div>
+            <div style={{ fontFamily:"'Inter',sans-serif", fontWeight:700, fontSize:22, letterSpacing:0.5, color:"#F5F5F7", padding:"6px 0" }}>{resolvedMix()}</div>
           ) : (
             <input
               value={mixName}
@@ -8035,7 +8035,7 @@ function Lobby({ onJoin, djName = null }) {
         {!isJoining && (
         <div style={{ background:"#0D0F12", border:`1px solid ${G}18`, borderRadius:12, padding:16, display:"flex", flexDirection:"column", gap:8 }}>
           <div style={{ fontSize:8, fontFamily:"'Inter',sans-serif", color:`${G}55`, letterSpacing:2 }}>Mix code</div>
-          <div style={{ fontFamily:"'Cormorant Garamond',serif", fontWeight:700, fontSize:22, letterSpacing:1, color:"#F5F5F7" }}>{room}</div>
+          <div style={{ fontFamily:"'Inter',sans-serif", fontWeight:700, fontSize:22, letterSpacing:1, color:"#F5F5F7" }}>{room}</div>
           <div style={{ fontSize:8, fontFamily:"'Inter',sans-serif", color:"#5A5E66", wordBreak:"break-all" }}>{inviteLink}</div>
           <button
             onClick={copyLink}
@@ -10578,7 +10578,7 @@ export default function CollabMix({ initialPage = "landing", djName = null }) {
           <div style={{ width:28, height:28, borderRadius:7, border:`1px solid ${G}38`, display:"flex", alignItems:"center", justifyContent:"center", background:`${G}08` }}>
             <span style={{ fontFamily:"'Inter',sans-serif", fontSize:9, color:G }}>{"//"}</span>
           </div>
-          <span style={{ fontFamily:"'Cormorant Garamond',serif", fontSize:18, fontWeight:700, color:"#F5F5F7", letterSpacing:-0.3 }}>Mix<span style={{ color:G }}>//</span>Sync</span>
+          <span style={{ fontFamily:"'Inter',sans-serif", fontSize:18, fontWeight:700, color:"#F5F5F7", letterSpacing:-0.3 }}>Mix<span style={{ color:G }}>//</span>Sync</span>
         </div>
         <div style={{ flex:1, display:"flex", gap:10, alignItems:"center" }}>
           <div style={{ display:"flex", gap:5, alignItems:"center", fontSize:7, fontFamily:"'Inter',sans-serif" }}>
