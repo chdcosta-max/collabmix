@@ -6028,30 +6028,30 @@ function Deck({ id, ch, ctx:ac, color, local, remote, onChange, midi:mt, bpmResu
     const sg=ac.createGain(); s.connect(sg); sg.connect(ch.trim);
     const lr=loopRef.current;
     if(lr.active&&lr.start!==null){s.loop=true;s.loopStart=lr.start*buf.duration;s.loopEnd=(lr.end??1)*buf.duration;}
+    // A3: HARD-SWAP retires the outgoing source BEFORE the new one starts → no momentary
+    // overlap/amplitude blip (the crossfade case keeps its intentional overlap below).
+    // onended nulled first so the stop() can't fire a false track-end (setPlay(false)).
+    if(old && !doXfade){ old.onended=null; _LIVE_SOURCES.delete(old); try{old.stop();}catch{} try{old.disconnect();}catch{} if(oldG){try{oldG.disconnect();}catch{}} }
     if(doXfade) sg.gain.setValueCurveAtTime(XFADE_IN_CURVE, now, XF);   // equal-power fade IN (0→1)
     else        sg.gain.setValueAtTime(1, now);                          // instant (play-start / hard swap)
     s.start(0,o);
     s.onended=()=>{_LIVE_SOURCES.delete(s);if(!loopRef.current.active){setPlay(false);setProg(0);off.current=0;onChange?.("playing",false);}};
-    // ── Retire the OUTGOING source. CRITICAL: null its onended FIRST so its delayed
-    // stop() can't fire a false track-end (setPlay(false)). Then crossfade it out
-    // (overlap) or hard-stop it; cleanup (stop + disconnect) is guaranteed either way. ──
-    if(old){
+    // ── CROSSFADE retire: OVERLAP the outgoing source out while the new one fades in
+    // (started above). onended nulled first so the delayed stop() can't fire a false
+    // track-end; cleanup (stop + disconnect) guaranteed via the fade-tail onended. ──
+    if(old && doXfade && oldG){
       old.onended=null;
-      if(doXfade && oldG){
-        oldG.gain.cancelScheduledValues(now);
-        if(now>=(oldFadeEnd||0)){
-          oldG.gain.setValueCurveAtTime(XFADE_OUT_CURVE, now, XF);       // common case: outgoing is at full gain → equal-power cos out (1→0)
-        } else {
-          // rapid re-seek (<XF since the last): outgoing is still mid fade-in. Fade from
-          // its LIVE value so there's no jump/click — robustness over perfect constant power.
-          if(oldG.gain.cancelAndHoldAtTime) oldG.gain.cancelAndHoldAtTime(now); else oldG.gain.setValueAtTime(oldG.gain.value, now);
-          oldG.gain.linearRampToValueAtTime(0.0001, now+XF);
-        }
-        try{ old.stop(now+XF); }catch{}
-        const _o=old, _og=oldG; old.onended=()=>{ _LIVE_SOURCES.delete(_o); try{_o.disconnect();}catch{} try{_og.disconnect();}catch{} };   // cleanup when the fade tail ends
+      oldG.gain.cancelScheduledValues(now);
+      if(now>=(oldFadeEnd||0)){
+        oldG.gain.setValueCurveAtTime(XFADE_OUT_CURVE, now, XF);         // common case: outgoing is at full gain → equal-power cos out (1→0)
       } else {
-        _LIVE_SOURCES.delete(old); try{old.stop();}catch{} try{old.disconnect();}catch{} if(oldG){try{oldG.disconnect();}catch{}}
+        // rapid re-seek (<XF since the last): outgoing is still mid fade-in. Fade from
+        // its LIVE value so there's no jump/click — robustness over perfect constant power.
+        if(oldG.gain.cancelAndHoldAtTime) oldG.gain.cancelAndHoldAtTime(now); else oldG.gain.setValueAtTime(oldG.gain.value, now);
+        oldG.gain.linearRampToValueAtTime(0.0001, now+XF);
       }
+      try{ old.stop(now+XF); }catch{}
+      const _o=old, _og=oldG; old.onended=()=>{ _LIVE_SOURCES.delete(_o); try{_o.disconnect();}catch{} try{_og.disconnect();}catch{} };   // cleanup when the fade tail ends
     }
     cancelAnimationFrame(raf.current);   // kill the outgoing source's progress RAF (stop_ used to do this before play_)
     src.current=s; sgRef.current=sg; sgFadeEndRef.current = doXfade ? now+XF : now; st.current=(acNowRef?.current ?? ac.currentTime); off.current=o;
