@@ -155,6 +155,12 @@ const WF_GOLD_FRAC  = _urlNum("wfGoldFrac",  0.78);  // 0..1 — gold middle ban
 const WF_RIM_FRAC   = _urlNum("wfRimFrac",   0.12);  // 0..1 — guaranteed blue outer-rim thickness
 const WF_SPECTRAL   = _urlNum("wfSpectral",  0.50);  // 0 = uniform cream core, 1 = fully high-energy-driven core
 const WF_EDGE_MS    = _urlNum("wfEdge",      110);   // ms — silhouette transient release (right taper; smaller = sharper)
+// ── HYBRID/COLUMN knobs (?wflayer=hybrid|column). Shape decoupled from colour.
+const WF_DECAY_MS      = _urlNum("wfDecay",        90);   // ms — kick triangle taper. THE triangle-vs-tube knob (smaller = sharper, more collapsed)
+const WF_FLOOR         = _urlNum("wfFloor",       0.12);  // 0..1 — how high the non-kick energy thread sits (0 = kicks on near-black)
+const WF_HIGH_WEIGHT   = _urlNum("wfHighWeight",   2.5);  // perceptual boost on highs so cream reads (highs are low-energy)
+const WF_CORE_RESPONSE = _urlNum("wfCoreResponse", 1.4);  // how strongly the cream core grows with high/broadband energy
+const WF_BLEND_GAMMA   = _urlNum("wfBlendGamma",   1.0);  // bass↔mid body-colour blend curve (>1 holds blue longer, <1 leans orange)
 
 // ── Server Configuration ─────────────────────────────────────
 // After deploying to Railway, replace this URL with your Railway server URL.
@@ -4770,10 +4776,12 @@ function AnimatedZoomedWF({ bands, dur, progRef, onSeek, h=96, windowSec=8, beat
             hMid:new Float32Array(physW+64),   // amber MID transient height (independent)
             hHigh:new Float32Array(physW+64),  // cream HIGH attack height (independent)
             hEnv:new Float32Array(physW+64),   // outer envelope (max) — halo source
+            bandMid:new Float32Array(physW+64),// raw MID band energy per column (hybrid/column colour)
+            onset:new Float32Array(physW+64),  // low-mid ONSET per column (hybrid silhouette driver)
             len:physW+64,
           };
         }
-        const {bv:colB,mv:colM,hv:colH,hLow,hMid,hHigh,hEnv}=colBufRef.current;
+        const {bv:colB,mv:colM,hv:colH,hLow,hMid,hHigh,hEnv,bandMid:colMid,onset:colOnset}=colBufRef.current;
 
         // ── Pass 1: per-column band values. Source buckets hold per-band RMS
         // (computed in Deck.load — smooth, not peak-hold, so the body reads as
@@ -4796,11 +4804,11 @@ function AnimatedZoomedWF({ bands, dur, progRef, onSeek, h=96, windowSec=8, beat
         const interp = spp<=1.0;
         const sample=(A,p)=>{ if(p<=0)return A[0]; if(p>=len-1)return A[len-1]; const i=p|0; return A[i]+(A[i+1]-A[i])*(p-i); };
         for(let dx=0;dx<physW;dx++){
-          let b=0,onM=0,hh=0;
+          let b=0,onM=0,hh=0,md=0;
           if(interp){
             const fC=srcX+dx*spp+spp*0.5;                     // column centre, source-bucket space
             if(fC>=0&&fC<len){
-              const bv=sample(bArr,fC), mv=sample(mArr,fC); hh=sample(hArr,fC); b=bv;
+              const bv=sample(bArr,fC), mv=sample(mArr,fC); hh=sample(hArr,fC); b=bv; md=mv;
               const eNow=bv+mv, eP=sample(bArr,fC-onD)+sample(mArr,fC-onD);
               onM=eNow>eP?eNow-eP:0;                          // low-mid onset = positive rise
             }
@@ -4812,6 +4820,7 @@ function AnimatedZoomedWF({ bands, dur, progRef, onSeek, h=96, windowSec=8, beat
             if(f1>=0&&f0<len){
               for(let k=s0;k<=s1;k++){
                 const bk=bArr[k]; if(bk>b)b=bk;
+                const mk=mArr[k]; if(mk>md)md=mk;
                 const hk=hArr[k]; if(hk>hh)hh=hk;
                 const kD=k-onD<0?0:k-onD;
                 const e=bArr[k]+mArr[k], ep=bArr[kD]+mArr[kD];
@@ -4820,6 +4829,7 @@ function AnimatedZoomedWF({ bands, dur, progRef, onSeek, h=96, windowSec=8, beat
             }
           }
           colB[dx]=b; colM[dx]=onM; colH[dx]=hh;             // colM holds the ONSET, not raw mid
+          colMid[dx]=md; colOnset[dx]=onM;                   // raw MID + ONSET retained for hybrid/column
         }
 
         // ── De-smear (?onsetgrid=1): clamp each band DOWN to its pre-onset
@@ -4856,15 +4866,15 @@ function AnimatedZoomedWF({ bands, dur, progRef, onSeek, h=96, windowSec=8, beat
         // its OWN loudest moment so sparse-but-bright highs (the sharp attack
         // click) read as obvious cream even though their raw energy is low.
         if(envMaxRef.current.bands!==bands){
-          const srcLen=bArr.length; let mb=0,mon=0,mh=0;
+          const srcLen=bArr.length; let mb=0,mon=0,mh=0,mmid=0;
           for(let i=0;i<srcLen;i++){
-            if(bArr[i]>mb)mb=bArr[i]; if(hArr[i]>mh)mh=hArr[i];
+            if(bArr[i]>mb)mb=bArr[i]; if(hArr[i]>mh)mh=hArr[i]; if(mArr[i]>mmid)mmid=mArr[i];
             const iD=i-onD<0?0:i-onD; const e=bArr[i]+mArr[i], ep=bArr[iD]+mArr[iD];
             const on=e>ep?e-ep:0; if(on>mon)mon=on;          // per-track max ONSET (for amber norm)
           }
-          envMaxRef.current={bands,mb:mb>1e-4?mb:1,mm:mon>1e-4?mon:1,mh:mh>1e-4?mh:1};
+          envMaxRef.current={bands,mb:mb>1e-4?mb:1,mm:mon>1e-4?mon:1,mh:mh>1e-4?mh:1,mmid:mmid>1e-4?mmid:1};
         }
-        const {mb:maxB,mm:maxM,mh:maxH2}=envMaxRef.current;
+        const {mb:maxB,mm:maxM,mh:maxH2,mmid:maxMid}=envMaxRef.current;
 
         // ── BLUE BODY (dominant) + GOLD TRANSIENT SPINE. Teal = the kick ENERGY
         // envelope (genuinely sustained → the dominant mass). Amber gets its OWN
@@ -4890,7 +4900,40 @@ function AnimatedZoomedWF({ bands, dur, progRef, onSeek, h=96, windowSec=8, beat
           aEnv = inp>aEnv ? aAtk*aEnv+(1-aAtk)*inp : aEnv*aRel;
           colM[dx]=aEnv;                                       // amber transient envelope (supersedes the onset)
         }
-        if(WF_LAYER_MODE!=='nested'){
+        const isColMode = WF_LAYER_MODE==='column' || WF_LAYER_MODE==='hybrid';
+        if(isColMode){
+          // ── COLUMN (B) + HYBRID (C) — shape DECOUPLED from colour. Silhouette S → hEnv
+          // (also the halo source); colour is computed per column from the literal band
+          // energies in the draw block below.
+          //   column → S = overall AMPLITUDE (loudness) → spectrally-coloured but tube-ish (comparison rung).
+          //   hybrid → S = onset-driven KICK TRIANGLE (attack 0, release wfDecay) that COLLAPSES to
+          //            near-zero between kicks, lifted only by a faint wfFloor·amplitude thread so
+          //            non-kick energy still shows LOW. Kick-dominant sharp triangles, not a tube.
+          const floorLvl=Math.max(0,Math.min(1,WF_FLOOR));
+          const relK=Math.exp(-secPerCol/Math.max(1e-4,WF_DECAY_MS/1000));
+          const KICK_GAMMA=0.75, KICK_GAIN=1.5;   // kick triangle: lift mid kicks; loud kicks clamp to rail
+          const AMP_GAMMA=1.0,   AMP_GAIN=1.2;     // amplitude/body shaping (faint thread + column shape)
+          const hybrid = WF_LAYER_MODE==='hybrid';
+          let kEnv=0;
+          for(let dx=0;dx<physW;dx++){
+            const amp=Math.max(colB[dx]/maxB, colMid[dx]/maxMid, colH[dx]/maxH2);   // overall loudness
+            let bodyH = amp>0.004 ? Math.pow(amp,AMP_GAMMA)*maxH*AMP_GAIN : 0;
+            if(bodyH>maxH)bodyH=maxH;
+            let S;
+            if(hybrid){
+              const onset=colOnset[dx];
+              kEnv = onset>kEnv ? onset : kEnv*relK;          // attack 0 = hard left wall; release = right taper
+              const nk = maxM>0 ? kEnv/maxM : 0;
+              let kickH = nk>0.004 ? Math.pow(nk,KICK_GAMMA)*maxH*KICK_GAIN : 0;
+              if(kickH>maxH)kickH=maxH;
+              const floorH=floorLvl*bodyH;
+              S = kickH>floorH ? kickH : floorH;              // kick triangle dominates; faint thread between
+            } else {
+              S = bodyH;                                      // column: pure amplitude shape
+            }
+            hEnv[dx]=S;
+          }
+        } else if(WF_LAYER_MODE!=='nested'){
         for(let dx=0;dx<physW;dx++){
           const nb=colB[dx]/maxB, na=colM[dx]/maxB, nh=colH[dx]/maxH2;
           hLow[dx]  = nb>0.004 ? Math.pow(nb,WF_TEAL_GAMMA)*maxH*WF_TEAL_GAIN  : 0; // BLUE body (dominant mass)
@@ -4951,14 +4994,48 @@ function AnimatedZoomedWF({ bands, dur, progRef, onSeek, h=96, windowSec=8, beat
         const haloPath=buildSilhouettePath(hEnv,center,physW,maxH);
         renderSilhouetteGlow(lctx,haloPath,lr,lg,lb,SILHOUETTE_FILL_ALPHA);
 
-        // Crisp detail (UPPER canvas), back→front: BLUE body (dominant) → GOLD
-        // transient spine (on top, spikes through at kicks) → CREAM tips.
-        ctx.fillStyle=`rgb(${lr},${lg},${lb})`;        // BLUE body (dominant mass)
-        for(let dx=0;dx<physW;dx++){ const hh=hLow[dx];  if(hh>0) ctx.fillRect(dx,center-hh,1,hh*2+1); }
-        ctx.fillStyle=`rgb(${mr},${mg},${mb2})`;       // GOLD transient spine
-        for(let dx=0;dx<physW;dx++){ const hh=hMid[dx];  if(hh>0) ctx.fillRect(dx,center-hh,1,hh*2+1); }
-        ctx.fillStyle=`rgb(${hr},${hg},${hb})`;        // CREAM tips
-        for(let dx=0;dx<physW;dx++){ const hh=hHigh[dx]; if(hh>0) ctx.fillRect(dx,center-hh,1,hh*2+1); }
+        if(WF_LAYER_MODE==='column'||WF_LAYER_MODE==='hybrid'){
+          // Shape = hEnv (silhouette computed above). Colour = literal per-column frequency
+          // mix between the three palette anchors (lr/lg/lb = low, mr/mg/mb2 = mid, hr/hg/hb
+          // = high). highW boosts the low-energy highs so cream reads.
+          const highW=Math.max(0,WF_HIGH_WEIGHT);
+          const coreResp=Math.max(0,WF_CORE_RESPONSE);
+          const blendG=Math.max(0.05,WF_BLEND_GAMMA);
+          if(WF_LAYER_MODE==='column'){
+            // ONE blended colour per column, full silhouette height (no vertical core).
+            for(let dx=0;dx<physW;dx++){
+              const S=hEnv[dx]; if(S<=0)continue;
+              const wB=colB[dx]/maxB, wM=colMid[dx]/maxMid, wH=(colH[dx]/maxH2)*highW;
+              const wSum=wB+wM+wH||1;
+              const R=(wB*lr+wM*mr+wH*hr)/wSum, G=(wB*lg+wM*mg+wH*hg)/wSum, B=(wB*lb+wM*mb2+wH*hb)/wSum;
+              ctx.fillStyle=`rgb(${R|0},${G|0},${B|0})`;
+              ctx.fillRect(dx,center-S,1,S*2+1);
+            }
+          } else {
+            // HYBRID: body = bass↔mid blend (blue↔orange); cream CORE sized by high energy
+            // → cream punches through at broadband attacks, absent on pure sustained bass.
+            for(let dx=0;dx<physW;dx++){
+              const S=hEnv[dx]; if(S<=0)continue;
+              const wB=colB[dx]/maxB, wM=colMid[dx]/maxMid;
+              let t=(wB+wM)>1e-4 ? wM/(wB+wM) : 0; t=Math.pow(t,blendG);   // 0 = bass(blue) … 1 = mid(orange)
+              const R=lr+(mr-lr)*t, G=lg+(mg-lg)*t, B=lb+(mb2-lb)*t;
+              ctx.fillStyle=`rgb(${R|0},${G|0},${B|0})`;
+              ctx.fillRect(dx,center-S,1,S*2+1);
+              let coreFrac=(colH[dx]/maxH2)*coreResp; if(coreFrac>1)coreFrac=1;   // high energy → cream core size
+              const coreH=coreFrac*S;
+              if(coreH>0.5){ ctx.fillStyle=`rgb(${hr},${hg},${hb})`; ctx.fillRect(dx,center-coreH,1,coreH*2+1); }
+            }
+          }
+        } else {
+          // Crisp detail (UPPER canvas), back→front: BLUE body (dominant) → GOLD
+          // transient spine (on top, spikes through at kicks) → CREAM tips.
+          ctx.fillStyle=`rgb(${lr},${lg},${lb})`;        // BLUE body (dominant mass)
+          for(let dx=0;dx<physW;dx++){ const hh=hLow[dx];  if(hh>0) ctx.fillRect(dx,center-hh,1,hh*2+1); }
+          ctx.fillStyle=`rgb(${mr},${mg},${mb2})`;       // GOLD transient spine
+          for(let dx=0;dx<physW;dx++){ const hh=hMid[dx];  if(hh>0) ctx.fillRect(dx,center-hh,1,hh*2+1); }
+          ctx.fillStyle=`rgb(${hr},${hg},${hb})`;        // CREAM tips
+          for(let dx=0;dx<physW;dx++){ const hh=hHigh[dx]; if(hh>0) ctx.fillRect(dx,center-hh,1,hh*2+1); }
+        }
       }
 
       // ── Premium beat grid — three-tier edge markers with downbeat + phrase emphasis.
