@@ -10453,6 +10453,16 @@ export default function CollabMix({ initialPage = "landing", djName = null }) {
   // leave() clears cm_session, so post-leave refresh correctly returns to Landing.
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
+    // ?fresh=1 — bookmarkable clean-start escape hatch. Skips auto-rejoin and
+    // forces the landing page regardless of a saved cm_session, and clears that
+    // saved pointer so a later plain load also stays on landing until the user
+    // re-joins. Does NOT change the silent-resume logic itself — it's an explicit,
+    // opt-in override that simply returns before any rejoin path runs.
+    if (params.get("fresh") === "1") {
+      try { localStorage.removeItem("cm_session"); } catch {}
+      setPage("landing");
+      return;
+    }
     const paramRoom = params.get("room");
     const paramName = params.get("name");
     const paramMix  = params.get("mix");
