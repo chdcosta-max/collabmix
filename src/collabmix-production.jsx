@@ -145,6 +145,18 @@ const WF_TEAL_GAMMA    = _urlNum("wfTealGamma", 1.30);   // teal body curve; LOW
 // carries an earlier ?wfcolor=deckblue resolves to mono (URLSearchParams.get
 // returns the FIRST occurrence, which made the newer value appear ignored).
 const _urlStr = (k, d) => { const all = URL_FLAGS.getAll(k); return all.length ? all[all.length-1] : d; };
+// Smooth-seek crossfade. AudioBufferSourceNode is fire-once → a seek MUST create a new
+// source; the audible skip is the hard cut between stopping the old and starting the new.
+// We overlap them with a short EQUAL-POWER gain crossfade (sin in / cos out → constant
+// power across the overlap). ?seekXfade=<ms> tunes it; 0 = hard swap (old behaviour).
+const WF_SEEK_XFADE_MS = _urlNum("seekXfade", 12);
+const _XF_N = 33;
+const XFADE_IN_CURVE = new Float32Array(_XF_N), XFADE_OUT_CURVE = new Float32Array(_XF_N);
+for (let _i = 0; _i < _XF_N; _i++) { const _t = _i / (_XF_N - 1); XFADE_IN_CURVE[_i] = Math.sin(_t * Math.PI / 2); XFADE_OUT_CURVE[_i] = Math.cos(_t * Math.PI / 2); }
+// Live (created-but-not-yet-cleaned) AudioBufferSourceNodes. add/delete are idempotent,
+// so double-cleanup can't corrupt the count. Exposed via window.__liveSourceCount() for
+// the rapid-seek test to prove fade tails are released, not accumulated.
+const _LIVE_SOURCES = new Set();
 const WF_COLOR_MODE = _urlStr("wfcolor", "mono");   // DEFAULT: solid deck colour (#2E86DE on A). ?wfcolor=current|deckblue still reachable.
 // ── Top scrolling waveform LAYER MODEL (live ?wflayer=…) — shape + layer composition.
 //   current = today's render (independent center-anchored band heights; blue owns the outline).
@@ -5565,6 +5577,8 @@ function Deck({ id, ch, ctx:ac, color, local, remote, onChange, midi:mt, bpmResu
   const loopRef=useRef({active:false,start:null,end:null});
   const src=useRef(null),st=useRef(0),off=useRef(0),raf=useRef(null),fr=useRef(null);
   const seekEpochRef=useRef(0);   // monotone counter bumped on each REAL user seek/cue (driver) → broadcast so the mirror snaps deterministically
+  const sgRef=useRef(null);       // per-source gain node (source → sg → trim) — owns the seek crossfade envelope; NOT ch.trim (that's the driver gate)
+  const sgFadeEndRef=useRef(0);   // ac time the current source's fade-in finishes — lets the next seek fade the outgoing source out correctly even mid-fade
   // Pending nudge bookkeeping (see nudgeRate below).
   const nudgeT=useRef(null);
   const nudgeSrcRef=useRef(null);
@@ -5952,7 +5966,7 @@ function Deck({ id, ch, ctx:ac, color, local, remote, onChange, midi:mt, bpmResu
   const sfx=`DECK_${id}`;
   useEffect(()=>{ if(!mt||!local)return; const{actionKey:ak,value:v}=mt; if(ak===`${sfx}_PLAY`&&v===true)toggle(); if(ak===`${sfx}_CUE`&&v===true)cue(); },[mt]);
 
-  const stop_=()=>{ console.log('[PLAY-STATE] deck',id,'stop_() called, destroying source (hadSrc='+!!src.current+')'); if(src.current){src.current.onended=null;try{src.current.stop();}catch{}src.current.disconnect();src.current=null;}cancelAnimationFrame(raf.current); };
+  const stop_=()=>{ console.log('[PLAY-STATE] deck',id,'stop_() called, destroying source (hadSrc='+!!src.current+')'); if(src.current){_LIVE_SOURCES.delete(src.current);src.current.onended=null;try{src.current.stop();}catch{}src.current.disconnect();src.current=null;} if(sgRef.current){try{sgRef.current.disconnect();}catch{}sgRef.current=null;} cancelAnimationFrame(raf.current); };
 
   // Broadcast the driver's progress computed from the AUDIO CLOCK (ac.currentTime),
   // self-throttled to 10Hz. Driven from BOTH the RAF tick (foreground) AND the
@@ -5996,17 +6010,51 @@ function Deck({ id, ch, ctx:ac, color, local, remote, onChange, midi:mt, bpmResu
     if(isDriver&&play) w.postMessage({cmd:"start",ms:100}); else w.postMessage({cmd:"stop"});
   },[isDriver,play]);
 
-  const play_=(o)=>{ if(!buf||!ch||!ac){console.log('[PLAY-STATE] deck',id,'play_() bailed early: hasBuf='+!!buf+' hasCh='+!!ch+' hasAc='+!!ac); return;} console.log('[PLAY-STATE] deck',id,'play_() creating source at offset',o); stop_();
+  const play_=(o, hardSwap=false)=>{ if(!buf||!ch||!ac){console.log('[PLAY-STATE] deck',id,'play_() bailed early: hasBuf='+!!buf+' hasCh='+!!ch+' hasAc='+!!ac); return;} console.log('[PLAY-STATE] deck',id,'play_() creating source at offset',o,'hardSwap='+hardSwap);
     // ── one-shot audio diagnostics (booth-silence investigation) ──
     const _stateBefore=ac.state;
     if(ac.state==="suspended")ac.resume().then(()=>console.log('[AUDIO-DIAG] deck',id,'resume() resolved → ac.state='+ac.state)).catch(e=>console.warn('[AUDIO-DIAG] deck',id,'resume() FAILED',e?.message||e));
     try{ console.log('[AUDIO-DIAG] deck '+id+' play_ source-create | ac.state(before)='+_stateBefore+' trim='+ch.trim.gain.value.toFixed(3)+' vol='+ch.vol.gain.value.toFixed(3)+' xf='+ch.xf.gain.value.toFixed(3)+' rate='+rate); }catch(err){ console.warn('[AUDIO-DIAG] deck',id,'gain read failed',err?.message||err); }
-    const s=ac.createBufferSource(); s.buffer=buf; s.playbackRate.value=rate; s.connect(ch.trim);
+    const now=ac.currentTime;
+    const XF=Math.max(0,WF_SEEK_XFADE_MS)/1000;
+    const old=src.current, oldG=sgRef.current, oldFadeEnd=sgFadeEndRef.current;
+    // Crossfade ONLY when replacing a LIVE source on a real seek. Not on play-start
+    // (no old source — keep an instant attack) and not on the engage's sub-beat align
+    // (hardSwap=true — those micro-seeks are inaudible, so hard-swap and skip the
+    // overlap/cleanup cost entirely; same gate shape as the seekEpoch fix).
+    const doXfade=!hardSwap && XF>0 && !!old;
+    // New source gets its OWN gain node so it can fade independently of the outgoing one.
+    const s=ac.createBufferSource(); s.buffer=buf; s.playbackRate.value=rate; _LIVE_SOURCES.add(s);
+    const sg=ac.createGain(); s.connect(sg); sg.connect(ch.trim);
     const lr=loopRef.current;
     if(lr.active&&lr.start!==null){s.loop=true;s.loopStart=lr.start*buf.duration;s.loopEnd=(lr.end??1)*buf.duration;}
+    if(doXfade) sg.gain.setValueCurveAtTime(XFADE_IN_CURVE, now, XF);   // equal-power fade IN (0→1)
+    else        sg.gain.setValueAtTime(1, now);                          // instant (play-start / hard swap)
     s.start(0,o);
-    s.onended=()=>{if(!loopRef.current.active){setPlay(false);setProg(0);off.current=0;onChange?.("playing",false);}};
-    src.current=s; st.current=(acNowRef?.current ?? ac.currentTime); off.current=o;
+    s.onended=()=>{_LIVE_SOURCES.delete(s);if(!loopRef.current.active){setPlay(false);setProg(0);off.current=0;onChange?.("playing",false);}};
+    // ── Retire the OUTGOING source. CRITICAL: null its onended FIRST so its delayed
+    // stop() can't fire a false track-end (setPlay(false)). Then crossfade it out
+    // (overlap) or hard-stop it; cleanup (stop + disconnect) is guaranteed either way. ──
+    if(old){
+      old.onended=null;
+      if(doXfade && oldG){
+        oldG.gain.cancelScheduledValues(now);
+        if(now>=(oldFadeEnd||0)){
+          oldG.gain.setValueCurveAtTime(XFADE_OUT_CURVE, now, XF);       // common case: outgoing is at full gain → equal-power cos out (1→0)
+        } else {
+          // rapid re-seek (<XF since the last): outgoing is still mid fade-in. Fade from
+          // its LIVE value so there's no jump/click — robustness over perfect constant power.
+          if(oldG.gain.cancelAndHoldAtTime) oldG.gain.cancelAndHoldAtTime(now); else oldG.gain.setValueAtTime(oldG.gain.value, now);
+          oldG.gain.linearRampToValueAtTime(0.0001, now+XF);
+        }
+        try{ old.stop(now+XF); }catch{}
+        const _o=old, _og=oldG; old.onended=()=>{ _LIVE_SOURCES.delete(_o); try{_o.disconnect();}catch{} try{_og.disconnect();}catch{} };   // cleanup when the fade tail ends
+      } else {
+        _LIVE_SOURCES.delete(old); try{old.stop();}catch{} try{old.disconnect();}catch{} if(oldG){try{oldG.disconnect();}catch{}}
+      }
+    }
+    cancelAnimationFrame(raf.current);   // kill the outgoing source's progress RAF (stop_ used to do this before play_)
+    src.current=s; sgRef.current=sg; sgFadeEndRef.current = doXfade ? now+XF : now; st.current=(acNowRef?.current ?? ac.currentTime); off.current=o;
     const tick=()=>{
       // Shared frame-snapshot: read parent-RAF-published time so both decks
       // measure elapsed from an identical instant per frame. Eliminates the
@@ -6134,7 +6182,7 @@ function Deck({ id, ch, ctx:ac, color, local, remote, onChange, midi:mt, bpmResu
     // seek epoch so the mirror hard-snaps deterministically on THIS jump. Broadcast the
     // epoch BEFORE progress so it's already present when the mirror processes the new pos.
     if(!noQuantize){ seekEpochRef.current++; onChange?.("seekEpoch", seekEpochRef.current); }
-    const o=pq*durSec;off.current=o;if(play)play_(o);else{setProg(pq);progRef.current=pq;onProgUpdate?.(pq);}onChange?.("progress",pq);
+    const o=pq*durSec;off.current=o;if(play)play_(o, noQuantize);else{setProg(pq);progRef.current=pq;onProgUpdate?.(pq);}onChange?.("progress",pq);
     // User interacted — block auto-position-to-first-downbeat on this track.
     userMovedRef.current=true;
     // Local-only hook for sync re-align (see handleTransportFire). seek_local
@@ -9029,6 +9077,7 @@ export default function CollabMix({ initialPage = "landing", djName = null }) {
     window.__setRateDeck = (deck, r) => { rateFnsRef.current[deck === "B" ? "B" : "A"]?.(r); return true; };
     window.__dropWS = () => { syncRef.current?.forceDrop?.(); return true; };   // simulate a network blip
     window.__deckProg = (deck) => (deck === "B" ? progRefB : progRefA).current;  // displayed playhead 0..1 (mirror-motion test)
+    window.__liveSourceCount = () => _LIVE_SOURCES.size;  // created-but-not-cleaned AudioBufferSourceNodes (smooth-seek leak test)
     // What the deck ACTUALLY consumes through the unified grid path — used by the
     // Door 3 smoke to prove imported rekordbox beatTimes flow into bpm.results and
     // that the desmear gate (the SAME expression the WF prop uses) is off for them.
