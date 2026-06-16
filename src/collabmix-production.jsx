@@ -164,6 +164,12 @@ const WF_FLOOR         = _urlNum("wfFloor",       0.12);  // 0..1 — how high t
 const WF_HIGH_WEIGHT   = _urlNum("wfHighWeight",   2.5);  // perceptual boost on highs so cream reads (highs are low-energy)
 const WF_CORE_RESPONSE = _urlNum("wfCoreResponse", 1.4);  // how strongly the cream core grows with high/broadband energy
 const WF_BLEND_GAMMA   = _urlNum("wfBlendGamma",   1.0);  // bass↔mid body-colour blend curve (>1 holds blue longer, <1 leans orange)
+// ── CREAM KICK-PRESENCE MARKER — a cream (#F5EED2) tip drawn ONLY where the analyzer
+// detected a real kick (per-beat beatAttacks ≥ thresh × track median). Absent in
+// breakdowns (beatAttacks≈0) so kick drop-out / return is obvious. NOT high-freq, NOT
+// every grid line. Applies to the top hybrid waveform + the small deck overview strip.
+const WF_KICK_THRESH = _urlNum("wfKickThresh", 0.25);  // 0..1 — kick-present cutoff as a fraction of the track's median kick strength
+const WF_CREAM_TIP   = _urlNum("wfCreamTip",   0.5);   // 0..1 — cream tip height as a fraction of the kick's silhouette (the bright core)
 
 // ── Server Configuration ─────────────────────────────────────
 // After deploying to Railway, replace this URL with your Railway server URL.
@@ -4412,6 +4418,24 @@ function WF({ bands, peaks, freq, prog, onSeek, h=80, hotCues=[], loopStart=null
           ctx.fillRect(x,0,1,H);
         }
         ctx.restore();
+
+        // Cream kick-presence markers — a small cream (#F5EED2) tip at each beat
+        // where a REAL kick is detected (beatAttacks ≥ thresh × track median); absent
+        // in breakdowns so the mix-in / mix-out point is visible on the overview strip.
+        const kmed=kickCacheRef.current.median;
+        if(kmed>0 && beatTimes && beatAttacks && dur>0){
+          const thr=Math.max(0,WF_KICK_THRESH)*kmed;
+          const tipFrac=Math.max(0,Math.min(1,WF_CREAM_TIP));
+          ctx.fillStyle='#F5EED2';
+          for(let i=0;i<beatTimes.length;i++){
+            if(beatAttacks[i]<thr) continue;            // no real kick here → no cream
+            const bx=Math.round((beatTimes[i]/dur)*W);
+            if(bx<0||bx>=W) continue;
+            const sh=renderHeights[bx]||0; if(sh<=0) continue;
+            const ch=Math.max(1,sh*tipFrac);
+            ctx.fillRect(bx,center-ch,1,ch*2);
+          }
+        }
       }
 
       // Minute time markers — 1 CSS px tick every 60 s of track time.
@@ -4546,7 +4570,7 @@ function buildSilhouettePath(heights,center,physW,maxH){
 }
 
 
-function AnimatedZoomedWF({ bands, dur, progRef, onSeek, h=96, windowSec=8, beatPhaseFrac=null, beatPeriodSec=null, gridOffsetMs=0, barOneOffsetSec=0, deckColor="#FFFFFF", rate=1, beatTimes=null, beatsV2=false, desmear=false, isDriver=true, deckId=null, gridAlignSecRef=null }) {
+function AnimatedZoomedWF({ bands, dur, progRef, onSeek, h=96, windowSec=8, beatPhaseFrac=null, beatPeriodSec=null, gridOffsetMs=0, barOneOffsetSec=0, deckColor="#FFFFFF", rate=1, beatTimes=null, beatAttacks=null, beatsV2=false, desmear=false, isDriver=true, deckId=null, gridAlignSecRef=null }) {
   // Glow layer REMOVED: the blurred lower-canvas duplicate washed the waveform
   // out and bridged the gaps between kicks into a tube. The top waveform now
   // renders as a single crisp layer, matching the deck-A overview strip.
@@ -4620,9 +4644,12 @@ function AnimatedZoomedWF({ bands, dur, progRef, onSeek, h=96, windowSec=8, beat
   useEffect(()=>{beatPhaseFracRef.current=beatPhaseFrac;},[beatPhaseFrac]);
   useEffect(()=>{beatPeriodSecRef.current=beatPeriodSec;},[beatPeriodSec]);
   const beatTimesRef=useRef(beatTimes);
+  const beatAttacksRef=useRef(beatAttacks);                  // per-beat kick strength (cream marker gate)
+  const kickMedianRef=useRef({beatAttacks:null,median:0});   // median of non-zero attacks, cached on array ref
   const beatsV2Ref=useRef(beatsV2);
   const desmearRef=useRef(desmear);
   useEffect(()=>{beatTimesRef.current=beatTimes;},[beatTimes]);
+  useEffect(()=>{beatAttacksRef.current=beatAttacks;},[beatAttacks]);
   useEffect(()=>{beatsV2Ref.current=beatsV2;},[beatsV2]);
   useEffect(()=>{desmearRef.current=desmear;},[desmear]);
   useEffect(()=>{gridOffsetMsRef.current=gridOffsetMs;},[gridOffsetMs]);
@@ -4981,8 +5008,10 @@ function AnimatedZoomedWF({ bands, dur, progRef, onSeek, h=96, windowSec=8, beat
               ctx.fillRect(dx,center-S,1,S*2+1);
             }
           } else {
-            // HYBRID: body = bass↔mid blend (blue↔orange); cream CORE sized by high energy
-            // → cream punches through at broadband attacks, absent on pure sustained bass.
+            // HYBRID: body = bass↔mid blend (blue↔orange) silhouette. The cream CORE is
+            // NOT drawn here from high-freq energy (that smeared onto hats/pads) — it is
+            // drawn below as a kick-presence marker keyed to the analyzer's beatAttacks.
+            void coreResp;
             for(let dx=0;dx<physW;dx++){
               const S=hEnv[dx]; if(S<=0)continue;
               const wB=colB[dx]/maxB, wM=colMid[dx]/maxMid;
@@ -4990,9 +5019,39 @@ function AnimatedZoomedWF({ bands, dur, progRef, onSeek, h=96, windowSec=8, beat
               const R=lr+(mr-lr)*t, G=lg+(mg-lg)*t, B=lb+(mb2-lb)*t;
               ctx.fillStyle=`rgb(${R|0},${G|0},${B|0})`;
               ctx.fillRect(dx,center-S,1,S*2+1);
-              let coreFrac=(colH[dx]/maxH2)*coreResp; if(coreFrac>1)coreFrac=1;   // high energy → cream core size
-              const coreH=coreFrac*S;
-              if(coreH>0.5){ ctx.fillStyle=`rgb(${hr},${hg},${hb})`; ctx.fillRect(dx,center-coreH,1,coreH*2+1); }
+            }
+            // ── CREAM KICK-PRESENCE MARKER ──────────────────────────────────────────
+            // A bright cream tip ON the blue triangle at each beat where a REAL kick is
+            // detected (beatAttacks ≥ thresh × track median). Breakdown beats have
+            // beatAttacks≈0 → no cream, so the kick drop-out + return read at a glance.
+            // Cream is a FIXED colour (not the palette anchor) so it shows even in mono.
+            const bA=beatAttacksRef.current, bT=beatTimesRef.current;
+            if(bA&&bT&&bT.length>1){
+              if(kickMedianRef.current.beatAttacks!==bA){
+                const nz=[]; for(let i=0;i<bA.length;i++) if(bA[i]>0) nz.push(bA[i]);
+                nz.sort((a,b)=>a-b);
+                kickMedianRef.current={beatAttacks:bA, median: nz.length?nz[nz.length>>1]:0};
+              }
+              const kmed=kickMedianRef.current.median;
+              if(kmed>0){
+                const thr=Math.max(0,WF_KICK_THRESH)*kmed;
+                const tipFrac=Math.max(0,Math.min(1,WF_CREAM_TIP));
+                const tipW=Math.max(2,Math.round(3*dpr));            // cream tip width in px (follows the attack)
+                const tLeft=(srcX/len)*dur2, tRight=((srcX+viewPx)/len)*dur2;
+                ctx.fillStyle='#F5EED2';
+                for(let i=0;i<bT.length;i++){
+                  const tt=bT[i];
+                  if(tt<tLeft) continue; if(tt>tRight) break;
+                  if(bA[i]<thr) continue;                            // no real kick here → no cream
+                  const xc=Math.round(((tt/dur2)*len - srcX)/spp);
+                  for(let dxx=0;dxx<tipW;dxx++){
+                    const xx=xc+dxx; if(xx<0) continue; if(xx>=physW) break;
+                    const sh=hEnv[xx]||0; if(sh<=0) continue;
+                    const ch=Math.max(1,sh*tipFrac);
+                    ctx.fillRect(xx,center-ch,1,ch*2+1);
+                  }
+                }
+              }
             }
           }
         } else {
@@ -10702,7 +10761,7 @@ export default function CollabMix({ initialPage = "landing", djName = null }) {
                   } catch {}
                 }}
                 style={{ minHeight:wfH, flexShrink:0 }}>
-                <AnimatedZoomedWF bands={wfA} dur={wfA?.dur||0} progRef={progRefA} onSeek={seekDeckA} h={wfH} windowSec={WF_WINDOWS[wfZoom]} beatPhaseFrac={bpm.results["A"]?.beatPhaseFrac ?? pA?.beatPhaseFrac ?? null} beatPeriodSec={bpm.results["A"]?.beatPeriodSec ?? pA?.beatPeriodSec ?? null} gridOffsetMs={gridOffsetA} barOneOffsetSec={barOneA * (bpm.results["A"]?.beatPeriodSec || pA?.beatPeriodSec || 0)} deckColor="#2E86DE" rate={rateA} beatTimes={bpm.results["A"]?.beatTimes ?? pA?.beatTimes ?? null} beatsV2={beatsV2On} desmear={onsetGridOn && bpm.results["A"]?.gridSource !== "rekordbox"} deckId="A" isDriver={!deckDrivers.A || deckDrivers.A?.id === sync.djId} gridAlignSecRef={gridAlignSecRef}/>
+                <AnimatedZoomedWF bands={wfA} dur={wfA?.dur||0} progRef={progRefA} onSeek={seekDeckA} h={wfH} windowSec={WF_WINDOWS[wfZoom]} beatPhaseFrac={bpm.results["A"]?.beatPhaseFrac ?? pA?.beatPhaseFrac ?? null} beatPeriodSec={bpm.results["A"]?.beatPeriodSec ?? pA?.beatPeriodSec ?? null} gridOffsetMs={gridOffsetA} barOneOffsetSec={barOneA * (bpm.results["A"]?.beatPeriodSec || pA?.beatPeriodSec || 0)} deckColor="#2E86DE" rate={rateA} beatTimes={bpm.results["A"]?.beatTimes ?? pA?.beatTimes ?? null} beatAttacks={bpm.results["A"]?.beatAttacks ?? pA?.beatAttacks ?? null} beatsV2={beatsV2On} desmear={onsetGridOn && bpm.results["A"]?.gridSource !== "rekordbox"} deckId="A" isDriver={!deckDrivers.A || deckDrivers.A?.id === sync.djId} gridAlignSecRef={gridAlignSecRef}/>
               </div>
             )}
             {hasB && (
@@ -10719,7 +10778,7 @@ export default function CollabMix({ initialPage = "landing", djName = null }) {
                   } catch {}
                 }}
                 style={{ minHeight:wfH, flexShrink:0 }}>
-                <AnimatedZoomedWF bands={wfB} dur={wfB?.dur||0} progRef={progRefB} onSeek={seekDeckB} h={wfH} windowSec={WF_WINDOWS[wfZoom]} beatPhaseFrac={bpm.results["B"]?.beatPhaseFrac ?? pB?.beatPhaseFrac ?? null} beatPeriodSec={bpm.results["B"]?.beatPeriodSec ?? pB?.beatPeriodSec ?? null} gridOffsetMs={gridOffsetB} barOneOffsetSec={barOneB * (bpm.results["B"]?.beatPeriodSec || pB?.beatPeriodSec || 0)} deckColor="#A855F7" rate={rateB} beatTimes={bpm.results["B"]?.beatTimes ?? pB?.beatTimes ?? null} beatsV2={beatsV2On} desmear={onsetGridOn && bpm.results["B"]?.gridSource !== "rekordbox"} deckId="B" isDriver={!deckDrivers.B || deckDrivers.B?.id === sync.djId} gridAlignSecRef={gridAlignSecRef}/>
+                <AnimatedZoomedWF bands={wfB} dur={wfB?.dur||0} progRef={progRefB} onSeek={seekDeckB} h={wfH} windowSec={WF_WINDOWS[wfZoom]} beatPhaseFrac={bpm.results["B"]?.beatPhaseFrac ?? pB?.beatPhaseFrac ?? null} beatPeriodSec={bpm.results["B"]?.beatPeriodSec ?? pB?.beatPeriodSec ?? null} gridOffsetMs={gridOffsetB} barOneOffsetSec={barOneB * (bpm.results["B"]?.beatPeriodSec || pB?.beatPeriodSec || 0)} deckColor="#A855F7" rate={rateB} beatTimes={bpm.results["B"]?.beatTimes ?? pB?.beatTimes ?? null} beatAttacks={bpm.results["B"]?.beatAttacks ?? pB?.beatAttacks ?? null} beatsV2={beatsV2On} desmear={onsetGridOn && bpm.results["B"]?.gridSource !== "rekordbox"} deckId="B" isDriver={!deckDrivers.B || deckDrivers.B?.id === sync.djId} gridAlignSecRef={gridAlignSecRef}/>
               </div>
             )}
             {/* Zoom selector — floats in the top-right corner of the waveform
