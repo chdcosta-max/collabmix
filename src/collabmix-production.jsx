@@ -169,7 +169,10 @@ const WF_BLEND_GAMMA   = _urlNum("wfBlendGamma",   1.0);  // bass↔mid body-col
 // breakdowns (beatAttacks≈0) so kick drop-out / return is obvious. NOT high-freq, NOT
 // every grid line. Applies to the top hybrid waveform + the small deck overview strip.
 const WF_KICK_THRESH = _urlNum("wfKickThresh", 0.25);  // 0..1 — kick-present cutoff as a fraction of the track's median kick strength
-const WF_CREAM_TIP   = _urlNum("wfCreamTip",   0.5);   // 0..1 — cream tip height as a fraction of the kick's silhouette (the bright core)
+// Rekordbox cream-dominant kick layering (radius fractions of the kick silhouette).
+const WF_CREAM_SIZE  = _urlNum("wfCreamSize",  0.80);  // 0..1 — cream inner-body radius (DOMINANT — defaults large)
+const WF_GOLD_SIZE   = _urlNum("wfGoldSize",   0.92);  // 0..1 — gold mid-ring radius (between cream and blue)
+const WF_BLUE_RIM    = _urlNum("wfBlueRim",    0.08);  // 0..1 — blue outer-frame thickness (defaults THIN)
 
 // ── Server Configuration ─────────────────────────────────────
 // After deploying to Railway, replace this URL with your Railway server URL.
@@ -4418,24 +4421,6 @@ function WF({ bands, peaks, freq, prog, onSeek, h=80, hotCues=[], loopStart=null
           ctx.fillRect(x,0,1,H);
         }
         ctx.restore();
-
-        // Cream kick-presence markers — a small cream (#F5EED2) tip at each beat
-        // where a REAL kick is detected (beatAttacks ≥ thresh × track median); absent
-        // in breakdowns so the mix-in / mix-out point is visible on the overview strip.
-        const kmed=kickCacheRef.current.median;
-        if(kmed>0 && beatTimes && beatAttacks && dur>0){
-          const thr=Math.max(0,WF_KICK_THRESH)*kmed;
-          const tipFrac=Math.max(0,Math.min(1,WF_CREAM_TIP));
-          ctx.fillStyle='#F5EED2';
-          for(let i=0;i<beatTimes.length;i++){
-            if(beatAttacks[i]<thr) continue;            // no real kick here → no cream
-            const bx=Math.round((beatTimes[i]/dur)*W);
-            if(bx<0||bx>=W) continue;
-            const sh=renderHeights[bx]||0; if(sh<=0) continue;
-            const ch=Math.max(1,sh*tipFrac);
-            ctx.fillRect(bx,center-ch,1,ch*2);
-          }
-        }
       }
 
       // Minute time markers — 1 CSS px tick every 60 s of track time.
@@ -5008,23 +4993,27 @@ function AnimatedZoomedWF({ bands, dur, progRef, onSeek, h=96, windowSec=8, beat
               ctx.fillRect(dx,center-S,1,S*2+1);
             }
           } else {
-            // HYBRID: body = bass↔mid blend (blue↔orange) silhouette. The cream CORE is
-            // NOT drawn here from high-freq energy (that smeared onto hats/pads) — it is
-            // drawn below as a kick-presence marker keyed to the analyzer's beatAttacks.
-            void coreResp;
-            for(let dx=0;dx<physW;dx++){
-              const S=hEnv[dx]; if(S<=0)continue;
-              const wB=colB[dx]/maxB, wM=colMid[dx]/maxMid;
-              let t=(wB+wM)>1e-4 ? wM/(wB+wM) : 0; t=Math.pow(t,blendG);   // 0 = bass(blue) … 1 = mid(orange)
-              const R=lr+(mr-lr)*t, G=lg+(mg-lg)*t, B=lb+(mb2-lb)*t;
-              ctx.fillStyle=`rgb(${R|0},${G|0},${B|0})`;
-              ctx.fillRect(dx,center-S,1,S*2+1);
-            }
-            // ── CREAM KICK-PRESENCE MARKER ──────────────────────────────────────────
-            // A bright cream tip ON the blue triangle at each beat where a REAL kick is
-            // detected (beatAttacks ≥ thresh × track median). Breakdown beats have
-            // beatAttacks≈0 → no cream, so the kick drop-out + return read at a glance.
-            // Cream is a FIXED colour (not the palette anchor) so it shows even in mono.
+            // HYBRID — Rekordbox CREAM-DOMINANT kick. The onset-triangle silhouette S
+            // (hard flat left edge, taper right) is drawn as a LAYERED triangle built
+            // centre→out, painted largest-first so each smaller layer sits on top:
+            //   BLUE (deck colour) = full S = the outer FRAME (thin rim) + the solid
+            //                         body everywhere (and the whole breakdown look).
+            //   GOLD #F0A532       = goldSize·S = mid ring (kick columns only).
+            //   CREAM #F5EED2      = creamSize·S = DOMINANT inner body (kick columns only).
+            // Gold + cream are gated by kick presence (beatAttacks ≥ thr × median), so in
+            // no-kick sections only the thin blue body remains → drop-out/return obvious.
+            void coreResp; void highW; void blendG;
+            const creamSize=Math.max(0,Math.min(1,WF_CREAM_SIZE));
+            const goldSize =Math.max(0,Math.min(1,WF_GOLD_SIZE));
+            const blueRim  =Math.max(0,Math.min(1,WF_BLUE_RIM));
+            // Deck identity colour for the blue frame (A blue / B purple), independent of wfcolor.
+            const _dc=deckColorRef.current||'#2E86DE'; let bR=46,bG=134,bB=222;
+            if(_dc.length>=7&&_dc[0]==='#'){ bR=parseInt(_dc.slice(1,3),16)|0; bG=parseInt(_dc.slice(3,5),16)|0; bB=parseInt(_dc.slice(5,7),16)|0; }
+            // Pass A — blue body/frame for EVERY column (solid base + breakdown look).
+            ctx.fillStyle=`rgb(${bR},${bG},${bB})`;
+            for(let dx=0;dx<physW;dx++){ const S=hEnv[dx]; if(S>0) ctx.fillRect(dx,center-S,1,S*2+1); }
+            // Kick-presence mask from beatAttacks — each detected kick fills its triangle
+            // span [thisBeatCol, nextBeatCol). Breakdown beats (attack < thr) are skipped.
             const bA=beatAttacksRef.current, bT=beatTimesRef.current;
             if(bA&&bT&&bT.length>1){
               if(kickMedianRef.current.beatAttacks!==bA){
@@ -5035,21 +5024,30 @@ function AnimatedZoomedWF({ bands, dur, progRef, onSeek, h=96, windowSec=8, beat
               const kmed=kickMedianRef.current.median;
               if(kmed>0){
                 const thr=Math.max(0,WF_KICK_THRESH)*kmed;
-                const tipFrac=Math.max(0,Math.min(1,WF_CREAM_TIP));
-                const tipW=Math.max(2,Math.round(3*dpr));            // cream tip width in px (follows the attack)
-                const tLeft=(srcX/len)*dur2, tRight=((srcX+viewPx)/len)*dur2;
-                ctx.fillStyle='#F5EED2';
+                const tRight=((srcX+viewPx)/len)*dur2;
+                const col=(t)=>Math.round(((t/dur2)*len - srcX)/spp);
+                const kickMask=new Uint8Array(physW);
                 for(let i=0;i<bT.length;i++){
-                  const tt=bT[i];
-                  if(tt<tLeft) continue; if(tt>tRight) break;
-                  if(bA[i]<thr) continue;                            // no real kick here → no cream
-                  const xc=Math.round(((tt/dur2)*len - srcX)/spp);
-                  for(let dxx=0;dxx<tipW;dxx++){
-                    const xx=xc+dxx; if(xx<0) continue; if(xx>=physW) break;
-                    const sh=hEnv[xx]||0; if(sh<=0) continue;
-                    const ch=Math.max(1,sh*tipFrac);
-                    ctx.fillRect(xx,center-ch,1,ch*2+1);
-                  }
+                  if(bT[i]>tRight) break;
+                  if(bA[i]<thr) continue;                       // no real kick → no cream/gold
+                  let x0=col(bT[i]); let x1=(i+1<bT.length)?col(bT[i+1]):physW;
+                  if(x0<0)x0=0; if(x1>physW)x1=physW;
+                  for(let x=x0;x<x1;x++) kickMask[x]=1;
+                }
+                // Pass B — gold mid ring (kick columns), capped to leave the blue rim.
+                ctx.fillStyle='#F0A532';
+                for(let dx=0;dx<physW;dx++){
+                  if(!kickMask[dx])continue; const S=hEnv[dx]; if(S<=0)continue;
+                  let rg=goldSize*S; const cap=(1-blueRim)*S; if(rg>cap)rg=cap;
+                  if(rg>0.5) ctx.fillRect(dx,center-rg,1,rg*2+1);
+                }
+                // Pass C — cream DOMINANT inner body (kick columns), never past gold.
+                ctx.fillStyle='#F5EED2';
+                for(let dx=0;dx<physW;dx++){
+                  if(!kickMask[dx])continue; const S=hEnv[dx]; if(S<=0)continue;
+                  let rg=goldSize*S; const cap=(1-blueRim)*S; if(rg>cap)rg=cap;
+                  let rc=creamSize*S; if(rc>rg)rc=rg;
+                  if(rc>0.5) ctx.fillRect(dx,center-rc,1,rc*2+1);
                 }
               }
             }
