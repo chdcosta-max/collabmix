@@ -136,6 +136,13 @@ const WF_AMBER_GAMMA   = _urlNum("wfAmberGamma", 1.40);  // >1 crushes the tail 
 const WF_AMBER_GAIN    = _urlNum("wfAmberGain", 0.60);   // amber height — gold is the SMALLER inner element (below teal)
 const WF_TEAL_GAIN     = _urlNum("wfTealGain", 1.25);    // blue/teal body height — the DOMINANT mass (above amber)
 const WF_TEAL_GAMMA    = _urlNum("wfTealGamma", 1.30);   // teal body curve; LOWER lifts the between-kick valleys (more continuous body), higher pinches
+// ── Top scrolling waveform PALETTE (live ?wfcolor=…) — colour only, shape unchanged.
+//   current  = teal #1AA8C4 / amber #F0A532 / cream #F5EED2 (default, the existing look)
+//   deckblue = low band swapped to the DECK identity colour (blue on A, purple on B); keep amber + cream
+//   mono     = whole waveform in the deck identity colour; height/brightness carries the shape (no amber/cream)
+// Does NOT touch the deck overview strip (separate WF component).
+const _urlStr = (k, d) => { const v = URL_FLAGS.get(k); return v == null ? d : v; };
+const WF_COLOR_MODE = _urlStr("wfcolor", "current");
 
 // ── Server Configuration ─────────────────────────────────────
 // After deploying to Railway, replace this URL with your Railway server URL.
@@ -4884,7 +4891,17 @@ function AnimatedZoomedWF({ bands, dur, progRef, onSeek, h=96, windowSec=8, beat
         ctx.fillStyle='rgba(255,255,255,0.06)';
         ctx.fillRect(0,center,physW,1);
 
-        const [lr,lg,lb]=WF_LOW_RGB, [mr,mg,mb2]=WF_MID_RGB, [hr,hg,hb]=WF_HIGH_RGB;
+        // Live palette select (?wfcolor=current|deckblue|mono). deckblue/mono pull
+        // the DECK identity colour from deckColorRef so band hue stays tied to deck
+        // identity (blue on A, purple on B) rather than a hardcoded blue.
+        let [lr,lg,lb]=WF_LOW_RGB, [mr,mg,mb2]=WF_MID_RGB, [hr,hg,hb]=WF_HIGH_RGB;
+        if(WF_COLOR_MODE==='deckblue'||WF_COLOR_MODE==='mono'){
+          const _dc=deckColorRef.current||'#FFFFFF';
+          let dcr=255,dcg=255,dcb=255;
+          if(_dc.length>=7&&_dc[0]==='#'){ dcr=parseInt(_dc.slice(1,3),16)|0; dcg=parseInt(_dc.slice(3,5),16)|0; dcb=parseInt(_dc.slice(5,7),16)|0; }
+          if(WF_COLOR_MODE==='deckblue'){ lr=dcr; lg=dcg; lb=dcb; }            // low → deck colour; amber + cream kept
+          else { lr=mr=hr=dcr; lg=mg=hg=dcg; lb=mb2=hb=dcb; }                  // mono → every band the deck colour
+        }
 
         // Atmospheric halo (LOWER canvas, GPU-blurred): one smooth teal envelope.
         const haloPath=buildSilhouettePath(hEnv,center,physW,maxH);
