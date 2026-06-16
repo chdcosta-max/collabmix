@@ -5729,10 +5729,15 @@ function Deck({ id, ch, ctx:ac, color, local, remote, onChange, midi:mt, bpmResu
       if(isReorder){
         // Drop — keep coasting on the newer anchor. lastRemProgRef already advanced,
         // so this stale value won't be reprocessed; the follower is undisturbed.
-        if(MIRROR_DIAG) console.log('[MIRROR-NET-DIAG] deck='+id+' action=DROP-REORDER fwdSeek=false'+
-          ' truthJumpMs=0 backwardMs='+(backwardSec*1000).toFixed(0)+' pktGapMs='+Math.round(mnPktGapMs)+
-          ' (stale/reordered pkt below anchor — dropped, follower undisturbed)'+
-          ' anchorProg='+remProgRef.current.toFixed(4)+' pktProg='+remote.progress.toFixed(4));
+        if(MIRROR_DIAG){
+          console.log('[MIRROR-NET-DIAG] deck='+id+' action=DROP-REORDER fwdSeek=false'+
+            ' truthJumpMs=0 backwardMs='+(backwardSec*1000).toFixed(0)+' pktGapMs='+Math.round(mnPktGapMs)+
+            ' (stale/reordered pkt below anchor — dropped, follower undisturbed)'+
+            ' anchorProg='+remProgRef.current.toFixed(4)+' pktProg='+remote.progress.toFixed(4));
+          // Mirror into the downloadable Cmd+Option+L session log (logEvent → pushEvent).
+          logEvent("mirror","drop_reorder",{ deck:id, backwardMs:+(backwardSec*1000).toFixed(0),
+            pktGapMs:Math.round(mnPktGapMs), anchorProg:+remProgRef.current.toFixed(4), pktProg:+remote.progress.toFixed(4) });
+        }
       } else {
         // Predict where TRUTH should be NOW from the PRIOR anchor (before we move it)
         // to tell a genuine forward seek from ordinary coast drift. The snap/smooth
@@ -5809,6 +5814,14 @@ function Deck({ id, ch, ctx:ac, color, local, remote, onChange, midi:mt, bpmResu
             ' baseRate='+(remRateRef.current*1e6).toFixed(2)+'e-6'+
             (coastSuspect?'  >>> COAST-SUSPECT (false-snap candidate → fix#1 seek-epoch)':'')+
             ' truthProg='+remote.progress.toFixed(4));
+          // Mirror the NOTABLE events (snaps) into the downloadable Cmd+Option+L session
+          // log. Normal FOLLOW packets are console-only — logging every packet would flood
+          // the 5000-event ring and evict the snaps we actually want to read back.
+          if(fwdSeek||genuineRewind) logEvent("mirror", fwdSeek?"fwd_snap":"rewind_snap", {
+            deck:id, truthJumpMs:+(truthJumpSec*1000).toFixed(0), snapThreshMs:FWD_SNAP_SEC*1000,
+            pktGapMs:Math.round(mnPktGapMs), backwardMs:+(backwardSec*1000).toFixed(0),
+            rate:rateBasis, baseRate:+(remRateRef.current*1e6).toFixed(2), coastSuspect, truthProg:+remote.progress.toFixed(4),
+          });
         }
       }
       // DO NOT setProg here — the RAF follower below renders the smooth position.
@@ -5825,9 +5838,15 @@ function Deck({ id, ch, ctx:ac, color, local, remote, onChange, midi:mt, bpmResu
         // (remote.progress changed while not playing) — idempotent re-renders stay silent.
         const prevDisp=remDispRef.current;
         const moveMs=(fp-prevDisp)*(remote.duration||dur||1)*1000;
-        if(Math.abs(moveMs)>1) console.log('[MIRROR-NET-DIAG] deck='+id+' action=PAUSED-RESNAP fwdSeek=false'+
-          ' moveMs='+moveMs.toFixed(0)+' pktGapMs='+(remPktRef.current?Math.round(performance.now()-remPktRef.current):0)+
-          ' (mirror MOVED while paused) prevDisp='+prevDisp.toFixed(4)+' truthProg='+fp.toFixed(4));
+        if(Math.abs(moveMs)>1){
+          const pausedGapMs=remPktRef.current?Math.round(performance.now()-remPktRef.current):0;
+          console.log('[MIRROR-NET-DIAG] deck='+id+' action=PAUSED-RESNAP fwdSeek=false'+
+            ' moveMs='+moveMs.toFixed(0)+' pktGapMs='+pausedGapMs+
+            ' (mirror MOVED while paused) prevDisp='+prevDisp.toFixed(4)+' truthProg='+fp.toFixed(4));
+          // Mirror into the downloadable Cmd+Option+L session log.
+          logEvent("mirror","paused_resnap",{ deck:id, moveMs:+moveMs.toFixed(0), pktGapMs:pausedGapMs,
+            prevDisp:+prevDisp.toFixed(4), truthProg:+fp.toFixed(4) });
+        }
       }
       remProgRef.current=fp; remDispRef.current=fp; remSlewRef.current=0; setProg(fp); progRef.current=fp; onProgUpdate?.(fp);
     }
