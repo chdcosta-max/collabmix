@@ -2889,9 +2889,9 @@ function LibraryPanelV2({ lib, onLoad, playingTrack, deckATrackId:deckATrackIdPr
                       background: t.analyzed ? "rgba(255,255,255,0.6)" : "rgba(255,255,255,0.2)",
                       display: "inline-block",
                     }} />
-                    <span style={{ overflow: "hidden", textOverflow: "ellipsis" }}>{t.title || "(untitled)"}</span>
+                    <span title={t.title || undefined} style={{ overflow: "hidden", textOverflow: "ellipsis" }}>{t.title || "(untitled)"}</span>
                   </div>
-                  <div style={{ fontSize: 11, fontWeight: 400, color: "rgba(255,255,255,0.6)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", marginTop: 1 }}>{t.artist || ""}</div>
+                  <div title={t.artist || undefined} style={{ fontSize: 11, fontWeight: 400, color: "rgba(255,255,255,0.6)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", marginTop: 1 }}>{t.artist || ""}</div>
                 </div>
                 {/* Energy — thin horizontal bar, replaces underscore/text decoration */}
                 <div style={{ width: 56, flexShrink: 0 }}>
@@ -3047,8 +3047,8 @@ function LibraryPanelV2({ lib, onLoad, playingTrack, deckATrackId:deckATrackIdPr
                       alt={t.title||""}
                     />
                     <div style={{ flex: 1, minWidth: 0 }}>
-                      <div style={{ fontSize: 11, color: TEXT, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{t.title}</div>
-                      <div style={{ fontSize: 10, color: SUBTLE, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{t.artist}</div>
+                      <div title={t.title || undefined} style={{ fontSize: 11, color: TEXT, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{t.title}</div>
+                      <div title={t.artist || undefined} style={{ fontSize: 10, color: SUBTLE, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{t.artist}</div>
                     </div>
                     <div style={{ fontSize: 10, color: G, fontFamily: "'Inter',sans-serif" }}>{t.bpm?.toFixed(0) || "—"}</div>
                   </div>
@@ -3170,8 +3170,8 @@ function LibraryPanelV2({ lib, onLoad, playingTrack, deckATrackId:deckATrackIdPr
                   alt={t.title||""}
                 />
                 <div style={{ flex: 1, minWidth: 0 }}>
-                  <div style={{ fontSize: 12, color: TEXT, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", fontWeight: 500 }}>{t.title}</div>
-                  <div style={{ fontSize: 10, color: SUBTLE, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{t.artist}</div>
+                  <div title={t.title || undefined} style={{ fontSize: 12, color: TEXT, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", fontWeight: 500 }}>{t.title}</div>
+                  <div title={t.artist || undefined} style={{ fontSize: 10, color: SUBTLE, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{t.artist}</div>
                   {t.reasons && t.reasons.length > 0 && (
                     <div style={{ marginTop: 3, display: "flex", gap: 4, flexWrap: "wrap" }}>
                       {t.reasons.map(r => (
@@ -6432,7 +6432,7 @@ function Deck({ id, ch, ctx:ac, color, local, remote, onChange, midi:mt, bpmResu
                 {/* Title + inline time (Rekordbox-style). Time sits to the
                     right of the title on the same row; both ellipsis-safe. */}
                 <div style={{display:"flex", alignItems:"baseline", gap:10}}>
-                  <div style={{flex:1, minWidth:0, fontSize:20, fontWeight:600, color:"#F5F5F7", fontFamily:"'Inter',sans-serif", letterSpacing:-0.3, lineHeight:1.15, whiteSpace:"nowrap", overflow:"hidden", textOverflow:"ellipsis"}}>
+                  <div title={name||remote?.trackName||undefined} style={{flex:1, minWidth:0, fontSize:20, fontWeight:600, color:"#F5F5F7", fontFamily:"'Inter',sans-serif", letterSpacing:-0.3, lineHeight:1.15, whiteSpace:"nowrap", overflow:"hidden", textOverflow:"ellipsis"}}>
                     {name||remote?.trackName||"—"}
                   </div>
                   {(()=>{
@@ -7464,7 +7464,7 @@ function ReviewTracksModal({ lib, onClose }) {
                 <input type="checkbox" checked={checked} onChange={() => toggleOne(k)}
                   style={{ width: 14, height: 14, accentColor: "rgba(255,255,255,0.85)", cursor: "pointer", flexShrink: 0 }}/>
                 <div style={{ minWidth: 0, flex: 1 }}>
-                  <div style={{ fontSize: 12, color: "#F5F5F7", letterSpacing: 0.15, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{title}</div>
+                  <div title={title || undefined} style={{ fontSize: 12, color: "#F5F5F7", letterSpacing: 0.15, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{title}</div>
                   <div style={{ fontSize: 10, color: "rgba(255,255,255,0.55)", marginTop: 2, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", letterSpacing: 0.2 }}>
                     {artist ? artist + " · " : ""}{t.folderName}/{t.relativePath}
                   </div>
@@ -7978,7 +7978,8 @@ function Lobby({ onJoin, djName = null }) {
   return (
     <div style={{ minHeight:"100vh", background:"#0D0F12", display:"flex", alignItems:"center", justifyContent:"center", fontFamily:"'Inter',sans-serif", position:"relative", overflow:"hidden" }}>
       <style>{`@keyframes drift2{0%,100%{transform:translateY(0)}50%{transform:translateY(-12px)}}`}</style>
-      <link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:wght@600;700&family=DM+Sans:wght@300;400;500&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet"/>
+      {/* Font preloads removed — Cormorant Garamond / DM Sans / DM Mono were all
+          0-usage after unifying on Inter (loaded globally in index.html). */}
       <div style={{ position:"absolute", top:"15%", right:"10%", width:"50%", height:"60%", borderRadius:"50%", background:`radial-gradient(ellipse,${G}07 0%,transparent 65%)`, animation:"drift2 18s ease-in-out infinite", pointerEvents:"none" }}/>
       <div style={{ position:"absolute", bottom:"10%", left:"5%", width:"35%", height:"45%", borderRadius:"50%", background:"radial-gradient(ellipse,#4A308008 0%,transparent 60%)", animation:"drift2 24s ease-in-out 4s infinite", pointerEvents:"none" }}/>
 
@@ -8054,7 +8055,9 @@ function Lobby({ onJoin, djName = null }) {
             (?room= in URL → joiner via invite link). */}
         <button
           onClick={() => onJoin({ url: SERVER_URL, room, name, mixName: resolvedMix(), isHost: !isJoining })}
-          style={{ background:G, border:"none", color:"#0D0F12", fontFamily:"'Inter',sans-serif", fontWeight:500, fontSize:12, letterSpacing:2, padding:"15px", borderRadius:10, cursor:"pointer", boxShadow:`0 0 32px ${G}30, 0 8px 20px rgba(0,0,0,.4)`, transition:"all .2s" }}
+          style={{ background:"#FFFFFF", border:"none", color:"#0D0F12", fontFamily:"'Inter',sans-serif", fontWeight:700, fontSize:12, letterSpacing:2, padding:"15px", borderRadius:10, cursor:"pointer", boxShadow:"0 0 32px rgba(255,255,255,0.20), 0 8px 20px rgba(0,0,0,.45)", transition:"all .2s" }}
+          onMouseEnter={e=>{ e.currentTarget.style.background="#FFFFFF"; e.currentTarget.style.transform="translateY(-1px)"; e.currentTarget.style.boxShadow="0 0 40px rgba(255,255,255,0.30), 0 10px 24px rgba(0,0,0,.5)"; }}
+          onMouseLeave={e=>{ e.currentTarget.style.transform="none"; e.currentTarget.style.boxShadow="0 0 32px rgba(255,255,255,0.20), 0 8px 20px rgba(0,0,0,.45)"; }}
         >
           {isJoining?"JOIN MIX →":"START MIX →"}
         </button>
@@ -10564,9 +10567,10 @@ export default function CollabMix({ initialPage = "landing", djName = null }) {
           browser denies persist() (Safari, private mode) or the API is
           unsupported. Tells the user to use the Export button as backup. */}
       {!persistenceBannerDismissed && (storagePersistence === "denied" || storagePersistence === "unsupported") && (
-        <div style={{ background:"rgba(255,255,255,0.04)", borderBottom:"1px solid rgba(255,255,255,0.08)", padding:"6px 18px", display:"flex", alignItems:"center", gap:12, fontSize:10, fontFamily:"'Inter',sans-serif", color:"rgba(255,255,255,0.6)", flexShrink:0 }}>
-          <span style={{ flex:1, letterSpacing:0.3 }}>Persistent storage unavailable in this browser. Use Export Library to back up.</span>
-          <button onClick={dismissPersistenceBanner} style={{ background:"transparent", border:"none", color:"rgba(255,255,255,0.4)", fontSize:11, cursor:"pointer", padding:"2px 6px", transition:"color 150ms cubic-bezier(0.4, 0, 0.2, 1)" }} onMouseEnter={e=>e.currentTarget.style.color="rgba(255,255,255,0.9)"} onMouseLeave={e=>e.currentTarget.style.color="rgba(255,255,255,0.4)"}>×</button>
+        <div style={{ alignSelf:"flex-start", margin:"8px 0 0 18px", background:"rgba(255,255,255,0.05)", border:"1px solid rgba(255,255,255,0.10)", borderRadius:8, padding:"5px 8px 5px 11px", display:"inline-flex", alignItems:"center", gap:9, fontSize:10, fontFamily:"'Inter',sans-serif", color:"rgba(255,255,255,0.55)", flexShrink:0 }}>
+          <span style={{ opacity:0.65 }}>ⓘ</span>
+          <span style={{ letterSpacing:0.3 }}>Persistent storage unavailable — use Export Library to back up.</span>
+          <button onClick={dismissPersistenceBanner} style={{ background:"transparent", border:"none", color:"rgba(255,255,255,0.4)", fontSize:11, cursor:"pointer", padding:"0 2px", marginLeft:2, transition:"color 150ms cubic-bezier(0.4, 0, 0.2, 1)" }} onMouseEnter={e=>e.currentTarget.style.color="rgba(255,255,255,0.9)"} onMouseLeave={e=>e.currentTarget.style.color="rgba(255,255,255,0.4)"}>×</button>
         </div>
       )}
 
@@ -10580,7 +10584,8 @@ export default function CollabMix({ initialPage = "landing", djName = null }) {
           )}
         </div>
       )}
-      <link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:wght@600;700&family=DM+Sans:wght@300;400;500&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet"/>
+      {/* Font preloads removed — Cormorant Garamond / DM Sans / DM Mono were all
+          0-usage after unifying on Inter (loaded globally in index.html). */}
 
       {/* TOP BAR — matches App.jsx nav */}
       <div style={{ background:"#000000f0", backdropFilter:"blur(16px)", borderBottom:"1px solid rgba(255,255,255,0.06)", padding:"8px 18px", display:"flex", alignItems:"center", gap:12, flexShrink:0 }}>
@@ -10594,9 +10599,12 @@ export default function CollabMix({ initialPage = "landing", djName = null }) {
           <div style={{ display:"flex", gap:5, alignItems:"center", fontSize:7, fontFamily:"'Inter',sans-serif" }}>
             <div style={{ width:5, height:5, borderRadius:"50%", background:SC[sync.status], boxShadow:sync.status==="connected"?`0 0 8px ${SC[sync.status]}`:""}}/>
             <span style={{ color:SC[sync.status], letterSpacing:1 }}>{sync.status.toUpperCase()}</span>
-            {sync.ping&&<span style={{ color:"#5A5E66" }}>· {sync.ping}ms</span>}
+            {sync.ping&&<span style={{ color:"#9CA3AF", fontVariantNumeric:"tabular-nums", letterSpacing:.3, background:"rgba(255,255,255,0.05)", border:"1px solid rgba(255,255,255,0.08)", borderRadius:3, padding:"0 4px", marginLeft:2 }}>{sync.ping}ms</span>}
           </div>
-          {sync.connErr && <span style={{ fontSize:9, fontFamily:"'Inter',sans-serif", color:"#ef4444", background:"#ef444411", border:"1px solid #ef444422", borderRadius:4, padding:"1px 8px" }}>{sync.connErr}</span>}
+          {sync.connErr && (sync.connErr === "Room full"
+            ? /* Not an error — the 2-person room is COMPLETE. Calm neutral chip, not red. */
+              <span style={{ fontSize:9, fontFamily:"'Inter',sans-serif", color:"rgba(255,255,255,0.7)", background:"rgba(255,255,255,0.06)", border:"1px solid rgba(255,255,255,0.14)", borderRadius:4, padding:"1px 8px", letterSpacing:.3 }}>Room complete · 2 DJs</span>
+            : <span style={{ fontSize:9, fontFamily:"'Inter',sans-serif", color:"#ef4444", background:"#ef444411", border:"1px solid #ef444422", borderRadius:4, padding:"1px 8px" }}>{sync.connErr}</span>)}
           {sync.partner&&<div style={{ fontSize:9, fontFamily:"'Inter',sans-serif", color:G, background:`${G}0e`, border:`1px solid ${G}28`, borderRadius:5, padding:"2px 10px", letterSpacing:.5 }}>⟺ {sync.partner}</div>}
           {(() => {
             // AUDIO status pill — surfaces WebRTC state so users know if partner audio is flowing.
@@ -10651,11 +10659,10 @@ export default function CollabMix({ initialPage = "landing", djName = null }) {
           {/* Room code — readable at a glance so the host can say it out
               loud to a partner who only has voice contact. tabular-nums
               keeps the dash-separated digit groups aligned. */}
-          <span style={{
-            fontSize:10, fontFamily:"'Inter',sans-serif",
-            color:"rgba(255,255,255,0.6)", letterSpacing:.3,
-            fontVariantNumeric:"tabular-nums",
-          }}>{session.room}</span>
+          <span style={{ display:"inline-flex", alignItems:"center", gap:5, fontFamily:"'Inter',sans-serif", background:"rgba(255,255,255,0.04)", border:"1px solid rgba(255,255,255,0.10)", borderRadius:5, padding:"2px 8px" }}>
+            <span style={{ fontSize:7, letterSpacing:1, color:"rgba(255,255,255,0.4)" }}>SESSION</span>
+            <span style={{ fontSize:10, color:"rgba(255,255,255,0.7)", letterSpacing:.3, fontVariantNumeric:"tabular-nums" }}>{session.room}</span>
+          </span>
           <ShareButton room={session.room} mixName={session.mixName} me={session.name}/>
           <button onClick={leave} style={{ height:24, padding:"0 10px", background:"transparent", border:"1px solid #ef444433", color:"#ef4444", borderRadius:6, cursor:"pointer", fontFamily:"'Inter',sans-serif", fontSize:9, letterSpacing:.5 }}>Leave</button>
         </div>
