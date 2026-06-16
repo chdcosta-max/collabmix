@@ -5564,6 +5564,7 @@ function Deck({ id, ch, ctx:ac, color, local, remote, onChange, midi:mt, bpmResu
   const [bpmInputError,setBpmInputError]=useState(false);
   const loopRef=useRef({active:false,start:null,end:null});
   const src=useRef(null),st=useRef(0),off=useRef(0),raf=useRef(null),fr=useRef(null);
+  const seekEpochRef=useRef(0);   // monotone counter bumped on each REAL user seek/cue (driver) → broadcast so the mirror snaps deterministically
   // Pending nudge bookkeeping (see nudgeRate below).
   const nudgeT=useRef(null);
   const nudgeSrcRef=useRef(null);
@@ -5605,6 +5606,8 @@ function Deck({ id, ch, ctx:ac, color, local, remote, onChange, midi:mt, bpmResu
   const remStaleLoggedRef=useRef(false);
   const remDiagAtRef=useRef(0);       // throttle for [MIRROR-DIAG] interp log
   const lastRemProgRef=useRef(null);  // last remote.progress we re-anchored on (skip non-progress re-runs)
+  const lastSeekEpochRef=useRef(null);// last seen remote.seekEpoch — a CHANGE = the driver did a real seek → hard snap
+  const lastPausedProgRef=useRef(null);// baseline truth recorded on pause-entry — a paused mirror only moves when this changes
   const remAwaitPktRef=useRef(false); // play just started → hold at paused pos until first fresh packet
   const lastProgBroadcastRef=useRef(0);
   // Drag telemetry timestamp. applyRate skips logEvent when method==="drag" and
@@ -5668,6 +5671,7 @@ function Deck({ id, ch, ctx:ac, color, local, remote, onChange, midi:mt, bpmResu
       // slope or read a stale-anchor seek.
       remProgRef.current=progRef.current; remDispRef.current=progRef.current; remSlewRef.current=0;
       remTimeRef.current=performance.now(); remPrevTimeRef.current=0; remFrameRef.current=performance.now();
+      lastPausedProgRef.current=null;   // clear paused baseline so the next pause re-establishes it
     }
     // EQ values now come from parent props when remote is true
     if(remote.trackName)setName(remote.trackName);
@@ -5698,7 +5702,11 @@ function Deck({ id, ch, ctx:ac, color, local, remote, onChange, midi:mt, bpmResu
     const CREEP_FRAC=0.15;     // when ahead, creep forward at 15% of base — alive, not frozen, never < 0
     const SLEW_TAU_MS=220;     // decay half-life of the re-anchor step — smooths position jitter
                                // (stable mirror phase) without lagging the forward ramp
-    const FWD_SNAP_SEC=3;      // truth jumps forward beyond this = genuine seek/cue → hard snap
+    const FWD_SNAP_SEC=10;     // SAFETY BACKSTOP only. Real seeks now snap via the seekEpoch
+                               // signal (deterministic). This magnitude gate just catches a jump
+                               // too large to smoothly absorb if an epoch is ever missing (old
+                               // client / reordered epoch packet). Raised 3→10 so ordinary coast
+                               // misestimation (a few seconds) no longer FALSE-snaps — the dogfood bug.
     const REORDER_TOL_SEC=0.75;// a packet BELOW the anchor by less than this = reordering/jitter
                                // (drop it — re-anchoring would drag the follower backward off
                                // truth); by MORE than this = a genuine rewind/loop (hard snap).
@@ -5745,7 +5753,17 @@ function Deck({ id, ch, ctx:ac, color, local, remote, onChange, midi:mt, bpmResu
         const dtPktMs=now-remTimeRef.current;
         const predictedTruth=remProgRef.current+(remRateRef.current||0)*dtPktMs;
         const truthJumpSec=(remote.progress-predictedTruth)*trackDurSec;
-        const fwdSeek=havePrior && !justStarted && truthJumpSec>FWD_SNAP_SEC;
+        // PRIMARY seek signal: the driver bumped seekEpoch on a real user seek/cue. A
+        // change ⇒ hard snap, deterministically — no more guessing from a magnitude
+        // threshold (the marginal-3s coast misestimation that false-snapped is gone).
+        // truthJumpSec>FWD_SNAP_SEC is now only a safety backstop for a missing epoch.
+        // epoch present AND different from the value at the last progress packet ⇒ a
+        // real seek happened. lastSeekEpochRef starts null and only updates when an
+        // epoch is seen, so the FIRST seek (undefined→1) is detected; the havePrior /
+        // !justStarted guard below prevents a spurious snap on a late-joiner's snapshot.
+        const epochSeek = remote.seekEpoch!=null && remote.seekEpoch!==lastSeekEpochRef.current;
+        if(remote.seekEpoch!=null) lastSeekEpochRef.current=remote.seekEpoch;   // consume — next change re-detects
+        const fwdSeek=havePrior && !justStarted && (epochSeek || truthJumpSec>FWD_SNAP_SEC);
         const genuineRewind=backwardSec>=REORDER_TOL_SEC;   // below anchor by a real margin = rewind/loop
 
         // OBSERVED base rate from the packet slope (primary), low-passed. Adopt only
@@ -5829,26 +5847,31 @@ function Deck({ id, ch, ctx:ac, color, local, remote, onChange, midi:mt, bpmResu
     // Start/stop smooth interpolation RAF
     cancelAnimationFrame(remRaf.current);
     if(!nowPlaying && remote.progress!=null){
-      // PAUSED: no RAF runs, so snap the displayed playhead to the delivered
-      // (frozen) truth here — otherwise the mirror keeps showing its last
-      // coasted position and lurches on the next play.
+      // PAUSED: the RAF is stopped. A paused mirror must stay STATIC — it moves ONLY
+      // when the partner GENUINELY re-cues (remote.progress changes vs the baseline
+      // recorded on pause-entry). On entry we record truth but DO NOT move the displayed
+      // playhead (snapping it back to truth was the backward "slide-back"); unrelated
+      // remote re-broadcasts (analyzer / waveform / rate) and sub-frame jitter no longer
+      // nudge a paused playhead.
       const fp=Math.min(1,Math.max(0,remote.progress));
-      if(MIRROR_DIAG){
-        // "moves while paused" capture: log ONLY when the paused mirror actually shifts
-        // (remote.progress changed while not playing) — idempotent re-renders stay silent.
-        const prevDisp=remDispRef.current;
-        const moveMs=(fp-prevDisp)*(remote.duration||dur||1)*1000;
-        if(Math.abs(moveMs)>1){
+      const trackDurSec2=remote.duration||dur||1;
+      if(lastPausedProgRef.current==null){
+        // Pause-entry baseline — anchor the model to truth for a clean resume; leave the
+        // displayed playhead where it is (no slide-back); no re-render.
+        lastPausedProgRef.current=fp; remProgRef.current=fp;
+      } else if(Math.abs(fp-lastPausedProgRef.current)*trackDurSec2*1000 > 20){
+        // Genuine paused re-cue (>20ms move vs baseline) → move the mirror to the new spot.
+        const moveMs=(fp-remDispRef.current)*trackDurSec2*1000;
+        lastPausedProgRef.current=fp;
+        remProgRef.current=fp; remDispRef.current=fp; remSlewRef.current=0; setProg(fp); progRef.current=fp; onProgUpdate?.(fp);
+        if(MIRROR_DIAG){
           const pausedGapMs=remPktRef.current?Math.round(performance.now()-remPktRef.current):0;
-          console.log('[MIRROR-NET-DIAG] deck='+id+' action=PAUSED-RESNAP fwdSeek=false'+
-            ' moveMs='+moveMs.toFixed(0)+' pktGapMs='+pausedGapMs+
-            ' (mirror MOVED while paused) prevDisp='+prevDisp.toFixed(4)+' truthProg='+fp.toFixed(4));
-          // Mirror into the downloadable Cmd+Option+L session log.
-          logEvent("mirror","paused_resnap",{ deck:id, moveMs:+moveMs.toFixed(0), pktGapMs:pausedGapMs,
-            prevDisp:+prevDisp.toFixed(4), truthProg:+fp.toFixed(4) });
+          console.log('[MIRROR-NET-DIAG] deck='+id+' action=PAUSED-RECUE fwdSeek=false moveMs='+moveMs.toFixed(0)+
+            ' pktGapMs='+pausedGapMs+' (partner re-cued while paused) truthProg='+fp.toFixed(4));
+          logEvent("mirror","paused_recue",{ deck:id, moveMs:+moveMs.toFixed(0), pktGapMs:pausedGapMs, truthProg:+fp.toFixed(4) });
         }
       }
-      remProgRef.current=fp; remDispRef.current=fp; remSlewRef.current=0; setProg(fp); progRef.current=fp; onProgUpdate?.(fp);
+      // else: paused + position unchanged → do NOTHING (mirror stays static).
     }
     if(nowPlaying){
       remFrameRef.current=performance.now();
@@ -6107,6 +6130,10 @@ function Deck({ id, ch, ctx:ac, color, local, remote, onChange, midi:mt, bpmResu
       pq=Math.max(0,Math.min(1,nearest/durSec));
       console.log("[SEEK-QUANTIZE]",{deckId:id,fromSec:+targetSec.toFixed(3),toSec:+nearest.toFixed(3),deltaMs:+((nearest-targetSec)*1000).toFixed(1)});
     }
+    // Real USER seek (not the engage's sub-beat phase-align, noQuantize=true) — bump the
+    // seek epoch so the mirror hard-snaps deterministically on THIS jump. Broadcast the
+    // epoch BEFORE progress so it's already present when the mirror processes the new pos.
+    if(!noQuantize){ seekEpochRef.current++; onChange?.("seekEpoch", seekEpochRef.current); }
     const o=pq*durSec;off.current=o;if(play)play_(o);else{setProg(pq);progRef.current=pq;onProgUpdate?.(pq);}onChange?.("progress",pq);
     // User interacted — block auto-position-to-first-downbeat on this track.
     userMovedRef.current=true;
@@ -6126,6 +6153,7 @@ function Deck({ id, ch, ctx:ac, color, local, remote, onChange, midi:mt, bpmResu
     }
     off.current=0;setProg(0);progRef.current=0;onProgUpdate?.(0);
     if(play){stop_();setPlay(false);onChange?.("playing",false);}
+    seekEpochRef.current++; onChange?.("seekEpoch", seekEpochRef.current);   // cue = a real jump to 0 → mirror snaps
     onChange?.("progress",0);
     // CUE is an explicit user action (jump to track start) — block any
     // pending auto-position-to-first-downbeat from overriding.
