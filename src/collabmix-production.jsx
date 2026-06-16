@@ -5729,7 +5729,10 @@ function Deck({ id, ch, ctx:ac, color, local, remote, onChange, midi:mt, bpmResu
       if(isReorder){
         // Drop — keep coasting on the newer anchor. lastRemProgRef already advanced,
         // so this stale value won't be reprocessed; the follower is undisturbed.
-        if(MIRROR_DIAG) console.log('[MIRROR-NET-DIAG] deck',id,'dropped reordered pkt prog='+remote.progress.toFixed(4)+' ('+(backwardSec*1000).toFixed(0)+'ms below anchor '+remProgRef.current.toFixed(4)+')');
+        if(MIRROR_DIAG) console.log('[MIRROR-NET-DIAG] deck='+id+' action=DROP-REORDER fwdSeek=false'+
+          ' truthJumpMs=0 backwardMs='+(backwardSec*1000).toFixed(0)+' pktGapMs='+Math.round(mnPktGapMs)+
+          ' (stale/reordered pkt below anchor — dropped, follower undisturbed)'+
+          ' anchorProg='+remProgRef.current.toFixed(4)+' pktProg='+remote.progress.toFixed(4));
       } else {
         // Predict where TRUTH should be NOW from the PRIOR anchor (before we move it)
         // to tell a genuine forward seek from ordinary coast drift. The snap/smooth
@@ -5788,10 +5791,24 @@ function Deck({ id, ch, ctx:ac, color, local, remote, onChange, midi:mt, bpmResu
         // inter-arrival gap, how far TRUTH jumped vs the predicted trajectory (the
         // snap/smooth signal), the observed base rate, and the action taken.
         if(MIRROR_DIAG){
-          const mnAction=fwdSeek?'FWD-SNAP':genuineRewind?'REWIND-SNAP':justStarted?'playstart-follow':'follow';
-          console.log('[MIRROR-NET-DIAG] deck '+id+' pktGapMs='+Math.round(mnPktGapMs)+
-            ' truthJumpMs='+(truthJumpSec*1000).toFixed(0)+' baseRate='+(remRateRef.current*1e6).toFixed(2)+'e-6'+
-            ' action='+mnAction+' truthProg='+remote.progress.toFixed(4));
+          const mnAction=fwdSeek?'FWD-SNAP':genuineRewind?'REWIND-SNAP':justStarted?'PLAYSTART-FOLLOW':'FOLLOW';
+          // REAL vs FALSE snap discriminator:
+          //   REAL partner seek  = big truthJumpMs at a NORMAL pktGapMs on an established rate.
+          //   FALSE snap (coast) = a marginal jump just over snapThreshMs after a LONG pktGap
+          //                        and/or a not-yet-established rate (predictedTruth was unreliable).
+          const rateBasis=(havePrior && remRateRef.current>0)?'observed':'bootstrap/first';
+          const coastSuspect=fwdSeek && (mnPktGapMs>1000 || rateBasis!=='observed');
+          console.log('[MIRROR-NET-DIAG] deck='+id+
+            ' action='+mnAction+
+            ' fwdSeek='+(!!fwdSeek)+
+            ' truthJumpMs='+(truthJumpSec*1000).toFixed(0)+
+            ' snapThreshMs='+(FWD_SNAP_SEC*1000)+
+            ' pktGapMs='+Math.round(mnPktGapMs)+
+            ' backwardMs='+(backwardSec*1000).toFixed(0)+
+            ' rate='+rateBasis+
+            ' baseRate='+(remRateRef.current*1e6).toFixed(2)+'e-6'+
+            (coastSuspect?'  >>> COAST-SUSPECT (false-snap candidate → fix#1 seek-epoch)':'')+
+            ' truthProg='+remote.progress.toFixed(4));
         }
       }
       // DO NOT setProg here — the RAF follower below renders the smooth position.
@@ -5803,6 +5820,15 @@ function Deck({ id, ch, ctx:ac, color, local, remote, onChange, midi:mt, bpmResu
       // (frozen) truth here — otherwise the mirror keeps showing its last
       // coasted position and lurches on the next play.
       const fp=Math.min(1,Math.max(0,remote.progress));
+      if(MIRROR_DIAG){
+        // "moves while paused" capture: log ONLY when the paused mirror actually shifts
+        // (remote.progress changed while not playing) — idempotent re-renders stay silent.
+        const prevDisp=remDispRef.current;
+        const moveMs=(fp-prevDisp)*(remote.duration||dur||1)*1000;
+        if(Math.abs(moveMs)>1) console.log('[MIRROR-NET-DIAG] deck='+id+' action=PAUSED-RESNAP fwdSeek=false'+
+          ' moveMs='+moveMs.toFixed(0)+' pktGapMs='+(remPktRef.current?Math.round(performance.now()-remPktRef.current):0)+
+          ' (mirror MOVED while paused) prevDisp='+prevDisp.toFixed(4)+' truthProg='+fp.toFixed(4));
+      }
       remProgRef.current=fp; remDispRef.current=fp; remSlewRef.current=0; setProg(fp); progRef.current=fp; onProgUpdate?.(fp);
     }
     if(nowPlaying){
@@ -5810,7 +5836,7 @@ function Deck({ id, ch, ctx:ac, color, local, remote, onChange, midi:mt, bpmResu
       const animate=()=>{
         const tnow=performance.now();
         const sincePkt=tnow-remPktRef.current;
-        let dispNow;
+        let dispNow, mnCatchup=false;
         if(remAwaitPktRef.current){
           // Play just started — HOLD at the displayed position until the first
           // fresh packet anchors the restart (prevents the per-press jump-to-end).
@@ -5832,7 +5858,9 @@ function Deck({ id, ch, ctx:ac, color, local, remote, onChange, midi:mt, bpmResu
           if(smoothed>=disp){
             // Forward: follow the smoothed position, capping the per-frame advance at
             // the bounded catch-up rate so a large recovery eases in (never a leap).
-            dispNow=Math.min(smoothed,disp+maxRate*dtMs);
+            const capped=disp+maxRate*dtMs;
+            dispNow=Math.min(smoothed,capped);
+            mnCatchup=(smoothed>capped);   // rate-capped this frame → actively catching up a gap
           } else {
             // The smoothing would move us BACKWARD (over-coasted ahead: a stale packet,
             // or a pitched-down driver during a blackout). NEVER reverse — creep
@@ -5848,7 +5876,7 @@ function Deck({ id, ch, ctx:ac, color, local, remote, onChange, midi:mt, bpmResu
           remDiagAtRef.current=tnow;
           // disp = what the follower OUTPUTS this frame; anchor = last packet value;
           // pktAgeMs = how long since a packet arrived; rafLive proves the RAF is running.
-          console.log('[MIRROR-DIAG] deck '+id+' disp='+dispNow.toFixed(4)+' anchorPkt='+(remProgRef.current||0).toFixed(4)+' pktAgeMs='+Math.round(sincePkt)+' baseRate='+(remRateRef.current*1e6).toFixed(2)+'e-6 rafLive=1 hidden='+(typeof document!=="undefined"?document.hidden:'?'));
+          console.log('[MIRROR-DIAG] deck='+id+' action='+(mnCatchup?'CATCH-UP':'FOLLOW')+' disp='+dispNow.toFixed(4)+' anchorPkt='+(remProgRef.current||0).toFixed(4)+' pktAgeMs='+Math.round(sincePkt)+' baseRate='+(remRateRef.current*1e6).toFixed(2)+'e-6 rafLive=1 hidden='+(typeof document!=="undefined"?document.hidden:'?'));
         }
         remRaf.current=requestAnimationFrame(animate);
       };
