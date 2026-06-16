@@ -143,6 +143,18 @@ const WF_TEAL_GAMMA    = _urlNum("wfTealGamma", 1.30);   // teal body curve; LOW
 // Does NOT touch the deck overview strip (separate WF component).
 const _urlStr = (k, d) => { const v = URL_FLAGS.get(k); return v == null ? d : v; };
 const WF_COLOR_MODE = _urlStr("wfcolor", "current");
+// ── Top scrolling waveform LAYER MODEL (live ?wflayer=…) — shape + layer composition.
+//   current = today's render (independent center-anchored band heights; blue owns the outline).
+//   nested  = transient-driven silhouette (hard left edge + right taper) filled with NESTED
+//             colour fractions: blue thin OUTER RIM → gold MIDDLE → cream solid INNER CORE,
+//             with high-freq energy fattening the core (Rekordbox RGB feel). Colour stays on
+//             the existing wfcolor switch. Does NOT touch the deck overview strip.
+const WF_LAYER_MODE = _urlStr("wflayer", "current");
+const WF_CREAM_FRAC = _urlNum("wfCreamFrac", 0.45);  // 0..1 — inner cream core radius (fraction of silhouette)
+const WF_GOLD_FRAC  = _urlNum("wfGoldFrac",  0.78);  // 0..1 — gold middle band radius
+const WF_RIM_FRAC   = _urlNum("wfRimFrac",   0.12);  // 0..1 — guaranteed blue outer-rim thickness
+const WF_SPECTRAL   = _urlNum("wfSpectral",  0.50);  // 0 = uniform cream core, 1 = fully high-energy-driven core
+const WF_EDGE_MS    = _urlNum("wfEdge",      110);   // ms — silhouette transient release (right taper; smaller = sharper)
 
 // ── Server Configuration ─────────────────────────────────────
 // After deploying to Railway, replace this URL with your Railway server URL.
@@ -4878,6 +4890,7 @@ function AnimatedZoomedWF({ bands, dur, progRef, onSeek, h=96, windowSec=8, beat
           aEnv = inp>aEnv ? aAtk*aEnv+(1-aAtk)*inp : aEnv*aRel;
           colM[dx]=aEnv;                                       // amber transient envelope (supersedes the onset)
         }
+        if(WF_LAYER_MODE!=='nested'){
         for(let dx=0;dx<physW;dx++){
           const nb=colB[dx]/maxB, na=colM[dx]/maxB, nh=colH[dx]/maxH2;
           hLow[dx]  = nb>0.004 ? Math.pow(nb,WF_TEAL_GAMMA)*maxH*WF_TEAL_GAIN  : 0; // BLUE body (dominant mass)
@@ -4885,6 +4898,37 @@ function AnimatedZoomedWF({ bands, dur, progRef, onSeek, h=96, windowSec=8, beat
           hHigh[dx] = nh>0.004 ? Math.pow(nh,WF_GAMMA_HIGH)*maxH*WF_HIGH_SCALE : 0; // cream tips
           if(hLow[dx]>maxH)hLow[dx]=maxH; if(hMid[dx]>maxH)hMid[dx]=maxH; if(hHigh[dx]>maxH)hHigh[dx]=maxH; // gains >1 clip flat, not past the rail
           let e=hLow[dx]; if(hMid[dx]>e)e=hMid[dx]; hEnv[dx]=e;
+        }
+        } else {
+          // ── NESTED MODEL (?wflayer=nested) — transient-driven silhouette + nested colour fractions.
+          // SILHOUETTE: a sharp transient follower (attack 0, release wfEdge) over the kick energy
+          // colB. inp>sEnv ? inp : sEnv*relS → instant vertical JUMP at each kick attack (HARD LEFT
+          // EDGE), then an exponential taper DOWN to the sustained-body floor (= colB level) → a row
+          // of distinct sharp-fronted kicks with body between, not a soft tube. wfEdge sets the taper.
+          // FILL: nested centre-anchored radii inside that silhouette. We reuse hLow/hMid/hHigh so the
+          // existing draw block paints them blue→gold→cream (outer→inner) unchanged:
+          //   blue  = full silhouette S        → thin OUTER RIM (rim ≥ wfRimFrac of S guaranteed)
+          //   gold  = wfGoldFrac · S           → MIDDLE band
+          //   cream = wfCreamFrac · S · scale  → solid INNER CORE; scale lets high-freq energy (colH)
+          //           fatten the core at broadband attacks (wfSpectral 0=uniform … 1=energy-driven).
+          const cF=Math.max(0,Math.min(1,WF_CREAM_FRAC)), gF=Math.max(0,Math.min(1,WF_GOLD_FRAC));
+          const rF=Math.max(0,Math.min(1,WF_RIM_FRAC)),   spec=Math.max(0,Math.min(1,WF_SPECTRAL));
+          const relS=Math.exp(-secPerCol/Math.max(1e-4,WF_EDGE_MS/1000));
+          const SIL_GAMMA=1.2, SIL_GAIN=1.25;            // fixed silhouette shaping — kicks clamp to the rail, body sits lower
+          let sEnv=0;
+          for(let dx=0;dx<physW;dx++){
+            const inp=colB[dx];
+            sEnv = inp>sEnv ? inp : sEnv*relS;           // attack 0 = hard left wall; release = right taper
+            const ns=maxB>0?sEnv/maxB:0;
+            let S = ns>0.004 ? Math.pow(ns,SIL_GAMMA)*maxH*SIL_GAIN : 0;
+            if(S>maxH)S=maxH;
+            const nh=maxH2>0?colH[dx]/maxH2:0;           // 0..1 high-freq energy this column
+            const creamScale=(1-spec)+spec*nh;           // spec 0 = uniform core, 1 = energy-driven core
+            let goldTop=gF*S; const rimCap=(1-rF)*S; if(goldTop>rimCap)goldTop=rimCap;  // keep a visible blue rim
+            let creamTop=cF*S*creamScale; if(creamTop>goldTop)creamTop=goldTop;          // cream never exceeds gold
+            hLow[dx]=S; hMid[dx]=goldTop; hHigh[dx]=creamTop;   // draw paints blue(rim)→gold(mid)→cream(core)
+            hEnv[dx]=S;                                          // halo follows the silhouette
+          }
         }
 
         // Faint center hairline so silent sections read as a defined line.
