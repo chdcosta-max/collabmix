@@ -145,14 +145,14 @@ const WF_TEAL_GAMMA    = _urlNum("wfTealGamma", 1.30);   // teal body curve; LOW
 // carries an earlier ?wfcolor=deckblue resolves to mono (URLSearchParams.get
 // returns the FIRST occurrence, which made the newer value appear ignored).
 const _urlStr = (k, d) => { const all = URL_FLAGS.getAll(k); return all.length ? all[all.length-1] : d; };
-const WF_COLOR_MODE = _urlStr("wfcolor", "current");
+const WF_COLOR_MODE = _urlStr("wfcolor", "mono");   // DEFAULT: solid deck colour (#2E86DE on A). ?wfcolor=current|deckblue still reachable.
 // ── Top scrolling waveform LAYER MODEL (live ?wflayer=…) — shape + layer composition.
 //   current = today's render (independent center-anchored band heights; blue owns the outline).
 //   nested  = transient-driven silhouette (hard left edge + right taper) filled with NESTED
 //             colour fractions: blue thin OUTER RIM → gold MIDDLE → cream solid INNER CORE,
 //             with high-freq energy fattening the core (Rekordbox RGB feel). Colour stays on
 //             the existing wfcolor switch. Does NOT touch the deck overview strip.
-const WF_LAYER_MODE = _urlStr("wflayer", "current");
+const WF_LAYER_MODE = _urlStr("wflayer", "hybrid");   // DEFAULT: onset-driven sharp-kick triangle. ?wflayer=current|nested|column still reachable.
 const WF_CREAM_FRAC = _urlNum("wfCreamFrac", 0.45);  // 0..1 — inner cream core radius (fraction of silhouette)
 const WF_GOLD_FRAC  = _urlNum("wfGoldFrac",  0.78);  // 0..1 — gold middle band radius
 const WF_RIM_FRAC   = _urlNum("wfRimFrac",   0.12);  // 0..1 — guaranteed blue outer-rim thickness
