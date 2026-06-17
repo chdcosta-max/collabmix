@@ -208,6 +208,9 @@ const WF_AMP_PAD     = _urlNum("wfAmpPad",      16);
 const WF_KICK_WIN_MS = _urlNum("wfKickWin",     70);   // ms — energy-sampling window per kick (centre-biased: ~30% before / 70% after the beat). Wider = every kick gets a fair peak read → consistent heights in a section.
 const WF_BODY_GAMMA  = _urlNum("wfBodyGamma", 1.2);
 const WF_KICK_SHARP  = _urlNum("wfKickSharp", 0.6);
+const WF_BLUE_SWELL  = _urlNum("wfBlueSwell", 1.5);   // BLUE lows OPPOSITE-taper curve: 0 at the beat → 1 toward the next beat (>1 stays thin longer then opens wide). Mirrors the cream kick's decay.
+const WF_BLUE_SCALE  = _urlNum("wfBlueScale", 0.8);   // BLUE max height as a fraction of the lane — keep < 1 so blue stays BELOW the cream kick peaks (anti-tube)
+const WF_MID_SCALE   = _urlNum("wfMidScale",  0.5);   // ORANGE mids height scale (thin accents layered over the blue)
 // Retired — superseded models. Left defined/unused to avoid touching unrelated refs.
 // (wfBodyGain: replaced by wfFill auto-fit. wfSpine*: the additive-spine model.)
 const WF_BODY_GAIN   = _urlNum("wfBodyGain",  0.95);
@@ -4984,16 +4987,9 @@ function AnimatedZoomedWF({ bands, dur, progRef, onSeek, h=96, windowSec=8, beat
             const bts=beatTimesRef.current;
             const gridOff=gridOffsetMsRef.current/1000;       // honor the grid's manual fine-tune so walls track it
             const hasKicks = bts && bts.length>0 && dur2>0;
-            // FLOOR / FALLBACK pass: per-column energy thread. With kicks → faint wfFloor pedestal
-            // under the triangles; before beatTimes arrive (no kicks) → full energy body so it's
-            // never blank.
-            for(let dx=0;dx<physW;dx++){
-              const energy=(WF_TOP_BASS_W*colB[dx]+WF_TOP_MID_W*colMid[dx]+WF_TOP_HIGH_W*colH[dx])/maxComb;
-              const eN=energy>0.004 ? Math.pow(energy,WF_BODY_GAMMA) : 0;
-              let v=(hasKicks ? WF_FLOOR*eN : eN)*fitScale;
-              if(v>maxH)v=maxH;
-              hEnv[dx]=v;
-            }
+            // Init both layers. hMid = CREAM kick triangles (filled by the kick loop below);
+            // hLow = BLUE lows body, filled by the opposite-taper SWELL pass after the kicks.
+            for(let dx=0;dx<physW;dx++){ hMid[dx]=0; hLow[dx]=0; }
             // KICK TRIANGLES at beatTimes(+gridOff), mapped to columns the SAME way as the bands/grid.
             if(hasKicks){
               const bpsW=len/dur2;                                  // buckets/sec — centre-biased kick energy window (matches the fit pass)
@@ -5023,12 +5019,38 @@ function AnimatedZoomedWF({ bands, dur, progRef, onSeek, h=96, windowSec=8, beat
                 let x=(xk<0?0:xk);
                 let h=(xk<0?Hk*Math.pow(relK,-xk):Hk);
                 for(; x<physW; x++){
-                  if(h>hEnv[x]) hEnv[x]=h;
-                  else if(x>xk) break;                             // tail fell under floor / an earlier tail → done
+                  if(h>hMid[x]) hMid[x]=h;                         // write into the KICK layer (cream)
+                  else if(x>xk) break;                             // tail fell under an earlier kick's tail → done
                   if(h<0.5 && x>xk) break;                         // negligible tail
                   h*=relK;
                 }
               }
+            }
+            // BLUE LOWS = the OPPOSITE taper to the cream kick: THIN at the beat → SWELLS WIDE
+            // toward the next beat (the sustained sub/bassline filling the gap), drawn BEHIND the
+            // cream. Per beat interval, ramp 0→1 (pow wfBlueSwell) × the bass energy at the column,
+            // capped to wfBlueScale of the lane so it stays below the cream kick peaks (anti-tube).
+            if(hasKicks){
+              const tRightB=((srcX+viewPx)/len)*dur2, tLeftB=(srcX/len)*dur2;
+              let lo=0,hi=bts.length-1;                        // first beat whose interval can touch the left edge
+              while(lo<hi){ const m=(lo+hi)>>1; if(bts[m]+gridOff<tLeftB) lo=m+1; else hi=m; }
+              for(let bi=(lo>0?lo-1:0); bi+1<bts.length; bi++){
+                const t0=bts[bi]+gridOff, t1=bts[bi+1]+gridOff;
+                if(t0>tRightB) break;
+                const x0=(t0/dur2*len - srcX)/spp, x1=(t1/dur2*len - srcX)/spp;
+                const span=x1-x0; if(span<=0) continue;
+                const cs=Math.max(0,Math.floor(x0)), ce=Math.min(physW-1,Math.ceil(x1));
+                for(let x=cs;x<=ce;x++){
+                  let frac=(x-x0)/span; if(frac<0)frac=0; else if(frac>1)frac=1;
+                  const swell=Math.pow(frac, WF_BLUE_SWELL);    // 0 at the beat → 1 toward the next beat
+                  const nb=colB[x]/maxB; const bl=nb>0.004?Math.pow(nb,WF_BODY_GAMMA)*WF_FILL*maxH*WF_BLUE_SCALE:0;
+                  let bH=swell*bl; if(bH>maxH)bH=maxH;
+                  if(bH>hLow[x]) hLow[x]=bH;
+                }
+              }
+            } else {
+              // fallback (pre-analysis): plain bass-energy body, no swell.
+              for(let dx=0;dx<physW;dx++){ const nb=colB[dx]/maxB; let bH=nb>0.004?Math.pow(nb,WF_BODY_GAMMA)*WF_FILL*maxH*WF_BLUE_SCALE:0; if(bH>maxH)bH=maxH; hLow[dx]=bH; }
             }
           } else {
             // column: pure amplitude — energy already 0..1 (track-peak normalized) → lane via WF_FILL.
@@ -5115,19 +5137,18 @@ function AnimatedZoomedWF({ bands, dur, progRef, onSeek, h=96, windowSec=8, beat
               ctx.fillRect(dx,center-S,1,S*2+1);
             }
           } else {
-            // HYBRID: body = bass↔mid blend (blue↔orange); cream CORE sized by high energy
-            // → cream punches through at broadband attacks, absent on pure sustained bass.
-            for(let dx=0;dx<physW;dx++){
-              const S=hEnv[dx]; if(S<=0)continue;
-              const wB=colB[dx]/maxB, wM=colMid[dx]/maxMid;
-              let t=(wB+wM)>1e-4 ? wM/(wB+wM) : 0; t=Math.pow(t,blendG);   // 0 = bass(blue) … 1 = mid(orange)
-              const R=lr+(mr-lr)*t, G=lg+(mg-lg)*t, B=lb+(mb2-lb)*t;
-              ctx.fillStyle=`rgb(${R|0},${G|0},${B|0})`;
-              ctx.fillRect(dx,center-S,1,S*2+1);
-              let coreFrac=(colH[dx]/maxH2)*coreResp; if(coreFrac>1)coreFrac=1;   // high energy → cream core size
-              const coreH=coreFrac*S;
-              if(coreH>0.5){ ctx.fillStyle=`rgb(${hr},${hg},${hb})`; ctx.fillRect(dx,center-coreH,1,coreH*2+1); }
-            }
+            // HYBRID three-layer OPPOSITE-TAPER colour (Rekordbox). Opaque, drawn back→front:
+            //   BLUE lows (hLow)  — swells THIN-at-beat → WIDE toward the next beat; drawn behind.
+            //   ORANGE mids       — thin mid-energy accents layered over the blue.
+            //   CREAM kick (hMid) — sharp wall-left → point-right; opaque, ON TOP.
+            // The two opposite tapers interlock (cream points right, blue opens right), so the mass
+            // reads as a rhythm, not a uniform tube. Blue shows where the cream has narrowed.
+            ctx.fillStyle=`rgb(${lr},${lg},${lb})`;                       // 1) BLUE lows (back)
+            for(let dx=0;dx<physW;dx++){ const bH=hLow[dx]; if(bH>0.5) ctx.fillRect(dx,center-bH,1,bH*2+1); }
+            ctx.fillStyle=`rgb(${mr},${mg},${mb2})`;                      // 2) ORANGE mids (accents)
+            for(let dx=0;dx<physW;dx++){ const nm=colMid[dx]/maxMid; let mH=nm>0.004?Math.pow(nm,WF_BODY_GAMMA)*WF_FILL*maxH*WF_MID_SCALE:0; if(mH>maxH)mH=maxH; if(mH>0.5) ctx.fillRect(dx,center-mH,1,mH*2+1); }
+            ctx.fillStyle=`rgb(${hr},${hg},${hb})`;                       // 3) CREAM kick (front)
+            for(let dx=0;dx<physW;dx++){ const kH=hMid[dx]; if(kH>0.5) ctx.fillRect(dx,center-kH,1,kH*2+1); }
           }
         } else {
           // Crisp detail (UPPER canvas), back→front: BLUE body (dominant) → GOLD
