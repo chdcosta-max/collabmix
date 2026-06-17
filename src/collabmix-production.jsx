@@ -4647,6 +4647,11 @@ function AnimatedZoomedWF({ bands, dur, progRef, onSeek, h=96, windowSec=8, beat
   // because no column has bass=mid=high=1.0 simultaneously). Recomputed
   // once per bands-identity change; cheap (one linear pass over 24k).
   const envMaxRef=useRef({bands:null,maxVal:1});
+  // Per-track kick-height auto-fit, cached on (bands, beatTimes). The WF_FIT_PCT
+  // percentile of the energy AT each kick → the bulk of kicks fill the lane while a
+  // single freak-loud transient doesn't crush the scale. Keyed on both refs because
+  // the fit depends on the kick positions, not just the band data.
+  const fitRef=useRef({bands:null,bts:null,fit:1});
   const beatPhaseFracRef=useRef(beatPhaseFrac);
   const beatPeriodSecRef=useRef(beatPeriodSec);
   const gridOffsetMsRef=useRef(gridOffsetMs);
@@ -4899,34 +4904,37 @@ function AnimatedZoomedWF({ bands, dur, progRef, onSeek, h=96, windowSec=8, beat
             const on=e>ep?e-ep:0; if(on>mon)mon=on;          // per-track max ONSET (for amber norm)
             const cb=WF_TOP_BASS_W*bArr[i]+WF_TOP_MID_W*mArr[i]+WF_TOP_HIGH_W*hArr[i]; if(cb>mcomb)mcomb=cb; // per-track max of TOP HEIGHT blend
           }
-          const mmn=mon>1e-4?mon:1, mcb=mcomb>1e-4?mcomb:1;
-          // AUTO-FIT pass 2: replay the rendered silhouette (shape×energy + floor) at source
-          // resolution and record its per-track PEAK → fit. The draw scales by WF_FILL*maxH/fit
-          // so the track's loudest kick fills the lane while every other kick stays proportional.
-          // Done here (cached per track-load) — cheap, and avoids a per-frame rescale that would
-          // make the height "breathe" as you scroll (which would flatten the intro↔drop variation).
-          const relKsrc=Math.exp(-(dur2/srcLen)/Math.max(1e-4,WF_DECAY_MS/1000));
-          const sArr=new Float32Array(srcLen);
-          let kE=0;
-          for(let i=0;i<srcLen;i++){
-            const iD=i-onD<0?0:i-onD; const e=bArr[i]+mArr[i], ep=bArr[iD]+mArr[iD];
-            const on=e>ep?e-ep:0;
-            kE = on>kE ? on : kE*relKsrc;                    // same attack-0 peak-hold as the draw
-            let shp=Math.pow(Math.min(1,kE/mmn), WF_KICK_SHARP);
-            const eN=Math.pow((WF_TOP_BASS_W*bArr[i]+WF_TOP_MID_W*mArr[i]+WF_TOP_HIGH_W*hArr[i])/mcb, WF_BODY_GAMMA);
-            let sN=shp*eN; const flN=WF_FLOOR*eN; if(flN>sN)sN=flN;
-            sArr[i]=sN;
-          }
-          // PERCENTILE fit (not absolute max): normalize to the WF_FIT_PCT'th percentile of
-          // the silhouette so a single freak-loud transient can't crush the whole scale — the
-          // bulk of kicks fill the lane; the rare louder-than-percentile column clips (fine).
-          sArr.sort();                                       // TypedArray.sort = numeric ascending
-          let fit=sArr[Math.min(srcLen-1, Math.floor(srcLen*WF_FIT_PCT))];
-          if(!(fit>1e-4)) fit=sArr[srcLen-1]||1;             // degenerate (near-silent) → fall back to max
-          if(!(fit>1e-4)) fit=1;
-          envMaxRef.current={bands,mb:mb>1e-4?mb:1,mm:mmn,mh:mh>1e-4?mh:1,mmid:mmid>1e-4?mmid:1,mcomb:mcb,fit};
+          envMaxRef.current={bands,mb:mb>1e-4?mb:1,mm:mon>1e-4?mon:1,mh:mh>1e-4?mh:1,mmid:mmid>1e-4?mmid:1,mcomb:mcomb>1e-4?mcomb:1};
         }
-        const {mb:maxB,mm:maxM,mh:maxH2,mmid:maxMid,mcomb:maxComb,fit:fitMax}=envMaxRef.current;
+        const {mb:maxB,mm:maxM,mh:maxH2,mmid:maxMid,mcomb:maxComb}=envMaxRef.current;
+
+        // Per-track kick-height auto-fit (cached on bands+beatTimes). Percentile of the
+        // energy AT each kick — the bulk of kicks fill the lane; a freak-loud transient
+        // (above the percentile) clips rather than crushing the whole scale. Done over the
+        // KICK list (hundreds of beats), not every column — small + correct.
+        const btsFit=beatTimesRef.current;
+        if(fitRef.current.bands!==bands || fitRef.current.bts!==btsFit){
+          let fit=1;
+          if(btsFit && btsFit.length>0 && dur2>0){
+            const wWin=Math.max(1,Math.round(0.03*len/dur2));   // ~30ms kick-body window
+            const arr=new Float32Array(btsFit.length); let n=0;
+            for(let i=0;i<btsFit.length;i++){
+              const c=Math.round((btsFit[i]/dur2)*len);
+              if(c<0||c>=len) continue;
+              let pe=0; const c1=Math.min(len-1,c+wWin);
+              for(let k=c;k<=c1;k++){ const bl=WF_TOP_BASS_W*bArr[k]+WF_TOP_MID_W*mArr[k]+WF_TOP_HIGH_W*hArr[k]; if(bl>pe)pe=bl; }
+              arr[n++]=Math.pow(pe/maxComb, WF_BODY_GAMMA);
+            }
+            if(n>0){
+              const sorted=arr.slice(0,n).sort();              // TypedArray.sort = numeric ascending
+              fit=sorted[Math.min(n-1, Math.floor(n*WF_FIT_PCT))];
+              if(!(fit>1e-4)) fit=sorted[n-1]||1;
+            }
+          }
+          if(!(fit>1e-4)) fit=1;
+          fitRef.current={bands,bts:btsFit,fit};
+        }
+        const fitMax=fitRef.current.fit;
 
         // ── BLUE BODY (dominant) + GOLD TRANSIENT SPINE. Teal = the kick ENERGY
         // envelope (genuinely sustained → the dominant mass). Amber gets its OWN
@@ -4957,45 +4965,71 @@ function AnimatedZoomedWF({ bands, dur, progRef, onSeek, h=96, windowSec=8, beat
           // ── COLUMN (B) + HYBRID (C) — shape DECOUPLED from colour. Silhouette S → hEnv
           // (also the halo source); colour is computed per column from the literal band
           // energies in the draw block below.
-          //   column → S = overall AMPLITUDE (loudness) → spectrally-coloured but tube-ish (comparison rung).
-          //   hybrid → S = onset-driven KICK TRIANGLE (attack 0, release wfDecay) that COLLAPSES to
-          //            near-zero between kicks, lifted only by a faint wfFloor·amplitude thread so
-          //            non-kick energy still shows LOW. Kick-dominant sharp triangles, not a tube.
+          //   column → S = overall AMPLITUDE (loudness) → spectrally-coloured but tube-ish.
+          //   hybrid → S = KICK TRIANGLES drawn AT the analyzer beatTimes (the SAME validated
+          //            events + time→x transform the grid uses), so every kick is a clean
+          //            triangle — hard vertical wall + wfDecay right-taper — sitting ON the
+          //            grid tick. Height = bass-weighted energy AT the kick (intro short, drop
+          //            tall). A faint wfFloor·energy thread fills kickless sections; before
+          //            beatTimes arrive, fall back to the energy thread alone (least-jarring).
           const relK=Math.exp(-secPerCol/Math.max(1e-4,WF_DECAY_MS/1000));
           const hybrid = WF_LAYER_MODE==='hybrid';
-          let kEnv=0;
-          const fitScale=(WF_FILL*maxH)/fitMax;               // AUTO-FIT: loudest track kick → WF_FILL of the lane
-          for(let dx=0;dx<physW;dx++){
-            // ENERGY — bass-weighted section loudness, 0..1 (normalized to the track peak).
-            // NOT a silhouette; it only SCALES kick height. Quiet/breakdown low, drop high.
-            const energy=(WF_TOP_BASS_W*colB[dx]+WF_TOP_MID_W*colMid[dx]+WF_TOP_HIGH_W*colH[dx])/maxComb;
-            const eN=energy>0.004 ? Math.pow(energy,WF_BODY_GAMMA) : 0;   // 0..1, contrast-shaped
-            let S;
-            if(hybrid){
-              // SHAPE — sharp kick ONSET (lifted from 6288771): hard left wall at the kick
-              // attack (vertical front ON the grid), exponential taper right (relK=?wfDecay),
-              // ~0 between kicks. This IS the silhouette — it stays sharp because the onset is
-              // a transient, never the smooth energy envelope.
-              const onset=colOnset[dx];
-              kEnv = onset>kEnv ? onset : kEnv*relK;          // attack 0 = vertical front; release = right taper
-              let shape = maxM>0 ? kEnv/maxM : 0;             // 0..1 sharp profile
-              shape = Math.pow(shape, WF_KICK_SHARP);         // presence curve — <1 lets most kicks reach full presence so HEIGHT is governed by energy, not onset magnitude
-              if(shape>1)shape=1;
-              // COMBINE — sharp triangle whose PEAK = energy (multiplicative, never additive,
-              // so no rounding). Faint energy thread under it so kickless breakdowns aren't a
-              // dead-flat line (?wfFloor=0 → sharp kicks on black). Then AUTO-FIT to the lane.
-              let sN = shape*eN;
-              const flN = WF_FLOOR*eN;
-              if(flN>sN) sN=flN;
-              S = sN*fitScale;
-              if(S>maxH) S=maxH;                              // safety only; fit keeps peaks under the rail
-            } else {
-              // column: pure amplitude — energy already 0..1 (track-peak normalized), so map it
-              // straight to the lane via WF_FILL (no extra fit pass needed).
-              S = eN*WF_FILL*maxH;
-              if(S>maxH) S=maxH;
+          const fitScale=(WF_FILL*maxH)/fitMax;               // AUTO-FIT: bulk of kicks → WF_FILL of the lane
+          if(hybrid){
+            const bts=beatTimesRef.current;
+            const gridOff=gridOffsetMsRef.current/1000;       // honor the grid's manual fine-tune so walls track it
+            const hasKicks = bts && bts.length>0 && dur2>0;
+            // FLOOR / FALLBACK pass: per-column energy thread. With kicks → faint wfFloor pedestal
+            // under the triangles; before beatTimes arrive (no kicks) → full energy body so it's
+            // never blank.
+            for(let dx=0;dx<physW;dx++){
+              const energy=(WF_TOP_BASS_W*colB[dx]+WF_TOP_MID_W*colMid[dx]+WF_TOP_HIGH_W*colH[dx])/maxComb;
+              const eN=energy>0.004 ? Math.pow(energy,WF_BODY_GAMMA) : 0;
+              let v=(hasKicks ? WF_FLOOR*eN : eN)*fitScale;
+              if(v>maxH)v=maxH;
+              hEnv[dx]=v;
             }
-            hEnv[dx]=S;
+            // KICK TRIANGLES at beatTimes(+gridOff), mapped to columns the SAME way as the bands/grid.
+            if(hasKicks){
+              const wWin=Math.max(1,Math.round(0.03*len/dur2));     // ~30ms kick-body energy window
+              const tailSec=(WF_DECAY_MS/1000)*5;                   // include off-left kicks whose taper reaches view
+              const tRight=((srcX+viewPx)/len)*dur2;
+              const tScanL=(srcX/len)*dur2 - tailSec;
+              let lo=0,hi=bts.length-1;                             // first kick whose tail can reach the left edge
+              while(lo<hi){ const mid=(lo+hi)>>1; if(bts[mid]+gridOff<tScanL) lo=mid+1; else hi=mid; }
+              for(let bi=lo; bi<bts.length; bi++){
+                const t=bts[bi]+gridOff;
+                if(t>tRight) break;                                 // walls past the right edge don't draw
+                const srcBucket=(t/dur2)*len;
+                const xk=Math.round((srcBucket-srcX)/spp);          // wall column (same transform as bands → on the tick)
+                if(xk>=physW) break;
+                // energy AT the kick — windowed MAX over the kick body (robust to attack/peak offset)
+                const c0=Math.max(0,Math.round(srcBucket)), c1=Math.min(len-1,Math.max(0,Math.round(srcBucket))+wWin);
+                let pe=0; for(let k=c0;k<=c1;k++){ const bl=WF_TOP_BASS_W*bArr[k]+WF_TOP_MID_W*mArr[k]+WF_TOP_HIGH_W*hArr[k]; if(bl>pe)pe=bl; }
+                let Hk=Math.pow(pe/maxComb, WF_BODY_GAMMA)*fitScale;
+                if(Hk>maxH)Hk=maxH;
+                if(Hk<=0) continue;
+                // HARD WALL at xk + exponential right-taper (relK). max() into hEnv so the wall rides
+                // over the floor and earlier tails; the column LEFT of xk keeps the floor → vertical front.
+                let x=(xk<0?0:xk);
+                let h=(xk<0?Hk*Math.pow(relK,-xk):Hk);
+                for(; x<physW; x++){
+                  if(h>hEnv[x]) hEnv[x]=h;
+                  else if(x>xk) break;                             // tail fell under floor / an earlier tail → done
+                  if(h<0.5 && x>xk) break;                         // negligible tail
+                  h*=relK;
+                }
+              }
+            }
+          } else {
+            // column: pure amplitude — energy already 0..1 (track-peak normalized) → lane via WF_FILL.
+            for(let dx=0;dx<physW;dx++){
+              const energy=(WF_TOP_BASS_W*colB[dx]+WF_TOP_MID_W*colMid[dx]+WF_TOP_HIGH_W*colH[dx])/maxComb;
+              const eN=energy>0.004 ? Math.pow(energy,WF_BODY_GAMMA) : 0;
+              let S=eN*WF_FILL*maxH;
+              if(S>maxH)S=maxH;
+              hEnv[dx]=S;
+            }
           }
         } else if(WF_LAYER_MODE!=='nested'){
         for(let dx=0;dx<physW;dx++){
