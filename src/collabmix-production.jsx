@@ -208,9 +208,9 @@ const WF_AMP_PAD     = _urlNum("wfAmpPad",      16);
 const WF_KICK_WIN_MS = _urlNum("wfKickWin",     70);   // ms — energy-sampling window per kick (centre-biased: ~30% before / 70% after the beat). Wider = every kick gets a fair peak read → consistent heights in a section.
 const WF_BODY_GAMMA  = _urlNum("wfBodyGamma", 1.2);
 const WF_KICK_SHARP  = _urlNum("wfKickSharp", 0.6);
-const WF_BLUE_SWELL  = _urlNum("wfBlueSwell", 1.5);   // BLUE lows OPPOSITE-taper curve: 0 at the beat → 1 toward the next beat (>1 stays thin longer then opens wide). Mirrors the cream kick's decay.
-const WF_BLUE_SCALE  = _urlNum("wfBlueScale", 0.8);   // BLUE max height as a fraction of the lane — keep < 1 so blue stays BELOW the cream kick peaks (anti-tube)
-const WF_MID_SCALE   = _urlNum("wfMidScale",  0.5);   // ORANGE mids height scale (thin accents layered over the blue)
+const WF_BLUE_SWELL  = _urlNum("wfBlueSwell", 1.0);   // BLUE lows RISE-AND-FALL arc curve: sin(π·frac)^this → 0 at beat, peak mid-gap, 0 before next beat. <1 = fatter/wider arc, >1 = narrower peak. The arc SHAPE is the anti-tube.
+const WF_BLUE_SCALE  = _urlNum("wfBlueScale", 2.0);   // BLUE size — the dominant body mass (the biggest element). Higher = bigger blue. (Arc peak clamps to the lane.)
+const WF_MID_SCALE   = _urlNum("wfMidScale",  0.5);   // ORANGE mids height scale (arc accents, same shape as blue, smaller)
 // Retired — superseded models. Left defined/unused to avoid touching unrelated refs.
 // (wfBodyGain: replaced by wfFill auto-fit. wfSpine*: the additive-spine model.)
 const WF_BODY_GAIN   = _urlNum("wfBodyGain",  0.95);
@@ -4989,7 +4989,7 @@ function AnimatedZoomedWF({ bands, dur, progRef, onSeek, h=96, windowSec=8, beat
             const hasKicks = bts && bts.length>0 && dur2>0;
             // Init both layers. hMid = CREAM kick triangles (filled by the kick loop below);
             // hLow = BLUE lows body, filled by the opposite-taper SWELL pass after the kicks.
-            for(let dx=0;dx<physW;dx++){ hMid[dx]=0; hLow[dx]=0; }
+            for(let dx=0;dx<physW;dx++){ hMid[dx]=0; hLow[dx]=0; hHigh[dx]=0; }
             // KICK TRIANGLES at beatTimes(+gridOff), mapped to columns the SAME way as the bands/grid.
             if(hasKicks){
               const bpsW=len/dur2;                                  // buckets/sec — centre-biased kick energy window (matches the fit pass)
@@ -5042,15 +5042,21 @@ function AnimatedZoomedWF({ bands, dur, progRef, onSeek, h=96, windowSec=8, beat
                 const cs=Math.max(0,Math.floor(x0)), ce=Math.min(physW-1,Math.ceil(x1));
                 for(let x=cs;x<=ce;x++){
                   let frac=(x-x0)/span; if(frac<0)frac=0; else if(frac>1)frac=1;
-                  const swell=Math.pow(frac, WF_BLUE_SWELL);    // 0 at the beat → 1 toward the next beat
-                  const nb=colB[x]/maxB; const bl=nb>0.004?Math.pow(nb,WF_BODY_GAMMA)*WF_FILL*maxH*WF_BLUE_SCALE:0;
-                  let bH=swell*bl; if(bH>maxH)bH=maxH;
+                  // RISE-AND-FALL ARC: 0 at this beat → peak mid-gap → 0 at the next beat. The arc
+                  // shape itself (a swelling/receding body, not a flat mass) is the anti-tube.
+                  const arc=Math.pow(Math.sin(Math.PI*frac), WF_BLUE_SWELL);
+                  const nb=colB[x]/maxB; let bH=nb>0.004?arc*Math.pow(nb,WF_BODY_GAMMA)*WF_FILL*maxH*WF_BLUE_SCALE:0; if(bH>maxH)bH=maxH;
                   if(bH>hLow[x]) hLow[x]=bH;
+                  const nm=colMid[x]/maxMid; let mH=nm>0.004?arc*Math.pow(nm,WF_BODY_GAMMA)*WF_FILL*maxH*WF_MID_SCALE:0; if(mH>maxH)mH=maxH;
+                  if(mH>hHigh[x]) hHigh[x]=mH;
                 }
               }
             } else {
-              // fallback (pre-analysis): plain bass-energy body, no swell.
-              for(let dx=0;dx<physW;dx++){ const nb=colB[dx]/maxB; let bH=nb>0.004?Math.pow(nb,WF_BODY_GAMMA)*WF_FILL*maxH*WF_BLUE_SCALE:0; if(bH>maxH)bH=maxH; hLow[dx]=bH; }
+              // fallback (pre-analysis): plain bass/mid energy bodies, no arc.
+              for(let dx=0;dx<physW;dx++){
+                const nb=colB[dx]/maxB; let bH=nb>0.004?Math.pow(nb,WF_BODY_GAMMA)*WF_FILL*maxH*WF_BLUE_SCALE:0; if(bH>maxH)bH=maxH; hLow[dx]=bH;
+                const nm=colMid[dx]/maxMid; let mH=nm>0.004?Math.pow(nm,WF_BODY_GAMMA)*WF_FILL*maxH*WF_MID_SCALE:0; if(mH>maxH)mH=maxH; hHigh[dx]=mH;
+              }
             }
           } else {
             // column: pure amplitude — energy already 0..1 (track-peak normalized) → lane via WF_FILL.
@@ -5145,8 +5151,8 @@ function AnimatedZoomedWF({ bands, dur, progRef, onSeek, h=96, windowSec=8, beat
             // reads as a rhythm, not a uniform tube. Blue shows where the cream has narrowed.
             ctx.fillStyle=`rgb(${lr},${lg},${lb})`;                       // 1) BLUE lows (back)
             for(let dx=0;dx<physW;dx++){ const bH=hLow[dx]; if(bH>0.5) ctx.fillRect(dx,center-bH,1,bH*2+1); }
-            ctx.fillStyle=`rgb(${mr},${mg},${mb2})`;                      // 2) ORANGE mids (accents)
-            for(let dx=0;dx<physW;dx++){ const nm=colMid[dx]/maxMid; let mH=nm>0.004?Math.pow(nm,WF_BODY_GAMMA)*WF_FILL*maxH*WF_MID_SCALE:0; if(mH>maxH)mH=maxH; if(mH>0.5) ctx.fillRect(dx,center-mH,1,mH*2+1); }
+            ctx.fillStyle=`rgb(${mr},${mg},${mb2})`;                      // 2) ORANGE mids (arc accents, precomputed in hHigh)
+            for(let dx=0;dx<physW;dx++){ const mH=hHigh[dx]; if(mH>0.5) ctx.fillRect(dx,center-mH,1,mH*2+1); }
             ctx.fillStyle=`rgb(${hr},${hg},${hb})`;                       // 3) CREAM kick (front)
             for(let dx=0;dx<physW;dx++){ const kH=hMid[dx]; if(kH>0.5) ctx.fillRect(dx,center-kH,1,kH*2+1); }
           }
