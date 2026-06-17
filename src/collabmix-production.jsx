@@ -190,7 +190,11 @@ const WF_HIGH_W = _urlNum("wfHighW", 1);
 // MULTIPLIES each triangle's peak height (intro kicks short, drop kicks tall) WITHOUT
 // rounding the shape — energy never draws the outline, it only scales height. All live:
 //   energy blend  : ?wfTopBassW / ?wfTopMidW / ?wfTopHighW
-//   lane fill     : ?wfFill (per-track AUTO-FIT — the track's loudest kick maps to this fraction of the lane; fills the height like a normal waveform without clipping)
+//   lane fill     : ?wfFill (per-track AUTO-FIT — the fit kick maps to this fraction of the lane)
+//   fit ceiling   : ?wfFitPct (auto-fit normalizes to this PERCENTILE of kick heights, not the absolute
+//                   max — so one freak-loud transient doesn't crush the whole scale; rare louder columns clip)
+//   lane padding  : ?wfAmpPad (css px reserved top+bottom for the grid tick rail — LOWER = waveform fills
+//                   more of the lane. This is the structural height cap, independent of normalization.)
 //   contrast      : ?wfBodyGamma (>1 deepens intro→drop contrast; relative heights only — fill is separate)
 //   kick presence : ?wfKickSharp (<1 = every kick reaches full sharp presence so height is pure energy)
 //   faint floor   : ?wfFloor (energy thread under the kicks; 0 = kicks on black)
@@ -199,6 +203,8 @@ const WF_TOP_BASS_W  = _urlNum("wfTopBassW", 0.7);
 const WF_TOP_MID_W   = _urlNum("wfTopMidW",  0.2);
 const WF_TOP_HIGH_W  = _urlNum("wfTopHighW", 0.1);
 const WF_FILL        = _urlNum("wfFill",      0.97);
+const WF_FIT_PCT     = _urlNum("wfFitPct",    0.97);
+const WF_AMP_PAD     = _urlNum("wfAmpPad",       6);
 const WF_BODY_GAMMA  = _urlNum("wfBodyGamma", 1.2);
 const WF_KICK_SHARP  = _urlNum("wfKickSharp", 0.6);
 // Retired — superseded models. Left defined/unused to avoid touching unrelated refs.
@@ -4755,7 +4761,11 @@ function AnimatedZoomedWF({ bands, dur, progRef, onSeek, h=96, windowSec=8, beat
       //    18, so the amplitude region and tick rail now exactly meet
       //    (no overlap, no gap).
       const tickRailPad=Math.round(18*dpr);
-      const ampPad=Math.round(18*dpr);
+      // ampPad reserves space top+bottom so peaks don't collide with the grid tick rail.
+      // It is DECOUPLED from tickRailPad (ticks stay anchored to the edges). At the old
+      // hard-coded 18 on a 90px lane it capped the waveform at ~60% of the lane regardless
+      // of normalization — LOWER ?wfAmpPad fills more (peaks then reach toward the tick rail).
+      const ampPad=Math.round(WF_AMP_PAD*dpr);
       const ampTop=ampPad;
       const ampBottom=physH-ampPad;
       const drawH=ampBottom-ampTop;
@@ -4896,7 +4906,8 @@ function AnimatedZoomedWF({ bands, dur, progRef, onSeek, h=96, windowSec=8, beat
           // Done here (cached per track-load) — cheap, and avoids a per-frame rescale that would
           // make the height "breathe" as you scroll (which would flatten the intro↔drop variation).
           const relKsrc=Math.exp(-(dur2/srcLen)/Math.max(1e-4,WF_DECAY_MS/1000));
-          let kE=0, fit=0;
+          const sArr=new Float32Array(srcLen);
+          let kE=0;
           for(let i=0;i<srcLen;i++){
             const iD=i-onD<0?0:i-onD; const e=bArr[i]+mArr[i], ep=bArr[iD]+mArr[iD];
             const on=e>ep?e-ep:0;
@@ -4904,9 +4915,16 @@ function AnimatedZoomedWF({ bands, dur, progRef, onSeek, h=96, windowSec=8, beat
             let shp=Math.pow(Math.min(1,kE/mmn), WF_KICK_SHARP);
             const eN=Math.pow((WF_TOP_BASS_W*bArr[i]+WF_TOP_MID_W*mArr[i]+WF_TOP_HIGH_W*hArr[i])/mcb, WF_BODY_GAMMA);
             let sN=shp*eN; const flN=WF_FLOOR*eN; if(flN>sN)sN=flN;
-            if(sN>fit)fit=sN;
+            sArr[i]=sN;
           }
-          envMaxRef.current={bands,mb:mb>1e-4?mb:1,mm:mmn,mh:mh>1e-4?mh:1,mmid:mmid>1e-4?mmid:1,mcomb:mcb,fit:fit>1e-4?fit:1};
+          // PERCENTILE fit (not absolute max): normalize to the WF_FIT_PCT'th percentile of
+          // the silhouette so a single freak-loud transient can't crush the whole scale — the
+          // bulk of kicks fill the lane; the rare louder-than-percentile column clips (fine).
+          sArr.sort();                                       // TypedArray.sort = numeric ascending
+          let fit=sArr[Math.min(srcLen-1, Math.floor(srcLen*WF_FIT_PCT))];
+          if(!(fit>1e-4)) fit=sArr[srcLen-1]||1;             // degenerate (near-silent) → fall back to max
+          if(!(fit>1e-4)) fit=1;
+          envMaxRef.current={bands,mb:mb>1e-4?mb:1,mm:mmn,mh:mh>1e-4?mh:1,mmid:mmid>1e-4?mmid:1,mcomb:mcb,fit};
         }
         const {mb:maxB,mm:maxM,mh:maxH2,mmid:maxMid,mcomb:maxComb,fit:fitMax}=envMaxRef.current;
 
