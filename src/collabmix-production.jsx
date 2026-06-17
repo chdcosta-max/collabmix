@@ -5040,15 +5040,22 @@ function AnimatedZoomedWF({ bands, dur, progRef, onSeek, h=96, windowSec=8, beat
                 const x0=(t0/dur2*len - srcX)/spp, x1=(t1/dur2*len - srcX)/spp;
                 const span=x1-x0; if(span<=0) continue;
                 const cs=Math.max(0,Math.floor(x0)), ce=Math.min(physW-1,Math.ceil(x1));
+                // ONE energy scalar per gap (mean bass / mean mid over the interval) sets the arc
+                // HEIGHT. Multiplying the smooth arc by a CONSTANT — not the per-column energy —
+                // keeps the contour a single clean slope; per-column energy re-introduces the
+                // bubble/pinch/widen lumps that track the raw bass wiggles.
+                let sb=0,sm=0,cnt=0;
+                for(let x=cs;x<=ce;x++){ sb+=colB[x]; sm+=colMid[x]; cnt++; }
+                const nbg=cnt?(sb/cnt)/maxB:0, nmg=cnt?(sm/cnt)/maxMid:0;
+                const blAmp=nbg>0.004?Math.pow(nbg,WF_BODY_GAMMA)*WF_FILL*maxH*WF_BLUE_SCALE:0;
+                const mlAmp=nmg>0.004?Math.pow(nmg,WF_BODY_GAMMA)*WF_FILL*maxH*WF_MID_SCALE:0;
                 for(let x=cs;x<=ce;x++){
                   let frac=(x-x0)/span; if(frac<0)frac=0; else if(frac>1)frac=1;
-                  // RISE-AND-FALL ARC: 0 at this beat → peak mid-gap → 0 at the next beat. The arc
-                  // shape itself (a swelling/receding body, not a flat mass) is the anti-tube.
+                  // RISE-AND-FALL ARC × constant gap amplitude = ONE smooth slope (0 at beat → peak
+                  // mid-gap → 0 at next beat). The arc shape is the anti-tube; no per-column lumps.
                   const arc=Math.pow(Math.sin(Math.PI*frac), WF_BLUE_SWELL);
-                  const nb=colB[x]/maxB; let bH=nb>0.004?arc*Math.pow(nb,WF_BODY_GAMMA)*WF_FILL*maxH*WF_BLUE_SCALE:0; if(bH>maxH)bH=maxH;
-                  if(bH>hLow[x]) hLow[x]=bH;
-                  const nm=colMid[x]/maxMid; let mH=nm>0.004?arc*Math.pow(nm,WF_BODY_GAMMA)*WF_FILL*maxH*WF_MID_SCALE:0; if(mH>maxH)mH=maxH;
-                  if(mH>hHigh[x]) hHigh[x]=mH;
+                  let bH=arc*blAmp; if(bH>maxH)bH=maxH; if(bH>hLow[x]) hLow[x]=bH;
+                  let mH=arc*mlAmp; if(mH>maxH)mH=maxH; if(mH>hHigh[x]) hHigh[x]=mH;
                 }
               }
             } else {
