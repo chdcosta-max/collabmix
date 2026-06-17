@@ -205,6 +205,7 @@ const WF_TOP_HIGH_W  = _urlNum("wfTopHighW", 0.1);
 const WF_FILL        = _urlNum("wfFill",      0.97);
 const WF_FIT_PCT     = _urlNum("wfFitPct",    0.97);
 const WF_AMP_PAD     = _urlNum("wfAmpPad",      16);
+const WF_KICK_WIN_MS = _urlNum("wfKickWin",     70);   // ms — energy-sampling window per kick (centre-biased: ~30% before / 70% after the beat). Wider = every kick gets a fair peak read → consistent heights in a section.
 const WF_BODY_GAMMA  = _urlNum("wfBodyGamma", 1.2);
 const WF_KICK_SHARP  = _urlNum("wfKickSharp", 0.6);
 // Retired — superseded models. Left defined/unused to avoid touching unrelated refs.
@@ -4916,13 +4917,17 @@ function AnimatedZoomedWF({ bands, dur, progRef, onSeek, h=96, windowSec=8, beat
         if(fitRef.current.bands!==bands || fitRef.current.bts!==btsFit){
           let fit=1;
           if(btsFit && btsFit.length>0 && dur2>0){
-            const wWin=Math.max(1,Math.round(0.03*len/dur2));   // ~30ms kick-body window
+            // Centre-biased energy window (must match the draw loop exactly, else the fit
+            // normalization drifts from the rendered heights): ~30% before / 70% after the beat.
+            const bpsF=len/dur2;                                  // source buckets per second
+            const wBack=Math.max(1,Math.round(WF_KICK_WIN_MS*0.0003*bpsF));   // 0.3·win, ms→s→buckets
+            const wFwd =Math.max(1,Math.round(WF_KICK_WIN_MS*0.0007*bpsF));   // 0.7·win
             const arr=new Float32Array(btsFit.length); let n=0;
             for(let i=0;i<btsFit.length;i++){
               const c=Math.round((btsFit[i]/dur2)*len);
               if(c<0||c>=len) continue;
-              let pe=0; const c1=Math.min(len-1,c+wWin);
-              for(let k=c;k<=c1;k++){ const bl=WF_TOP_BASS_W*bArr[k]+WF_TOP_MID_W*mArr[k]+WF_TOP_HIGH_W*hArr[k]; if(bl>pe)pe=bl; }
+              let pe=0; const k0=Math.max(0,c-wBack), k1=Math.min(len-1,c+wFwd);
+              for(let k=k0;k<=k1;k++){ const bl=WF_TOP_BASS_W*bArr[k]+WF_TOP_MID_W*mArr[k]+WF_TOP_HIGH_W*hArr[k]; if(bl>pe)pe=bl; }
               arr[n++]=Math.pow(pe/maxComb, WF_BODY_GAMMA);
             }
             if(n>0){
@@ -4991,7 +4996,9 @@ function AnimatedZoomedWF({ bands, dur, progRef, onSeek, h=96, windowSec=8, beat
             }
             // KICK TRIANGLES at beatTimes(+gridOff), mapped to columns the SAME way as the bands/grid.
             if(hasKicks){
-              const wWin=Math.max(1,Math.round(0.03*len/dur2));     // ~30ms kick-body energy window
+              const bpsW=len/dur2;                                  // buckets/sec — centre-biased kick energy window (matches the fit pass)
+              const wBack=Math.max(1,Math.round(WF_KICK_WIN_MS*0.0003*bpsW));  // ~30% before the beat (alignment jitter)
+              const wFwd =Math.max(1,Math.round(WF_KICK_WIN_MS*0.0007*bpsW));  // ~70% after (bass body peaks just after onset)
               const tailSec=(WF_DECAY_MS/1000)*5;                   // include off-left kicks whose taper reaches view
               const tRight=((srcX+viewPx)/len)*dur2;
               const tScanL=(srcX/len)*dur2 - tailSec;
@@ -5003,8 +5010,10 @@ function AnimatedZoomedWF({ bands, dur, progRef, onSeek, h=96, windowSec=8, beat
                 const srcBucket=(t/dur2)*len;
                 const xk=Math.round((srcBucket-srcX)/spp);          // wall column (same transform as bands → on the tick)
                 if(xk>=physW) break;
-                // energy AT the kick — windowed MAX over the kick body (robust to attack/peak offset)
-                const c0=Math.max(0,Math.round(srcBucket)), c1=Math.min(len-1,Math.max(0,Math.round(srcBucket))+wWin);
+                // energy AT the kick — windowed MAX over the kick body, centre-biased so every
+                // kick catches its peak regardless of ±bucket alignment → consistent heights.
+                const cb=Math.round(srcBucket);
+                const c0=Math.max(0,cb-wBack), c1=Math.min(len-1,cb+wFwd);
                 let pe=0; for(let k=c0;k<=c1;k++){ const bl=WF_TOP_BASS_W*bArr[k]+WF_TOP_MID_W*mArr[k]+WF_TOP_HIGH_W*hArr[k]; if(bl>pe)pe=bl; }
                 let Hk=Math.pow(pe/maxComb, WF_BODY_GAMMA)*fitScale;
                 if(Hk>maxH)Hk=maxH;
