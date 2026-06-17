@@ -190,18 +190,20 @@ const WF_HIGH_W = _urlNum("wfHighW", 1);
 // MULTIPLIES each triangle's peak height (intro kicks short, drop kicks tall) WITHOUT
 // rounding the shape — energy never draws the outline, it only scales height. All live:
 //   energy blend  : ?wfTopBassW / ?wfTopMidW / ?wfTopHighW
-//   kick height   : ?wfBodyGain (peak height of a full-energy kick) / ?wfBodyGamma (>1 deepens intro→drop contrast)
+//   lane fill     : ?wfFill (per-track AUTO-FIT — the track's loudest kick maps to this fraction of the lane; fills the height like a normal waveform without clipping)
+//   contrast      : ?wfBodyGamma (>1 deepens intro→drop contrast; relative heights only — fill is separate)
 //   kick presence : ?wfKickSharp (<1 = every kick reaches full sharp presence so height is pure energy)
 //   faint floor   : ?wfFloor (energy thread under the kicks; 0 = kicks on black)
 //   taper         : ?wfDecay (triangle right-taper sharpness — reused)
 const WF_TOP_BASS_W  = _urlNum("wfTopBassW", 0.7);
 const WF_TOP_MID_W   = _urlNum("wfTopMidW",  0.2);
 const WF_TOP_HIGH_W  = _urlNum("wfTopHighW", 0.1);
-const WF_BODY_GAIN   = _urlNum("wfBodyGain",  0.95);
+const WF_FILL        = _urlNum("wfFill",      0.97);
 const WF_BODY_GAMMA  = _urlNum("wfBodyGamma", 1.2);
 const WF_KICK_SHARP  = _urlNum("wfKickSharp", 0.6);
-// Retired (today's additive-spine model, superseded by shape×energy) — left defined,
-// unused, to avoid touching unrelated refs.
+// Retired — superseded models. Left defined/unused to avoid touching unrelated refs.
+// (wfBodyGain: replaced by wfFill auto-fit. wfSpine*: the additive-spine model.)
+const WF_BODY_GAIN   = _urlNum("wfBodyGain",  0.95);
 const WF_SPINE_GAIN  = _urlNum("wfSpineGain", 0.35);
 const WF_SPINE_GAMMA = _urlNum("wfSpineGamma",0.8);
 
@@ -4887,9 +4889,26 @@ function AnimatedZoomedWF({ bands, dur, progRef, onSeek, h=96, windowSec=8, beat
             const on=e>ep?e-ep:0; if(on>mon)mon=on;          // per-track max ONSET (for amber norm)
             const cb=WF_TOP_BASS_W*bArr[i]+WF_TOP_MID_W*mArr[i]+WF_TOP_HIGH_W*hArr[i]; if(cb>mcomb)mcomb=cb; // per-track max of TOP HEIGHT blend
           }
-          envMaxRef.current={bands,mb:mb>1e-4?mb:1,mm:mon>1e-4?mon:1,mh:mh>1e-4?mh:1,mmid:mmid>1e-4?mmid:1,mcomb:mcomb>1e-4?mcomb:1};
+          const mmn=mon>1e-4?mon:1, mcb=mcomb>1e-4?mcomb:1;
+          // AUTO-FIT pass 2: replay the rendered silhouette (shape×energy + floor) at source
+          // resolution and record its per-track PEAK → fit. The draw scales by WF_FILL*maxH/fit
+          // so the track's loudest kick fills the lane while every other kick stays proportional.
+          // Done here (cached per track-load) — cheap, and avoids a per-frame rescale that would
+          // make the height "breathe" as you scroll (which would flatten the intro↔drop variation).
+          const relKsrc=Math.exp(-(dur2/srcLen)/Math.max(1e-4,WF_DECAY_MS/1000));
+          let kE=0, fit=0;
+          for(let i=0;i<srcLen;i++){
+            const iD=i-onD<0?0:i-onD; const e=bArr[i]+mArr[i], ep=bArr[iD]+mArr[iD];
+            const on=e>ep?e-ep:0;
+            kE = on>kE ? on : kE*relKsrc;                    // same attack-0 peak-hold as the draw
+            let shp=Math.pow(Math.min(1,kE/mmn), WF_KICK_SHARP);
+            const eN=Math.pow((WF_TOP_BASS_W*bArr[i]+WF_TOP_MID_W*mArr[i]+WF_TOP_HIGH_W*hArr[i])/mcb, WF_BODY_GAMMA);
+            let sN=shp*eN; const flN=WF_FLOOR*eN; if(flN>sN)sN=flN;
+            if(sN>fit)fit=sN;
+          }
+          envMaxRef.current={bands,mb:mb>1e-4?mb:1,mm:mmn,mh:mh>1e-4?mh:1,mmid:mmid>1e-4?mmid:1,mcomb:mcb,fit:fit>1e-4?fit:1};
         }
-        const {mb:maxB,mm:maxM,mh:maxH2,mmid:maxMid,mcomb:maxComb}=envMaxRef.current;
+        const {mb:maxB,mm:maxM,mh:maxH2,mmid:maxMid,mcomb:maxComb,fit:fitMax}=envMaxRef.current;
 
         // ── BLUE BODY (dominant) + GOLD TRANSIENT SPINE. Teal = the kick ENERGY
         // envelope (genuinely sustained → the dominant mass). Amber gets its OWN
@@ -4927,11 +4946,12 @@ function AnimatedZoomedWF({ bands, dur, progRef, onSeek, h=96, windowSec=8, beat
           const relK=Math.exp(-secPerCol/Math.max(1e-4,WF_DECAY_MS/1000));
           const hybrid = WF_LAYER_MODE==='hybrid';
           let kEnv=0;
+          const fitScale=(WF_FILL*maxH)/fitMax;               // AUTO-FIT: loudest track kick → WF_FILL of the lane
           for(let dx=0;dx<physW;dx++){
-            // ENERGY — bass-weighted section loudness, 0..1. NOT a silhouette; it only
-            // SCALES kick height below. Quiet/breakdown low, drop high.
+            // ENERGY — bass-weighted section loudness, 0..1 (normalized to the track peak).
+            // NOT a silhouette; it only SCALES kick height. Quiet/breakdown low, drop high.
             const energy=(WF_TOP_BASS_W*colB[dx]+WF_TOP_MID_W*colMid[dx]+WF_TOP_HIGH_W*colH[dx])/maxComb;
-            const energyH=energy>0.004 ? Math.pow(energy,WF_BODY_GAMMA)*maxH*WF_BODY_GAIN : 0;
+            const eN=energy>0.004 ? Math.pow(energy,WF_BODY_GAMMA) : 0;   // 0..1, contrast-shaped
             let S;
             if(hybrid){
               // SHAPE — sharp kick ONSET (lifted from 6288771): hard left wall at the kick
@@ -4944,14 +4964,18 @@ function AnimatedZoomedWF({ bands, dur, progRef, onSeek, h=96, windowSec=8, beat
               shape = Math.pow(shape, WF_KICK_SHARP);         // presence curve — <1 lets most kicks reach full presence so HEIGHT is governed by energy, not onset magnitude
               if(shape>1)shape=1;
               // COMBINE — sharp triangle whose PEAK = energy (multiplicative, never additive,
-              // so no rounding and no flat-top clamp). Faint energy thread under it so kickless
-              // breakdowns aren't a dead-flat line (?wfFloor=0 → sharp kicks on black).
-              S = shape*energyH;
-              const floorS = WF_FLOOR*energyH;
-              if(floorS>S) S=floorS;
-              if(S>maxH) S=maxH;                              // safety only; BODY_GAIN<1 keeps peaks under the rail
+              // so no rounding). Faint energy thread under it so kickless breakdowns aren't a
+              // dead-flat line (?wfFloor=0 → sharp kicks on black). Then AUTO-FIT to the lane.
+              let sN = shape*eN;
+              const flN = WF_FLOOR*eN;
+              if(flN>sN) sN=flN;
+              S = sN*fitScale;
+              if(S>maxH) S=maxH;                              // safety only; fit keeps peaks under the rail
             } else {
-              S = energyH>maxH ? maxH : energyH;              // column: pure amplitude shape
+              // column: pure amplitude — energy already 0..1 (track-peak normalized), so map it
+              // straight to the lane via WF_FILL (no extra fit pass needed).
+              S = eN*WF_FILL*maxH;
+              if(S>maxH) S=maxH;
             }
             hEnv[dx]=S;
           }
