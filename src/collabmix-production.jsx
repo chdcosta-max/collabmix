@@ -208,9 +208,14 @@ const WF_AMP_PAD     = _urlNum("wfAmpPad",      16);
 const WF_KICK_WIN_MS = _urlNum("wfKickWin",     70);   // ms — energy-sampling window per kick (centre-biased: ~30% before / 70% after the beat). Wider = every kick gets a fair peak read → consistent heights in a section.
 const WF_BODY_GAMMA  = _urlNum("wfBodyGamma", 1.2);
 const WF_KICK_SHARP  = _urlNum("wfKickSharp", 0.6);
-const WF_BLUE_SWELL  = _urlNum("wfBlueSwell", 1.0);   // BLUE lows RISE-AND-FALL arc curve: sin(π·frac)^this → 0 at beat, peak mid-gap, 0 before next beat. <1 = fatter/wider arc, >1 = narrower peak. The arc SHAPE is the anti-tube.
 const WF_BLUE_SCALE  = _urlNum("wfBlueScale", 2.0);   // BLUE size — the dominant body mass (the biggest element). Higher = bigger blue. (Arc peak clamps to the lane.)
+// BLUE lows ASYMMETRIC arc (Rekordbox): fast rise off the kick → early peak → gradual decline to
+// the next beat. peak=position (0=at kick … 1=at next beat); rise/fall = the two curve exponents.
+const WF_BLUE_PEAK   = _urlNum("wfBluePeak", 0.22);   // peak position — small = peaks EARLY (steep rise right off the kick)
+const WF_BLUE_RISE   = _urlNum("wfBlueRise", 0.7);    // rise curve over [0,peak]; <1 = snappier/faster rise
+const WF_BLUE_FALL   = _urlNum("wfBlueFall", 1.0);    // decline curve over [peak,1]; 1 = linear gradual taper, >1 stays high longer, <1 tails off faster
 const WF_MID_SCALE   = _urlNum("wfMidScale",  0.5);   // ORANGE mids height scale (arc accents, same shape as blue, smaller)
+const WF_BLUE_SWELL  = _urlNum("wfBlueSwell", 1.0);   // retired (symmetric sin arc) — superseded by wfBluePeak/wfBlueRise/wfBlueFall. Left defined/unused.
 // Retired — superseded models. Left defined/unused to avoid touching unrelated refs.
 // (wfBodyGain: replaced by wfFill auto-fit. wfSpine*: the additive-spine model.)
 const WF_BODY_GAIN   = _urlNum("wfBodyGain",  0.95);
@@ -5051,9 +5056,12 @@ function AnimatedZoomedWF({ bands, dur, progRef, onSeek, h=96, windowSec=8, beat
                 const mlAmp=nmg>0.004?Math.pow(nmg,WF_BODY_GAMMA)*WF_FILL*maxH*WF_MID_SCALE:0;
                 for(let x=cs;x<=ce;x++){
                   let frac=(x-x0)/span; if(frac<0)frac=0; else if(frac>1)frac=1;
-                  // RISE-AND-FALL ARC × constant gap amplitude = ONE smooth slope (0 at beat → peak
-                  // mid-gap → 0 at next beat). The arc shape is the anti-tube; no per-column lumps.
-                  const arc=Math.pow(Math.sin(Math.PI*frac), WF_BLUE_SWELL);
+                  // ASYMMETRIC ARC × constant gap amplitude = ONE smooth slope: fast rise off the
+                  // kick → EARLY peak (wfBluePeak) → gradual decline to the next beat. Not the old
+                  // symmetric oval. The arc shape is the anti-tube; no per-column lumps.
+                  const pk=WF_BLUE_PEAK<0.02?0.02:(WF_BLUE_PEAK>0.98?0.98:WF_BLUE_PEAK);
+                  const arc = frac<=pk ? Math.pow(frac/pk, WF_BLUE_RISE)
+                                       : Math.pow((1-frac)/(1-pk), WF_BLUE_FALL);
                   let bH=arc*blAmp; if(bH>maxH)bH=maxH; if(bH>hLow[x]) hLow[x]=bH;
                   let mH=arc*mlAmp; if(mH>maxH)mH=maxH; if(mH>hHigh[x]) hHigh[x]=mH;
                 }
