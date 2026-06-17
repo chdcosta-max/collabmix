@@ -212,10 +212,11 @@ const WF_BLUE_SCALE  = _urlNum("wfBlueScale", 2.0);   // BLUE size — the domin
 // BLUE lows ASYMMETRIC arc (Rekordbox): fast rise off the kick → early peak → gradual decline to
 // the next beat. peak=position (0=at kick … 1=at next beat); rise/fall = the two curve exponents.
 const WF_BLUE_PEAK   = _urlNum("wfBluePeak", 0.22);   // peak position — small = peaks EARLY (steep rise right off the kick)
-const WF_BLUE_RISE   = _urlNum("wfBlueRise", 0.7);    // rise curve over [0,peak]; <1 = snappier/faster rise
-const WF_BLUE_FALL   = _urlNum("wfBlueFall", 1.0);    // decline curve over [peak,1]; 1 = linear gradual taper, >1 stays high longer, <1 tails off faster
-const WF_MID_SCALE   = _urlNum("wfMidScale",  0.5);   // ORANGE mids height scale (arc accents, same shape as blue, smaller)
-const WF_BLUE_SWELL  = _urlNum("wfBlueSwell", 1.0);   // retired (symmetric sin arc) — superseded by wfBluePeak/wfBlueRise/wfBlueFall. Left defined/unused.
+const WF_BLUE_FALL   = _urlNum("wfBlueFall", 1.0);    // fall-tail bias on the smoothstep decline; 1 = pure smooth taper, >1 = drops faster, <1 = longer tail
+const WF_BLUE_CHAR   = _urlNum("wfBlueChar", 0.3);    // organic character: 0 = pure smooth arc (sterile), 1 = full per-column energy (lumpy). ~0.3 = subtle natural variation.
+const WF_MID_SCALE   = _urlNum("wfMidScale",  1.2);   // ORANGE mids height — visible accents riding the arc (higher = more orange)
+const WF_BLUE_RISE   = _urlNum("wfBlueRise", 0.7);    // retired (smoothstep handles the rise) — left defined/unused
+const WF_BLUE_SWELL  = _urlNum("wfBlueSwell", 1.0);   // retired (symmetric sin arc) — left defined/unused
 // Retired — superseded models. Left defined/unused to avoid touching unrelated refs.
 // (wfBodyGain: replaced by wfFill auto-fit. wfSpine*: the additive-spine model.)
 const WF_BODY_GAIN   = _urlNum("wfBodyGain",  0.95);
@@ -5045,25 +5046,25 @@ function AnimatedZoomedWF({ bands, dur, progRef, onSeek, h=96, windowSec=8, beat
                 const x0=(t0/dur2*len - srcX)/spp, x1=(t1/dur2*len - srcX)/spp;
                 const span=x1-x0; if(span<=0) continue;
                 const cs=Math.max(0,Math.floor(x0)), ce=Math.min(physW-1,Math.ceil(x1));
-                // ONE energy scalar per gap (mean bass / mean mid over the interval) sets the arc
-                // HEIGHT. Multiplying the smooth arc by a CONSTANT — not the per-column energy —
-                // keeps the contour a single clean slope; per-column energy re-introduces the
-                // bubble/pinch/widen lumps that track the raw bass wiggles.
+                // Gap-mean energy = the smooth body level; blended below with a TOUCH of per-column
+                // energy (wfBlueChar) for subtle organic character without the big bubble/pinch lumps.
                 let sb=0,sm=0,cnt=0;
                 for(let x=cs;x<=ce;x++){ sb+=colB[x]; sm+=colMid[x]; cnt++; }
                 const nbg=cnt?(sb/cnt)/maxB:0, nmg=cnt?(sm/cnt)/maxMid:0;
-                const blAmp=nbg>0.004?Math.pow(nbg,WF_BODY_GAMMA)*WF_FILL*maxH*WF_BLUE_SCALE:0;
-                const mlAmp=nmg>0.004?Math.pow(nmg,WF_BODY_GAMMA)*WF_FILL*maxH*WF_MID_SCALE:0;
+                const ch=WF_BLUE_CHAR<0?0:(WF_BLUE_CHAR>1?1:WF_BLUE_CHAR);
+                const pk=WF_BLUE_PEAK<0.02?0.02:(WF_BLUE_PEAK>0.98?0.98:WF_BLUE_PEAK);
                 for(let x=cs;x<=ce;x++){
                   let frac=(x-x0)/span; if(frac<0)frac=0; else if(frac>1)frac=1;
-                  // ASYMMETRIC ARC × constant gap amplitude = ONE smooth slope: fast rise off the
-                  // kick → EARLY peak (wfBluePeak) → gradual decline to the next beat. Not the old
-                  // symmetric oval. The arc shape is the anti-tube; no per-column lumps.
-                  const pk=WF_BLUE_PEAK<0.02?0.02:(WF_BLUE_PEAK>0.98?0.98:WF_BLUE_PEAK);
-                  const arc = frac<=pk ? Math.pow(frac/pk, WF_BLUE_RISE)
-                                       : Math.pow((1-frac)/(1-pk), WF_BLUE_FALL);
-                  let bH=arc*blAmp; if(bH>maxH)bH=maxH; if(bH>hLow[x]) hLow[x]=bH;
-                  let mH=arc*mlAmp; if(mH>maxH)mH=maxH; if(mH>hHigh[x]) hHigh[x]=mH;
+                  // SMOOTHSTEP-rounded asymmetric arc (smooth SWELL, not a rigid arrow): fast rise
+                  // off the kick → early peak (pk) → gradual rounded decline to the next beat.
+                  let tt=frac<=pk ? frac/pk : (1-frac)/(1-pk);
+                  let arc=tt*tt*(3-2*tt);
+                  if(frac>pk && WF_BLUE_FALL!==1) arc=Math.pow(arc, WF_BLUE_FALL);   // optional tail bias
+                  // SUBTLE character: smooth gap-mean blended with a touch of per-column energy.
+                  const ab=(1-ch)*nbg + ch*(colB[x]/maxB);
+                  const am=(1-ch)*nmg + ch*(colMid[x]/maxMid);
+                  let bH=ab>0.004?arc*Math.pow(ab,WF_BODY_GAMMA)*WF_FILL*maxH*WF_BLUE_SCALE:0; if(bH>maxH)bH=maxH; if(bH>hLow[x]) hLow[x]=bH;
+                  let mH=am>0.004?arc*Math.pow(am,WF_BODY_GAMMA)*WF_FILL*maxH*WF_MID_SCALE:0; if(mH>maxH)mH=maxH; if(mH>hHigh[x]) hHigh[x]=mH;
                 }
               }
             } else {
