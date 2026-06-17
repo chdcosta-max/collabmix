@@ -204,7 +204,7 @@ const WF_TOP_MID_W   = _urlNum("wfTopMidW",  0.2);
 const WF_TOP_HIGH_W  = _urlNum("wfTopHighW", 0.1);
 const WF_FILL        = _urlNum("wfFill",      0.97);
 const WF_FIT_PCT     = _urlNum("wfFitPct",    0.97);
-const WF_AMP_PAD     = _urlNum("wfAmpPad",       6);
+const WF_AMP_PAD     = _urlNum("wfAmpPad",      16);
 const WF_BODY_GAMMA  = _urlNum("wfBodyGamma", 1.2);
 const WF_KICK_SHARP  = _urlNum("wfKickSharp", 0.6);
 // Retired — superseded models. Left defined/unused to avoid touching unrelated refs.
