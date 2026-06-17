@@ -176,6 +176,14 @@ const WF_FLOOR         = _urlNum("wfFloor",       0.12);  // 0..1 — how high t
 const WF_HIGH_WEIGHT   = _urlNum("wfHighWeight",   2.5);  // perceptual boost on highs so cream reads (highs are low-energy)
 const WF_CORE_RESPONSE = _urlNum("wfCoreResponse", 1.4);  // how strongly the cream core grows with high/broadband energy
 const WF_BLEND_GAMMA   = _urlNum("wfBlendGamma",   1.0);  // bass↔mid body-colour blend curve (>1 holds blue longer, <1 leans orange)
+// ── Waveform HEIGHT blend (live ?wfBassW/?wfMidW/?wfHighW). Per-column silhouette
+// HEIGHT = WF_BASS_W·bass + WF_MID_W·mid + WF_HIGH_W·high, normalized to the track
+// max of that blend. Bass-dominant so quiet sections read SHORT and kicks read TALL
+// (restores the pre-rework dynamic range). Drives BOTH the zoomed deck WF body term
+// and the small overview strip. Colour is computed separately and is unaffected.
+const WF_BASS_W = _urlNum("wfBassW", 0.7);
+const WF_MID_W  = _urlNum("wfMidW",  0.2);
+const WF_HIGH_W = _urlNum("wfHighW", 0.1);
 
 // ── Server Configuration ─────────────────────────────────────
 // After deploying to Railway, replace this URL with your Railway server URL.
@@ -4051,9 +4059,10 @@ function VU({ an, color, w=100 }) {
 function WF({ bands, peaks, freq, prog, onSeek, h=80, hotCues=[], loopStart=null, loopEnd=null, loopActive=false, bpm=null, dur=0, beatPhaseFrac=null, color='#ffffff', analyzing=false, beatTimes=null, beatAttacks=null }) {
   const ref=useRef(null);
   // Step B: per-track envelope-percentile cache. 5th and 95th percentiles
-  // of the combined env (max of bass/mid/high) across the full source
-  // array — normalization stretches that [envFloor, envCeil] band to [0,1]
-  // so dense tracks read with the same dynamic range as dynamic tracks.
+  // of the bass-weighted blend (WF_BASS_W·bass + WF_MID_W·mid + WF_HIGH_W·high,
+  // live ?wfBassW/?wfMidW/?wfHighW) across the full source array — normalization
+  // stretches that [envFloor, envCeil] band to [0,1] so dense tracks read with
+  // the same dynamic range as dynamic tracks. Bass-dominant so kicks read tall.
   // Cache keys on bArr (Float32Array reference, stable across renders)
   // rather than the wrapper bands object literal which the parent rebuilds
   // every render. Soft-clip (tanh) variant was tried and reverted — looked
@@ -4150,7 +4159,7 @@ function WF({ bands, peaks, freq, prog, onSeek, h=80, hotCues=[], loopStart=null
           const bv=bArr[i]||0;
           const mv=mArr?mArr[i]||0:0;
           const hv=hArr?hArr[i]||0:0;
-          envArr[i]=hv;
+          envArr[i]=WF_BASS_W*bv+WF_MID_W*mv+WF_HIGH_W*hv;
         }
         envArr.sort();
         envNormRef.current={
@@ -4179,7 +4188,7 @@ function WF({ bands, peaks, freq, prog, onSeek, h=80, hotCues=[], loopStart=null
           const mk=mArr?mArr[k]||0:0; if(mk>mv)mv=mk;
           const hk=hArr?hArr[k]||0:0; if(hk>hv)hv=hk;
         }
-        const env=hv;
+        const env=WF_BASS_W*bv+WF_MID_W*mv+WF_HIGH_W*hv;
         if(env<=0){heights[x]=0;heightsDim[x]=0;continue;}
         const normalized=Math.max(0,Math.min(1,(env-envFloor)/envRange));
         let hVal=Math.pow(normalized,GAMMA)*maxH;
@@ -4851,15 +4860,16 @@ function AnimatedZoomedWF({ bands, dur, progRef, onSeek, h=96, windowSec=8, beat
         // its OWN loudest moment so sparse-but-bright highs (the sharp attack
         // click) read as obvious cream even though their raw energy is low.
         if(envMaxRef.current.bands!==bands){
-          const srcLen=bArr.length; let mb=0,mon=0,mh=0,mmid=0;
+          const srcLen=bArr.length; let mb=0,mon=0,mh=0,mmid=0,mcomb=0;
           for(let i=0;i<srcLen;i++){
             if(bArr[i]>mb)mb=bArr[i]; if(hArr[i]>mh)mh=hArr[i]; if(mArr[i]>mmid)mmid=mArr[i];
             const iD=i-onD<0?0:i-onD; const e=bArr[i]+mArr[i], ep=bArr[iD]+mArr[iD];
             const on=e>ep?e-ep:0; if(on>mon)mon=on;          // per-track max ONSET (for amber norm)
+            const cb=WF_BASS_W*bArr[i]+WF_MID_W*mArr[i]+WF_HIGH_W*hArr[i]; if(cb>mcomb)mcomb=cb; // per-track max of HEIGHT blend
           }
-          envMaxRef.current={bands,mb:mb>1e-4?mb:1,mm:mon>1e-4?mon:1,mh:mh>1e-4?mh:1,mmid:mmid>1e-4?mmid:1};
+          envMaxRef.current={bands,mb:mb>1e-4?mb:1,mm:mon>1e-4?mon:1,mh:mh>1e-4?mh:1,mmid:mmid>1e-4?mmid:1,mcomb:mcomb>1e-4?mcomb:1};
         }
-        const {mb:maxB,mm:maxM,mh:maxH2,mmid:maxMid}=envMaxRef.current;
+        const {mb:maxB,mm:maxM,mh:maxH2,mmid:maxMid,mcomb:maxComb}=envMaxRef.current;
 
         // ── BLUE BODY (dominant) + GOLD TRANSIENT SPINE. Teal = the kick ENERGY
         // envelope (genuinely sustained → the dominant mass). Amber gets its OWN
@@ -4901,7 +4911,7 @@ function AnimatedZoomedWF({ bands, dur, progRef, onSeek, h=96, windowSec=8, beat
           const hybrid = WF_LAYER_MODE==='hybrid';
           let kEnv=0;
           for(let dx=0;dx<physW;dx++){
-            const amp=Math.max(colB[dx]/maxB, colMid[dx]/maxMid, colH[dx]/maxH2);   // overall loudness
+            const amp=(WF_BASS_W*colB[dx]+WF_MID_W*colMid[dx]+WF_HIGH_W*colH[dx])/maxComb; // bass-weighted energy: quiet=low, kick=high (live ?wfBassW/?wfMidW/?wfHighW)
             let bodyH = amp>0.004 ? Math.pow(amp,AMP_GAMMA)*maxH*AMP_GAIN : 0;
             if(bodyH>maxH)bodyH=maxH;
             let S;
