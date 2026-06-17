@@ -172,7 +172,7 @@ const WF_SPECTRAL   = _urlNum("wfSpectral",  0.50);  // 0 = uniform cream core, 
 const WF_EDGE_MS    = _urlNum("wfEdge",      110);   // ms — silhouette transient release (right taper; smaller = sharper)
 // ── HYBRID/COLUMN knobs (?wflayer=hybrid|column). Shape decoupled from colour.
 const WF_DECAY_MS      = _urlNum("wfDecay",        90);   // ms — kick triangle taper. THE triangle-vs-tube knob (smaller = sharper, more collapsed)
-const WF_FLOOR         = _urlNum("wfFloor",       0.12);  // 0..1 — how high the non-kick energy thread sits (0 = kicks on near-black)
+const WF_FLOOR         = _urlNum("wfFloor",        0.1);  // 0..1 — faint energy thread UNDER the top-waveform sharp kicks so kickless breakdowns aren't dead-flat (0 = sharp kicks on black)
 const WF_HIGH_WEIGHT   = _urlNum("wfHighWeight",   2.5);  // perceptual boost on highs so cream reads (highs are low-energy)
 const WF_CORE_RESPONSE = _urlNum("wfCoreResponse", 1.4);  // how strongly the cream core grows with high/broadband energy
 const WF_BLEND_GAMMA   = _urlNum("wfBlendGamma",   1.0);  // bass↔mid body-colour blend curve (>1 holds blue longer, <1 leans orange)
@@ -185,18 +185,23 @@ const WF_BASS_W = _urlNum("wfBassW", 0);
 const WF_MID_W  = _urlNum("wfMidW",  0);
 const WF_HIGH_W = _urlNum("wfHighW", 1);
 // ── TOP zoomed waveform (AnimatedZoomedWF, hybrid) HEIGHT model — independent of the
-// deck-card strip. The silhouette is a bass-weighted ENERGY body (quiet=short,
-// drop=tall) with the kick ONSET added as a sharpening SPINE on top (additive, the
-// SUM clamped to the rail so only the loudest drops flat-top). All live URL params:
+// deck-card strip. The silhouette SHAPE is the sharp kick ONSET (hard vertical front
+// ON the grid line, taper right) — lifted from 6288771. Bass-weighted section ENERGY
+// MULTIPLIES each triangle's peak height (intro kicks short, drop kicks tall) WITHOUT
+// rounding the shape — energy never draws the outline, it only scales height. All live:
 //   energy blend  : ?wfTopBassW / ?wfTopMidW / ?wfTopHighW
-//   body height   : ?wfBodyGain (lower = more headroom for spikes) / ?wfBodyGamma (>1 deepens quiet)
-//   kick spine    : ?wfSpineGain (spike height above body) / ?wfSpineGamma (spike curve)
-// (?wfDecay already controls the spine taper sharpness — reused.)
+//   kick height   : ?wfBodyGain (peak height of a full-energy kick) / ?wfBodyGamma (>1 deepens intro→drop contrast)
+//   kick presence : ?wfKickSharp (<1 = every kick reaches full sharp presence so height is pure energy)
+//   faint floor   : ?wfFloor (energy thread under the kicks; 0 = kicks on black)
+//   taper         : ?wfDecay (triangle right-taper sharpness — reused)
 const WF_TOP_BASS_W  = _urlNum("wfTopBassW", 0.7);
 const WF_TOP_MID_W   = _urlNum("wfTopMidW",  0.2);
 const WF_TOP_HIGH_W  = _urlNum("wfTopHighW", 0.1);
-const WF_BODY_GAIN   = _urlNum("wfBodyGain",  0.9);
-const WF_BODY_GAMMA  = _urlNum("wfBodyGamma", 1.0);
+const WF_BODY_GAIN   = _urlNum("wfBodyGain",  0.95);
+const WF_BODY_GAMMA  = _urlNum("wfBodyGamma", 1.2);
+const WF_KICK_SHARP  = _urlNum("wfKickSharp", 0.6);
+// Retired (today's additive-spine model, superseded by shape×energy) — left defined,
+// unused, to avoid touching unrelated refs.
 const WF_SPINE_GAIN  = _urlNum("wfSpineGain", 0.35);
 const WF_SPINE_GAMMA = _urlNum("wfSpineGamma",0.8);
 
@@ -4923,26 +4928,30 @@ function AnimatedZoomedWF({ bands, dur, progRef, onSeek, h=96, windowSec=8, beat
           const hybrid = WF_LAYER_MODE==='hybrid';
           let kEnv=0;
           for(let dx=0;dx<physW;dx++){
-            // ENERGY BODY — the dominant height. Bass-weighted blend (top-waveform's own
-            // weights) normalized to the track max → quiet/breakdown reads SHORT, drop reads
-            // TALL. WF_BODY_GAIN<1 leaves headroom above the loud body for the spike tips.
-            const amp=(WF_TOP_BASS_W*colB[dx]+WF_TOP_MID_W*colMid[dx]+WF_TOP_HIGH_W*colH[dx])/maxComb;
-            let bodyH = amp>0.004 ? Math.pow(amp,WF_BODY_GAMMA)*maxH*WF_BODY_GAIN : 0;
-            if(bodyH>maxH)bodyH=maxH;
+            // ENERGY — bass-weighted section loudness, 0..1. NOT a silhouette; it only
+            // SCALES kick height below. Quiet/breakdown low, drop high.
+            const energy=(WF_TOP_BASS_W*colB[dx]+WF_TOP_MID_W*colMid[dx]+WF_TOP_HIGH_W*colH[dx])/maxComb;
+            const energyH=energy>0.004 ? Math.pow(energy,WF_BODY_GAMMA)*maxH*WF_BODY_GAIN : 0;
             let S;
             if(hybrid){
-              // KICK SPINE — rides ON TOP of the body. The onset peak-hold/decay keeps the
-              // sharp right-triangle attack; here it's ADDED (modest gain) so each kick is a
-              // crisp tip above the energy line, not the whole silhouette. Clamp the SUM so
-              // only the loudest drop-kicks reach the rail (no per-kick flat-topping).
+              // SHAPE — sharp kick ONSET (lifted from 6288771): hard left wall at the kick
+              // attack (vertical front ON the grid), exponential taper right (relK=?wfDecay),
+              // ~0 between kicks. This IS the silhouette — it stays sharp because the onset is
+              // a transient, never the smooth energy envelope.
               const onset=colOnset[dx];
-              kEnv = onset>kEnv ? onset : kEnv*relK;          // attack 0 = hard left wall; release = right taper
-              const nk = maxM>0 ? kEnv/maxM : 0;
-              const spineH = nk>0.004 ? Math.pow(nk,WF_SPINE_GAMMA)*maxH*WF_SPINE_GAIN : 0;
-              S = bodyH + spineH;
-              if(S>maxH)S=maxH;
+              kEnv = onset>kEnv ? onset : kEnv*relK;          // attack 0 = vertical front; release = right taper
+              let shape = maxM>0 ? kEnv/maxM : 0;             // 0..1 sharp profile
+              shape = Math.pow(shape, WF_KICK_SHARP);         // presence curve — <1 lets most kicks reach full presence so HEIGHT is governed by energy, not onset magnitude
+              if(shape>1)shape=1;
+              // COMBINE — sharp triangle whose PEAK = energy (multiplicative, never additive,
+              // so no rounding and no flat-top clamp). Faint energy thread under it so kickless
+              // breakdowns aren't a dead-flat line (?wfFloor=0 → sharp kicks on black).
+              S = shape*energyH;
+              const floorS = WF_FLOOR*energyH;
+              if(floorS>S) S=floorS;
+              if(S>maxH) S=maxH;                              // safety only; BODY_GAIN<1 keeps peaks under the rail
             } else {
-              S = bodyH;                                      // column: pure amplitude shape
+              S = energyH>maxH ? maxH : energyH;              // column: pure amplitude shape
             }
             hEnv[dx]=S;
           }
