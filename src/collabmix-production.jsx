@@ -176,14 +176,29 @@ const WF_FLOOR         = _urlNum("wfFloor",       0.12);  // 0..1 — how high t
 const WF_HIGH_WEIGHT   = _urlNum("wfHighWeight",   2.5);  // perceptual boost on highs so cream reads (highs are low-energy)
 const WF_CORE_RESPONSE = _urlNum("wfCoreResponse", 1.4);  // how strongly the cream core grows with high/broadband energy
 const WF_BLEND_GAMMA   = _urlNum("wfBlendGamma",   1.0);  // bass↔mid body-colour blend curve (>1 holds blue longer, <1 leans orange)
-// ── Waveform HEIGHT blend (live ?wfBassW/?wfMidW/?wfHighW). Per-column silhouette
-// HEIGHT = WF_BASS_W·bass + WF_MID_W·mid + WF_HIGH_W·high, normalized to the track
-// max of that blend. Bass-dominant so quiet sections read SHORT and kicks read TALL
-// (restores the pre-rework dynamic range). Drives BOTH the zoomed deck WF body term
-// and the small overview strip. Colour is computed separately and is unaffected.
-const WF_BASS_W = _urlNum("wfBassW", 0.7);
-const WF_MID_W  = _urlNum("wfMidW",  0.2);
-const WF_HIGH_W = _urlNum("wfHighW", 0.1);
+// ── DECK-CARD overview strip HEIGHT blend (live ?wfBassW/?wfMidW/?wfHighW).
+// Per-column height = WF_BASS_W·bass + WF_MID_W·mid + WF_HIGH_W·high, normalized to
+// the percentile band. Default 0/0/1 (pure high band) — Chad's chosen deck-card look.
+// Colour is computed separately and is unaffected. (The TOP zoomed waveform has its
+// OWN independent weights below — these two are intentionally decoupled.)
+const WF_BASS_W = _urlNum("wfBassW", 0);
+const WF_MID_W  = _urlNum("wfMidW",  0);
+const WF_HIGH_W = _urlNum("wfHighW", 1);
+// ── TOP zoomed waveform (AnimatedZoomedWF, hybrid) HEIGHT model — independent of the
+// deck-card strip. The silhouette is a bass-weighted ENERGY body (quiet=short,
+// drop=tall) with the kick ONSET added as a sharpening SPINE on top (additive, the
+// SUM clamped to the rail so only the loudest drops flat-top). All live URL params:
+//   energy blend  : ?wfTopBassW / ?wfTopMidW / ?wfTopHighW
+//   body height   : ?wfBodyGain (lower = more headroom for spikes) / ?wfBodyGamma (>1 deepens quiet)
+//   kick spine    : ?wfSpineGain (spike height above body) / ?wfSpineGamma (spike curve)
+// (?wfDecay already controls the spine taper sharpness — reused.)
+const WF_TOP_BASS_W  = _urlNum("wfTopBassW", 0.7);
+const WF_TOP_MID_W   = _urlNum("wfTopMidW",  0.2);
+const WF_TOP_HIGH_W  = _urlNum("wfTopHighW", 0.1);
+const WF_BODY_GAIN   = _urlNum("wfBodyGain",  0.9);
+const WF_BODY_GAMMA  = _urlNum("wfBodyGamma", 1.0);
+const WF_SPINE_GAIN  = _urlNum("wfSpineGain", 0.35);
+const WF_SPINE_GAMMA = _urlNum("wfSpineGamma",0.8);
 
 // ── Server Configuration ─────────────────────────────────────
 // After deploying to Railway, replace this URL with your Railway server URL.
@@ -4865,7 +4880,7 @@ function AnimatedZoomedWF({ bands, dur, progRef, onSeek, h=96, windowSec=8, beat
             if(bArr[i]>mb)mb=bArr[i]; if(hArr[i]>mh)mh=hArr[i]; if(mArr[i]>mmid)mmid=mArr[i];
             const iD=i-onD<0?0:i-onD; const e=bArr[i]+mArr[i], ep=bArr[iD]+mArr[iD];
             const on=e>ep?e-ep:0; if(on>mon)mon=on;          // per-track max ONSET (for amber norm)
-            const cb=WF_BASS_W*bArr[i]+WF_MID_W*mArr[i]+WF_HIGH_W*hArr[i]; if(cb>mcomb)mcomb=cb; // per-track max of HEIGHT blend
+            const cb=WF_TOP_BASS_W*bArr[i]+WF_TOP_MID_W*mArr[i]+WF_TOP_HIGH_W*hArr[i]; if(cb>mcomb)mcomb=cb; // per-track max of TOP HEIGHT blend
           }
           envMaxRef.current={bands,mb:mb>1e-4?mb:1,mm:mon>1e-4?mon:1,mh:mh>1e-4?mh:1,mmid:mmid>1e-4?mmid:1,mcomb:mcomb>1e-4?mcomb:1};
         }
@@ -4904,25 +4919,28 @@ function AnimatedZoomedWF({ bands, dur, progRef, onSeek, h=96, windowSec=8, beat
           //   hybrid → S = onset-driven KICK TRIANGLE (attack 0, release wfDecay) that COLLAPSES to
           //            near-zero between kicks, lifted only by a faint wfFloor·amplitude thread so
           //            non-kick energy still shows LOW. Kick-dominant sharp triangles, not a tube.
-          const floorLvl=Math.max(0,Math.min(1,WF_FLOOR));
           const relK=Math.exp(-secPerCol/Math.max(1e-4,WF_DECAY_MS/1000));
-          const KICK_GAMMA=0.75, KICK_GAIN=1.5;   // kick triangle: lift mid kicks; loud kicks clamp to rail
-          const AMP_GAMMA=1.0,   AMP_GAIN=1.2;     // amplitude/body shaping (faint thread + column shape)
           const hybrid = WF_LAYER_MODE==='hybrid';
           let kEnv=0;
           for(let dx=0;dx<physW;dx++){
-            const amp=(WF_BASS_W*colB[dx]+WF_MID_W*colMid[dx]+WF_HIGH_W*colH[dx])/maxComb; // bass-weighted energy: quiet=low, kick=high (live ?wfBassW/?wfMidW/?wfHighW)
-            let bodyH = amp>0.004 ? Math.pow(amp,AMP_GAMMA)*maxH*AMP_GAIN : 0;
+            // ENERGY BODY — the dominant height. Bass-weighted blend (top-waveform's own
+            // weights) normalized to the track max → quiet/breakdown reads SHORT, drop reads
+            // TALL. WF_BODY_GAIN<1 leaves headroom above the loud body for the spike tips.
+            const amp=(WF_TOP_BASS_W*colB[dx]+WF_TOP_MID_W*colMid[dx]+WF_TOP_HIGH_W*colH[dx])/maxComb;
+            let bodyH = amp>0.004 ? Math.pow(amp,WF_BODY_GAMMA)*maxH*WF_BODY_GAIN : 0;
             if(bodyH>maxH)bodyH=maxH;
             let S;
             if(hybrid){
+              // KICK SPINE — rides ON TOP of the body. The onset peak-hold/decay keeps the
+              // sharp right-triangle attack; here it's ADDED (modest gain) so each kick is a
+              // crisp tip above the energy line, not the whole silhouette. Clamp the SUM so
+              // only the loudest drop-kicks reach the rail (no per-kick flat-topping).
               const onset=colOnset[dx];
               kEnv = onset>kEnv ? onset : kEnv*relK;          // attack 0 = hard left wall; release = right taper
               const nk = maxM>0 ? kEnv/maxM : 0;
-              let kickH = nk>0.004 ? Math.pow(nk,KICK_GAMMA)*maxH*KICK_GAIN : 0;
-              if(kickH>maxH)kickH=maxH;
-              const floorH=floorLvl*bodyH;
-              S = kickH>floorH ? kickH : floorH;              // kick triangle dominates; faint thread between
+              const spineH = nk>0.004 ? Math.pow(nk,WF_SPINE_GAMMA)*maxH*WF_SPINE_GAIN : 0;
+              S = bodyH + spineH;
+              if(S>maxH)S=maxH;
             } else {
               S = bodyH;                                      // column: pure amplitude shape
             }
