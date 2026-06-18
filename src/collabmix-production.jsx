@@ -158,6 +158,11 @@ for (let _i = 0; _i < _XF_N; _i++) { const _t = _i / (_XF_N - 1); XFADE_IN_CURVE
 // the rapid-seek test to prove fade tails are released, not accumulated.
 const _LIVE_SOURCES = new Set();
 const WF_COLOR_MODE = _urlStr("wfcolor", "current");   // DEFAULT: layered three-band look (cream kick / blue lows / orange mids). ?wfcolor=mono|deckblue still reachable.
+// ?wftop=off — RENDER-COST A/B: fully skip the top scrolling waveform draw (binning +
+// per-column passes + fillRect). Clears the canvas blank and early-returns each frame so
+// per-frame cost drops to ~0 — isolates "is the heavy render starving the main thread?"
+// from the audio/sync path. Default on. (NOTE: also hides the top-waveform playhead while off.)
+const WF_TOP_OFF = _urlStr("wftop", "on") === "off";
 // ── Top scrolling waveform LAYER MODEL (live ?wflayer=…) — shape + layer composition.
 //   current = today's render (independent center-anchored band heights; blue owns the outline).
 //   nested  = transient-driven silhouette (hard left edge + right taper) filled with NESTED
@@ -4750,6 +4755,8 @@ function AnimatedZoomedWF({ bands, dur, progRef, onSeek, h=96, windowSec=8, beat
         }
       }
       if(!ctx) return;
+      // ?wftop=off — render-cost A/B: wipe the canvas and skip ALL binning/draw this frame.
+      if(WF_TOP_OFF){ ctx.clearRect(0,0,physW,physH); return; }
 
       const dur2=durRef.current;
       // Drag overlay takes precedence — see dragProgRef declaration above.
