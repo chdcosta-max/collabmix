@@ -157,7 +157,7 @@ for (let _i = 0; _i < _XF_N; _i++) { const _t = _i / (_XF_N - 1); XFADE_IN_CURVE
 // so double-cleanup can't corrupt the count. Exposed via window.__liveSourceCount() for
 // the rapid-seek test to prove fade tails are released, not accumulated.
 const _LIVE_SOURCES = new Set();
-const WF_COLOR_MODE = _urlStr("wfcolor", "mono");   // DEFAULT: solid deck colour (#2E86DE on A). ?wfcolor=current|deckblue still reachable.
+const WF_COLOR_MODE = _urlStr("wfcolor", "current");   // DEFAULT: layered three-band look (cream kick / blue lows / orange mids). ?wfcolor=mono|deckblue still reachable.
 // ── Top scrolling waveform LAYER MODEL (live ?wflayer=…) — shape + layer composition.
 //   current = today's render (independent center-anchored band heights; blue owns the outline).
 //   nested  = transient-driven silhouette (hard left edge + right taper) filled with NESTED
@@ -172,7 +172,7 @@ const WF_SPECTRAL   = _urlNum("wfSpectral",  0.50);  // 0 = uniform cream core, 
 const WF_EDGE_MS    = _urlNum("wfEdge",      110);   // ms — silhouette transient release (right taper; smaller = sharper)
 // ── HYBRID/COLUMN knobs (?wflayer=hybrid|column). Shape decoupled from colour.
 const WF_DECAY_MS      = _urlNum("wfDecay",        90);   // ms — kick triangle taper. THE triangle-vs-tube knob (smaller = sharper, more collapsed)
-const WF_FLOOR         = _urlNum("wfFloor",        0.1);  // 0..1 — faint energy thread UNDER the top-waveform sharp kicks so kickless breakdowns aren't dead-flat (0 = sharp kicks on black)
+const WF_FLOOR         = _urlNum("wfFloor",        0.45);  // 0..1 — faint energy thread UNDER the top-waveform sharp kicks so kickless breakdowns aren't dead-flat (0 = sharp kicks on black)
 const WF_HIGH_WEIGHT   = _urlNum("wfHighWeight",   2.5);  // perceptual boost on highs so cream reads (highs are low-energy)
 const WF_CORE_RESPONSE = _urlNum("wfCoreResponse", 1.4);  // how strongly the cream core grows with high/broadband energy
 const WF_BLEND_GAMMA   = _urlNum("wfBlendGamma",   1.0);  // bass↔mid body-colour blend curve (>1 holds blue longer, <1 leans orange)
