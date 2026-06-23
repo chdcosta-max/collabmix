@@ -62,6 +62,10 @@ const LIB_WIZARD = URL_FLAGS.get("libwizard") === "1";
 // the mirror misbehaves because the DRAW is starved (main-thread budget) vs the
 // interp being wrong vs packets absent. Off by default — pure logging.
 const MIRROR_DIAG = URL_FLAGS.get("mirrordiag") === "1";
+// ?wfmiddiag=1 — THROWAWAY: measures whether the top-waveform MID band actually varies
+// beat-to-beat (raw signal) or is being flattened by the render. Logs per-beat peak+mean
+// over 16 consecutive beats, once per track. Delete after the amber signal fix lands.
+const WF_MID_DIAG = URL_FLAGS.get("wfmiddiag") === "1";
 // ?smoothdiag=1 — "why isn't the scroll glass?" instrumentation. Per deck, once
 // a second, logs over the last second: scroll-delta stats (mean / stddev / max
 // px the playhead moved per frame) to quantify motion smoothness; zeroFrames
@@ -220,7 +224,9 @@ const WF_BLUE_SCALE  = _urlNum("wfBlueScale", 2.0);   // BLUE size — the domin
 const WF_BLUE_PEAK   = _urlNum("wfBluePeak", 0.22);   // peak position — small = peaks EARLY (steep rise right off the kick)
 const WF_BLUE_FALL   = _urlNum("wfBlueFall", 1.0);    // fall-tail bias on the smoothstep decline; 1 = pure smooth taper, >1 = drops faster, <1 = longer tail
 const WF_BLUE_CHAR   = _urlNum("wfBlueChar", 0.3);    // organic character: 0 = pure smooth arc (sterile), 1 = full per-column energy (lumpy). ~0.3 = subtle natural variation.
-const WF_MID_SCALE   = _urlNum("wfMidScale",  1.2);   // ORANGE mids height — visible accents riding the arc (higher = more orange)
+const WF_MID_SCALE   = _urlNum("wfMidScale",  0.65);  // AMBER continuous-body height. Lower = amber sits as a low connective FLOOR under the blue/cream (not a competing mass). Range ~0.3–1.2.
+const WF_MID_GAMMA   = _urlNum("wfMidGamma",  1.2);   // AMBER body contrast — exponent on the per-column mid energy. Higher = quiet parts sit lower (more dynamic floor); lower = flatter. Range ~0.8–2.0.
+const WF_MID_SMOOTH  = _urlNum("wfmidsmooth",  30);   // ms — light gaussian smoothing on the continuous amber so the body reads clean, not jittery. 0 = raw. Range ~0–80.
 const WF_BLUE_RISE   = _urlNum("wfBlueRise", 0.6);    // BLUE rise softness — exponent on the leading-edge smoothstep. 1.0 = current (sharper point); LOWER = rounder dome / more gradual swell. Useful range 0.3–1.0.
 const WF_BLUE_SWELL  = _urlNum("wfBlueSwell", 1.0);   // retired (symmetric sin arc) — left defined/unused
 // Retired — superseded models. Left defined/unused to avoid touching unrelated refs.
@@ -4645,6 +4651,7 @@ function AnimatedZoomedWF({ bands, dur, progRef, onSeek, h=96, windowSec=8, beat
   // so without this the draw loop closure would hold a stale (initial) bands value
   // and never pick up new arrays when a track finishes analyzing.
   const bandsRef=useRef(bands);
+  const midDiagRef=useRef(null);   // [WF-MIDDIAG] once-per-track guard (throwaway)
   // While the user is drag-scrubbing the waveform, the draw loop reads
   // dragProgRef.current INSTEAD of progRef.current. This decouples the
   // displayed playhead from the audio position during a drag — the audio
@@ -4827,10 +4834,12 @@ function AnimatedZoomedWF({ bands, dur, progRef, onSeek, h=96, windowSec=8, beat
             hEnv:new Float32Array(physW+64),   // outer envelope (max) — halo source
             bandMid:new Float32Array(physW+64),// raw MID band energy per column (hybrid/column colour)
             onset:new Float32Array(physW+64),  // low-mid ONSET per column (hybrid silhouette driver)
+            midSm:new Float32Array(physW+64),  // smoothed per-column mid (continuous amber body — wfmidsmooth)
+            midTmp:new Float32Array(physW+64), // ping-pong scratch for the 3-pass amber blur
             len:physW+64,
           };
         }
-        const {bv:colB,mv:colM,hv:colH,hLow,hMid,hHigh,hEnv,bandMid:colMid,onset:colOnset}=colBufRef.current;
+        const {bv:colB,mv:colM,hv:colH,hLow,hMid,hHigh,hEnv,bandMid:colMid,onset:colOnset,midSm:colMidSm,midTmp:colMidTmp}=colBufRef.current;
 
         // ── Pass 1: per-column band values. Source buckets hold per-band RMS
         // (computed in Deck.load — smooth, not peak-hold, so the body reads as
@@ -4925,6 +4934,38 @@ function AnimatedZoomedWF({ bands, dur, progRef, onSeek, h=96, windowSec=8, beat
           envMaxRef.current={bands,mb:mb>1e-4?mb:1,mm:mon>1e-4?mon:1,mh:mh>1e-4?mh:1,mmid:mmid>1e-4?mmid:1,mcomb:mcomb>1e-4?mcomb:1};
         }
         const {mb:maxB,mm:maxM,mh:maxH2,mmid:maxMid,mcomb:maxComb}=envMaxRef.current;
+
+        // ── [WF-MIDDIAG] THROWAWAY (?wfmiddiag=1): does the RAW mid band vary beat-to-beat, or is the
+        // render flattening it? Measures mArr (the high-res source, pre-render) over 16 consecutive
+        // beats — peak + mean per beat, normalized to maxMid — once per track. Verdict at ≥5% CV.
+        if(WF_MID_DIAG && midDiagRef.current!==bands){
+          midDiagRef.current=bands;
+          const btsD=beatTimesRef.current;
+          if(btsD && btsD.length>2 && dur2>0 && maxMid>0){
+            const perBeat=[];
+            for(let i=0;i+1<btsD.length;i++){
+              const c0=Math.max(0,Math.floor(btsD[i]/dur2*len)), c1=Math.min(len-1,Math.ceil(btsD[i+1]/dur2*len));
+              if(c1<=c0) continue;
+              let pk=0,sum=0,n=0;
+              for(let k=c0;k<=c1;k++){ const v=mArr[k]; if(v>pk)pk=v; sum+=v; n++; }
+              perBeat.push({i,peak:pk,mean:n?sum/n:0});
+            }
+            let meanMax=0; for(const b of perBeat) if(b.mean>meanMax)meanMax=b.mean;
+            let start=0; for(let j=0;j<perBeat.length;j++){ if(perBeat[j].mean>0.1*meanMax){ start=j; break; } }   // skip silent intro
+            const win=perBeat.slice(start,start+16);
+            if(win.length>=2){
+              const means=win.map(b=>b.mean), peaks=win.map(b=>b.peak);
+              const avg=a=>a.reduce((s,v)=>s+v,0)/a.length;
+              const cv=a=>{ const m=avg(a); if(m<=0)return 0; return Math.sqrt(avg(a.map(v=>(v-m)*(v-m))))/m; };
+              const spread=a=>{ const mn=Math.min(...a),mx=Math.max(...a); return mx>0?(mx-mn)/mx:0; };
+              console.log('[WF-MIDDIAG] deck='+(deckColorRef.current||'?')+' maxMid='+maxMid.toFixed(4)+' beats '+win[0].i+'..'+win[win.length-1].i+' (n='+win.length+')');
+              console.log('[WF-MIDDIAG] MEAN/maxMid: '+means.map(v=>(v/maxMid).toFixed(3)).join(' '));
+              console.log('[WF-MIDDIAG] PEAK/maxMid: '+peaks.map(v=>(v/maxMid).toFixed(3)).join(' '));
+              console.log('[WF-MIDDIAG] MEAN cv='+(cv(means)*100).toFixed(1)+'% spread='+(spread(means)*100).toFixed(1)+'%  |  PEAK cv='+(cv(peaks)*100).toFixed(1)+'% spread='+(spread(peaks)*100).toFixed(1)+'%');
+              console.log('[WF-MIDDIAG] verdict: '+((cv(means)*100>=5||cv(peaks)*100>=5)?'mid VARIES ≥5% → render is FLATTENING real variation (fixable)':'mid near-FLAT (<5%) → track mid genuinely uniform'));
+            }
+          }
+        }
 
         // Per-track kick-height auto-fit (cached on bands+beatTimes). Percentile of the
         // energy AT each kick — the bulk of kicks fill the lane; a freak-loud transient
@@ -5040,10 +5081,28 @@ function AnimatedZoomedWF({ bands, dur, progRef, onSeek, h=96, windowSec=8, beat
                 }
               }
             }
-            // BLUE LOWS = the OPPOSITE taper to the cream kick: THIN at the beat → SWELLS WIDE
-            // toward the next beat (the sustained sub/bassline filling the gap), drawn BEHIND the
-            // cream. Per beat interval, ramp 0→1 (pow wfBlueSwell) × the bass energy at the column,
-            // capped to wfBlueScale of the lane so it stays below the cream kick peaks (anti-tube).
+            // ── CONTINUOUS AMBER BODY (Step 1) — the mid band is drawn from the REAL per-column mid
+            // energy across EVERY column, NO per-beat arc, so amber is an unbroken connective floor that
+            // fills the inter-beat gaps. Blue humps + cream needles ride ON TOP (drawn after this).
+            // wfmidsmooth lightly rounds it; wfMidScale/wfMidGamma set how low the floor sits.
+            {
+              const rMid=Math.round((WF_MID_SMOOTH/1000)/secPerCol);
+              const blurM=(src,dst,n,r)=>{
+                const norm=1/(2*r+1); let acc=0;
+                for(let k=-r;k<=r;k++){ const i=k<0?0:(k>=n?n-1:k); acc+=src[i]; }
+                for(let i=0;i<n;i++){ dst[i]=acc*norm; const a=i+r+1,b=i-r; acc+=(a>=n?src[n-1]:src[a])-(b<0?src[0]:src[b]); }
+              };
+              if(rMid<1){ for(let dx=0;dx<physW;dx++) colMidSm[dx]=colMid[dx]; }
+              else { blurM(colMid,colMidSm,physW,rMid); blurM(colMidSm,colMidTmp,physW,rMid); blurM(colMidTmp,colMidSm,physW,rMid); }
+              for(let dx=0;dx<physW;dx++){
+                const nm=colMidSm[dx]/maxMid;
+                let mH=nm>0.004?Math.pow(nm,WF_MID_GAMMA)*WF_FILL*maxH*WF_MID_SCALE:0;
+                if(mH>maxH)mH=maxH; hHigh[dx]=mH;
+              }
+            }
+            // BLUE LOWS = the OPPOSITE taper to the cream kick: THIN at the beat → SWELLS WIDE toward the
+            // next beat (the sustained sub/bassline filling the gap), drawn OVER the amber floor, under the
+            // cream. Per beat interval × the bass energy at the column. (Amber decoupled — blue only now.)
             if(hasKicks){
               const tRightB=((srcX+viewPx)/len)*dur2, tLeftB=(srcX/len)*dur2;
               let lo=0,hi=bts.length-1;                        // first beat whose interval can touch the left edge
@@ -5056,9 +5115,9 @@ function AnimatedZoomedWF({ bands, dur, progRef, onSeek, h=96, windowSec=8, beat
                 const cs=Math.max(0,Math.floor(x0)), ce=Math.min(physW-1,Math.ceil(x1));
                 // Gap-mean energy = the smooth body level; blended below with a TOUCH of per-column
                 // energy (wfBlueChar) for subtle organic character without the big bubble/pinch lumps.
-                let sb=0,sm=0,cnt=0;
-                for(let x=cs;x<=ce;x++){ sb+=colB[x]; sm+=colMid[x]; cnt++; }
-                const nbg=cnt?(sb/cnt)/maxB:0, nmg=cnt?(sm/cnt)/maxMid:0;
+                let sb=0,cnt=0;
+                for(let x=cs;x<=ce;x++){ sb+=colB[x]; cnt++; }
+                const nbg=cnt?(sb/cnt)/maxB:0;
                 const ch=WF_BLUE_CHAR<0?0:(WF_BLUE_CHAR>1?1:WF_BLUE_CHAR);
                 const pk=WF_BLUE_PEAK<0.02?0.02:(WF_BLUE_PEAK>0.98?0.98:WF_BLUE_PEAK);
                 for(let x=cs;x<=ce;x++){
@@ -5071,16 +5130,13 @@ function AnimatedZoomedWF({ bands, dur, progRef, onSeek, h=96, windowSec=8, beat
                   if(frac>pk && WF_BLUE_FALL!==1) arc=Math.pow(arc, WF_BLUE_FALL);   // optional tail bias
                   // SUBTLE character: smooth gap-mean blended with a touch of per-column energy.
                   const ab=(1-ch)*nbg + ch*(colB[x]/maxB);
-                  const am=(1-ch)*nmg + ch*(colMid[x]/maxMid);
                   let bH=ab>0.004?arc*Math.pow(ab,WF_BODY_GAMMA)*WF_FILL*maxH*WF_BLUE_SCALE:0; if(bH>maxH)bH=maxH; if(bH>hLow[x]) hLow[x]=bH;
-                  let mH=am>0.004?arc*Math.pow(am,WF_BODY_GAMMA)*WF_FILL*maxH*WF_MID_SCALE:0; if(mH>maxH)mH=maxH; if(mH>hHigh[x]) hHigh[x]=mH;
                 }
               }
             } else {
-              // fallback (pre-analysis): plain bass/mid energy bodies, no arc.
+              // fallback (pre-analysis): plain bass-energy blue body, no arc. (Amber handled above, continuous.)
               for(let dx=0;dx<physW;dx++){
                 const nb=colB[dx]/maxB; let bH=nb>0.004?Math.pow(nb,WF_BODY_GAMMA)*WF_FILL*maxH*WF_BLUE_SCALE:0; if(bH>maxH)bH=maxH; hLow[dx]=bH;
-                const nm=colMid[dx]/maxMid; let mH=nm>0.004?Math.pow(nm,WF_BODY_GAMMA)*WF_FILL*maxH*WF_MID_SCALE:0; if(mH>maxH)mH=maxH; hHigh[dx]=mH;
               }
             }
           } else {
@@ -5170,17 +5226,16 @@ function AnimatedZoomedWF({ bands, dur, progRef, onSeek, h=96, windowSec=8, beat
               ctx.fillRect(dx,center-S,1,S*2+1);
             }
           } else {
-            // HYBRID three-layer OPPOSITE-TAPER colour (Rekordbox). Opaque, drawn back→front:
-            //   BLUE lows (hLow)  — swells THIN-at-beat → WIDE toward the next beat; drawn behind.
-            //   ORANGE mids       — thin mid-energy accents layered over the blue.
-            //   CREAM kick (hMid) — sharp wall-left → point-right; opaque, ON TOP.
-            // The two opposite tapers interlock (cream points right, blue opens right), so the mass
-            // reads as a rhythm, not a uniform tube. Blue shows where the cream has narrowed.
-            ctx.fillStyle=`rgb(${lr},${lg},${lb})`;                       // 1) BLUE lows (back)
-            for(let dx=0;dx<physW;dx++){ const bH=hLow[dx]; if(bH>0.5) ctx.fillRect(dx,center-bH,1,bH*2+1); }
-            ctx.fillStyle=`rgb(${mr},${mg},${mb2})`;                      // 2) ORANGE mids (arc accents, precomputed in hHigh)
+            // HYBRID three-layer colour (Rekordbox). Opaque, drawn back→front:
+            //   AMBER mids (hHigh) — CONTINUOUS connective body across every column; the BACKING floor.
+            //   BLUE lows (hLow)   — per-beat duck-and-swell humps riding ON TOP of the amber.
+            //   CREAM kick (hMid)  — sharp per-kick needles, opaque, ON TOP of everything.
+            // Amber fills the inter-beat gaps; blue + cream read against it as rhythm, not a uniform tube.
+            ctx.fillStyle=`rgb(${mr},${mg},${mb2})`;                      // 1) AMBER continuous body (back)
             for(let dx=0;dx<physW;dx++){ const mH=hHigh[dx]; if(mH>0.5) ctx.fillRect(dx,center-mH,1,mH*2+1); }
-            ctx.fillStyle=`rgb(${hr},${hg},${hb})`;                       // 3) CREAM kick (front)
+            ctx.fillStyle=`rgb(${lr},${lg},${lb})`;                       // 2) BLUE lows humps (mid)
+            for(let dx=0;dx<physW;dx++){ const bH=hLow[dx]; if(bH>0.5) ctx.fillRect(dx,center-bH,1,bH*2+1); }
+            ctx.fillStyle=`rgb(${hr},${hg},${hb})`;                       // 3) CREAM kick needles (front)
             for(let dx=0;dx<physW;dx++){ const kH=hMid[dx]; if(kH>0.5) ctx.fillRect(dx,center-kH,1,kH*2+1); }
           }
         } else {
