@@ -207,6 +207,7 @@ const WF_HIGH_W = _urlNum("wfHighW", 1);
 const WF_TOP_BASS_W  = _urlNum("wfTopBassW", 0.7);
 const WF_TOP_MID_W   = _urlNum("wfTopMidW",  0.2);
 const WF_TOP_HIGH_W  = _urlNum("wfTopHighW", 0.1);
+const WF_WIDE_SEC    = _urlNum("wfwide",        24);   // sec — TOP waveform DEFAULT (most zoomed-OUT, "WIDE") window. Bigger = more of the track on screen. Was 16. MED(8)/ZOOM(4) zoom-in unchanged. Range ~16–48.
 const WF_FILL        = _urlNum("wfFill",      0.97);
 const WF_FIT_PCT     = _urlNum("wfFitPct",    0.97);
 const WF_AMP_PAD     = _urlNum("wfAmpPad",      16);
@@ -220,7 +221,7 @@ const WF_BLUE_PEAK   = _urlNum("wfBluePeak", 0.22);   // peak position — small
 const WF_BLUE_FALL   = _urlNum("wfBlueFall", 1.0);    // fall-tail bias on the smoothstep decline; 1 = pure smooth taper, >1 = drops faster, <1 = longer tail
 const WF_BLUE_CHAR   = _urlNum("wfBlueChar", 0.3);    // organic character: 0 = pure smooth arc (sterile), 1 = full per-column energy (lumpy). ~0.3 = subtle natural variation.
 const WF_MID_SCALE   = _urlNum("wfMidScale",  1.2);   // ORANGE mids height — visible accents riding the arc (higher = more orange)
-const WF_BLUE_RISE   = _urlNum("wfBlueRise", 0.7);    // retired (smoothstep handles the rise) — left defined/unused
+const WF_BLUE_RISE   = _urlNum("wfBlueRise", 0.6);    // BLUE rise softness — exponent on the leading-edge smoothstep. 1.0 = current (sharper point); LOWER = rounder dome / more gradual swell. Useful range 0.3–1.0.
 const WF_BLUE_SWELL  = _urlNum("wfBlueSwell", 1.0);   // retired (symmetric sin arc) — left defined/unused
 // Retired — superseded models. Left defined/unused to avoid touching unrelated refs.
 // (wfBodyGain: replaced by wfFill auto-fit. wfSpine*: the additive-spine model.)
@@ -4623,7 +4624,7 @@ function AnimatedZoomedWF({ bands, dur, progRef, onSeek, h=96, windowSec=8, beat
   // (#2E86DE / #A855F7) no longer appears in the waveform body — both decks
   // share this frequency palette, Rekordbox-style; deck colour still lives on
   // the grid-tick halo + deck card. Edit these to retune colour / contrast.
-  const WF_LOW_RGB  = [26,168,196];   // deep teal-blue — lows (bass BODY)
+  const WF_LOW_RGB  = [168,85,247];   // #A855F7 deck-B (bottom deck) purple — lows (bass BODY)
   const WF_MID_RGB  = [240,165,50];   // warm amber — mids (kick TRANSIENT)
   const WF_HIGH_RGB = [245,238,210];  // soft cream — highs (sharp attack click)
   // INDEPENDENT per-band height gamma. Each band drawn as its own per-column
@@ -5066,6 +5067,7 @@ function AnimatedZoomedWF({ bands, dur, progRef, onSeek, h=96, windowSec=8, beat
                   // off the kick → early peak (pk) → gradual rounded decline to the next beat.
                   let tt=frac<=pk ? frac/pk : (1-frac)/(1-pk);
                   let arc=tt*tt*(3-2*tt);
+                  if(frac<=pk && WF_BLUE_RISE!==1) arc=Math.pow(arc, WF_BLUE_RISE);  // rise softness (lower = rounder, gentler swell — kills the arrow point)
                   if(frac>pk && WF_BLUE_FALL!==1) arc=Math.pow(arc, WF_BLUE_FALL);   // optional tail bias
                   // SUBTLE character: smooth gap-mean blended with a touch of per-column energy.
                   const ab=(1-ch)*nbg + ch*(colB[x]/maxB);
@@ -5140,12 +5142,14 @@ function AnimatedZoomedWF({ bands, dur, progRef, onSeek, h=96, windowSec=8, beat
         // the DECK identity colour from deckColorRef so band hue stays tied to deck
         // identity (blue on A, purple on B) rather than a hardcoded blue.
         let [lr,lg,lb]=WF_LOW_RGB, [mr,mg,mb2]=WF_MID_RGB, [hr,hg,hb]=WF_HIGH_RGB;
-        if(WF_COLOR_MODE==='deckblue'||WF_COLOR_MODE==='mono'){
+        // PER-DECK low colour (default): the lows track THIS deck's own identity colour — A=blue
+        // #2E86DE, B=purple #A855F7 — parsed from the deckColor prop (deckColorRef), so each deck's
+        // waveform lows match its strip instead of a single shared constant. (WF_LOW_RGB is just the
+        // fallback if the deck colour is ever malformed.) mid + cream unchanged.
+        {
           const _dc=deckColorRef.current||'#FFFFFF';
-          let dcr=255,dcg=255,dcb=255;
-          if(_dc.length>=7&&_dc[0]==='#'){ dcr=parseInt(_dc.slice(1,3),16)|0; dcg=parseInt(_dc.slice(3,5),16)|0; dcb=parseInt(_dc.slice(5,7),16)|0; }
-          if(WF_COLOR_MODE==='deckblue'){ lr=dcr; lg=dcg; lb=dcb; }            // low → deck colour; amber + cream kept
-          else { lr=mr=hr=dcr; lg=mg=hg=dcg; lb=mb2=hb=dcb; }                  // mono → every band the deck colour
+          if(_dc.length>=7&&_dc[0]==='#'){ lr=parseInt(_dc.slice(1,3),16)|0; lg=parseInt(_dc.slice(3,5),16)|0; lb=parseInt(_dc.slice(5,7),16)|0; }
+          if(WF_COLOR_MODE==='mono'){ mr=hr=lr; mg=hg=lg; mb2=hb=lb; }         // mono → every band the deck colour
         }
 
         if(WF_LAYER_MODE==='column'||WF_LAYER_MODE==='hybrid'){
@@ -8872,7 +8876,7 @@ export default function CollabMix({ initialPage = "landing", djName = null }) {
   const [wfA, setWfA] = useState(null); // {bass, mid, high, dur} — only updates on track load
   const [wfB, setWfB] = useState(null);
   const [wfZoom, setWfZoom] = useState(0); // 0=WIDE(16s) 1=MED(8s) 2=ZOOM(4s)
-  const WF_WINDOWS = [16, 8, 4]; // seconds — WIDE / MED / ZOOM per spec
+  const WF_WINDOWS = [WF_WIDE_SEC, 8, 4]; // seconds — WIDE(default, ?wfwide) / MED / ZOOM. Only WIDE is tunable; MED/ZOOM zoom-in unchanged.
   const WF_ZOOM_LABELS = ["WIDE","MED","ZOOM"];
   const progRefA = useRef(0);
   const progRefB = useRef(0);
