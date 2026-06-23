@@ -5791,6 +5791,15 @@ function Deck({ id, ch, ctx:ac, color, local, remote, onChange, midi:mt, bpmResu
   const remPktRef=useRef(0);          // performance.now() of the last progress packet (staleness)
   const remStaleLoggedRef=useRef(false);
   const remDiagAtRef=useRef(0);       // throttle for [MIRROR-DIAG] interp log
+  // [MIRROR-RAF] receiver RAF-cadence probe (Suspect B — reconcile contention). Pure
+  // diagnostic, gated by ?mirrordiag=1. Measures the FOLLOWER RAF's own inter-frame
+  // gap on the MIRROR machine: the 0.9ms drawMs probe times only the canvas blit, NOT
+  // the 10Hz setPA/setPB App reconcile + 60Hz setProg Deck reconcile that ride the same
+  // main thread. Irregular gaps here = the position pipe is being starved by JS work the
+  // draw timer can't see. {prev:last frame ts, n/sum/worst:1s window, over33:dropped-frame
+  // count (>2 frame budgets), t0:window start}. Persists across the per-packet effect
+  // re-runs (a stable ref) — reset only on play-START and visibility, never per-packet.
+  const remRafProbeRef=useRef({prev:0,n:0,sum:0,worst:0,over33:0,t0:0});
   const lastRemProgRef=useRef(null);  // last remote.progress we re-anchored on (skip non-progress re-runs)
   const lastSeekEpochRef=useRef(null);// last seen remote.seekEpoch — a CHANGE = the driver did a real seek → hard snap
   const lastPausedProgRef=useRef(null);// baseline truth recorded on pause-entry — a paused mirror only moves when this changes
@@ -5858,6 +5867,7 @@ function Deck({ id, ch, ctx:ac, color, local, remote, onChange, midi:mt, bpmResu
       remProgRef.current=progRef.current; remDispRef.current=progRef.current; remSlewRef.current=0;
       remTimeRef.current=performance.now(); remPrevTimeRef.current=0; remFrameRef.current=performance.now();
       lastPausedProgRef.current=null;   // clear paused baseline so the next pause re-establishes it
+      remRafProbeRef.current={prev:0,n:0,sum:0,worst:0,over33:0,t0:0};   // restart the RAF-cadence window on play-start
     }
     // EQ values now come from parent props when remote is true
     if(remote.trackName)setName(remote.trackName);
@@ -6064,6 +6074,26 @@ function Deck({ id, ch, ctx:ac, color, local, remote, onChange, midi:mt, bpmResu
       const animate=()=>{
         const tnow=performance.now();
         const sincePkt=tnow-remPktRef.current;
+        // [MIRROR-RAF] Suspect-B cadence probe — measured BEFORE the motion branches so it
+        // captures pure RAF interval regardless of hold/follow. prev=0 = first frame after a
+        // (re)start → seed, don't record (avoids a stale stop-gap polluting worstGapMs).
+        if(MIRROR_DIAG){
+          const pr=remRafProbeRef.current;
+          if(pr.t0===0) pr.t0=tnow;
+          if(pr.prev>0){
+            const gap=tnow-pr.prev;
+            pr.n++; pr.sum+=gap;
+            if(gap>pr.worst) pr.worst=gap;
+            if(gap>33) pr.over33++;   // >2× the 16.7ms @60fps budget ⇒ at least one frame dropped
+          }
+          pr.prev=tnow;
+          if(tnow-pr.t0>=1000 && pr.n>0){
+            console.log('[MIRROR-RAF] deck='+id+' fps='+Math.round(pr.n*1000/(tnow-pr.t0))+
+              ' meanGapMs='+(pr.sum/pr.n).toFixed(1)+' worstGapMs='+pr.worst.toFixed(0)+
+              ' droppedFrames='+pr.over33+'/'+pr.n+' rafLive=1');
+            pr.t0=tnow; pr.n=0; pr.sum=0; pr.worst=0; pr.over33=0;
+          }
+        }
         let dispNow, mnCatchup=false;
         if(remAwaitPktRef.current){
           // Play just started — HOLD at the displayed position until the first
@@ -6128,6 +6158,7 @@ function Deck({ id, ch, ctx:ac, color, local, remote, onChange, midi:mt, bpmResu
         remTimeRef.current=performance.now(); remFrameRef.current=performance.now();
         remDispRef.current=progRef.current; remPrevTimeRef.current=0; remSlewRef.current=0;
         remAwaitPktRef.current=true; remStaleLoggedRef.current=false;
+        remRafProbeRef.current.prev=0;   // drop the across-hidden gap from the cadence probe
       }
     };
     document.addEventListener("visibilitychange",onVis);
