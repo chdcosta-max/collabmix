@@ -9718,3 +9718,37 @@ build hash differs from local — content, not hash, is the reliable signal.
   download (belt-and-suspenders). Wiring console→Sentry Logs is a small future add.
 - Note: a deploy-skip scare during this session turned out to be a hash-naming ghost — Vercel
   builds fresh but content-hashes differently than the local build; always verify by CONTENT.
+
+---
+
+## OWED WRITE-UP — Connection & render saga (stub, June 24 2026)
+
+PLACEHOLDER — full write-up owed next session. Flagging the threads so they
+don't get lost; this is NOT the documentation, just the to-do.
+
+Document next session:
+- **TURN fix (#1):** STUN-only had no relay fallback → peer connections dropped
+  on strong lines behind symmetric/carrier-grade NAT, firewalls, institutional
+  networks. Added env-driven Metered TURN (`VITE_TURN_*`), `?ice=relay` proof
+  flag. Shipped to master (a8538a8). Cover WHY bandwidth ≠ reachability.
+- **Echo-guard false-firing (#2):** the self-echo guard latched partner audio
+  OFF permanently on the first BroadcastChannel "present" — false-fired off
+  Chrome omnibox PRERENDER / bfcache / refresh-overlap (phantom same-origin
+  contexts), silencing real one-tab sessions. Rewrote as recoverable heartbeat
+  (earliest live tab keeps audio; restored when an earlier tab closes).
+- **Software-rendering render cliff:** high-end laptop at 5-13fps because Chrome
+  GPU accel was OFF → software canvas. The KILLER is shadowBlur glow (CPU
+  Gaussian blur, every tick + playhead, ×2 decks) — pathological under software;
+  1px-fillRect volume + dpr=2 compound it. Fix = auto-detect software (WebGL
+  renderer) → kill glow + cap dpr, measure drawMs, add Path2D batching if needed.
+- **Two-pipes audio/position model:** smooth 60fps motion rides REFS (progRef /
+  remProgRef + interp RAF), decoupled from the 10Hz setPA/setPB React reconcile
+  (state pipe). Document why the position pipe is ref-based and the state pipe is
+  for low-frequency field updates — and that the 10Hz reconcile re-renders the
+  App (no React.memo), a render-cost factor on weak machines.
+- **STANDARD (canonical):** the app must work great AUTOMATICALLY for everyone,
+  regardless of machine config. Users must NEVER change a setting (e.g. Chrome
+  GPU acceleration) to use it. "Flip a setting" is a DIAGNOSIS, never a fix.
+  Detection + auto-adaptation is the required pattern.
+
+(See memory: project_connection_stability, project_software_render_hardening.)
