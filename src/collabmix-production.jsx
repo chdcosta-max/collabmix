@@ -310,10 +310,44 @@ function normalizeRoomCode(raw) {
   return s.trim().toLowerCase();
 }
 
-const ICE = { iceServers: [
+// ── ICE / connectivity ───────────────────────────────────────
+// STUN lets the two browsers discover their public addresses for a DIRECT
+// peer-to-peer path. TURN is the RELAY fallback that carries the audio when a
+// direct path is impossible (symmetric / carrier-grade NAT, strict firewalls) —
+// the #1 cause of "connected on a strong line, then dropped": bandwidth is
+// irrelevant to NAT traversal; without a relay there is no fallback when the
+// direct path lapses. TURN credentials are injected at BUILD time from env
+// (VITE_* — set in Vercel + .env.local, never committed) so the secret stays out
+// of the repo. Absent env → STUN-only (prior behaviour, no regression):
+//   VITE_TURN_URLS        comma-separated, e.g.
+//                         "turn:relay.host:80,turns:relay.host:443?transport=tcp"
+//   VITE_TURN_USERNAME    long-term credential username
+//   VITE_TURN_CREDENTIAL  long-term credential password
+// ?ice=relay forces RELAY-ONLY (iceTransportPolicy:"relay"): the connection
+// REFUSES the direct path, so if audio still flows the TURN relay is provably
+// wired correctly — the one reliable way to verify TURN on a real two-machine
+// test. Default ("all") prefers the direct path and only relays when it must.
+const _ENV = (typeof import.meta !== "undefined" && import.meta.env) || {};
+const _TURN_URLS = String(_ENV.VITE_TURN_URLS || "").split(",").map(s=>s.trim()).filter(Boolean);
+const _ICE_SERVERS = [
   { urls: "stun:stun.l.google.com:19302" },
   { urls: "stun:stun1.l.google.com:19302" },
-]};
+];
+if (_TURN_URLS.length) {
+  _ICE_SERVERS.push({ urls: _TURN_URLS, username: _ENV.VITE_TURN_USERNAME || "", credential: _ENV.VITE_TURN_CREDENTIAL || "" });
+}
+const _ICE_RELAY_ONLY = URL_FLAGS.get("ice") === "relay";
+const ICE = {
+  iceServers: _ICE_SERVERS,
+  ...(_ICE_RELAY_ONLY ? { iceTransportPolicy: "relay" } : {}),
+};
+// One-time load log so a real test can confirm whether TURN is actually wired
+// (without leaking the credential) — read it in the browser console.
+try { console.log("[ICE] turnServers=" + _TURN_URLS.length + " transportPolicy=" + (_ICE_RELAY_ONLY ? "relay (RELAY-ONLY test mode)" : "all")); } catch {}
+// ?monitor=on — bypass the self-echo guard entirely (partner audio always
+// available, never auto-muted). Maximal-safety escape hatch for a real
+// two-machine test where the guard should never fire anyway.
+const MONITOR_FORCE_ON = URL_FLAGS.get("monitor") === "on";
 
 // ── Audio Engine ─────────────────────────────────────────────
 function createEngine() {
@@ -3616,35 +3650,64 @@ function useRTC({ engineRef, send, onIceRecover }) {
   const pc=useRef(null),dest=useRef(null),remAudio=useRef(null),pend=useRef([]),sRef=useRef(send);
   useEffect(()=>{sRef.current=send;},[send]);
 
-  // Sibling-tab detection. Each tab announces "hello" on a shared per-origin
-  // BroadcastChannel; any already-present tab replies "present". A tab that
-  // hears a "present" knows it arrived second → it is the echo source, so it
-  // defaults partner audio OFF (unless the human already chose). Same-origin
-  // only by construction — two DIFFERENT browsers (Chrome + Safari) can't share
-  // a channel, which is exactly why the booth Monitor switch is the manual
-  // backstop for that case.
+  // Sibling-tab detection (recoverable). Every REAL tab heartbeats its presence
+  // on a shared per-origin BroadcastChannel; each tab tracks the live set of
+  // OTHER tabs by last-seen and drops any that stop beating (closed, or frozen
+  // in back/forward cache). The single EARLIEST live tab keeps partner audio;
+  // later tabs are the echo source and default OFF — but the instant an earlier
+  // tab goes away, a later tab is PROMOTED and audio is restored.
+  //
+  // This replaces the old one-shot latch that muted on the first "present" and
+  // never recovered, which silenced REAL sessions whenever a phantom same-origin
+  // context answered once (Chrome omnibox prerender, a bfcached page, or the
+  // brief unload overlap during a refresh). Prerendering pages don't beat (they
+  // aren't real tabs yet), so a prerender can no longer trip the guard.
+  // ?monitor=on bypasses the guard entirely. Same-origin only by construction —
+  // two DIFFERENT browsers can't share a channel, so on a real two-machine
+  // session this never fires; the booth Monitor switch is the backstop there.
   useEffect(()=>{
+    if (MONITOR_FORCE_ON) { console.log("[SELF-ECHO-GUARD] ?monitor=on — guard bypassed, partner audio always available"); return; }
     let bc;
     try { bc = new BroadcastChannel("cm-presence"); } catch { return; }
     const myId = `${Date.now()}-${Math.random().toString(36).slice(2)}`;
-    let later = false;
-    const onMsg = (e)=>{
-      const m = e.data;
-      if(!m || m.id === myId) return;
-      if(m.type === "hello"){
-        try { bc.postMessage({ type:"present", id: myId }); } catch {}
-      } else if(m.type === "present" && !later){
-        later = true;
-        setSiblingTab(true);
-        if(!userOverrodeRef.current){
-          setPartnerAudioOn(false);
-          console.log("[SELF-ECHO-GUARD] another tab on this device is already present → partner audio defaulted OFF (toggle in the booth or P2P panel to enable)");
+    const seen = new Map();                 // siblingId -> last-seen ms
+    const HEARTBEAT_MS = 2000, STALE_MS = 6000;
+    // "Earlier" = smaller timestamp prefix (tie-break on the full id). The
+    // earliest LIVE tab is the monitor; any tab with an earlier live sibling mutes.
+    const tsOf = (id)=>{ const n = parseInt(id, 10); return Number.isFinite(n) ? n : 0; };
+    const isEarlier = (a, b)=> tsOf(a) !== tsOf(b) ? tsOf(a) < tsOf(b) : a < b;
+    const recompute = ()=>{
+      const now = Date.now();
+      for (const [id, t] of seen) if (now - t > STALE_MS) seen.delete(id);
+      let earlierExists = false;
+      for (const id of seen.keys()) if (isEarlier(id, myId)) { earlierExists = true; break; }
+      setSiblingTab(seen.size > 0);
+      if (!userOverrodeRef.current) {
+        const want = !earlierExists;        // audio ON only if I'm the earliest live tab
+        if (partnerAudioOnRef.current !== want) {
+          setPartnerAudioOn(want);
+          console.log("[SELF-ECHO-GUARD] " + (want
+            ? "earliest live tab on this device → partner audio available ON"
+            : "an earlier tab on this device is live → partner audio defaulted OFF (toggle to enable)"));
         }
       }
     };
+    const beat = ()=>{ if (typeof document !== "undefined" && document.prerendering) return; try { bc.postMessage({ type:"alive", id: myId }); } catch {} };
+    const onMsg = (e)=>{
+      const m = e.data; if (!m || m.id === myId || m.type !== "alive") return;
+      const fresh = !seen.has(m.id);
+      seen.set(m.id, Date.now());
+      if (fresh) beat();                    // answer a newcomer at once so it learns about us without a full interval's wait
+      recompute();
+    };
     bc.addEventListener("message", onMsg);
-    try { bc.postMessage({ type:"hello", id: myId }); } catch {}
-    return ()=>{ try{ bc.removeEventListener("message", onMsg); bc.close(); }catch{} };
+    const startBeating = ()=>beat();
+    if (typeof document !== "undefined" && document.prerendering) {
+      document.addEventListener("prerenderingchange", startBeating, { once:true });
+    } else { startBeating(); }
+    const hb = setInterval(beat, HEARTBEAT_MS);
+    const sweep = setInterval(recompute, HEARTBEAT_MS);
+    return ()=>{ clearInterval(hb); clearInterval(sweep); try { document.removeEventListener("prerenderingchange", startBeating); bc.removeEventListener("message", onMsg); bc.close(); }catch{} };
   },[]);
   // ICE-failure recovery: a network change (wifi switch, sleep/wake) can drop
   // ICE to "disconnected" (often self-heals) or "failed" (dead). Previously
