@@ -95,6 +95,15 @@ const GRID_ALIGN = URL_FLAGS.get("gridalign") !== "0";
 // one source of truth, can't diverge. NOT a sign flip (still prog2 = rawProg − offset).
 // ?gridcouple=1 (default) = coupled fix; ?gridcouple=0 = legacy slew (for the A/B).
 const WF_GRID_COUPLE = URL_FLAGS.get("gridcouple") !== "0";
+// ── Issue #2 fix: throttle the wasteful 60Hz `prog` REACT STATE to ~10Hz ──────────
+// Smooth playhead/waveform motion rides progRef (a ref, 60Hz, UNTOUCHED). The React
+// `prog` STATE only feeds the time readout + the slow overview-strip playhead — both
+// fine at 10Hz. setProg at 60Hz × 2 decks re-rendered the whole Deck subtree every frame
+// (~120 reconciles/sec) and starved the top waveform's draw RAF → ~23fps on slower
+// machines. Throttling the STATE (never the ref) frees that without touching the top
+// waveform's motion. ?progthrottle=0 reverts to the old 60Hz state for the A/B.
+const WF_PROG_THROTTLE = URL_FLAGS.get("progthrottle") !== "0";
+const PROG_STATE_MS = 100;  // ~10Hz cap on the React prog-state commit (ref pipe stays 60Hz)
 // BUG #2 audio smoothness — jitter-buffer depth on the PARTNER's inbound audio
 // receiver. The browser default starts SHALLOW (~70ms) and HUNTS up to the depth a
 // connection actually needs (~135ms in Jake's June 13 log) over ~30s — and during
@@ -5815,6 +5824,7 @@ function Deck({ id, ch, ctx:ac, color, local, remote, onChange, midi:mt, bpmResu
   const [buf,setBuf]=useState(null),[name,setName]=useState(null),[play,setPlay]=useState(false);
   const [prog,setProg]=useState(0),[dur,setDur]=useState(0);
   const progRef=useRef(0); // mirror of prog for parent AnimatedZoomedWF without 60fps setState
+  const lastProgStateRef=useRef(0); // last performance.now() we committed prog STATE (10Hz throttle)
   const [hi,setHi]=useState(0),[mid,setMid]=useState(0),[lo,setLo]=useState(0),[vol,setVol]=useState(1);
   const [rate,setRate]=useState(1); // FIX: track actual playback rate
   const [dragOver,setDragOver]=useState(false);
@@ -6217,7 +6227,10 @@ function Deck({ id, ch, ctx:ac, color, local, remote, onChange, midi:mt, bpmResu
         }
         remDispRef.current=dispNow;
         if(sincePkt>1500 && !remStaleLoggedRef.current){ console.warn('[MIRROR-STALE] deck',id,'packets sparse ('+Math.round(sincePkt)+'ms) — coasting forward at base rate'); remStaleLoggedRef.current=true; }
-        setProg(dispNow); progRef.current=dispNow; onProgUpdate?.(dispNow);
+        // refs at 60Hz (top waveform rides these) — UNCHANGED; React prog STATE throttled to ~10Hz.
+        progRef.current=dispNow; onProgUpdate?.(dispNow);
+        if(!WF_PROG_THROTTLE){ setProg(dispNow); }
+        else { const _ps=performance.now(); if(_ps-lastProgStateRef.current>=PROG_STATE_MS){ lastProgStateRef.current=_ps; setProg(dispNow); } }
         if(MIRROR_DIAG && tnow-remDiagAtRef.current>1000){
           remDiagAtRef.current=tnow;
           // disp = what the follower OUTPUTS this frame; anchor = last packet value;
@@ -6369,7 +6382,10 @@ function Deck({ id, ch, ctx:ac, color, local, remote, onChange, midi:mt, bpmResu
       } else {
         p=Math.min(1,(off.current+elapsedBuf)/buf.duration);
       }
-      setProg(p); progRef.current=p; onProgUpdate?.(p);
+      // refs at 60Hz (top waveform rides these) — UNCHANGED; React prog STATE throttled to ~10Hz.
+      progRef.current=p; onProgUpdate?.(p);
+      if(!WF_PROG_THROTTLE){ setProg(p); }
+      else { const _ps=performance.now(); if(_ps-lastProgStateRef.current>=PROG_STATE_MS){ lastProgStateRef.current=_ps; setProg(p); } }
       // Wire broadcast moved to broadcastProgress() (computes from ac.currentTime,
       // also driven by the background-immune worker heartbeat). The self-throttle
       // to 10Hz lives there, so foreground RAF + worker can't double-send.
@@ -7293,7 +7309,7 @@ function Deck({ id, ch, ctx:ac, color, local, remote, onChange, midi:mt, bpmResu
             const ts = isSet ? fmt(hotCues[i] * dur) : "—";
             return (
               <button key={i}
-                onClick={()=>{if(!buf)return;if(hotCues[i]!==null){seek(hotCues[i]);}else{setHotCues(p=>{const n=[...p];n[i]=prog;return n;});}}}
+                onClick={()=>{if(!buf)return;if(hotCues[i]!==null){seek(hotCues[i]);}else{setHotCues(p=>{const n=[...p];n[i]=progRef.current;return n;});}}}
                 onContextMenu={e=>{e.preventDefault();if(buf)setHotCues(p=>{const n=[...p];n[i]=null;return n;});}}
                 title={isSet?"Click to recall · Right-click to clear":"Click to set cue at playhead"}
                 style={{flex:1, height:26, padding:"0 8px",
@@ -7320,7 +7336,7 @@ function Deck({ id, ch, ctx:ac, color, local, remote, onChange, midi:mt, bpmResu
                 if(!buf)return;
                 const bps=(bpmResult?.bpm||120)/60;
                 const lDur=beats/bps;
-                const lStart=prog;
+                const lStart=progRef.current;
                 const lEnd=Math.min(1,lStart+lDur/(buf?.duration||1));
                 setLoopStart(lStart);setLoopEnd(lEnd);setLoopActive(true);
               }}
@@ -7396,14 +7412,14 @@ function Deck({ id, ch, ctx:ac, color, local, remote, onChange, midi:mt, bpmResu
           const beatPhase=bpmResult?.beatPhaseSec??0;
           const isLocked=syncRole!==null;
           if(isLocked&&beatPeriod&&dur){
-            const currentTime=prog*dur;
+            const currentTime=progRef.current*dur;
             const currentBeatPos=(currentTime-beatPhase)/beatPeriod;
             const targetBeatNum=Math.floor(currentBeatPos-0.001);
             const newTime=beatPhase+targetBeatNum*beatPeriod;
             seek(Math.max(0,Math.min(1,newTime/dur)));
           } else {
             const step=(beatPeriod&&dur)?(beatPeriod/dur):0.005;
-            seek(Math.max(0,prog-step));
+            seek(Math.max(0,progRef.current-step));
           }
         }:undefined} disabled={!local} title={syncRole!==null?"Snap to previous beat":"Skip back 1 beat"}
           style={{height:38, width:32, background:"transparent", border:"1px solid rgba(255,255,255,0.12)", color:local?"#9CA3AF":"#5A5E66", borderRadius:6, cursor:local?"pointer":"default", fontFamily:"'Inter',sans-serif", fontSize:13, outline:"none", flexShrink:0, padding:0, display:"flex", alignItems:"center", justifyContent:"center"}}>◂</button>
@@ -7444,14 +7460,14 @@ function Deck({ id, ch, ctx:ac, color, local, remote, onChange, midi:mt, bpmResu
           const beatPhase=bpmResult?.beatPhaseSec??0;
           const isLocked=syncRole!==null;
           if(isLocked&&beatPeriod&&dur){
-            const currentTime=prog*dur;
+            const currentTime=progRef.current*dur;
             const currentBeatPos=(currentTime-beatPhase)/beatPeriod;
             const targetBeatNum=Math.ceil(currentBeatPos+0.001);
             const newTime=beatPhase+targetBeatNum*beatPeriod;
             seek(Math.max(0,Math.min(1,newTime/dur)));
           } else {
             const step=(beatPeriod&&dur)?(beatPeriod/dur):0.005;
-            seek(Math.min(1,prog+step));
+            seek(Math.min(1,progRef.current+step));
           }
         }:undefined} disabled={!local} title={syncRole!==null?"Snap to next beat":"Skip forward 1 beat"}
           style={{height:38, width:32, background:"transparent", border:"1px solid rgba(255,255,255,0.12)", color:local?"#9CA3AF":"#5A5E66", borderRadius:6, cursor:local?"pointer":"default", fontFamily:"'Inter',sans-serif", fontSize:13, outline:"none", flexShrink:0, padding:0, display:"flex", alignItems:"center", justifyContent:"center"}}>▸</button>
