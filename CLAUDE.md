@@ -1,3 +1,5 @@
+> ⚠ NEW INSTANCE: read `tools/docs/MASTER_INDEX.md` FIRST — it maps all project docs. Your memory is a lossy summary, not the source of truth.
+
 # CLAUDE.md — Standing Instructions for Mix//Sync
 
 This file is read at the start of every Claude Code session in this
