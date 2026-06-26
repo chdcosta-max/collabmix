@@ -163,6 +163,48 @@ const WF_COLOR_MODE = _urlStr("wfcolor", "current");   // DEFAULT: layered three
 // per-frame cost drops to ~0 — isolates "is the heavy render starving the main thread?"
 // from the audio/sync path. Default on. (NOTE: also hides the top-waveform playhead while off.)
 const WF_TOP_OFF = _urlStr("wftop", "on") === "off";
+// ── Top waveform RENDER EFFICIENCY (software-render levers) ─────────────────────
+// Two optimizations that make the SAME waveform cheaper to draw so it stays smooth
+// even under CPU/software rasterization (Chrome GPU-off) — with ZERO change to how it
+// looks. The waveform must look incredible + identical for everyone, like Rekordbox.
+//  1) WF_BATCH — collapse the per-column 1px fillRects of each SOLID-colour band into a
+//     single Path2D fill. Opaque, non-overlapping columns → PIXEL-IDENTICAL, but
+//     ~thousands of draw calls per frame become a handful. ?wfbatch=off reverts (byte A/B).
+//  2) WF_GLOW_MODE — pre-render each glowing grid tick / through-line / playhead ONCE to
+//     an offscreen stamp (same fill, same shadowBlur, same colour) and blit it per frame,
+//     instead of recomputing a Gaussian blur thousands of times/sec (the pathological
+//     software cost). Visually identical; sub-pixel ticks resample sub-perceptibly.
+//     ?wfglow=native reverts to the per-frame shadowBlur for a side-by-side visual A/B.
+const WF_BATCH = URL_FLAGS.get("wfbatch") !== "off";
+const WF_GLOW_MODE = URL_FLAGS.get("wfglow") === "native" ? "native" : "sprite";
+try { console.log("[WF-RENDER] batch=" + WF_BATCH + " glow=" + WF_GLOW_MODE); } catch { /* no console */ }
+// Paint one solid-colour waveform band. Batched = a single Path2D fill (default); else
+// the original per-column fillRect loop. Identical pixels (opaque, tiled 1px columns).
+function paintWFBand(ctx, heights, physW, center, style, thr){
+  ctx.fillStyle=style;
+  if(WF_BATCH){
+    const p=new Path2D();
+    for(let dx=0;dx<physW;dx++){ const h=heights[dx]; if(h>thr) p.rect(dx,center-h,1,h*2+1); }
+    ctx.fill(p);
+  }else{
+    for(let dx=0;dx<physW;dx++){ const h=heights[dx]; if(h>thr) ctx.fillRect(dx,center-h,1,h*2+1); }
+  }
+}
+// Build a reusable glow stamp: draw `paint` (a fillRect shape) ONCE with the given
+// shadowBlur/colour into an offscreen canvas sized with a margin that holds the blur
+// falloff. Blit at the shape's intended top-left; edge clipping matches a native
+// full-canvas blur because drawImage clips to the destination canvas too.
+function _wfGlowStamp(shapeW, shapeH, blur, glowColor, paint){
+  const m=Math.ceil(blur*3)+1;
+  const c=document.createElement('canvas');
+  c.width=Math.max(1,Math.ceil(shapeW))+2*m;
+  c.height=Math.max(1,Math.ceil(shapeH))+2*m;
+  const g=c.getContext('2d');
+  g.shadowColor=glowColor; g.shadowBlur=blur;
+  paint(g,m,m);
+  return {canvas:c,mx:m,my:m};
+}
+function _wfBlit(ctx,st,x,y){ ctx.drawImage(st.canvas, x-st.mx, y-st.my); }
 // ── Top scrolling waveform LAYER MODEL (live ?wflayer=…) — shape + layer composition.
 //   current = today's render (independent center-anchored band heights; blue owns the outline).
 //   nested  = transient-driven silhouette (hard left edge + right taper) filled with NESTED
@@ -4793,6 +4835,10 @@ function AnimatedZoomedWF({ bands, dur, progRef, onSeek, h=96, windowSec=8, beat
     let _sLast=0,_sPrevProg=null,_sFrames=0,_sDtSum=0,_sDtMax=0,_sDropped=0,
         _sScrollSum=0,_sScrollSqSum=0,_sScrollMax=0,_sZero=0,_sMove=0,
         _sDrawSum=0,_sDrawMax=0,_sLogAt=0;
+    // Pre-rendered glow caches (WF_GLOW_MODE==='sprite'). Persist across frames; the grid
+    // stamps rebuild when physH / deck-colour / tick dims change (key check), the playhead
+    // stamp when physH changes. Reset whenever the effect re-runs (resize/remount).
+    let glowCache=null, phStamp=null, phKey=-1;
     const draw=()=>{
       raf.current=requestAnimationFrame(draw);
       const _sT0=SMOOTH_DIAG?performance.now():0;
@@ -5239,22 +5285,17 @@ function AnimatedZoomedWF({ bands, dur, progRef, onSeek, h=96, windowSec=8, beat
             //   CREAM kick (hMid) — sharp wall-left → point-right; opaque, ON TOP.
             // The two opposite tapers interlock (cream points right, blue opens right), so the mass
             // reads as a rhythm, not a uniform tube. Blue shows where the cream has narrowed.
-            ctx.fillStyle=`rgb(${lr},${lg},${lb})`;                       // 1) BLUE lows (back)
-            for(let dx=0;dx<physW;dx++){ const bH=hLow[dx]; if(bH>0.5) ctx.fillRect(dx,center-bH,1,bH*2+1); }
-            ctx.fillStyle=`rgb(${mr},${mg},${mb2})`;                      // 2) ORANGE mids (arc accents, precomputed in hHigh)
-            for(let dx=0;dx<physW;dx++){ const mH=hHigh[dx]; if(mH>0.5) ctx.fillRect(dx,center-mH,1,mH*2+1); }
-            ctx.fillStyle=`rgb(${hr},${hg},${hb})`;                       // 3) CREAM kick (front)
-            for(let dx=0;dx<physW;dx++){ const kH=hMid[dx]; if(kH>0.5) ctx.fillRect(dx,center-kH,1,kH*2+1); }
+            // Batched (WF_BATCH): one Path2D fill per band — pixel-identical, far fewer calls.
+            paintWFBand(ctx,hLow ,physW,center,`rgb(${lr},${lg},${lb})`,0.5);   // 1) BLUE lows (back)
+            paintWFBand(ctx,hHigh,physW,center,`rgb(${mr},${mg},${mb2})`,0.5);  // 2) ORANGE mids (arc accents)
+            paintWFBand(ctx,hMid ,physW,center,`rgb(${hr},${hg},${hb})`,0.5);   // 3) CREAM kick (front)
           }
         } else {
           // Crisp detail (UPPER canvas), back→front: BLUE body (dominant) → GOLD
           // transient spine (on top, spikes through at kicks) → CREAM tips.
-          ctx.fillStyle=`rgb(${lr},${lg},${lb})`;        // BLUE body (dominant mass)
-          for(let dx=0;dx<physW;dx++){ const hh=hLow[dx];  if(hh>0) ctx.fillRect(dx,center-hh,1,hh*2+1); }
-          ctx.fillStyle=`rgb(${mr},${mg},${mb2})`;       // GOLD transient spine
-          for(let dx=0;dx<physW;dx++){ const hh=hMid[dx];  if(hh>0) ctx.fillRect(dx,center-hh,1,hh*2+1); }
-          ctx.fillStyle=`rgb(${hr},${hg},${hb})`;        // CREAM tips
-          for(let dx=0;dx<physW;dx++){ const hh=hHigh[dx]; if(hh>0) ctx.fillRect(dx,center-hh,1,hh*2+1); }
+          paintWFBand(ctx,hLow ,physW,center,`rgb(${lr},${lg},${lb})`,0);   // BLUE body (dominant mass)
+          paintWFBand(ctx,hMid ,physW,center,`rgb(${mr},${mg},${mb2})`,0);  // GOLD transient spine
+          paintWFBand(ctx,hHigh,physW,center,`rgb(${hr},${hg},${hb})`,0);   // CREAM tips
         }
       }
 
@@ -5357,6 +5398,7 @@ function AnimatedZoomedWF({ bands, dur, progRef, onSeek, h=96, windowSec=8, beat
         const PHRASE_FILL=`rgba(${PHRASE_RGB},1.0)`;
         const PHRASE_LINE=`rgba(${PHRASE_RGB},0.50)`; void PHRASE_LINE;
 
+        if(WF_GLOW_MODE==='native'){
         ctx.shadowColor=`rgba(${DECK_RGB},0.65)`;
         ctx.shadowBlur=4;
 
@@ -5413,18 +5455,63 @@ function AnimatedZoomedWF({ bands, dur, progRef, onSeek, h=96, windowSec=8, beat
         }
         // Reset shadow so downstream draws (playhead, hot cues) aren't blurred.
         ctx.shadowBlur=0;
+        } else {
+          // SPRITE mode — pre-rendered glow stamps (same fill + shadowBlur, blurred ONCE)
+          // blitted per marker. Rebuilt only when physH / deck-colour / tick dims change.
+          const glowKey=`${physH}|${dr},${dg},${db}|${lineW},${downTickW},${downTickH},${offTickH},${phraseTickW},${phraseTickH}`;
+          if(!glowCache||glowCache.key!==glowKey){
+            const deckGlow=`rgba(${DECK_RGB},0.65)`, phraseGlow=`rgba(${PHRASE_RGB},0.7)`;
+            glowCache={ key:glowKey,
+              through   :_wfGlowStamp(lineW,physH,4,deckGlow,  (g,ox,oy)=>{ g.fillStyle=DOWN_LINE;   g.fillRect(ox,oy,lineW,physH); }),
+              downTick  :_wfGlowStamp(downTickW,downTickH,4,deckGlow,  (g,ox,oy)=>{ g.fillStyle=DOWN_FILL;   g.fillRect(ox,oy,downTickW,downTickH); }),
+              offTick   :_wfGlowStamp(lineW,offTickH,4,deckGlow,  (g,ox,oy)=>{ g.fillStyle=OFF_FILL;    g.fillRect(ox,oy,lineW,offTickH); }),
+              phraseTick:_wfGlowStamp(phraseTickW,phraseTickH,4,phraseGlow,(g,ox,oy)=>{ g.fillStyle=PHRASE_FILL; g.fillRect(ox,oy,phraseTickW,phraseTickH); }),
+            };
+          }
+          for(const mk of gridMarkers){
+            const beatTime=mk.beatTime;
+            if(beatTime<0) continue;
+            const x=(physW>>1)+(beatTime-currentTimeSec)*pxPerSec;
+            if(x<-phraseTickW||x>physW+phraseTickW) continue;
+            const isPhrase=(mk.n%16===0);
+            const isDownbeat=(mk.n%4===0);
+            // Same draw order as native: through-line, then white downbeat ticks, then
+            // (phrase only) red phrase ticks — each its own pre-blurred stamp.
+            if(isPhrase){
+              _wfBlit(ctx,glowCache.through ,x,0);
+              _wfBlit(ctx,glowCache.downTick,x-downTickW/2,downTopY);
+              _wfBlit(ctx,glowCache.downTick,x-downTickW/2,downBotY);
+              _wfBlit(ctx,glowCache.phraseTick,x-phraseTickW/2,phraseTopY);
+              _wfBlit(ctx,glowCache.phraseTick,x-phraseTickW/2,phraseBotY);
+            }else if(isDownbeat){
+              _wfBlit(ctx,glowCache.through ,x,0);
+              _wfBlit(ctx,glowCache.downTick,x-downTickW/2,downTopY);
+              _wfBlit(ctx,glowCache.downTick,x-downTickW/2,downBotY);
+            }else if(showOffBeats){
+              _wfBlit(ctx,glowCache.offTick,x,offTopY);
+              _wfBlit(ctx,glowCache.offTick,x,offBotY);
+            }
+          }
+        }
       }
 
       // Playhead — FIXED at canvas center (physW/2). It does NOT move with progress;
       // progress is encoded by the waveform scrolling LEFT as the track plays.
       const cx=physW>>1; // physW/2
       ctx.fillStyle='rgba(0,0,0,0.55)';
-      ctx.fillRect(cx-3,0,8,physH);
-      ctx.fillStyle='#ffffff';
-      ctx.shadowColor='#ffffff';
-      ctx.shadowBlur=16;
-      ctx.fillRect(cx-1,0,3,physH);
-      ctx.shadowBlur=0;
+      ctx.fillRect(cx-3,0,8,physH);          // black base — no glow, unchanged
+      if(WF_GLOW_MODE==='native'){
+        ctx.fillStyle='#ffffff';
+        ctx.shadowColor='#ffffff';
+        ctx.shadowBlur=16;
+        ctx.fillRect(cx-1,0,3,physH);
+        ctx.shadowBlur=0;
+      } else {
+        // SPRITE: white core + blur16 pre-rendered once. cx-1 is an INTEGER x, so this
+        // stamp blits at integer offsets → BYTE-identical to the native shadowBlur.
+        if(!phStamp||phKey!==physH){ phKey=physH; phStamp=_wfGlowStamp(3,physH,16,'#ffffff',(g,ox,oy)=>{ g.fillStyle='#ffffff'; g.fillRect(ox,oy,3,physH); }); }
+        _wfBlit(ctx,phStamp,cx-1,0);
+      }
 
       // ── smoothdiag finalize: account this frame, log once a second ──────────
       if(SMOOTH_DIAG){

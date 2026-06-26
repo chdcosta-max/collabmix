@@ -15,3 +15,6 @@ tools/sota-eval/beat_this/
 
 # Generated smoke-suite audio fixture (created by tools/smoke/lib/gen-fixture.mjs)
 public/test-fixtures/
+
+# generated pixel-diff artifacts
+tools/smoke/out/
