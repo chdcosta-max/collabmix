@@ -1,9 +1,9 @@
 // e2e-jbtarget.smoke.mjs — PROOF that the partner receiver's jitter-buffer depth is
-// PINNED to JB_TARGET_MS (default 160) instead of the browser's shallow auto-target.
+// PINNED to JB_TARGET_MS (default 220) instead of the browser's shallow auto-target.
 // A plays the fixture (audio source → B's receiver); we read the realized
 // jitterBufferTargetDelay from B's [JITTER-DIAG] (getStats-derived) and assert it
-// HOLDS ~160. localhost (near-zero jitter) would auto-pick a far shallower target, so
-// a steady reading of ~160 proves the set took effect — not just that a constant was
+// HOLDS ~220. localhost (near-zero jitter) would auto-pick a far shallower target, so
+// a steady reading of ~220 proves the set took effect — not just that a constant was
 // changed. Needs real WebRTC audio; SKIPs if RTC never connects (headless env).
 import { Suite } from "../lib/result.mjs";
 import { launch, capture, createRoom, joinByCode, loadTestTrack } from "../lib/e2e.mjs";
@@ -45,13 +45,15 @@ try {
   const med = settled.length ? [...settled].sort((a, b) => a - b)[settled.length >> 1] : null;
   const min = settled.length ? Math.min(...settled) : null;
   const max = settled.length ? Math.max(...settled) : null;
-  console.log(`[JB-PROOF] settled jbTarget median ${med?.toFixed(0)}ms (min ${min?.toFixed(0)}, max ${max?.toFixed(0)}, n=${settled.length}) — pinned to 160`);
+  console.log(`[JB-PROOF] settled jbTarget median ${med?.toFixed(0)}ms (min ${min?.toFixed(0)}, max ${max?.toFixed(0)}, n=${settled.length}) — pinned to JB_TARGET_MS default 220`);
 
-  // ~160 forced. A clean localhost would auto-target far lower, so ≈160 proves the
-  // set took effect at the NetEQ level (getStats reflects what NetEQ actually targets).
-  t.check("jitter buffer HOLDS ~160ms (pinned, not browser-default shallow)", med != null && med >= 130 && med <= 220, `median jbTarget ${med?.toFixed(0)}ms`);
+  // Default is now 220ms (Issue #3). A clean localhost would auto-target far lower, so a
+  // steady reading near the pinned value proves the set took effect at the NetEQ level.
+  // Bounds are generous to bracket the 220 default + NetEQ wiggle AND survive by-ear
+  // ?jbtarget tuning of the default in the ~200–280 range without test churn.
+  t.check("jitter buffer HOLDS ~220ms (pinned, not browser-default shallow)", med != null && med >= 180 && med <= 320, `median jbTarget ${med?.toFixed(0)}ms`);
   // Steadiness: it never drops back to a shallow hunting value.
-  t.check("buffer STEADY, not hunting shallow (min ≥ 120ms)", min != null && min >= 120, `min jbTarget ${min?.toFixed(0)}ms (max ${max?.toFixed(0)})`);
+  t.check("buffer STEADY, not hunting shallow (min ≥ 150ms)", min != null && min >= 150, `min jbTarget ${min?.toFixed(0)}ms (max ${max?.toFixed(0)})`);
 
   t.check("connection clean (no page errors)", sA.errors().length === 0 && sB.errors().length === 0, [...sA.errors(), ...sB.errors()].slice(0, 2).join(" | ") || "clean");
 } catch (e) {

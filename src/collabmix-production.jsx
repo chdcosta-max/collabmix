@@ -109,12 +109,18 @@ const PROG_STATE_MS = 100;  // ~10Hz cap on the React prog-state commit (ref pip
 // connection actually needs (~135ms in Jake's June 13 log) over ~30s — and during
 // that shallow ramp NetEQ underruns + time-stretches (the audible wobble). Pinning
 // jitterBufferTarget makes NetEQ start deep from the first packet, skipping the ramp
-// and re-hunting after a reconnect. 160ms = the depth THIS connection proved clean
-// (realized jb ~140–165ms), reached instantly. Two-sided: applied ONLY to the partner
-// receiver (their latency is free to the listener); local Web Audio monitoring is
-// untouched/instant. Tune by ear: ?jbtarget=200 (deeper/smoother), ?jbtarget=120
-// (snappier), ?jbtarget=0 (disable → browser default, for A/B). Spec max 4000ms.
-const JB_TARGET_MS = (()=>{ const v=URL_FLAGS.get("jbtarget"); if(v==null)return 160; const n=parseInt(v,10); return (Number.isFinite(n)&&n>=0&&n<=4000)?n:160; })();
+// and re-hunting after a reconnect. 220ms (Issue #3, June 25): Jake's connection's
+// NetEQ CLIMBED its own target to ~192ms on its own under real jitter (so 160 was
+// UNDER-buffering it → shallow-ramp underruns + accel/decel time-stretch = the audible
+// pitch wobble + skips). 220 = ~30ms of steady HEADROOM above what the buffer proved it
+// needed, reached from packet 1 — favours SMOOTHNESS over latency (the principle for
+// partner audio). Costs ~+60ms latency on the PARTNER's inbound only; local Web Audio
+// monitoring is untouched/instant, and delay-comp aligns the mix. Two-sided: applied
+// ONLY to the partner receiver. Tune by ear (live, no rebuild): ?jbtarget=160 (old/A-B),
+// ?jbtarget=260 (deeper), ?jbtarget=180 (snappier), ?jbtarget=0 (browser default).
+// Ceiling: a deeper buffer fixes UNDERRUN skips + ordinary-jitter stretch, NOT real
+// packet loss (lostΔ) — that needs Opus FEC/RED, a separate lever. Spec max 4000ms.
+const JB_TARGET_MS = (()=>{ const v=URL_FLAGS.get("jbtarget"); if(v==null)return 220; const n=parseInt(v,10); return (Number.isFinite(n)&&n>=0&&n<=4000)?n:220; })();
 // Browser support (dogfood session 1): Jake on EDGE was unlistenable (audio cut
 // in/out); Chrome fixed it. Warn non-Chrome users at session start. "Real" Chrome
 // = UA has Chrome but NOT Edge (Edg/) / Opera (OPR/) / Samsung Internet.
