@@ -87,6 +87,14 @@ const DELAY_COMP = URL_FLAGS.get("delaycomp") !== "0";
 // smoke suite (no real jitter buffer in the mock). Requires delaycomp on (the
 // offset assumes the local audio is delayed by the same compMs).
 const GRID_ALIGN = URL_FLAGS.get("gridalign") !== "0";
+// ── Issue #1 fix: COUPLE the visual playhead shift to the LIVE audio monitorDelay ──
+// Bug: the visual grid-align used its OWN slewed copy of compMs (15ms/poll) while the
+// audio monitorDelay eased at a different rate (~1.5s TC) — they DRIFTED apart, so the
+// visual lagged the audio (partner heard the kick before seeing it). Fix: the waveform
+// reads the SAME monitorDelay.delayTime AudioParam value the audio uses, every frame —
+// one source of truth, can't diverge. NOT a sign flip (still prog2 = rawProg − offset).
+// ?gridcouple=1 (default) = coupled fix; ?gridcouple=0 = legacy slew (for the A/B).
+const WF_GRID_COUPLE = URL_FLAGS.get("gridcouple") !== "0";
 // BUG #2 audio smoothness — jitter-buffer depth on the PARTNER's inbound audio
 // receiver. The browser default starts SHALLOW (~70ms) and HUNTS up to the depth a
 // connection actually needs (~135ms in Jake's June 13 log) over ~30s — and during
@@ -4674,7 +4682,7 @@ function buildSilhouettePath(heights,center,physW,maxH){
 }
 
 
-function AnimatedZoomedWF({ bands, dur, progRef, onSeek, h=96, windowSec=8, beatPhaseFrac=null, beatPeriodSec=null, gridOffsetMs=0, barOneOffsetSec=0, deckColor="#FFFFFF", rate=1, beatTimes=null, beatsV2=false, desmear=false, isDriver=true, deckId=null, gridAlignSecRef=null }) {
+function AnimatedZoomedWF({ bands, dur, progRef, onSeek, h=96, windowSec=8, beatPhaseFrac=null, beatPeriodSec=null, gridOffsetMs=0, barOneOffsetSec=0, deckColor="#FFFFFF", rate=1, beatTimes=null, beatsV2=false, desmear=false, isDriver=true, deckId=null, gridAlignSecRef=null, monitorHostRef=null }) {
   // Glow layer REMOVED: the blurred lower-canvas duplicate washed the waveform
   // out and bridged the gaps between kicks into a tube. The top waveform now
   // renders as a single crisp layer, matching the deck-A overview strip.
@@ -4831,9 +4839,22 @@ function AnimatedZoomedWF({ bands, dur, progRef, onSeek, h=96, windowSec=8, beat
       // not the source/sent one. Render-time only — progRef (sync truth) is never
       // touched, and seeking reads progRef directly (onDown), so click-to-seek is
       // unaffected. Suppressed while dragging (the cursor maps to the raw window).
-      const alignTargetSec=(gridAlignSecRef?.current)||0;
-      appliedAlignSecRef.current += (alignTargetSec - appliedAlignSecRef.current)*0.04; // ~0.4s ease @60fps
-      const alignOffProg=(!dragging && dur2>0) ? (appliedAlignSecRef.current/dur2) : 0;
+      // Visual playhead shift (track-seconds → fractional progress). COUPLED path
+      // (WF_GRID_COUPLE, default): read the LIVE monitorDelay.delayTime the AUDIO uses
+      // THIS frame — same AudioParam, so visual + audio are delayed identically and
+      // can't drift (the audio's own setTargetAtTime ease IS the smoothing). Gated by
+      // gridAlignSecRef (set to 1 by the comp poll when grid-align is active, else 0).
+      // LEGACY path (?gridcouple=0): the old separately-slewed copy, kept for the A/B.
+      let alignSec;
+      if(WF_GRID_COUPLE){
+        const md=monitorHostRef?.current?.monitorDelay;
+        alignSec=(gridAlignSecRef?.current && md) ? (md.delayTime.value||0) : 0;
+      } else {
+        const alignTargetSec=(gridAlignSecRef?.current)||0;
+        appliedAlignSecRef.current += (alignTargetSec - appliedAlignSecRef.current)*0.04; // ~0.4s ease @60fps
+        alignSec=appliedAlignSecRef.current;
+      }
+      const alignOffProg=(!dragging && dur2>0) ? (alignSec/dur2) : 0;
       const prog2=Math.max(0, rawProg - alignOffProg);
       // Two independent paddings:
       //  - tickRailPad governs where beat-grid ticks center vertically (visual
@@ -9761,12 +9782,21 @@ export default function CollabMix({ initialPage = "landing", djName = null }) {
       // instead of the grid lurching to chase every twitch. A rock-steady offset
       // that's slightly off beats a jumpy exact one. (Disabling snaps to 0.)
       {
-        const tgt = (GRID_ALIGN && delayCompOn && !noFrames) ? measured / 1000 : 0;
-        if (tgt === 0) { gridAlignSecRef.current = 0; }
-        else {
-          const cur = gridAlignSecRef.current;
-          const maxStep = 0.015; // ≤15ms change per poll
-          gridAlignSecRef.current = cur + Math.max(-maxStep, Math.min(maxStep, tgt - cur));
+        const on = (GRID_ALIGN && delayCompOn && !noFrames);
+        if (WF_GRID_COUPLE) {
+          // COUPLED (default): gridAlignSecRef is just a GATE (1 = grid-align active).
+          // The waveform reads the LIVE monitorDelay.delayTime itself each frame, so no
+          // separately-slewed copy is kept here — that's what prevented drift.
+          gridAlignSecRef.current = on ? 1 : 0;
+        } else {
+          // LEGACY (?gridcouple=0): slew-rate-limited copy of the comp delay (old path).
+          const tgt = on ? measured / 1000 : 0;
+          if (tgt === 0) { gridAlignSecRef.current = 0; }
+          else {
+            const cur = gridAlignSecRef.current;
+            const maxStep = 0.015; // ≤15ms change per poll
+            gridAlignSecRef.current = cur + Math.max(-maxStep, Math.min(maxStep, tgt - cur));
+          }
         }
       }
       syncStatsRef.current = { ...syncStatsRef.current,
@@ -11138,7 +11168,7 @@ export default function CollabMix({ initialPage = "landing", djName = null }) {
                   } catch {}
                 }}
                 style={{ minHeight:wfH, flexShrink:0 }}>
-                <AnimatedZoomedWF bands={wfA} dur={wfA?.dur||0} progRef={progRefA} onSeek={seekDeckA} h={wfH} windowSec={WF_WINDOWS[wfZoom]} beatPhaseFrac={bpm.results["A"]?.beatPhaseFrac ?? pA?.beatPhaseFrac ?? null} beatPeriodSec={bpm.results["A"]?.beatPeriodSec ?? pA?.beatPeriodSec ?? null} gridOffsetMs={gridOffsetA} barOneOffsetSec={barOneA * (bpm.results["A"]?.beatPeriodSec || pA?.beatPeriodSec || 0)} deckColor="#2E86DE" rate={rateA} beatTimes={bpm.results["A"]?.beatTimes ?? pA?.beatTimes ?? null} beatsV2={beatsV2On} desmear={onsetGridOn && bpm.results["A"]?.gridSource !== "rekordbox"} deckId="A" isDriver={!deckDrivers.A || deckDrivers.A?.id === sync.djId} gridAlignSecRef={gridAlignSecRef}/>
+                <AnimatedZoomedWF bands={wfA} dur={wfA?.dur||0} progRef={progRefA} onSeek={seekDeckA} h={wfH} windowSec={WF_WINDOWS[wfZoom]} beatPhaseFrac={bpm.results["A"]?.beatPhaseFrac ?? pA?.beatPhaseFrac ?? null} beatPeriodSec={bpm.results["A"]?.beatPeriodSec ?? pA?.beatPeriodSec ?? null} gridOffsetMs={gridOffsetA} barOneOffsetSec={barOneA * (bpm.results["A"]?.beatPeriodSec || pA?.beatPeriodSec || 0)} deckColor="#2E86DE" rate={rateA} beatTimes={bpm.results["A"]?.beatTimes ?? pA?.beatTimes ?? null} beatsV2={beatsV2On} desmear={onsetGridOn && bpm.results["A"]?.gridSource !== "rekordbox"} deckId="A" isDriver={!deckDrivers.A || deckDrivers.A?.id === sync.djId} gridAlignSecRef={gridAlignSecRef} monitorHostRef={eng}/>
               </div>
             )}
             {hasB && (
@@ -11155,7 +11185,7 @@ export default function CollabMix({ initialPage = "landing", djName = null }) {
                   } catch {}
                 }}
                 style={{ minHeight:wfH, flexShrink:0 }}>
-                <AnimatedZoomedWF bands={wfB} dur={wfB?.dur||0} progRef={progRefB} onSeek={seekDeckB} h={wfH} windowSec={WF_WINDOWS[wfZoom]} beatPhaseFrac={bpm.results["B"]?.beatPhaseFrac ?? pB?.beatPhaseFrac ?? null} beatPeriodSec={bpm.results["B"]?.beatPeriodSec ?? pB?.beatPeriodSec ?? null} gridOffsetMs={gridOffsetB} barOneOffsetSec={barOneB * (bpm.results["B"]?.beatPeriodSec || pB?.beatPeriodSec || 0)} deckColor="#A855F7" rate={rateB} beatTimes={bpm.results["B"]?.beatTimes ?? pB?.beatTimes ?? null} beatsV2={beatsV2On} desmear={onsetGridOn && bpm.results["B"]?.gridSource !== "rekordbox"} deckId="B" isDriver={!deckDrivers.B || deckDrivers.B?.id === sync.djId} gridAlignSecRef={gridAlignSecRef}/>
+                <AnimatedZoomedWF bands={wfB} dur={wfB?.dur||0} progRef={progRefB} onSeek={seekDeckB} h={wfH} windowSec={WF_WINDOWS[wfZoom]} beatPhaseFrac={bpm.results["B"]?.beatPhaseFrac ?? pB?.beatPhaseFrac ?? null} beatPeriodSec={bpm.results["B"]?.beatPeriodSec ?? pB?.beatPeriodSec ?? null} gridOffsetMs={gridOffsetB} barOneOffsetSec={barOneB * (bpm.results["B"]?.beatPeriodSec || pB?.beatPeriodSec || 0)} deckColor="#A855F7" rate={rateB} beatTimes={bpm.results["B"]?.beatTimes ?? pB?.beatTimes ?? null} beatsV2={beatsV2On} desmear={onsetGridOn && bpm.results["B"]?.gridSource !== "rekordbox"} deckId="B" isDriver={!deckDrivers.B || deckDrivers.B?.id === sync.djId} gridAlignSecRef={gridAlignSecRef} monitorHostRef={eng}/>
               </div>
             )}
             {/* Zoom selector — floats in the top-right corner of the waveform
