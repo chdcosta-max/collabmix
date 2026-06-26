@@ -9482,6 +9482,27 @@ export default function CollabMix({ initialPage = "landing", djName = null }) {
   useEffect(()=>{ if(ready) applyFilter("A",eqA.filter); },[eqA.filter,ready]);
   useEffect(()=>{ if(ready) applyFilter("B",eqB.filter); },[eqB.filter,ready]);
 
+  // ── Partner-field reconcile coalescer (PERF; zero visual/functional change) ──────
+  // High-rate partner updates (position/rate, broadcast at 10Hz as deck_update fields)
+  // arrive EVENLY on localhost but CLUMPED over a real network (his logs: pktGap
+  // 100-600ms → bursts). Each one calls setPA/setPB, and pA/pB are App state with NO
+  // memoization, so a burst fires N whole-App reconciles back-to-back — starving the
+  // waveform draw RAF. That is the 60fps-localhost / 5fps-network gap (the paint itself
+  // is ~0.9ms per the SMOOTH-DIAG drawMs probe — NOT the bottleneck). We merge incoming
+  // partner FIELD updates into a pending object and flush them with ONE setPA/setPB per
+  // ANIMATION FRAME (latest value wins), so a packet burst causes at most one reconcile
+  // per frame. The mirror follower already coasts across sparse packets and reads
+  // position from a ref, so delivering only the freshest packet per frame is
+  // behaviourally identical — the displayed motion and the pixels are unchanged.
+  const pendPARef = useRef(null), pendPBRef = useRef(null), pendRafRef = useRef(0);
+  const flushPartnerFields = useCallback(() => {
+    pendRafRef.current = 0;
+    const a = pendPARef.current, b = pendPBRef.current;
+    pendPARef.current = null; pendPBRef.current = null;
+    if (a) setPA(p => ({ ...(p || {}), ...a }));
+    if (b) setPB(p => ({ ...(p || {}), ...b }));
+  }, []);
+
   const handleWS = useCallback((m) => {
     if (m.type==="rtc_hangup") {
       // Schedule reconnect BEFORE rtc.handleRtc runs endCall, so we use the
@@ -9549,8 +9570,12 @@ export default function CollabMix({ initialPage = "landing", djName = null }) {
       setMvol(m.value);
     }
     if (m.type==="deck_update")    {
-      // 1) Mirror partner's deck state for visuals
-      (m.deckId==="A"?setPA:setPB)(p=>({...(p||{}),[m.field]:m.value}));
+      // 1) Mirror partner's deck state for visuals — COALESCED into ≤1 reconcile/frame
+      //    (see flushPartnerFields above). Replaces the immediate per-packet setPA/setPB
+      //    that let a network burst pile up N whole-App reconciles and starve the draw RAF.
+      { const _pend = m.deckId==="A" ? pendPARef : pendPBRef;
+        (_pend.current || (_pend.current = {}))[m.field] = m.value;
+        if (!pendRafRef.current) pendRafRef.current = requestAnimationFrame(flushPartnerFields); }
       // Symmetric counterpart to [ANALYZER-BROADCAST] — proves the partner
       // actually RECEIVED the refined beat grid (B2B mirror debugging + smoke).
       if (m.field === "beatTimes" && Array.isArray(m.value)) console.log("[ANALYZER-RECV] " + m.deckId + " beats=" + m.value.length);
@@ -9675,7 +9700,7 @@ export default function CollabMix({ initialPage = "landing", djName = null }) {
     if (m.type==="sync_request")   sync.send({type:"sync_response",state:lsRef.current});
     if (m.type==="sync_response")  { if(m.state?.deckA)setPA(m.state.deckA); if(m.state?.deckB)setPB(m.state.deckB); if(m.state?.xfade!=null){setXf(m.state.xfade);applyXF(m.state.xfade);} }
     rtc.handleRtc(m);
-  }, [applyXF]);
+  }, [applyXF, flushPartnerFields]);
 
   const sync = useSync({ url: SERVER_URL, onMsg: handleWS });
   // ICE-failure recovery: when useRTC reports the connection dropped on a
