@@ -125,6 +125,13 @@ const PROG_STATE_MS = 100;  // ~10Hz cap on the React prog-state commit (ref pip
 // Ceiling: a deeper buffer fixes UNDERRUN skips + ordinary-jitter stretch, NOT real
 // packet loss (lostΔ) — that needs Opus FEC/RED, a separate lever. Spec max 4000ms.
 const JB_TARGET_MS = (()=>{ const v=URL_FLAGS.get("jbtarget"); if(v==null)return 220; const n=parseInt(v,10); return (Number.isFinite(n)&&n>=0&&n<=4000)?n:220; })();
+// SYNC TEMPO PRECISION fix — derive the sync rate from the FULL-PRECISION analyzed tempo
+// (beatPeriodSec), not the rounded display BPM. Two tracks that both round to e.g. "128.0"
+// but differ in the decimals previously got rate=1.0 (no tempo correction) → grids + audio
+// drifted even after sync. Now rate = slaveBps/masterBps; falls back to the rounded-BPM rate
+// if a period is missing; the ±12% safety clamp is unchanged. ?syncprecision=0 reverts to the
+// legacy rounded-BPM behaviour (A/B for the Jake by-ear validation session).
+const SYNC_PRECISION = URL_FLAGS.get("syncprecision") !== "0";
 // Browser support (dogfood session 1): Jake on EDGE was unlistenable (audio cut
 // in/out); Chrome fixed it. Warn non-Chrome users at session start. "Real" Chrome
 // = UA has Chrome but NOT Edge (Edg/) / Opera (OPR/) / Samsung Internet.
@@ -10416,7 +10423,20 @@ export default function CollabMix({ initialPage = "landing", djName = null }) {
       emitEngageQuality();
       return;
     }
-    const rate = targetBPM / srcBPM;
+    // SYNC TEMPO PRECISION (?syncprecision=, default ON): match the rate from the FULL-PRECISION
+    // analyzed tempo (beatPeriodSec), not the rounded display BPM — so two tracks both rounding to
+    // e.g. "128.0" but differing in the decimals still beat-match (audio stays locked through a long
+    // blend; grids lock as a consequence). rate = slaveBps/masterBps (= masterTrueBPM/slaveTrueBPM).
+    // Falls back to the rounded-BPM rate if either period is missing. Mirrors the period/partner-state
+    // reads used for phase-align below. ?syncprecision=0 = legacy rounded-BPM behaviour (A/B for Jake).
+    const _bpmRate = targetBPM / srcBPM;
+    const _mDeck = slave==="A" ? "B" : "A";
+    const _slaveBpsR  = bpm.results[slave]?.beatPeriodSec  ?? (slave==="A"?pA:pB)?.beatPeriodSec;
+    const _masterBpsR = bpm.results[_mDeck]?.beatPeriodSec ?? (_mDeck==="A"?pA:pB)?.beatPeriodSec;
+    const _usePrecision = SYNC_PRECISION && _slaveBpsR>0 && _masterBpsR>0;
+    const rate = _usePrecision ? (_slaveBpsR / _masterBpsR) : _bpmRate;
+    if (_usePrecision) console.log("[SYNC] precision rate from periods: slaveBps="+_slaveBpsR.toFixed(6)+" masterBps="+_masterBpsR.toFixed(6)+" rate="+rate.toFixed(6)+" (legacy bpmRate="+_bpmRate.toFixed(6)+")");
+    else console.log("[SYNC] rate from rounded BPM (precision off or period missing): "+rate.toFixed(6));
     engageStats.rateDelta = Math.abs(rate - 1);
     if (Math.abs(rate-1) > 0.12) {
       console.log("[SYNC] ignored, rate", rate, "outside ±12% safety window");

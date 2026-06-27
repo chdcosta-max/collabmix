@@ -32,6 +32,17 @@ in-flight. Don't re-litigate the locked ones or duplicate the in-flight ones.
   shipped to prod, **awaiting Jake B2B session confirmation**. See
   [[project_reconcile_contention]] memory.
 
+- **Sync tempo-precision fix** — sync now matches the rate from full-precision
+  `beatPeriodSec` (not rounded BPM), so two tracks both showing "128.0" but differing
+  in the decimals stay beat-matched (was an AUDIO drift, not just visual — kicks
+  separated through a long blend). Behind `?syncprecision=` (default ON, `=0` legacy).
+  Implemented, full smoke GREEN, shipped — **awaiting Jake by-ear validation** in the
+  same session as the connection fixes. VISION_5.md June 26 "SYNC TEMPO PRECISION".
+
+**HELD (separate decision, not started):**
+- **Fixed-beats-zoom** — would lock grids even for UNSYNCED/stopped different-tempo
+  tracks (true Rekordbox feel). Deferred; the sync fix solves the real-use problem.
+
 **BUILT / IN-FLIGHT:**
 - **Landing page** — built in **Claude Design** (has login / create / join build).
 - **App design unification** — making the **library + mixing view match the landing

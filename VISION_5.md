@@ -9761,3 +9761,56 @@ failed / 2 dep-skips); live deploy content-verified.
 Design-mocks → Code-builds loop. (3) Housekeeping: several stale dev-server processes
 were cleaned mid-session (one clean instance left running) — note for future sessions
 to avoid spawning duplicate `npm run dev`.
+
+## ═══ SYNC TEMPO PRECISION — FIXED + SHIPPED (awaiting Jake) — June 26, 2026 ═══
+
+**Status: FIXED, full smoke GREEN (25/0/2), shipped. Behind `?syncprecision=` (default ON;
+`=0` reverts to legacy rounded-BPM). Still needs JAKE BY-EAR validation — smoke proves the
+logic didn't regress, but only a real long-blend session confirms the audio stays beat-matched.
+Validate alongside the connection fixes in the same two-machine session.**
+
+**Confirmed it is an AUDIO bug, not just visual.** `rate` IS the deck's audio `playbackRate`
+(pitch+tempo, no time-stretch; `s.playbackRate.value=rate` ~L6573, `_setRate` ~L7778), and
+there is NO continuous tempo re-lock for local two-deck beatmatch (rate set once at engage),
+so a wrong rate is not masked — two "128.0" tracks (~128.04 / ~127.97) drifted audibly:
+~33ms flam after 1 min, ~66ms after 2, kicks separating through a long blend. The grid drift
+was its visual shadow. Fix keeps the audio locked to analyzer precision (~6 decimals).
+
+**Symptom.** Two tracks that both DISPLAY "128.0" BPM show beat grids that are aligned at
+one point in the window but DRIFT apart toward the edges — visible even when the decks are
+STOPPED. A DJ would read it as broken.
+
+**Root cause (real bug, not cosmetic).** Their true analyzed tempos differ in the decimals
+(e.g. 128.04 vs 127.97) — both round to "128.0" for display. Two independent facts combine:
+1. The **grid** is rendered from the analyzer's **full-precision `beatPeriodSec`**, and the
+   waveform zoom is a fixed-**TIME** window (`WF_WINDOWS` seconds), so each deck draws its
+   grid spacing proportional to its OWN tempo → different tempos = different on-screen
+   spacing = drift across the window even when static. (The spacing math is identical per
+   deck and correct — it faithfully renders two different tempos. NOT a precision bug in the
+   renderer.)
+2. **SYNC computes the rate from the ROUNDED display BPM** — `src/collabmix-production.jsx`
+   ~line 10419: `const rate = targetBPM / srcBPM` where both are `bpm.results[id].bpm`
+   (rounded to 0.1). So syncing two "128.0" tracks gives rate = 1.0 → NO tempo correction →
+   they keep drifting after sync, and during playback the audio itself slowly slides out of
+   beat-match. This is the actual product gap.
+
+**The fix (APPLIED, `src/collabmix-production.jsx` ~L10419).** Rate now derived from
+full-precision tempo: `rate = slaveBps / masterBps` (= masterTrueBPM/slaveTrueBPM), using
+`bpm.results[id].beatPeriodSec` with the same partner-state fallback as the phase-align reads.
+Falls back to the rounded-BPM rate if either period is missing; the ±12% safety clamp is
+unchanged. Gated by `SYNC_PRECISION` (`?syncprecision=`, default ON, `=0` legacy). Logs the
+chosen path (`[SYNC] precision rate from periods…`). Effect: sub-0.1-BPM differences get
+nudged out → audio stays beat-matched + grids lock across the whole window.
+
+**Done this session.** Implemented behind the A/B flag, full `npm run smoke` GREEN (25 passed
+/ 0 failed / 2 dep-skips — incl. e2e-sync, sync-mode, lock-stability, comp, drift). Does NOT
+touch the locked waveform aesthetic (WAVEFORM_LOCKED.md). Pending: Jake by-ear validation in
+the same two-machine session as gridcouple/progthrottle/jbtarget.
+
+**Held separately (bigger, own decision).** Fixed-BEATS zoom (lock the waveform horizontal
+scale to beats, not seconds) would make grids lock even for UNSYNCED/stopped different-tempo
+tracks (true Rekordbox feel). Deferred — the sync fix solves the real-use problem; unsynced
+different-tempo tracks showing different spacing is accurate.
+
+**How to confirm the real decimals.** Console logs per deck:
+`[BPM-PERIOD] track A : mean=0.4688xx s (128.0xx)` — compare the two `(128.0xx)` values.
