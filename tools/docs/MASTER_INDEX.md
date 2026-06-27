@@ -26,6 +26,12 @@ in-flight. Don't re-litigate the locked ones or duplicate the in-flight ones.
   paint/glow/cap/gate logic without Chad's explicit approval.** → **`tools/docs/WAVEFORM_LOCKED.md`**
   (code banner at the `WF_*` block ~L159 and above `AnimatedZoomedWF`).
 
+**JAKE TWO-MACHINE VALIDATION — plan covers TWO categories, scored SEPARATELY:**
+- **`tools/docs/JAKE_VALIDATION_PLAN.md`** — (A) LOCAL logic = sync reliability + visual
+  correctness (would misbehave on one machine too); (B) REAL-NETWORK = audio jitter/
+  dropouts/wobble (only over the wire). Today's local fixes are NOT assumed to fix the
+  audio category. A failure in one is not attributed to the other.
+
 **SHIPPED, AWAITING CONFIRMATION:**
 - **Connection / dogfood fixes** — visual-behind-audio (`?gridcouple=`), prog
   framerate throttle (`?progthrottle=`), jitter-buffer target (`?jbtarget=`) — all
