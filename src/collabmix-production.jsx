@@ -140,14 +140,16 @@ const JB_TARGET_MS = (()=>{ const v=URL_FLAGS.get("jbtarget"); if(v==null)return
 // if a period is missing; the ±12% safety clamp is unchanged. ?syncprecision=0 reverts to the
 // legacy rounded-BPM behaviour (A/B for the Jake by-ear validation session).
 const SYNC_PRECISION = URL_FLAGS.get("syncprecision") !== "0";
-// SYNC-STATE FIX (?synctempo=1, default OFF — A/B + Desktop/Jake validation). Fixes the
-// contaminated-session-tempo + master-reassignment bugs: the session tempo is captured from
-// the master's NATURAL period (not natural×stale-rate) ONCE at engage and stays sticky; at
-// engage BOTH decks are re-rated to it (master→1.0, wiping any leftover rate from a prior
-// sync); new tracks adopt the sticky tempo; the master is frozen at lock time (explicit M
-// always wins, no per-trigger recompute); a full release clears all of it. Self-cleaning:
-// every engage re-cleans the master, so contamination can't accumulate across cycles.
-const SYNC_TEMPO_FIX = URL_FLAGS.get("synctempo") === "1";
+// SYNC-STATE FIX (default ON; ?synctempo=0 reverts to legacy for A/B). Fixes the contaminated-
+// session-tempo + master-reassignment bugs: the session tempo is captured from the master's
+// NATURAL period (not natural×stale-rate) ONCE at engage and stays sticky; at engage BOTH decks
+// are re-rated to it (master→1.0, wiping any leftover rate from a prior sync); new tracks adopt
+// the sticky tempo; the master is frozen at lock time (explicit M always wins, no per-trigger
+// recompute); a full release clears all of it (clean slate — incl. the explicit master). Self-
+// cleaning: every engage re-cleans the master, so contamination can't accumulate across cycles.
+// Desktop-validated June 26 2026 (rate=1.0000 across cycles, master reassignment takes, clean
+// reset); awaiting Jake by-ear long-session + human review before "done". ?synctempo=0 = legacy.
+const SYNC_TEMPO_FIX = URL_FLAGS.get("synctempo") !== "0";
 // Browser support (dogfood session 1): Jake on EDGE was unlistenable (audio cut
 // in/out); Chrome fixed it. Warn non-Chrome users at session start. "Real" Chrome
 // = UA has Chrome but NOT Edge (Edg/) / Opera (OPR/) / Samsung Internet.
