@@ -140,6 +140,14 @@ const JB_TARGET_MS = (()=>{ const v=URL_FLAGS.get("jbtarget"); if(v==null)return
 // if a period is missing; the ±12% safety clamp is unchanged. ?syncprecision=0 reverts to the
 // legacy rounded-BPM behaviour (A/B for the Jake by-ear validation session).
 const SYNC_PRECISION = URL_FLAGS.get("syncprecision") !== "0";
+// SYNC-STATE FIX (?synctempo=1, default OFF — A/B + Desktop/Jake validation). Fixes the
+// contaminated-session-tempo + master-reassignment bugs: the session tempo is captured from
+// the master's NATURAL period (not natural×stale-rate) ONCE at engage and stays sticky; at
+// engage BOTH decks are re-rated to it (master→1.0, wiping any leftover rate from a prior
+// sync); new tracks adopt the sticky tempo; the master is frozen at lock time (explicit M
+// always wins, no per-trigger recompute); a full release clears all of it. Self-cleaning:
+// every engage re-cleans the master, so contamination can't accumulate across cycles.
+const SYNC_TEMPO_FIX = URL_FLAGS.get("synctempo") === "1";
 // Browser support (dogfood session 1): Jake on EDGE was unlistenable (audio cut
 // in/out); Chrome fixed it. Warn non-Chrome users at session start. "Real" Chrome
 // = UA has Chrome but NOT Edge (Edg/) / Opera (OPR/) / Samsung Internet.
@@ -9058,6 +9066,12 @@ export default function CollabMix({ initialPage = "landing", djName = null }) {
   // Master role is preserved (visual indicator, phase reference) but its
   // current effective BPM is held to the session tempo.
   const sessionTempoRef = useRef(null);
+  // SYNC_TEMPO_FIX state: the session tempo as the master's NATURAL beatPeriodSec (precision,
+  // rate-independent), captured ONCE at first engage and sticky until full release; and the
+  // master frozen at lock time so attemptLock stops recomputing it (kills the flip-flop /
+  // reassignment-not-taking). Both cleared on full release.
+  const sessionPeriodRef = useRef(null);
+  const lockedMasterRef = useRef(null);
   // ── Sync Phase 1 measurement plumbing ────────────────────────────────
   // Cristian's clock-offset estimator. Fed by sync_ping/sync_pong round
   // trips bounced off the partner via the WS relay. Read by the phase-
@@ -10379,6 +10393,33 @@ export default function CollabMix({ initialPage = "landing", djName = null }) {
     return effective;
   }, [bpm.results, pA, pB, rateA, rateB]);
 
+  // SYNC_TEMPO_FIX helpers. getNaturalPeriod = a deck's NATURAL beatPeriodSec (full precision,
+  // rate-INDEPENDENT — it's buffer-time, so a stale playback rate can't contaminate it).
+  const getNaturalPeriod = useCallback((deck) => {
+    return bpm.results[deck]?.beatPeriodSec ?? (deck === "A" ? pA?.beatPeriodSec : pB?.beatPeriodSec) ?? null;
+  }, [bpm.results, pA, pB]);
+  // Last session rate applied per deck — for idempotent de-churn + reset on full release.
+  const lastSessionRateRef = useRef({ A: null, B: null });
+  // rateDeckToSession: set a deck's playback rate so its EFFECTIVE tempo = the session tempo
+  // (rate = naturalPeriod / sessionPeriod). Master → 1.0 (= wipes any leftover rate). ±12%
+  // safety clamp; idempotent (skips if unchanged). Returns true if it applied a new rate.
+  const rateDeckToSession = useCallback((deck) => {
+    const np = getNaturalPeriod(deck), sp = sessionPeriodRef.current;
+    if (!np || !sp || np <= 0 || sp <= 0) return false;
+    const rate = np / sp;
+    if (!(rate > 0) || Math.abs(rate - 1) > 0.12) {
+      console.log("[SYNC] rateDeckToSession " + deck + " rate=" + rate.toFixed(4) + " outside ±12% — skip");
+      return false;
+    }
+    const prev = lastSessionRateRef.current[deck];
+    if (prev != null && Math.abs(rate - prev) < 1e-4) return false;   // de-churn
+    lastSessionRateRef.current[deck] = rate;
+    if (deck === "A") { setRateA(rate); const el = document.querySelector("[data-set-rate='A']"); if (el?._setRate) el._setRate(rate); }
+    else { setRateB(rate); const el = document.querySelector("[data-set-rate='B']"); if (el?._setRate) el._setRate(rate); }
+    console.log("[SYNC] rateDeckToSession " + deck + " → rate=" + rate.toFixed(5) + " (naturalPeriod=" + np.toFixed(5) + " sessionPeriod=" + sp.toFixed(5) + ")");
+    return true;
+  }, [getNaturalPeriod]);
+
   // BPM match + beat-phase alignment.
   // Slave = the deck the user clicked SYNC on (modified). Master = the OTHER deck.
   // syncDecks(slave, targetBPM, phaseAlign=true)
@@ -10732,12 +10773,26 @@ export default function CollabMix({ initialPage = "landing", djName = null }) {
     if (!tA && !tB) return;                            // nothing playing → stay armed
     const explicit = masterDeckRef.current;
     let master;
-    if (explicit) master = explicit;
+    if (explicit) master = explicit;                   // explicit M button ALWAYS wins (Part D)
+    else if (SYNC_TEMPO_FIX && syncLockedRef.current && (lockedMasterRef.current === "A" || lockedMasterRef.current === "B")) master = lockedMasterRef.current;  // frozen while locked — no per-trigger recompute (kills the flip-flop / stale-A reassert)
     else if (tA && tB) master = tA <= tB ? "A" : "B";  // first to play is master
     else master = tA ? "A" : "B";
     const slave = master === "A" ? "B" : "A";
     const masterBPM = master === "A" ? aBpm : bBpm;
     const wasLocked = syncLockedRef.current;
+    // SYNC_TEMPO_FIX Part A — capture the session tempo as the master's NATURAL period, ONCE,
+    // sticky until full release. Rate-independent, so a leftover rate can't contaminate it.
+    if (SYNC_TEMPO_FIX && sessionPeriodRef.current == null) {
+      const sp0 = getNaturalPeriod(master);
+      if (sp0 > 0) { sessionPeriodRef.current = sp0; console.log("[SYNC] session period locked at " + sp0.toFixed(5) + "s (" + (60 / sp0).toFixed(3) + " BPM, master=" + master + ")"); }
+    }
+    // SYNC_TEMPO_FIX Part B — re-rate the MASTER to the session tempo (→ 1.0, wiping any leftover
+    // rate from a prior sync). The slave is rated by syncDecks below (precision → master's natural,
+    // == session). Only re-rate a deck THIS client drives. Self-cleaning every engage.
+    if (SYNC_TEMPO_FIX) {
+      const masterDrivenLocally = !deckDriversRef.current?.[master] || deckDriversRef.current?.[master]?.id === syncRef.current?.djId;
+      if (masterDrivenLocally) rateDeckToSession(master);
+    }
     // Align the slave (rate + phase) — but ONLY a slave THIS client drives.
     // REGRESSION FIX (spontaneous mid-lock pause): syncDecks on a partner-driven
     // slave issues a cross-client seek_request computed from OUR mirror of that
@@ -10754,6 +10809,7 @@ export default function CollabMix({ initialPage = "landing", djName = null }) {
       console.log("[SYNC] attemptLock: slave " + slave + " is partner-driven — skipping cross-client re-seek (owner aligns locally)");
     }
     if (lastSlaveDeckRef.current !== slave) { lastSlaveDeckRef.current = slave; setLastSlaveDeck(slave); }
+    lockedMasterRef.current = master;   // Part D: freeze/track the master so it isn't recomputed while locked
     if (!explicit && masterDeckRef.current !== master) {
       masterDeckRef.current = master; setMasterDeck(master);
       sync.send({ type:"deck_update", deckId: master, field: "masterDeck", value: master });
@@ -10769,7 +10825,7 @@ export default function CollabMix({ initialPage = "landing", djName = null }) {
       console.log("[SYNC] LOCKED (mode) master=" + master + " slave=" + slave + " trigger=" + (triggerDeck || "—"));
       logEvent("sync", "mode_lock", { master, slave, trigger: triggerDeck });
     }
-  }, [syncDecks, getEffectiveMasterBpm, sync]);
+  }, [syncDecks, getEffectiveMasterBpm, sync, getNaturalPeriod, rateDeckToSession]);
   // Ref so earlier-defined callbacks (handleWS deck_update) and the Deck's
   // stale-closure dh can always reach the latest attemptLock without a dep.
   const attemptLockRef = useRef(null);
@@ -10925,19 +10981,30 @@ export default function CollabMix({ initialPage = "landing", djName = null }) {
   // effect, so the tempo stays consistent on both browsers.
   useEffect(() => {
     if (syncLocked) {
-      const slave = lastSlaveDeckRef.current;
-      const explicitMaster = masterDeckRef.current;
-      const master = explicitMaster && explicitMaster !== slave ? explicitMaster : (slave === "A" ? "B" : "A");
-      const tempo = getEffectiveMasterBpm(master);
-      if (tempo) {
-        sessionTempoRef.current = tempo;
-        console.log("[SYNC] session tempo locked at", tempo.toFixed(2), "(master=", master, ")");
+      // LEGACY capture (contaminated effective BPM). Under SYNC_TEMPO_FIX the clean session
+      // tempo is the NATURAL period captured in attemptLock (Part A) — skip this path.
+      if (!SYNC_TEMPO_FIX) {
+        const slave = lastSlaveDeckRef.current;
+        const explicitMaster = masterDeckRef.current;
+        const master = explicitMaster && explicitMaster !== slave ? explicitMaster : (slave === "A" ? "B" : "A");
+        const tempo = getEffectiveMasterBpm(master);
+        if (tempo) {
+          sessionTempoRef.current = tempo;
+          console.log("[SYNC] session tempo locked at", tempo.toFixed(2), "(master=", master, ")");
+        }
       }
     } else {
       if (sessionTempoRef.current !== null) {
         console.log("[SYNC] session tempo released (was", sessionTempoRef.current.toFixed(2), ")");
       }
       sessionTempoRef.current = null;
+      // SYNC_TEMPO_FIX Part E — full release clears ALL sticky session state for a clean slate.
+      if (SYNC_TEMPO_FIX) {
+        if (sessionPeriodRef.current !== null) console.log("[SYNC] session period released (was " + sessionPeriodRef.current.toFixed(5) + "s)");
+        sessionPeriodRef.current = null;
+        lockedMasterRef.current = null;
+        lastSessionRateRef.current = { A: null, B: null };
+      }
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [syncLocked]);
@@ -10957,7 +11024,7 @@ export default function CollabMix({ initialPage = "landing", djName = null }) {
       prevBpmBRef.current = null;
       return;
     }
-    const tempo = sessionTempoRef.current;
+    const tempo = SYNC_TEMPO_FIX ? sessionPeriodRef.current : sessionTempoRef.current;
     if (!tempo) return;
     for (const deck of ["A", "B"]) {
       const localBpm = bpm.results[deck]?.bpm;
@@ -10971,8 +11038,15 @@ export default function CollabMix({ initialPage = "landing", djName = null }) {
       }
       if (prevRef.current === naturalBpm) continue;
       prevRef.current = naturalBpm;
-      console.log(`[SYNC] track changed on deck ${deck} while locked — rate-only re-rate to session tempo ${tempo.toFixed(2)} (phase deferred to play-start)`);
-      syncDecks(deck, tempo, false);  // rate-only — keep playhead at 0; play-start hook handles phase
+      if (SYNC_TEMPO_FIX) {
+        // Part C: new track adopts the CLEAN sticky session tempo. rate-only (idempotent;
+        // phase deferred to play-start). rate = thisDeck'sNaturalPeriod / sessionPeriod.
+        console.log(`[SYNC] track changed on deck ${deck} while locked — re-rate to session period ${sessionPeriodRef.current.toFixed(5)}s (${(60/sessionPeriodRef.current).toFixed(2)} BPM)`);
+        rateDeckToSession(deck);
+      } else {
+        console.log(`[SYNC] track changed on deck ${deck} while locked — rate-only re-rate to session tempo ${tempo.toFixed(2)} (phase deferred to play-start)`);
+        syncDecks(deck, tempo, false);  // rate-only — keep playhead at 0; play-start hook handles phase
+      }
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [syncLocked, bpmAValue, bpmBValue, pA?.bpm, pB?.bpm]);
