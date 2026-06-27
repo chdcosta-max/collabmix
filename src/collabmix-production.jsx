@@ -53,6 +53,14 @@ const ONSET_GRID = URL_FLAGS.get("onsetgrid") !== "0";
 // ?beatsv2=0 kill-switch (default on). Read from the captured flags so the
 // kill-switch also survives the query-string strip.
 const BEATS_V2 = URL_FLAGS.get("beatsv2") !== "0";
+// Top-waveform GRID LINES render at the uniform snapped period (firstDownbeatSec +
+// n×beatPeriodSec) instead of the raw detected beatTimes — so two synced decks have
+// identical, uniform spacing and the grids stay PARALLEL across the whole window (no
+// per-beat raw-vs-snapped wobble). GRID-LINES ONLY — BEATS_V2 still drives seek-quantize
+// + engage off the real refined kicks. DEFAULT ON (confirmed by eye June 26 2026: parallel
+// edge-to-edge, still sits on the kicks incl. breakdown). ?griduniform=0 reverts to the
+// legacy raw-beat grid for A/B.
+const WF_GRID_UNIFORM = URL_FLAGS.get("griduniform") !== "0";
 // Library Import V2 (first-run wizard + Door 1/5 + mix detection). Default OFF —
 // gated so existing LIB-PHASE behavior is unchanged until promotion.
 const LIB_WIZARD = URL_FLAGS.get("libwizard") === "1";
@@ -5560,7 +5568,9 @@ function AnimatedZoomedWF({ bands, dur, progRef, onSeek, h=96, windowSec=8, beat
         // both — only the marker positions differ.
         const gridMarkers=[];
         const bts=beatTimesRef.current;
-        if(beatsV2Ref.current && bts && bts.length>1){
+        // ?griduniform=1 forces the uniform (snapped-period) grid below even with BEATS_V2 on —
+        // grid LINES only; seek/engage still use the refined kicks. Removes the raw-beat wobble.
+        if(!WF_GRID_UNIFORM && beatsV2Ref.current && bts && bts.length>1){
           const gridOff=gridOffsetMsRef.current/1000;   // manual fine-tune still honored
           let lo=0,hi=bts.length-1;                      // first beat >= minTime
           while(lo<hi){ const mid=(lo+hi)>>1; if(bts[mid]<minTime) lo=mid+1; else hi=mid; }
