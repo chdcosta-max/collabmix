@@ -65,6 +65,11 @@ const WF_GRID_UNIFORM = URL_FLAGS.get("griduniform") !== "0";
 // so the view doesn't shift by alignSec on mouseup. Fixes the cosmetic grid-jump-on-release
 // (the seek position was already exact). Eye-confirmed June 26 2026. ?dragfix=0 reverts.
 const WF_DRAG_ALIGN_FIX = URL_FLAGS.get("dragfix") !== "0";
+// Waveform drag = Rekordbox PLATTER model (grab-the-waveform): drag LEFT pulls the waveform
+// left so the playhead moves FORWARD into the track; drag RIGHT = backward. (Was the inverse
+// scrub-the-playhead model.) Applied at the drag source so the local seek AND the partner
+// broadcast both use the inverted position. Default ON; ?draginvert=0 reverts to the old model.
+const WF_DRAG_INVERT = URL_FLAGS.get("draginvert") !== "0";
 // NOTE: snap-to-uniform seek-quantize (?gridsnap) was prototyped and PULLED — it re-snapped
 // REMOTE seeks too, creating a cross-client broadcast feedback loop that walked the synced
 // position tens of seconds off. To revisit: gate the snap to LOCAL user seeks (!fromRemote)
@@ -5808,7 +5813,10 @@ function AnimatedZoomedWF({ bands, dur, progRef, onSeek, h=96, windowSec=8, beat
       // fraction of the whole track. The * rate keeps drag distance
       // consistent in buffer-time terms now that windowSec is wall-time.
       const r=rateRef.current||1;
-      const newProg=progAtDown+(deltaPx/widthAtDown)*(windowSec*r/durRef.current);
+      // Rekordbox platter model (?draginvert): drag left → forward. Inverting deltaPx here means
+      // dragProgRef (→ the release seek AND its partner broadcast) carry the inverted position.
+      const dragSign=WF_DRAG_INVERT?-1:1;
+      const newProg=progAtDown+dragSign*(deltaPx/widthAtDown)*(windowSec*r/durRef.current);
       dragProgRef.current=Math.max(0,Math.min(1,newProg));
     };
     const onUp=()=>{
@@ -5830,7 +5838,7 @@ function AnimatedZoomedWF({ bands, dur, progRef, onSeek, h=96, windowSec=8, beat
   },[windowSec,progRef]);
   // Single crisp canvas inside a #000000 container — no glow/blur layer.
   return (
-    <div style={{position:'relative',width:'100%',height:h,background:'#000000',cursor:'ew-resize',display:'block',userSelect:'none'}}>
+    <div style={{position:'relative',width:'100%',height:h,background:'#000000',cursor:'default',display:'block',userSelect:'none'}}>
       <canvas ref={ref} style={{position:'absolute',top:0,left:0,width:'100%',height:'100%'}}/>
     </div>
   );

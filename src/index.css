@@ -4,6 +4,25 @@
   box-sizing: border-box;
 }
 
+/* Native pro-tool feel (Rekordbox convention): the cursor NEVER changes anywhere —
+   a normal arrow over the waveforms, buttons, knobs and faders, in every state
+   (no pointer / crosshair / resize-arrows / grab-hand — ever, including mid-drag).
+   One global override beats editing ~80 inline cursor:* declarations and catches the
+   dynamic/conditional ones too. Text inputs are excluded so editable fields keep the
+   text caret (still read as editable, matching native apps). */
+*:not(input):not(textarea) {
+  cursor: default !important;
+}
+/* The rule above EXCLUDES inputs so text fields keep their caret — but that also skipped
+   the NON-text inputs (the <input type="range"> mixer faders, crossfader, volume sliders,
+   plus checkboxes/radios/selects), which aren't text-entry. Default the cursor on those too
+   so the mixer panel stays a normal arrow like everywhere else. (Only true text-entry inputs
+   keep the caret.) */
+input[type="range"], input[type="checkbox"], input[type="radio"],
+input[type="button"], input[type="submit"], input[type="reset"], select {
+  cursor: default !important;
+}
+
 body {
   /* Unified on Inter (was an Apple-system stack that fell back to Arial/Helvetica
      off-Mac for any un-styled text — one of three font stacks the audit flagged). */
