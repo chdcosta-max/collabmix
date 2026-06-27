@@ -4017,9 +4017,10 @@ function useRTC({ engineRef, send, onIceRecover }) {
   useEffect(()=>{
     if(state!=="connected"){ opusLoggedRef.current=false; return; }
     let stop=false, timer=null;
-    const snap=async(p)=>{ const st=await p.getStats(); const c={}; let i=null,o=null;
-      st.forEach(r=>{ if(r.type==="codec")c[r.id]=r; if(r.type==="inbound-rtp"&&r.kind==="audio")i=r; if(r.type==="outbound-rtp"&&r.kind==="audio")o=r; });
-      return { c, i, o, ts:Date.now() }; };
+    const snap=async(p)=>{ const st=await p.getStats(); const c={}, cand={}; const pairs=[]; let i=null,o=null,transport=null;
+      st.forEach(r=>{ if(r.type==="codec")c[r.id]=r; if(r.type==="inbound-rtp"&&r.kind==="audio")i=r; if(r.type==="outbound-rtp"&&r.kind==="audio")o=r;
+        if(r.type==="candidate-pair")pairs.push(r); if(r.type==="local-candidate"||r.type==="remote-candidate")cand[r.id]=r; if(r.type==="transport")transport=r; });
+      return { c, i, o, cand, pairs, transport, ts:Date.now() }; };
     const run=async()=>{
       const p=pc.current; if(!p||stop||opusLoggedRef.current) return;
       try{
@@ -4033,6 +4034,20 @@ function useRTC({ engineRef, send, onIceRecover }) {
         const outK = (a.o&&b.o&&dt>0) ? ((b.o.bytesSent-a.o.bytesSent)*8/1000/dt) : null;
         console.log('[OPUS-SDP] RECV fmtp="'+(ic?.sdpFmtpLine??"?")+'" channels='+(ic?.channels??"?")+' bitrateKbps='+inK.toFixed(0));
         console.log('[OPUS-SDP] SEND fmtp="'+(oc?.sdpFmtpLine??"?")+'" channels='+(oc?.channels??"?")+' bitrateKbps='+(outK!=null?outK.toFixed(0):"?"));
+        // [ICE-PATH] (Lever B): relay vs direct. The selected candidate pair's
+        // candidateType reveals the path — "relay" = traffic going through a TURN
+        // server (a prime suspect for added loss/latency); host/srflx/prflx = direct
+        // P2P. Logged once per connection alongside the codec proof.
+        try{
+          const selId=b.transport?.selectedCandidatePairId;
+          const pair=(selId&&b.pairs.find(p=>p.id===selId))||b.pairs.find(p=>(p.nominated||p.selected)&&p.state==="succeeded")||b.pairs.find(p=>p.state==="succeeded");
+          if(pair){
+            const lc=b.cand[pair.localCandidateId], rc=b.cand[pair.remoteCandidateId];
+            const lt=lc?.candidateType??"?", rt=rc?.candidateType??"?";
+            const relayed=lt==="relay"||rt==="relay";
+            console.log('[ICE-PATH] local='+lt+'/'+(lc?.protocol??'?')+(lc?.relayProtocol?'('+lc.relayProtocol+')':'')+' remote='+rt+'/'+(rc?.protocol??'?')+' rttMs='+(pair.currentRoundTripTime!=null?Math.round(pair.currentRoundTripTime*1000):'?')+' → '+(relayed?'RELAYED via TURN':'DIRECT P2P'));
+          } else { console.log('[ICE-PATH] no succeeded candidate pair in stats yet'); }
+        }catch{ /* stats shape varies by browser */ }
         opusLoggedRef.current=true;
       }catch{ /* getStats can throw mid-teardown */ }
     };
