@@ -9820,3 +9820,57 @@ different-tempo tracks showing different spacing is accurate.
 ### Social & Matchmaking — Core Foundation
 Before designing ANY social, matchmaking, community, profile, discovery, or taste-comparison feature, read **tools/docs/SOCIAL_DESIGN_PHILOSOPHY.md**.
 Core principle: **Music taste is identity. Pair people around SHARED taste (connection/belonging); never across taste differences** — incompatible-taste matching is harmful on three stacking levels: musical (the mix doesn't work), experiential (bad first experiences), and social (triggers "my taste is better" defensiveness and conflict). Matchmaking is *social compatibility*, not just a preference filter. Avoid quantifying/ranking taste (invites comparison/judgment — why the "92% match" score and "in tune" meter were cut); convey match strength through concrete shared evidence instead. This drives feature decisions across the whole social layer.
+
+## ═══ SESSION END — June 26–27, 2026 — WAVEFORM/SYNC/CURSOR POLISH + SOCIAL FOUNDATION ═══
+
+A long eye-by-eye + empirical session. Everything below is on `master` and live unless noted.
+
+### SHIPPED LIVE (production, content-verified)
+- **Locked waveform aesthetic** (`94cacaf`) — three-band Rekordbox-matched look: vivid
+  saturation (min channel→0 so the glow can't wash blue to sky-blue), tight additive bloom,
+  full-bodied dynamic amber (capped under blue, opens in breakdowns), solid opaque kicks
+  gated by bass-coincidence. FROZEN — see `tools/docs/WAVEFORM_LOCKED.md`. Do not regress.
+- **Uniform beat grid** (`943e36a`, default ON, `?griduniform=0`) — grid lines at the snapped
+  period, not raw beats → two synced decks' grids stay parallel edge-to-edge (fixed the
+  "looks broken" spread).
+- **Sync tempo precision** (`c9a1c61`, default ON, `?syncprecision=0`) — rate from full-
+  precision `beatPeriodSec`, not rounded BPM (was an AUDIO drift over long blends).
+- **Sync-state fix** (`87ed128`→`bf17067`, default ON, `?synctempo=0`) — natural-BPM sticky
+  session tempo + master freeze + clean reset + de-churn. Kills the contaminated-session-
+  tempo + master-reassignment bugs (rate=1.0165→123 stuck; master B not taking). **Desktop-
+  validated** (rate=1.0000 across 4 cycles, B-master takes, clean reset). Self-cleaning every
+  engage. Still needs Jake by-ear + human review before "done".
+- **Grid drag-jump fix** (`9662409`, default ON, `?dragfix=0`) — apply the grid-align offset
+  during the drag too → no visual jump on release (position was already exact).
+- **Cursor sweep + drag-direction** (`9d3dabd`) — normal arrow EVERYWHERE (waveforms, buttons,
+  mixer faders/crossfader/sliders; text caret kept in search/chat); waveform drag = Rekordbox
+  PLATTER model (drag left → forward), local+partner consistent, `?draginvert=0` reverts.
+- All gated by `=0` kill-switches; full `npm run smoke` GREEN each ship (25/0/2, dep-skips).
+
+### FOUNDATIONS (read-before-build, same tier as DESIGN_PHILOSOPHY)
+- **`tools/docs/WAVEFORM_LOCKED.md`** — every locked WF value + why + tried/rejected.
+- **`tools/docs/JAKE_VALIDATION_PLAN.md`** — TWO categories scored SEPARATELY (see NEXT).
+- **`tools/docs/SOCIAL_DESIGN_PHILOSOPHY.md`** (`4002d58`) — THE principle for all future
+  social/matchmaking/community/profile/discovery/taste-comparison design: music taste is
+  identity → pair around SHARED taste (connection), never across differences (musical +
+  experiential + social/identity harm). Never quantify taste (the "92% match" score + "in-
+  tune" meter were cut). Wired into CLAUDE.md (line-1 flag), MASTER_INDEX (🧭 Core Design
+  Principles section), and this doc — a fresh session hits it 3× before any social work.
+
+### HELD / PENDING
+- **gridsnap (snap-to-uniform seek-quantize)** — PULLED before ship; the danger is the
+  PARTNER-SYNC feedback loop (it re-snapped remote seeks → walked the synced position tens of
+  sec off). When revisited: gate to LOCAL seeks (`!fromRemote`) + match the rendered grid
+  (note `beatPhaseFrac` is a beat-INDEX, not 0..1). Memory: `project_gridsnap_held`.
+- **"Match with anyone"** — UI cut done in Claude Design; matchmaking is taste-only now. (Not
+  a repo change — the landing lives in Design until the app-unification project.)
+
+### NEXT MILESTONE — Jake two-machine dogfood (UNBLOCKED)
+Per `JAKE_VALIDATION_PLAN.md`, validate the two categories SEPARATELY:
+- **Category A (LOCAL logic = sync reliability + visuals):** sync precision + uniform grid +
+  sync-state — does sync stay reliable over a long multi-track session (no 4th-track failure,
+  grids parallel, tempo locks, master reassignment takes)?
+- **Category B (REAL-NETWORK = audio):** connection fixes (gridcouple/progthrottle/jbtarget) —
+  is partner audio clean over the wire? Ceiling = Opus FEC (not built) for real packet loss.
+A failure in one is NOT attributed to the other; today's local fixes are NOT assumed to fix
+the audio category. THEN: human-engineer review of the core sync/audio before launch.
