@@ -14,6 +14,29 @@ DJs, two cities, one mix. Founder **Chad** is non-developer (explain in plain En
 **Claude Code** (this tool) implements, tests, and deploys → **Claude Desktop** (Chrome
 extension) does visual verification of UI/waveform work. Protocols live in `CLAUDE.md`.
 
+## 🔒 Locked Foundations — what's SETTLED vs OPEN (orient before proposing)
+
+Read this before proposing changes — some things are deliberately frozen, some are
+in-flight. Don't re-litigate the locked ones or duplicate the in-flight ones.
+
+**SETTLED / LOCKED:**
+- **Waveform aesthetic = LOCKED** (top zoomed waveform: colours, glow, amber
+  height/cap, breakdown dynamics, kick gating, opacity). Tuned eye-by-eye against
+  real Rekordbox, June 26 2026. **Do not change `WF_*` defaults/presets/band-RGB or
+  paint/glow/cap/gate logic without Chad's explicit approval.** → **`tools/docs/WAVEFORM_LOCKED.md`**
+  (code banner at the `WF_*` block ~L159 and above `AnimatedZoomedWF`).
+
+**SHIPPED, AWAITING CONFIRMATION:**
+- **Connection / dogfood fixes** — visual-behind-audio (`?gridcouple=`), prog
+  framerate throttle (`?progthrottle=`), jitter-buffer target (`?jbtarget=`) — all
+  shipped to prod, **awaiting Jake B2B session confirmation**. See
+  [[project_reconcile_contention]] memory.
+
+**BUILT / IN-FLIGHT:**
+- **Landing page** — built in **Claude Design** (has login / create / join build).
+- **App design unification** — making the **library + mixing view match the landing
+  page** is the **PLANNED NEXT project**, via the Design-mocks → Code-builds loop.
+
 ## Where the LATEST state lives (check these first for "what's going on now")
 1. **`VISION_5.md`** — read the **LAST 2–3 "Session end" sections** (most recent state;
    append-only canonical log).

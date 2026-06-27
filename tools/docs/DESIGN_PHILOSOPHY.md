@@ -291,6 +291,15 @@ shipped:
 ### Waveforms
 Multi-band frequency-colored — refined, slightly softer than Rekordbox. Subtle glow under playing portion. Phrase markers clean and unobtrusive.
 
+> **⛔ TOP ZOOMED WAVEFORM = LOCKED (June 26, 2026).** The three-band
+> (blue/purple lows · amber mids · cream kicks) look — saturation, glow, amber
+> height/cap, breakdown dynamics, kick gating, opacity — was tuned eye-by-eye
+> against real Rekordbox and is FROZEN. Do not change `WF_*` defaults, presets,
+> band RGB, or paint/glow/cap/gate logic without Chad's explicit approval.
+> Full value list + rationale + tried-and-rejected: **`tools/docs/WAVEFORM_LOCKED.md`**.
+> (This intentionally OVERRIDES the older "no warm waveforms" rule for the
+> spectral amber band.)
+
 ### Sync button
 The most important button. When engaged, should feel dramatic — subtle pulse, glow, communicate "locked together." This is the moment the magic happens.
 

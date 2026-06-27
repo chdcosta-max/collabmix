@@ -62,6 +62,10 @@ const LIB_WIZARD = URL_FLAGS.get("libwizard") === "1";
 // the mirror misbehaves because the DRAW is starved (main-thread budget) vs the
 // interp being wrong vs packets absent. Off by default — pure logging.
 const MIRROR_DIAG = URL_FLAGS.get("mirrordiag") === "1";
+// ?wfmiddiag=1 — THROWAWAY: measures whether the top-waveform MID band actually varies
+// beat-to-beat (raw signal) or is being flattened by the render. Logs per-beat peak+mean
+// over 16 consecutive beats, once per track. Delete after the amber signal fix lands.
+const WF_MID_DIAG = URL_FLAGS.get("wfmiddiag") === "1";
 // ?smoothdiag=1 — "why isn't the scroll glass?" instrumentation. Per deck, once
 // a second, logs over the last second: scroll-delta stats (mean / stddev / max
 // px the playhead moved per frame) to quantify motion smoothness; zeroFrames
@@ -152,6 +156,24 @@ const WF_PULSE = (() => {
 // not a sustained bell). Gamma crushes the tail to a point; gains scale amber vs
 // the (genuinely sustained) teal bass body. Defaults lean TRANSIENT + blue-body-
 // dominant. Attack/release are independent (asymmetric follower).
+// ╔══════════════════════════════════════════════════════════════════════════════╗
+// ║  TOP ZOOMED WAVEFORM — AESTHETIC LOCKED (June 26 2026). DO NOT REGRESS.        ║
+// ║                                                                                ║
+// ║  Every default below (and in the depth/glow presets ~L280-335, the band RGB    ║
+// ║  ~L4797, and the AnimatedZoomedWF paint block ~L5440-5495) was tuned over an    ║
+// ║  EXTENSIVE eye-by-eye session against the real Rekordbox waveform. The values   ║
+// ║  are interdependent — e.g. saturation is pinned HIGH on purpose so the min RGB  ║
+// ║  channel hits 0 and the additive glow can't wash blue to sky-blue; cream is     ║
+// ║  fully OPAQUE so kicks read solid; the kick cream gates by bass-coincidence so   ║
+// ║  kicks (not hi-hats) are the markers. Change one and you can silently undo       ║
+// ║  another.                                                                        ║
+// ║                                                                                  ║
+// ║  ⛔ Do NOT change any WF_* default, preset, band RGB, or the paint/glow/cap      ║
+// ║     logic WITHOUT Chad's explicit approval. The URL knobs (?wfSat=, ?wfglow=,    ║
+// ║     ?wfMidScale=, …) remain for A/B tuning ONLY — they must not change defaults. ║
+// ║  📖 Full rationale + every value + what was TRIED & REJECTED:                    ║
+// ║     tools/docs/WAVEFORM_LOCKED.md  (and DESIGN_PHILOSOPHY.md → Waveforms).        ║
+// ╚══════════════════════════════════════════════════════════════════════════════╝
 const _urlNum = (k, d) => { const v = URL_FLAGS.get(k); const n = (v == null) ? NaN : parseFloat(v); return isFinite(n) ? n : d; };
 const WF_AMBER_ATTACK  = _urlNum("wfAmberAttack", 0);    // ms — 0 = vertical left wall (clamped to a 0.1ms floor, sub-column at any zoom; edge then = colB's own ~1ms rise)
 const WF_AMBER_RELEASE = _urlNum("wfAmberRelease", 110); // ms — smaller = transient/decays between kicks; larger = sustained bell
@@ -243,7 +265,9 @@ const WF_BLUE_SCALE  = _urlNum("wfBlueScale", 2.0);   // BLUE size — the domin
 const WF_BLUE_PEAK   = _urlNum("wfBluePeak", 0.22);   // peak position — small = peaks EARLY (steep rise right off the kick)
 const WF_BLUE_FALL   = _urlNum("wfBlueFall", 1.0);    // fall-tail bias on the smoothstep decline; 1 = pure smooth taper, >1 = drops faster, <1 = longer tail
 const WF_BLUE_CHAR   = _urlNum("wfBlueChar", 0.3);    // organic character: 0 = pure smooth arc (sterile), 1 = full per-column energy (lumpy). ~0.3 = subtle natural variation.
-const WF_MID_SCALE   = _urlNum("wfMidScale",  1.2);   // ORANGE mids height — visible accents riding the arc (higher = more orange)
+const WF_MID_SCALE   = _urlNum("wfMidScale",  0.95);  // AMBER height — FULL-BODIED co-equal band (Rekordbox), tall enough to ride just under blue; the cap keeps it below blue. Range ~0.3–1.2.
+const WF_MID_GAMMA   = _urlNum("wfMidGamma",  1.35);  // AMBER body contrast — its OWN dynamic shape from mid energy (rises/falls); too high = crushed to a sliver, too low = flat. Range ~0.8–2.0.
+const WF_MID_SMOOTH  = _urlNum("wfmidsmooth",  14);   // ms — light smoothing on the amber. LOWER reveals melodic rise/fall (avoid over-averaging sustained mids into a flat line); higher = cleaner/flatter. Range ~0–80.
 const WF_BLUE_RISE   = _urlNum("wfBlueRise", 0.6);    // BLUE rise softness — exponent on the leading-edge smoothstep. 1.0 = current (sharper point); LOWER = rounder dome / more gradual swell. Useful range 0.3–1.0.
 const WF_BLUE_SWELL  = _urlNum("wfBlueSwell", 1.0);   // retired (symmetric sin arc) — left defined/unused
 // Retired — superseded models. Left defined/unused to avoid touching unrelated refs.
@@ -251,6 +275,83 @@ const WF_BLUE_SWELL  = _urlNum("wfBlueSwell", 1.0);   // retired (symmetric sin 
 const WF_BODY_GAIN   = _urlNum("wfBodyGain",  0.95);
 const WF_SPINE_GAIN  = _urlNum("wfSpineGain", 0.35);
 const WF_SPINE_GAMMA = _urlNum("wfSpineGamma",0.8);
+
+// ── STEP 1 — DEPTH MACHINERY (hybrid top waveform only). Direction-agnostic: builds
+// blend/translucency/gradient/amber-variation/cap so a palette direction can drop in
+// later. ?wfflat=1 forces the OLD flat opaque look for a clean A/B baseline. All dials
+// below are live URL knobs so the look is judged by eye on the user's machine.
+const WF_FLAT        = URL_FLAGS.get("wfflat") === "1";  // A/B master: old flat opaque look (no blend/alpha/gradient/cap, abs-max amber)
+// Amber HEIGHT-VARIATION: normalize amber height to a high PERCENTILE of mid energy
+// (not the per-track absolute max). Abs-max → one loud transient crushes the scale →
+// amber reads as a flat ribbon. p95 lets quiet/loud sections spread across the lane;
+// the loudest ~5% clip the top. wfMidPct=1.0 reproduces the legacy abs-max ribbon.
+const WF_MID_PCT     = WF_FLAT ? 1.0 : _urlNum("wfMidPct", 1.0);   // 1.0 = abs-max reference → loud mid sections ride BELOW the ceiling and keep varying (no flat-tube clip). <1 = more prominent but loud sections saturate flat.
+// CAP AMBER UNDER BLUE: amber lives WITHIN the blue lows envelope, never taller. Soft
+// cap with a floor so inter-beat GAPS (blue≈0) keep the connective amber floor.
+const WF_AMBER_CAP        = WF_FLAT ? 0 : _urlNum("wfcap", 1);        // 0 = off
+const WF_AMBER_CAP_RATIO  = _urlNum("wfCapRatio", 0.68);            // amber ≤ blue*ratio at a KICK — lower = blue punches further above amber as a solid shape (Rekordbox kicks). Only bites where blue is strong; breakdowns open via wfAmberOpen, so this doesn't touch the melodic amber there.
+const WF_AMBER_OPEN       = _urlNum("wfAmberOpen", 0.45);          // blue level (frac of lane) treated as a FULL kick → cap fully closed. BELOW it the cap opens proportionally so amber shows its melodic shape over a faint breakdown bass (not clamped flat). Lower = opens more readily.
+const WF_AMBER_CAP_FLOOR  = _urlNum("wfCapFloor", 0.16);            // ...and in the gaps (blue≈0) amber keeps SOME body, but low enough that the energy variation rides ABOVE it (not a filled tube)
+// DEPTH PRESET — ONE knob (?wfdepth=0..3) bundles blend + saturation + value + alpha + tip
+// so the look is judged as whole "deeper, less pale" options, not a 12-dial hand-tune.
+// The paleness fix: leave the additive/screen direction (which washes toward white) and keep
+// colours DEEP — source-over so overlaps MIX their hue instead of brightening, plus a real
+// "deepen" pass (saturation up, value down) on every band, plus a multiplicative SAME-HUE tip
+// (vivid, not white). Direction-agnostic: when Design lands hues, the deepen pass enriches them.
+//   0 = pale Step-1 reference (screen + white tip-lift)  ·  1 = Deep  ·  2 = Deeper (DEFAULT)  ·  3 = Deepest
+const WF_DEPTH = WF_FLAT ? -1 : (_urlNum("wfdepth", 2)|0);
+//                blend          sat   val   tipMul blueA creamA tipWhite(px; 0 = multiplicative same-hue)
+// SATURATION cranked HIGH so colours hit vivid/electric AND the min channel pins to 0 — which keeps
+// the additive glow IN-HUE (it can't wash to sky-blue/pastel when one channel is already 0). val kept
+// high enough to glow (not dark). This is the deep-AND-vivid-AND-glowing balance, not pastel, not dark.
+const _WF_DPRESET = ({
+  "0": ["screen",      1.00, 1.00, 1.00, 0.85, 0.92, 45],
+  "1": ["source-over", 1.60, 0.96, 0.78, 1.00, 1.00,  0],
+  "2": ["source-over", 1.90, 0.92, 0.72, 1.00, 1.00,  0],
+  "3": ["source-over", 2.20, 0.88, 0.66, 1.00, 1.00,  0],
+})[String(WF_DEPTH)] || ["source-over", 1.90, 0.92, 0.72, 1.00, 1.00, 0];
+const WF_BLEND       = WF_FLAT ? "source-over" : _urlStr("wfblend", _WF_DPRESET[0]);  // screen|lighter|source-over
+const WF_SAT         = WF_FLAT ? 1 : _urlNum("wfSat",  _WF_DPRESET[1]);   // >1 = more saturated (push channels off luminance)
+const WF_VAL         = WF_FLAT ? 1 : _urlNum("wfVal",  _WF_DPRESET[2]);   // <1 = deeper/darker body
+const WF_TIP_MUL     = _urlNum("wfTipMul", _WF_DPRESET[3]);              // amber/blue peak-tip multiplier. <1 = DARKEN peaks (recess them so the between-beat highlights sit back and feed a dimmer glow); 1 = flat; >1 = bright tips. SAME-HUE (no wash to white).
+const WF_CREAM_TIP   = _urlNum("wfCreamTip", 1.15);                      // cream/KICK tip multiplier — kept >1 so the kick keeps a bright tip and stays the dominant marker while amber/blue peaks recede
+const WF_BLUE_ALPHA  = WF_FLAT ? 1 : _urlNum("wfBlueAlpha",  _WF_DPRESET[4]);
+const WF_CREAM_ALPHA = WF_FLAT ? 1 : _urlNum("wfCreamAlpha", _WF_DPRESET[5]);
+const WF_TIP_WHITE   = _urlNum("wfTipLift", _WF_DPRESET[6]);             // >0 = additive WHITE lift (pale, preset 0 only); 0 = same-hue
+const WF_GRAD        = WF_FLAT ? 0 : _urlNum("wfgrad", 1);              // 0 = flat fill (no in-bar gradient)
+// KICK SIZE (Step 3 pulled forward per feedback): trim the cream kick-needle height only.
+// Structure/attack/onset and the blue body are untouched — this scales Hk magnitude alone.
+const WF_KICK_SCALE  = WF_FLAT ? 1 : _urlNum("wfKickScale", 0.86);     // ~0.85–0.87 = smaller kicks (1.0 = original)
+// KICK-vs-HIHAT cream hierarchy: the cream layer is the HIGHS (kick transient + hi-hats + claps).
+// A KICK = highs AND lows at the same instant; a hi-hat/clap = highs with no low. Subdue the cream
+// where there's no coincident low-end so the KICK stands out as the clear beat marker (Rekordbox).
+const WF_KICK_HI_FLOOR = WF_FLAT ? 1 : _urlNum("wfKickHi", 0.28);      // cream height for highs WITHOUT lows, as a fraction of full. Lower = hi-hats/claps more subdued, kicks more dominant. 1 = uniform (off).
+const WF_KICK_LOW_REF  = _urlNum("wfKickLowRef", 0.5);                 // bass energy (frac of track max) that counts as a FULL kick → cream full
+const WF_CREAM_DBG     = URL_FLAGS.get("wfCreamDbg") === "1";          // diagnostic: paint the cream layer bright MAGENTA so its true extent/position is unmistakable
+// ── GLOW / BLOOM + INTERWEAVE (luminosity pass). The deep colours alone read flat; Design's
+// premium look adds LIGHT blooming around the bars against black. Mechanism: render the bands
+// once to an offscreen canvas, then composite to the visible canvas as (a) an ADDITIVE BLURRED
+// halo UNDER (light radiates outward) + (b) the DEEP CRISP core OVER (stays saturated, no wash).
+// A prior glow attempt was removed for washing out + bridging kick-gaps into a tube (see the
+// note at AnimatedZoomedWF top) — so the bloom radius stays TIGHT and rides under a sharp core.
+// ?wfglow=0 off (current look) · 1 subtle · 2 Design-bloom (DEFAULT) · 3 heavy
+const WF_GLOW_PRESET = WF_FLAT ? 0 : (_urlNum("wfglow", 2)|0);
+//                   blurPx, alpha, blur2Px(wide soft halo — DEFAULT OFF; it fogs/smears edges), alpha2
+// TIGHT bloom only: a small radius keeps each bar's edge crisp while still glowing. The wide pass
+// is the fog/haze (and the gap-bridging tube) — left as an opt-in knob but OFF in every preset.
+const _WF_GPRESET = ({
+  "0": [0,    0.00,  0,    0.00],
+  "1": [4,    0.42,  0,    0.00],
+  "2": [5,    0.60,  0,    0.00],
+  "3": [7,    0.82,  0,    0.00],
+})[String(WF_GLOW_PRESET)] || [5, 0.60, 0, 0.00];
+const WF_GLOW_PX   = _urlNum("wfGlowPx",  _WF_GPRESET[0]);   // tight bloom radius (deck px)
+const WF_GLOW_A    = _urlNum("wfGlowA",   _WF_GPRESET[1]);   // tight bloom intensity
+const WF_GLOW_PX2  = _urlNum("wfGlowPx2", _WF_GPRESET[2]);   // optional wide soft halo (0 = none)
+const WF_GLOW_A2   = _urlNum("wfGlowA2",  _WF_GPRESET[3]);
+// INTERWEAVE: blue is the body; amber is drawn TRANSLUCENT OVER it (not strictly behind) so they
+// blend where they overlap — the Rekordbox interwoven mix. wfAmberOver = amber alpha on the blue.
+const WF_AMBER_OVER = WF_FLAT ? 1 : _urlNum("wfAmberOver", 1.0);   // OPAQUE — no deck base bleeds through, so amber is the SAME rich amber on both decks (blue base's green channel was washing it yellow). Capped under blue so blue still pokes above.
 
 // ── Server Configuration ─────────────────────────────────────
 // After deploying to Railway, replace this URL with your Railway server URL.
@@ -4697,6 +4798,10 @@ function buildSilhouettePath(heights,center,physW,maxH){
 }
 
 
+// ⛔ AESTHETIC LOCKED (June 26 2026) — see the banner at the WF_* constants block (~L159)
+//    and tools/docs/WAVEFORM_LOCKED.md. The paint/glow/cap/gate logic below was tuned
+//    eye-by-eye to match Rekordbox. Do NOT alter colour, glow, amber cap, or kick gating
+//    without Chad's explicit approval. Functional changes (geometry/perf) are fine.
 function AnimatedZoomedWF({ bands, dur, progRef, onSeek, h=96, windowSec=8, beatPhaseFrac=null, beatPeriodSec=null, gridOffsetMs=0, barOneOffsetSec=0, deckColor="#FFFFFF", rate=1, beatTimes=null, beatsV2=false, desmear=false, isDriver=true, deckId=null, gridAlignSecRef=null, monitorHostRef=null }) {
   // Glow layer REMOVED: the blurred lower-canvas duplicate washed the waveform
   // out and bridged the gaps between kicks into a tube. The top waveform now
@@ -4724,6 +4829,7 @@ function AnimatedZoomedWF({ bands, dur, progRef, onSeek, h=96, windowSec=8, beat
   const ref=useRef(null);       // upper canvas — crisp draws + drag target
   const raf=useRef(null);
   const colBufRef=useRef(null); // {bv, mv, hv, heights: Float32Array, len} — per-column scratch
+  const glowRef=useRef(null);   // offscreen canvas — bands rendered once, composited as additive bloom + deep crisp core
   const sizeRef=useRef({physW:0,physH:0,dirty:true});
   const durRef=useRef(dur);
   const seekRef=useRef(onSeek);
@@ -4731,6 +4837,7 @@ function AnimatedZoomedWF({ bands, dur, progRef, onSeek, h=96, windowSec=8, beat
   // so without this the draw loop closure would hold a stale (initial) bands value
   // and never pick up new arrays when a track finishes analyzing.
   const bandsRef=useRef(bands);
+  const midDiagRef=useRef(null);   // [WF-MIDDIAG] once-per-track guard (throwaway)
   // While the user is drag-scrubbing the waveform, the draw loop reads
   // dragProgRef.current INSTEAD of progRef.current. This decouples the
   // displayed playhead from the audio position during a drag — the audio
@@ -4926,10 +5033,12 @@ function AnimatedZoomedWF({ bands, dur, progRef, onSeek, h=96, windowSec=8, beat
             hEnv:new Float32Array(physW+64),   // outer envelope (max) — halo source
             bandMid:new Float32Array(physW+64),// raw MID band energy per column (hybrid/column colour)
             onset:new Float32Array(physW+64),  // low-mid ONSET per column (hybrid silhouette driver)
+            midSm:new Float32Array(physW+64),  // smoothed per-column mid (continuous amber body — wfmidsmooth)
+            midTmp:new Float32Array(physW+64), // ping-pong scratch for the 3-pass amber blur
             len:physW+64,
           };
         }
-        const {bv:colB,mv:colM,hv:colH,hLow,hMid,hHigh,hEnv,bandMid:colMid,onset:colOnset}=colBufRef.current;
+        const {bv:colB,mv:colM,hv:colH,hLow,hMid,hHigh,hEnv,bandMid:colMid,onset:colOnset,midSm:colMidSm,midTmp:colMidTmp}=colBufRef.current;
 
         // ── Pass 1: per-column band values. Source buckets hold per-band RMS
         // (computed in Deck.load — smooth, not peak-hold, so the body reads as
@@ -5021,9 +5130,47 @@ function AnimatedZoomedWF({ bands, dur, progRef, onSeek, h=96, windowSec=8, beat
             const on=e>ep?e-ep:0; if(on>mon)mon=on;          // per-track max ONSET (for amber norm)
             const cb=WF_TOP_BASS_W*bArr[i]+WF_TOP_MID_W*mArr[i]+WF_TOP_HIGH_W*hArr[i]; if(cb>mcomb)mcomb=cb; // per-track max of TOP HEIGHT blend
           }
-          envMaxRef.current={bands,mb:mb>1e-4?mb:1,mm:mon>1e-4?mon:1,mh:mh>1e-4?mh:1,mmid:mmid>1e-4?mmid:1,mcomb:mcomb>1e-4?mcomb:1};
+          // p-th percentile of the mid band → amber HEIGHT-VARIATION normalization (separate
+          // from mmid so column-mode colour weighting + WF-MIDDIAG keep the abs-max). Sorted
+          // copy, once per track. wfMidPct=1.0 → top index → equals the abs-max (legacy ribbon).
+          let mmidp=mmid;
+          { const cp=Float32Array.from(mArr); cp.sort(); const v=cp[Math.min(srcLen-1,Math.floor(srcLen*WF_MID_PCT))]; if(v>1e-4) mmidp=v; }
+          envMaxRef.current={bands,mb:mb>1e-4?mb:1,mm:mon>1e-4?mon:1,mh:mh>1e-4?mh:1,mmid:mmid>1e-4?mmid:1,mmidp:mmidp>1e-4?mmidp:1,mcomb:mcomb>1e-4?mcomb:1};
         }
         const {mb:maxB,mm:maxM,mh:maxH2,mmid:maxMid,mcomb:maxComb}=envMaxRef.current;
+        const maxMidP=envMaxRef.current.mmidp||maxMid;   // amber height-variation reference (percentile)
+
+        // ── [WF-MIDDIAG] THROWAWAY (?wfmiddiag=1): does the RAW mid band vary beat-to-beat, or is the
+        // render flattening it? Measures mArr (the high-res source, pre-render) over 16 consecutive
+        // beats — peak + mean per beat, normalized to maxMid — once per track. Verdict at ≥5% CV.
+        if(WF_MID_DIAG && midDiagRef.current!==bands){
+          midDiagRef.current=bands;
+          const btsD=beatTimesRef.current;
+          if(btsD && btsD.length>2 && dur2>0 && maxMid>0){
+            const perBeat=[];
+            for(let i=0;i+1<btsD.length;i++){
+              const c0=Math.max(0,Math.floor(btsD[i]/dur2*len)), c1=Math.min(len-1,Math.ceil(btsD[i+1]/dur2*len));
+              if(c1<=c0) continue;
+              let pk=0,sum=0,n=0;
+              for(let k=c0;k<=c1;k++){ const v=mArr[k]; if(v>pk)pk=v; sum+=v; n++; }
+              perBeat.push({i,peak:pk,mean:n?sum/n:0});
+            }
+            let meanMax=0; for(const b of perBeat) if(b.mean>meanMax)meanMax=b.mean;
+            let start=0; for(let j=0;j<perBeat.length;j++){ if(perBeat[j].mean>0.1*meanMax){ start=j; break; } }   // skip silent intro
+            const win=perBeat.slice(start,start+16);
+            if(win.length>=2){
+              const means=win.map(b=>b.mean), peaks=win.map(b=>b.peak);
+              const avg=a=>a.reduce((s,v)=>s+v,0)/a.length;
+              const cv=a=>{ const m=avg(a); if(m<=0)return 0; return Math.sqrt(avg(a.map(v=>(v-m)*(v-m))))/m; };
+              const spread=a=>{ const mn=Math.min(...a),mx=Math.max(...a); return mx>0?(mx-mn)/mx:0; };
+              console.log('[WF-MIDDIAG] deck='+(deckColorRef.current||'?')+' maxMid='+maxMid.toFixed(4)+' beats '+win[0].i+'..'+win[win.length-1].i+' (n='+win.length+')');
+              console.log('[WF-MIDDIAG] MEAN/maxMid: '+means.map(v=>(v/maxMid).toFixed(3)).join(' '));
+              console.log('[WF-MIDDIAG] PEAK/maxMid: '+peaks.map(v=>(v/maxMid).toFixed(3)).join(' '));
+              console.log('[WF-MIDDIAG] MEAN cv='+(cv(means)*100).toFixed(1)+'% spread='+(spread(means)*100).toFixed(1)+'%  |  PEAK cv='+(cv(peaks)*100).toFixed(1)+'% spread='+(spread(peaks)*100).toFixed(1)+'%');
+              console.log('[WF-MIDDIAG] verdict: '+((cv(means)*100>=5||cv(peaks)*100>=5)?'mid VARIES ≥5% → render is FLATTENING real variation (fixable)':'mid near-FLAT (<5%) → track mid genuinely uniform'));
+            }
+          }
+        }
 
         // Per-track kick-height auto-fit (cached on bands+beatTimes). Percentile of the
         // energy AT each kick — the bulk of kicks fill the lane; a freak-loud transient
@@ -5123,8 +5270,11 @@ function AnimatedZoomedWF({ bands, dur, progRef, onSeek, h=96, windowSec=8, beat
                 // kick catches its peak regardless of ±bucket alignment → consistent heights.
                 const cb=Math.round(srcBucket);
                 const c0=Math.max(0,cb-wBack), c1=Math.min(len-1,cb+wFwd);
-                let pe=0; for(let k=c0;k<=c1;k++){ const bl=WF_TOP_BASS_W*bArr[k]+WF_TOP_MID_W*mArr[k]+WF_TOP_HIGH_W*hArr[k]; if(bl>pe)pe=bl; }
-                let Hk=Math.pow(pe/maxComb, WF_BODY_GAMMA)*fitScale;
+                let pe=0,peLow=0; for(let k=c0;k<=c1;k++){ const bl=WF_TOP_BASS_W*bArr[k]+WF_TOP_MID_W*mArr[k]+WF_TOP_HIGH_W*hArr[k]; if(bl>pe)pe=bl; if(bArr[k]>peLow)peLow=bArr[k]; }
+                let Hk=Math.pow(pe/maxComb, WF_BODY_GAMMA)*fitScale*WF_KICK_SCALE;   // WF_KICK_SCALE trims kick-needle height (structure untouched)
+                // KICK-vs-HIHAT: scale the cream by coincident LOW-end (bass energy at the beat). Strong
+                // low = a real kick → full cream; little/no low = hi-hat/clap → subdued toward WF_KICK_HI_FLOOR.
+                { let kf=peLow/(maxB*WF_KICK_LOW_REF); if(kf>1)kf=1; if(kf<0)kf=0; kf=kf*kf*(3-2*kf); Hk*=WF_KICK_HI_FLOOR+(1-WF_KICK_HI_FLOOR)*kf; }
                 if(Hk>maxH)Hk=maxH;
                 if(Hk<=0) continue;
                 // HARD WALL at xk + exponential right-taper (relK). max() into hEnv so the wall rides
@@ -5139,10 +5289,28 @@ function AnimatedZoomedWF({ bands, dur, progRef, onSeek, h=96, windowSec=8, beat
                 }
               }
             }
-            // BLUE LOWS = the OPPOSITE taper to the cream kick: THIN at the beat → SWELLS WIDE
-            // toward the next beat (the sustained sub/bassline filling the gap), drawn BEHIND the
-            // cream. Per beat interval, ramp 0→1 (pow wfBlueSwell) × the bass energy at the column,
-            // capped to wfBlueScale of the lane so it stays below the cream kick peaks (anti-tube).
+            // ── CONTINUOUS AMBER BODY (Step 1) — the mid band is drawn from the REAL per-column mid
+            // energy across EVERY column, NO per-beat arc, so amber is an unbroken connective floor that
+            // fills the inter-beat gaps. Blue humps + cream needles ride ON TOP (drawn after this).
+            // wfmidsmooth lightly rounds it; wfMidScale/wfMidGamma set how low the floor sits.
+            {
+              const rMid=Math.round((WF_MID_SMOOTH/1000)/secPerCol);
+              const blurM=(src,dst,n,r)=>{
+                const norm=1/(2*r+1); let acc=0;
+                for(let k=-r;k<=r;k++){ const i=k<0?0:(k>=n?n-1:k); acc+=src[i]; }
+                for(let i=0;i<n;i++){ dst[i]=acc*norm; const a=i+r+1,b=i-r; acc+=(a>=n?src[n-1]:src[a])-(b<0?src[0]:src[b]); }
+              };
+              if(rMid<1){ for(let dx=0;dx<physW;dx++) colMidSm[dx]=colMid[dx]; }
+              else { blurM(colMid,colMidSm,physW,rMid); blurM(colMidSm,colMidTmp,physW,rMid); blurM(colMidTmp,colMidSm,physW,rMid); }
+              for(let dx=0;dx<physW;dx++){
+                const nm=Math.min(1,colMidSm[dx]/maxMidP);   // percentile-normalized → visible height variation (loudest ~5% clip at 1)
+                let mH=nm>0.004?Math.pow(nm,WF_MID_GAMMA)*WF_FILL*maxH*WF_MID_SCALE:0;
+                if(mH>maxH)mH=maxH; hHigh[dx]=mH;
+              }
+            }
+            // BLUE LOWS = the OPPOSITE taper to the cream kick: THIN at the beat → SWELLS WIDE toward the
+            // next beat (the sustained sub/bassline filling the gap), drawn OVER the amber floor, under the
+            // cream. Per beat interval × the bass energy at the column. (Amber decoupled — blue only now.)
             if(hasKicks){
               const tRightB=((srcX+viewPx)/len)*dur2, tLeftB=(srcX/len)*dur2;
               let lo=0,hi=bts.length-1;                        // first beat whose interval can touch the left edge
@@ -5155,9 +5323,9 @@ function AnimatedZoomedWF({ bands, dur, progRef, onSeek, h=96, windowSec=8, beat
                 const cs=Math.max(0,Math.floor(x0)), ce=Math.min(physW-1,Math.ceil(x1));
                 // Gap-mean energy = the smooth body level; blended below with a TOUCH of per-column
                 // energy (wfBlueChar) for subtle organic character without the big bubble/pinch lumps.
-                let sb=0,sm=0,cnt=0;
-                for(let x=cs;x<=ce;x++){ sb+=colB[x]; sm+=colMid[x]; cnt++; }
-                const nbg=cnt?(sb/cnt)/maxB:0, nmg=cnt?(sm/cnt)/maxMid:0;
+                let sb=0,cnt=0;
+                for(let x=cs;x<=ce;x++){ sb+=colB[x]; cnt++; }
+                const nbg=cnt?(sb/cnt)/maxB:0;
                 const ch=WF_BLUE_CHAR<0?0:(WF_BLUE_CHAR>1?1:WF_BLUE_CHAR);
                 const pk=WF_BLUE_PEAK<0.02?0.02:(WF_BLUE_PEAK>0.98?0.98:WF_BLUE_PEAK);
                 for(let x=cs;x<=ce;x++){
@@ -5170,16 +5338,35 @@ function AnimatedZoomedWF({ bands, dur, progRef, onSeek, h=96, windowSec=8, beat
                   if(frac>pk && WF_BLUE_FALL!==1) arc=Math.pow(arc, WF_BLUE_FALL);   // optional tail bias
                   // SUBTLE character: smooth gap-mean blended with a touch of per-column energy.
                   const ab=(1-ch)*nbg + ch*(colB[x]/maxB);
-                  const am=(1-ch)*nmg + ch*(colMid[x]/maxMid);
                   let bH=ab>0.004?arc*Math.pow(ab,WF_BODY_GAMMA)*WF_FILL*maxH*WF_BLUE_SCALE:0; if(bH>maxH)bH=maxH; if(bH>hLow[x]) hLow[x]=bH;
-                  let mH=am>0.004?arc*Math.pow(am,WF_BODY_GAMMA)*WF_FILL*maxH*WF_MID_SCALE:0; if(mH>maxH)mH=maxH; if(mH>hHigh[x]) hHigh[x]=mH;
                 }
               }
             } else {
-              // fallback (pre-analysis): plain bass/mid energy bodies, no arc.
+              // fallback (pre-analysis): plain bass-energy blue body, no arc. (Amber handled above, continuous.)
               for(let dx=0;dx<physW;dx++){
                 const nb=colB[dx]/maxB; let bH=nb>0.004?Math.pow(nb,WF_BODY_GAMMA)*WF_FILL*maxH*WF_BLUE_SCALE:0; if(bH>maxH)bH=maxH; hLow[dx]=bH;
-                const nm=colMid[dx]/maxMid; let mH=nm>0.004?Math.pow(nm,WF_BODY_GAMMA)*WF_FILL*maxH*WF_MID_SCALE:0; if(mH>maxH)mH=maxH; hHigh[dx]=mH;
+              }
+            }
+            // ── CAP AMBER UNDER BLUE — but only WHERE BLUE IS PRESENT. A flat floor (old approach)
+            // clamped amber to a constant in no-blue breakdowns → a dead flat tube. Instead, cap under
+            // a blue-PRESENCE envelope: a max-hold of hLow that decays over ~1 beat. It BRIDGES the
+            // inter-beat gaps (stays up across beats → amber never pinches at a thin beat), but DECAYS
+            // to ~0 across a long mid-only breakdown — and there the cap opens to the full lane so amber
+            // rides its OWN energy and keeps rising/falling with the melody instead of saturating flat.
+            if(WF_AMBER_CAP){
+              const ratio=WF_AMBER_CAP_RATIO, capFloor=WF_AMBER_CAP_FLOOR*maxH;
+              const kickRef=Math.max(1e-3, WF_AMBER_OPEN*maxH);              // blue envelope level that counts as a FULL kick
+              const cpb=(beatPeriodSecRef.current>0 && secPerCol>0) ? beatPeriodSecRef.current/secPerCol : physW/24;
+              const decay=Math.exp(-2.3/Math.max(4,cpb));   // hold ~1 beat (→10%) so gaps bridge, breakdowns decay
+              let e=0; for(let dx=0;dx<physW;dx++){ const d=e*decay; e=hLow[dx]>d?hLow[dx]:d; colMidTmp[dx]=e; }  // forward
+              e=0;
+              for(let dx=physW-1;dx>=0;dx--){
+                const d=e*decay; e=hLow[dx]>d?hLow[dx]:d;                       // backward
+                const env=colMidTmp[dx]>e?colMidTmp[dx]:e;                      // symmetric blue envelope (kick strength near here)
+                let k=env/kickRef; if(k>1)k=1; k=k*k;                           // only a STRONG kick (k→1) pulls the ceiling down; a faint bass barely does
+                const openCeil=maxH-k*(maxH-capFloor);                          // faint/no blue → ~full lane (amber free to show melody); strong kick → floor under blue
+                let cap=env*ratio; if(openCeil>cap)cap=openCeil;
+                if(hHigh[dx]>cap) hHigh[dx]=cap;
               }
             }
           } else {
@@ -5269,18 +5456,60 @@ function AnimatedZoomedWF({ bands, dur, progRef, onSeek, h=96, windowSec=8, beat
               ctx.fillRect(dx,center-S,1,S*2+1);
             }
           } else {
-            // HYBRID three-layer OPPOSITE-TAPER colour (Rekordbox). Opaque, drawn back→front:
-            //   BLUE lows (hLow)  — swells THIN-at-beat → WIDE toward the next beat; drawn behind.
-            //   ORANGE mids       — thin mid-energy accents layered over the blue.
-            //   CREAM kick (hMid) — sharp wall-left → point-right; opaque, ON TOP.
-            // The two opposite tapers interlock (cream points right, blue opens right), so the mass
-            // reads as a rhythm, not a uniform tube. Blue shows where the cream has narrowed.
-            ctx.fillStyle=`rgb(${lr},${lg},${lb})`;                       // 1) BLUE lows (back)
-            for(let dx=0;dx<physW;dx++){ const bH=hLow[dx]; if(bH>0.5) ctx.fillRect(dx,center-bH,1,bH*2+1); }
-            ctx.fillStyle=`rgb(${mr},${mg},${mb2})`;                      // 2) ORANGE mids (arc accents, precomputed in hHigh)
-            for(let dx=0;dx<physW;dx++){ const mH=hHigh[dx]; if(mH>0.5) ctx.fillRect(dx,center-mH,1,mH*2+1); }
-            ctx.fillStyle=`rgb(${hr},${hg},${hb})`;                       // 3) CREAM kick (front)
-            for(let dx=0;dx<physW;dx++){ const kH=hMid[dx]; if(kH>0.5) ctx.fillRect(dx,center-kH,1,kH*2+1); }
+            // HYBRID three-layer colour (Rekordbox) — DEPTH + GLOW + INTERWEAVE. Bands are rendered
+            // ONCE to an offscreen canvas (deep, saturated, interwoven), then composited to the visible
+            // canvas as: (a) an ADDITIVE BLURRED halo UNDER → light blooms around the bars against black
+            // (Design's luminous look) without washing the core, then (b) the DEEP CRISP core OVER. The
+            // bloom radius stays tight (prior wide-blur glow was removed for gap-bridging into a tube).
+            // INTERWEAVE: blue is the body; AMBER is drawn TRANSLUCENT OVER it (not strictly behind) so
+            // they blend where they overlap. Heights (hHigh/hLow/hMid) untouched — paint-only change.
+            const _cl=(v)=>v<0?0:v>255?255:v|0;
+            // DEEPEN: push each channel OFF the luminance (saturation up) then scale value DOWN —
+            // turns the flat web colours into deep, saturated pigment. Applied to every band.
+            const deepen=(r,g,b)=>{ const L=(Math.max(r,g,b)+Math.min(r,g,b))*0.5;
+              return [_cl((L+(r-L)*WF_SAT)*WF_VAL),_cl((L+(g-L)*WF_SAT)*WF_VAL),_cl((L+(b-L)*WF_SAT)*WF_VAL)]; };
+            const tipOf=(r,g,b,tm)=> WF_TIP_WHITE>0 ? [_cl(r+WF_TIP_WHITE),_cl(g+WF_TIP_WHITE),_cl(b+WF_TIP_WHITE)]
+                                                     : [_cl(r*tm),_cl(g*tm),_cl(b*tm)];
+            // Offscreen band canvas (lazily sized to the visible canvas). Rendered deep + crisp; the
+            // same pixels feed both the additive bloom and the crisp core, so glow tracks colour exactly.
+            let glow=glowRef.current;
+            if(!glow){ glow=glowRef.current=document.createElement('canvas'); }
+            if(glow.width!==physW||glow.height!==physH){ glow.width=physW; glow.height=physH; }
+            const gx=glow.getContext('2d');
+            gx.clearRect(0,0,physW,physH);
+            gx.globalCompositeOperation='source-over';
+            const mkPaint=(r,g,b,a,tm)=>{
+              const tipM=tm===undefined?WF_TIP_MUL:tm;
+              const [dr,dg,db]=deepen(r,g,b);
+              if(!WF_GRAD){ return a>=1?`rgb(${dr},${dg},${db})`:`rgba(${dr},${dg},${db},${a})`; }
+              const [tr,tg,tb]=tipOf(dr,dg,db,tipM);
+              const gr=gx.createLinearGradient(0,center-maxH,0,center+maxH);   // vivid same-hue tips → deep centerline → vivid tips
+              gr.addColorStop(0,`rgba(${tr},${tg},${tb},${a})`);
+              gr.addColorStop(0.5,`rgba(${dr},${dg},${db},${a})`);
+              gr.addColorStop(1,`rgba(${tr},${tg},${tb},${a})`);
+              return gr;
+            };
+            // 1) BLUE lows = the body (deep, opaque)
+            gx.fillStyle=mkPaint(lr,lg,lb,WF_BLUE_ALPHA);
+            for(let dx=0;dx<physW;dx++){ const bH=hLow[dx]; if(bH>0.5) gx.fillRect(dx,center-bH,1,bH*2+1); }
+            // 2) AMBER mids = translucent OVER the blue (interweave — blends where they overlap; fills gaps)
+            gx.fillStyle=mkPaint(mr,mg,mb2,WF_AMBER_OVER);
+            for(let dx=0;dx<physW;dx++){ const mH=hHigh[dx]; if(mH>0.5) gx.fillRect(dx,center-mH,1,mH*2+1); }
+            // 3) CREAM kick needles = sharp tips on top. ?wfCreamDbg=1 → paint this layer bright MAGENTA
+            // so we can SEE exactly what/where the cream layer is (diagnostic for the kick-gating).
+            gx.fillStyle=WF_CREAM_DBG?'rgb(255,0,255)':mkPaint(hr,hg,hb,WF_CREAM_ALPHA,WF_CREAM_TIP);
+            for(let dx=0;dx<physW;dx++){ const kH=hMid[dx]; if(kH>0.5) gx.fillRect(dx,center-kH,1,kH*2+1); }
+            // ── Composite to the visible canvas: additive bloom UNDER, deep crisp core OVER.
+            if(WF_GLOW_A2>0 && WF_GLOW_PX2>0){
+              ctx.save(); ctx.globalCompositeOperation='lighter'; ctx.globalAlpha=WF_GLOW_A2;
+              ctx.filter=`blur(${WF_GLOW_PX2*dpr}px)`; ctx.drawImage(glow,0,0); ctx.restore();
+            }
+            if(WF_GLOW_A>0 && WF_GLOW_PX>0){
+              ctx.save(); ctx.globalCompositeOperation='lighter'; ctx.globalAlpha=WF_GLOW_A;
+              ctx.filter=`blur(${WF_GLOW_PX*dpr}px)`; ctx.drawImage(glow,0,0); ctx.restore();
+            }
+            ctx.globalCompositeOperation='source-over'; ctx.globalAlpha=1; ctx.filter='none';
+            ctx.drawImage(glow,0,0);                                    // deep crisp core on top of its own bloom
           }
         } else {
           // Crisp detail (UPPER canvas), back→front: BLUE body (dominant) → GOLD
