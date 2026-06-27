@@ -9718,3 +9718,46 @@ build hash differs from local — content, not hash, is the reliable signal.
   download (belt-and-suspenders). Wiring console→Sentry Logs is a small future add.
 - Note: a deploy-skip scare during this session turned out to be a hash-naming ghost — Vercel
   builds fresh but content-hashes differently than the local build; always verify by CONTENT.
+
+## ═══ SESSION END — June 26, 2026 — WAVEFORM AESTHETIC LOCKED + DEPLOYED ═══
+
+**What was done.** Resumed the parked top-zoomed-waveform aesthetic work and took it
+to a Rekordbox-matched, locked finish — then shipped to production. Iterated
+eye-by-eye against the real Rekordbox waveform (Chad on his machine, every step
+behind a live `?wf*=` URL knob). Squashed to one clean commit `94cacaf`, merged
+fast-forward to `master`, pushed (`b393496..94cacaf`), **live + content-verified**
+(bundle `main-BGT_u-BU.js` contains the new knob strings; hash differs from local
+build — content, not hash, is the signal, per the standing rule).
+
+**The waveform (three bands: blue/purple lows · amber mids · cream kicks), final:**
+- **Colour fix (pastel → vivid):** saturation pinned HIGH (`wfSat 1.90`) so the min
+  RGB channel hits 0 → the additive glow can't wash blue to sky-blue. `source-over`
+  blend, `wfVal 0.92` (luminous, not dark).
+- **Glow:** tight additive bloom (offscreen, `wfGlowPx 5 / wfGlowA 0.60`); wide soft
+  halo OFF (it was the foggy/smeared/gap-bridging failure).
+- **Amber:** full-bodied dynamic band (`wfMidScale 0.95`), abs-max normalization (no
+  flat-tube clip), opaque (`wfAmberOver 1.0` = identical amber on both decks), capped
+  under blue at kicks (`wfCapRatio 0.68` so blue punches solid) with a blue-envelope
+  cap that OPENS in breakdowns (`wfAmberOpen 0.45`) so amber rides the melody.
+- **Kicks:** cream = highs, gated by bass-coincidence (`wfKickHi 0.28`) so kicks (not
+  hi-hats) are the markers; fully OPAQUE (`wfCreamAlpha 1.0`) for solid punch; tips
+  darkened on amber/blue (`wfTipMul 0.72`), kept bright on cream (`wfCreamTip 1.15`).
+
+**What was decided (canonical).** The waveform aesthetic is **LOCKED — do not regress
+without Chad's explicit approval.** Protections shipped: code banners at the `WF_*`
+block + above `AnimatedZoomedWF`; full rationale + tried-and-rejected in
+**`tools/docs/WAVEFORM_LOCKED.md`**; pointer from DESIGN_PHILOSOPHY.md; a new
+**"🔒 Locked Foundations"** section in MASTER_INDEX.md (waveform locked; connection
+fixes shipped/awaiting Jake; landing built in Claude Design; app-design unification =
+next project). URL knobs retained for A/B tuning ONLY. Structure (onset/attack/
+two-layer geometry) was never touched — paint/colour/cap/gate only.
+
+**Verification.** `npm run build` clean; full `npm run smoke` GREEN (25 passed / 0
+failed / 2 dep-skips); live deploy content-verified.
+
+**What remains pending.** (1) Connection/dogfood fixes (`?gridcouple` / `?progthrottle`
+/ `?jbtarget`) still **awaiting Jake's B2B confirmation**. (2) **App design unification**
+(library + mixing view to match the landing page) is the planned next project via the
+Design-mocks → Code-builds loop. (3) Housekeeping: several stale dev-server processes
+were cleaned mid-session (one clean instance left running) — note for future sessions
+to avoid spawning duplicate `npm run dev`.
