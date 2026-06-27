@@ -3753,8 +3753,37 @@ function useSync({ url, onMsg }) {
 //   maxaveragebitrate=256000  → cap the REMOTE encoder to music-grade (it reads our fmtp)
 //   maxplaybackrate=48000     → full-band (no narrowband downshift)
 //   useinbandfec=1            → packet-loss resilience
-const OPUS_HIFI = { stereo: "1", "sprop-stereo": "1", maxaveragebitrate: "256000", maxplaybackrate: "48000", useinbandfec: "1" };
-const OPUS_MAX_BITRATE = 256000;
+// ── Audio profile + AUDIOLITE (Lever A/C): packet-loss mitigation by SHEDDING DATA ──
+// The default 256k STEREO "hi-fi" profile sounds gorgeous but on a busy SENDER the
+// encode/pacing pipeline stalls → late/CLUMPED packets the receiver counts as lost
+// (Jake dogfood June 27: DIRECT P2P, fast nets both sides, ~20ms RTT — yet concealMs~600,
+// lostΔ~30 on the path FROM the busy sender. Asymmetric: only the sender's outbound is
+// lossy → it's 256k stereo stressing the send pipeline, not bandwidth/relay/distance).
+// For MONITORING a partner's mix you don't need hi-fi: lower bitrate = less encode load +
+// smaller packets + less clumping. FEC stays ON. Lowering the sender maxBitrate too lets
+// congestion-control run lower.
+// Value grammar: a kbps number, optionally with 'm' to force MONO. STEREO is the DEFAULT
+// — we do NOT ship mono, because the active deck flips between players, so a mono peer
+// stream would flip stereo↔mono on every handoff (jarring, ear-fatiguing). Mono is a
+// ONE-TIME DIAGNOSTIC only (the FORK: mono clean → volume problem, climb to best stereo;
+// mono still lossy → pipeline/pacing bug, pivot off bitrate). One build walks the curve:
+//   ?audiolite=64m   → MONO 64 kbps   (DIAGNOSTIC ONLY — the fork test)
+//   ?audiolite=96    → stereo 96 kbps  ┐ candidate FIXES: find the highest stereo bitrate
+//   ?audiolite=128   → stereo 128 kbps ┘ that STAYS clean over the send path (no flipping)
+//   ?audiolite       → stereo 128 kbps (bare = lead candidate fix)
+//   (absent)         → unchanged 256k stereo hi-fi (default OFF, zero behavior change)
+// NOTE: this only shapes the WebRTC PEER stream (the partner-monitoring audio over the
+// network). Local deck playback + the recorder both tap eng.master and are never touched.
+const _AUDIOLITE_RAW = URL_FLAGS.get("audiolite");
+const AUDIOLITE_ON = _AUDIOLITE_RAW != null;
+const _alStr = (_AUDIOLITE_RAW || "").toLowerCase();
+const AUDIOLITE_STEREO = !/m/.test(_alStr);                                 // 'm' → mono (diagnostic); default STEREO
+const AUDIOLITE_KBPS = AUDIOLITE_ON ? (parseInt(_alStr.replace(/[^0-9]/g, ""), 10) || 128) : 0;   // default 128k = lead candidate fix
+try { if (AUDIOLITE_ON) console.log("[AUDIOLITE] ON — " + (AUDIOLITE_STEREO ? "stereo" : "MONO (diagnostic)") + " " + AUDIOLITE_KBPS + " kbps (shaping ONLY the network monitoring stream)"); } catch {}
+const OPUS_HIFI = AUDIOLITE_ON
+  ? { stereo: AUDIOLITE_STEREO ? "1" : "0", "sprop-stereo": AUDIOLITE_STEREO ? "1" : "0", maxaveragebitrate: String(AUDIOLITE_KBPS * 1000), maxplaybackrate: "48000", useinbandfec: "1" }
+  : { stereo: "1", "sprop-stereo": "1", maxaveragebitrate: "256000", maxplaybackrate: "48000", useinbandfec: "1" };
+const OPUS_MAX_BITRATE = AUDIOLITE_ON ? AUDIOLITE_KBPS * 1000 : 256000;
 function mungeOpusHiFi(sdp) {
   if (!sdp) return sdp;
   const lines = sdp.split(/\r\n/);
@@ -4057,7 +4086,13 @@ function useRTC({ engineRef, send, onIceRecover }) {
 
   const capture = useCallback(() => {
     const eng=engineRef.current; if(!eng)throw new Error("No engine");
-    const d=eng.ctx.createMediaStreamDestination(); eng.master.connect(d); dest.current=d; return d.stream;
+    const d=eng.ctx.createMediaStreamDestination(); eng.master.connect(d); dest.current=d;
+    // contentHint="music" (Lever: how-we-send) — tells the encoder this is MUSIC, not
+    // speech, so it skips voice-tuned processing (DTX/VAD/aggressive NS) that can mangle
+    // a music stream. Standards-based, cheap; minor next to bitrate but the legit
+    // send-side config fix. Set before addTrack so the encoder picks it up from frame 1.
+    try { d.stream.getAudioTracks().forEach(t => { t.contentHint = "music"; }); } catch {}
+    return d.stream;
   },[engineRef]);
 
   const tryPlayRemote = useCallback(() => {
