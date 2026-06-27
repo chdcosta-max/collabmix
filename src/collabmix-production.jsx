@@ -61,6 +61,14 @@ const BEATS_V2 = URL_FLAGS.get("beatsv2") !== "0";
 // edge-to-edge, still sits on the kicks incl. breakdown). ?griduniform=0 reverts to the
 // legacy raw-beat grid for A/B.
 const WF_GRID_UNIFORM = URL_FLAGS.get("griduniform") !== "0";
+// Apply the grid-align display offset DURING a waveform drag too (not only after release),
+// so the view doesn't shift by alignSec on mouseup. Fixes the cosmetic grid-jump-on-release
+// (the seek position was already exact). Eye-confirmed June 26 2026. ?dragfix=0 reverts.
+const WF_DRAG_ALIGN_FIX = URL_FLAGS.get("dragfix") !== "0";
+// NOTE: snap-to-uniform seek-quantize (?gridsnap) was prototyped and PULLED — it re-snapped
+// REMOTE seeks too, creating a cross-client broadcast feedback loop that walked the synced
+// position tens of seconds off. To revisit: gate the snap to LOCAL user seeks (!fromRemote)
+// + match the rendered uniform grid (note beatPhaseFrac is a beat-INDEX, not a 0..1 fraction).
 // Library Import V2 (first-run wizard + Door 1/5 + mix detection). Default OFF —
 // gated so existing LIB-PHASE behavior is unchanged until promotion.
 const LIB_WIZARD = URL_FLAGS.get("libwizard") === "1";
@@ -5001,7 +5009,9 @@ function AnimatedZoomedWF({ bands, dur, progRef, onSeek, h=96, windowSec=8, beat
         appliedAlignSecRef.current += (alignTargetSec - appliedAlignSecRef.current)*0.04; // ~0.4s ease @60fps
         alignSec=appliedAlignSecRef.current;
       }
-      const alignOffProg=(!dragging && dur2>0) ? (alignSec/dur2) : 0;
+      // ?dragfix=1: apply the align offset DURING the drag too (no discontinuity → no jump on
+      // release). Default: legacy (suppressed while dragging, snaps in on release).
+      const alignOffProg=(((WF_DRAG_ALIGN_FIX||!dragging) && dur2>0) ? (alignSec/dur2) : 0);
       const prog2=Math.max(0, rawProg - alignOffProg);
       // Two independent paddings:
       //  - tickRailPad governs where beat-grid ticks center vertically (visual
