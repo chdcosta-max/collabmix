@@ -9814,3 +9814,9 @@ different-tempo tracks showing different spacing is accurate.
 
 **How to confirm the real decimals.** Console logs per deck:
 `[BPM-PERIOD] track A : mean=0.4688xx s (128.0xx)` — compare the two `(128.0xx)` values.
+
+## ═══ STANDING FOUNDATION (read at session start) — Social & Matchmaking ═══
+
+### Social & Matchmaking — Core Foundation
+Before designing ANY social, matchmaking, community, profile, discovery, or taste-comparison feature, read **tools/docs/SOCIAL_DESIGN_PHILOSOPHY.md**.
+Core principle: **Music taste is identity. Pair people around SHARED taste (connection/belonging); never across taste differences** — incompatible-taste matching is harmful on three stacking levels: musical (the mix doesn't work), experiential (bad first experiences), and social (triggers "my taste is better" defensiveness and conflict). Matchmaking is *social compatibility*, not just a preference filter. Avoid quantifying/ranking taste (invites comparison/judgment — why the "92% match" score and "in tune" meter were cut); convey match strength through concrete shared evidence instead. This drives feature decisions across the whole social layer.

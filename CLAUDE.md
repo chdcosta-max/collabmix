@@ -1,5 +1,7 @@
 > ⚠ NEW INSTANCE: read `tools/docs/MASTER_INDEX.md` FIRST — it maps all project docs. Your memory is a lossy summary, not the source of truth.
 
+> 🧭 CORE PRINCIPLE — before designing ANY social/matchmaking/community/profile/discovery/taste-comparison feature, read `tools/docs/SOCIAL_DESIGN_PHILOSOPHY.md`. Pair people around SHARED taste (connection); never across taste differences (friction/judgment). This drives social feature decisions.
+
 # CLAUDE.md — Standing Instructions for Mix//Sync
 
 This file is read at the start of every Claude Code session in this

@@ -14,6 +14,10 @@ DJs, two cities, one mix. Founder **Chad** is non-developer (explain in plain En
 **Claude Code** (this tool) implements, tests, and deploys → **Claude Desktop** (Chrome
 extension) does visual verification of UI/waveform work. Protocols live in `CLAUDE.md`.
 
+## 🧭 Core Design Principles (read before building)
+
+**SOCIAL & MATCHMAKING — `tools/docs/SOCIAL_DESIGN_PHILOSOPHY.md`** — Foundational. Read BEFORE designing any social, matchmaking, community, profile, discovery, or taste-comparison feature. Core principle: music taste is identity, so pair people around what they SHARE (connection/belonging), never across what divides them (which triggers judgment, "my taste is better" defensiveness, and bad experiences). This is the reasoning behind removing "Match with anyone" and why we avoid quantifying taste (the dating-app % score and "in tune" meter we cut). Same tier as the locked foundations — load-bearing, not optional.
+
 ## 🔒 Locked Foundations — what's SETTLED vs OPEN (orient before proposing)
 
 Read this before proposing changes — some things are deliberately frozen, some are
