@@ -9874,3 +9874,84 @@ Per `JAKE_VALIDATION_PLAN.md`, validate the two categories SEPARATELY:
   is partner audio clean over the wire? Ceiling = Opus FEC (not built) for real packet loss.
 A failure in one is NOT attributed to the other; today's local fixes are NOT assumed to fix
 the audio category. THEN: human-engineer review of the core sync/audio before launch.
+
+## ═══ SESSION END — June 27, 2026 — DOGFOOD AUDIO DIAGNOSIS (CONCLUSIVE) + EXPERIMENT DEPLOYED ═══
+
+Pivoted from polish to the #1 blocker: the Jake B2B dogfood was **unusable after ~1 min** —
+audio and waveform too choppy to mix. This session **conclusively diagnosed the cause by
+elimination** and **deployed a flagged A/B experiment** to confirm the fix. The A/B itself runs
+next time Jake is available (he left before we could run it).
+
+### THE DIAGNOSIS — conclusive (root cause isolated by elimination)
+Symptom: heavy, sustained packet loss on Jake's side — `[JITTER-DIAG] concealMs≈472–670,
+lostΔ≈24–34` (~30 packets/window), plus `[MIRROR-SNAP]` waveform jumps (+186s/+54s). My side
+was spotless the entire log (`concealMs=0 lostΔ=0`). We ruled out every external cause:
+- **Relay — RULED OUT.** New `[ICE-PATH]` logging (shipped this session, commit `9bd023d`)
+  showed **DIRECT P2P both ways** (me `srflx/udp` 24ms RTT; Jake `host→srflx/udp` 20ms). No TURN.
+- **Bandwidth — RULED OUT both sides.** Me **757/166**, Jake **323/115**. 256k audio is ~0.03%
+  of either uplink. Not remotely a capacity problem.
+- **Distance/latency — RULED OUT.** ~20ms RTT, direct.
+- **"Wrong value / missing flag" — RULED OUT by the ASYMMETRY.** Both sides send identical 256k
+  stereo, yet **only the busy sender's OUTBOUND loses** (~30 pkts/window) while the received
+  stream is clean. If the value/flag were wrong, *both* directions would suffer.
+- → **REMAINING CAUSE: 256k STEREO encode/pacing load on the busy sender's CPU/pipeline.** The
+  sender (running the full DJ app — two deck decodes + 60fps waveforms) starves the audio
+  encode/pace thread → packets produced late and **CLUMPED** → the receiver's jitter buffer
+  counts late/clumped packets as **lost** and conceals. This explains the paradox (clean, fast,
+  direct connection yet "loss"), and matches our own code's note (~line 9810) that packets
+  "arrive EVENLY on localhost but CLUMPED over a real network."
+
+### THE EXPERIMENT — built + deployed, default-OFF (commit `755e90d`, live bundle `main-BzLdUPQv.js`)
+Two send-side levers, both safe in prod (prod unchanged until a flag is added):
+- **`?audiolite`** (default OFF) — shapes ONLY the WebRTC peer monitoring stream (local deck
+  playback + the recorder tap `eng.master` and are untouched). Grammar: kbps + optional `m` for
+  mono. **STEREO is the default — we do NOT ship mono** (the active deck flips senders, so a mono
+  peer stream would flip stereo↔mono on every handoff = jarring/ear-fatigue; established earlier).
+  Lowers BOTH the SDP `maxaveragebitrate` and the sender `maxBitrate` ceiling; FEC stays on.
+- **`contentHint="music"`** on the sent track (UNCONDITIONAL, now on prod) — tells the encoder
+  it's music, not speech, so it skips voice-tuned processing. The legit "how-we-send" config fix;
+  minor next to bitrate but standards-based. Validated non-breaking by `e2e-opus` (5/5, still
+  negotiates stereo 256k + FEC by default).
+
+### THE PENDING A/B LADDER (run with Jake — busier machine SENDS; capture Jake's console each round)
+Capture `[JITTER-DIAG] concealMs/lostΔ` + `[OPUS-SDP] SEND` (confirms bitrate changed) +
+`[MIRROR-SNAP]` per round; swap who sends for one round to confirm it follows the sender.
+- **R1** `(no flag)` = 256k stereo baseline (have it: concealMs~600, lostΔ~30)
+- **R2** `?audiolite=64m` = **THE FORK** (mono diagnostic)
+- **R3** `?audiolite=96` = stereo candidate
+- **R4** `?audiolite=128` = stereo candidate (best quality)
+Interpretation:
+- **Mono 64m goes CLEAN** → encode/volume load confirmed → climb to the **highest STEREO rung
+  that stays clean** → **ship that stereo bitrate** (never mono).
+- **Mono 64m STILL lossy** → not about data volume → **pivot** to send-pacing/CPU investigation
+  (bitrate is not the lever).
+- Win = highest stereo rung where Jake's conceal/lost → ~0.
+Honest confidence: with bandwidth/relay/distance all eliminated, the encode-load theory is the
+prime and near-sole explanation, so reduced-bitrate STEREO has strong reason to work — but the
+mono fork is what makes it conclusive rather than assumed.
+
+### SEPARATE BUG (flagged, NOT part of the audio fix)
+**Kick-behind-waveform on a LOCALLY-loaded track** (Jake's deck B, which he loaded himself):
+local audio is ahead of where the waveform shows it by a couple seconds. This is a local
+deck audio-vs-waveform TIMING bug, distinct from the packet-loss issue. Investigate separately.
+
+### ALSO PARKED (not shipped)
+- **Solo-state copy reframe** — DONE, localhost-ready, **uncommitted** in the working tree. Three
+  surfaces reframed so solo reads as a complete, intentional mode (never "offline/waiting"):
+  header AUDIO pill (`AUDIO: OFFLINE` → `Solo session · invite a partner`; connected →
+  `Mixing with [name]` showcase, restrained per Quiet Pro Tool), chat header (`waiting for
+  partner` → `Solo session`), RTC panel (`OFFLINE`/`Waiting for partner` → `SOLO`/`Solo session —
+  invite a partner to go live`). Real failures (NO OUTPUT/FAILED) preserved as attention-red.
+  Invite-affordance WIRING deferred to a follow-up (copy only this pass). NOTE: `contentHint`
+  rode to prod separately; the solo COPY did not.
+- **Solo-as-first-class positioning** — captured to memory (`project_solo_first_class`): solo
+  mixing is a legit, valued, COMPLETE use case and the on-ramp/broader market; collaboration is
+  the differentiator + upgrade moment. **TODO: promote to a repo doc** (e.g. tools/docs/) so it's
+  unmissable to fresh sessions, same as SOCIAL_DESIGN_PHILOSOPHY.
+
+### STATE
+- Prod `master` @ `755e90d`. Two commits shipped this session: `9bd023d` ([ICE-PATH] logging),
+  `755e90d` (?audiolite experiment + contentHint). Both content-verified live.
+- Smoke before push: 24 pass / 2 dep-skip / 1 fail — the fail (`e2e-sync`, a prod-relay flake)
+  reproduced GREEN 2× in isolation; `e2e-opus` 5/5 confirmed the default Opus path unchanged.
+- NEXT: run the A/B ladder with Jake → pick the ship stereo bitrate (or pivot to pacing/CPU).
