@@ -3784,7 +3784,20 @@ const OPUS_HIFI = AUDIOLITE_ON
   ? { stereo: AUDIOLITE_STEREO ? "1" : "0", "sprop-stereo": AUDIOLITE_STEREO ? "1" : "0", maxaveragebitrate: String(AUDIOLITE_KBPS * 1000), maxplaybackrate: "48000", useinbandfec: "1" }
   : { stereo: "1", "sprop-stereo": "1", maxaveragebitrate: "256000", maxplaybackrate: "48000", useinbandfec: "1" };
 const OPUS_MAX_BITRATE = AUDIOLITE_ON ? AUDIOLITE_KBPS * 1000 : 256000;
-function mungeOpusHiFi(sdp) {
+// ── AUDIO NACK / retransmission (Lever: loss RECOVERY) ───────────────────────
+// Chrome does NOT negotiate NACK for Opus by default (video gets it; audio
+// doesn't). ?audionack injects `a=rtcp-fb:<opus-pt> nack` into BOTH offer and
+// answer so genuinely-lost packets are RE-SENT. Best fit for our profile: direct
+// P2P, ~20ms RTT, 160-220ms jitter buffer ⇒ a retransmit lands long before
+// playout, and NACK beats FEC on BURSTY loss. Keeps full 256k quality (no
+// tradeoff) — the lead candidate. Default OFF: prod negotiation unchanged.
+const AUDIO_NACK_ON = URL_FLAGS.get("audionack") != null;
+try { if (AUDIO_NACK_ON) console.log("[AUDIO-NACK] ON — negotiating Opus retransmission (a=rtcp-fb nack) on offer+answer; recovers bursty loss at full quality"); } catch {}
+// `profile` defaults to this peer's own configured Opus params (OPUS_HIFI, from
+// the ?audiolite URL flag or the 256k stereo default). The ANSWERER passes the
+// initiator's parsed profile instead, so a single ?audiolite flag set by ONE peer
+// propagates to BOTH directions without manual URL coordination — see handleOffer.
+function mungeOpusHiFi(sdp, profile = OPUS_HIFI) {
   if (!sdp) return sdp;
   const lines = sdp.split(/\r\n/);
   let pt = null; // Opus payload type, from its rtpmap (opus/48000/2)
@@ -3798,22 +3811,48 @@ function mungeOpusHiFi(sdp) {
     merged = true;
     const params = {};
     for (const kv of m[1].split(";")) { const s = kv.trim(); if (!s) continue; const i = s.indexOf("="); if (i < 0) params[s] = ""; else params[s.slice(0, i)] = s.slice(i + 1); }
-    Object.assign(params, OPUS_HIFI); // override/add our hi-fi params, keep the rest
+    Object.assign(params, profile); // override/add our hi-fi params, keep the rest
     return `a=fmtp:${pt} ` + Object.entries(params).map(([k, v]) => (v === "" ? k : `${k}=${v}`)).join(";");
   });
   if (!merged) { // no fmtp line existed → insert one right after the opus rtpmap
     const idx = out.findIndex((l) => new RegExp("^a=rtpmap:" + pt + "\\s+opus").test(l));
-    if (idx >= 0) out.splice(idx + 1, 0, `a=fmtp:${pt} ` + Object.entries(OPUS_HIFI).map(([k, v]) => `${k}=${v}`).join(";"));
+    if (idx >= 0) out.splice(idx + 1, 0, `a=fmtp:${pt} ` + Object.entries(profile).map(([k, v]) => `${k}=${v}`).join(";"));
+  }
+  // ?audionack: ensure `a=rtcp-fb:<pt> nack` exists in the audio section so Opus
+  // retransmission is negotiated. Inserted right after the opus rtpmap; skipped if
+  // already present (idempotent across re-munges) or the flag is off.
+  if (AUDIO_NACK_ON && !out.some((l) => new RegExp("^a=rtcp-fb:" + pt + "\\s+nack\\b").test(l))) {
+    const idx = out.findIndex((l) => new RegExp("^a=rtpmap:" + pt + "\\s+opus").test(l));
+    if (idx >= 0) out.splice(idx + 1, 0, `a=rtcp-fb:${pt} nack`);
   }
   return out.join("\r\n");
 }
-async function applySenderHiFi(p) {
+// Pull the Opus fmtp params we care about out of a RECEIVED description (the
+// initiator's offer). Lets the answerer MIRROR the initiator's stereo/bitrate so
+// both peers negotiate the same profile. Returns null when there's no opus fmtp
+// (e.g. an old/un-munged offer) → caller falls back to its own OPUS_HIFI.
+function parseOpusProfileFromSdp(sdp) {
+  if (!sdp) return null;
+  const lines = sdp.split(/\r\n/);
+  let pt = null;
+  for (const l of lines) { const m = l.match(/^a=rtpmap:(\d+)\s+opus\/48000/i); if (m) { pt = m[1]; break; } }
+  if (pt == null) return null;
+  const fmtpRe = new RegExp("^a=fmtp:" + pt + "\\s+(.*)$");
+  let params = null;
+  for (const l of lines) { const m = l.match(fmtpRe); if (m) { params = {}; for (const kv of m[1].split(";")) { const s = kv.trim(); if (!s) continue; const i = s.indexOf("="); if (i < 0) params[s] = ""; else params[s.slice(0, i)] = s.slice(i + 1); } break; } }
+  if (!params) return null;
+  const profile = {};
+  for (const k of ["stereo", "sprop-stereo", "maxaveragebitrate", "maxplaybackrate", "useinbandfec"]) if (params[k] != null) profile[k] = params[k];
+  const mab = parseInt(params.maxaveragebitrate || "", 10);
+  return { profile, maxBitrate: Number.isFinite(mab) ? mab : OPUS_MAX_BITRATE };
+}
+async function applySenderHiFi(p, maxBitrate = OPUS_MAX_BITRATE) {
   try {
     const sender = (p.getSenders?.() || []).find((s) => s.track && s.track.kind === "audio");
     if (!sender) return;
     const params = sender.getParameters();
     if (!params.encodings || !params.encodings.length) params.encodings = [{}];
-    params.encodings[0].maxBitrate = OPUS_MAX_BITRATE; // let the encoder push music-grade, not the ~32k default
+    params.encodings[0].maxBitrate = maxBitrate; // let the encoder push music-grade, not the ~32k default
     await sender.setParameters(params);
   } catch (e) { console.warn("[OPUS-SDP] sender setParameters failed:", e?.message || e); }
 }
@@ -4063,6 +4102,14 @@ function useRTC({ engineRef, send, onIceRecover }) {
         const outK = (a.o&&b.o&&dt>0) ? ((b.o.bytesSent-a.o.bytesSent)*8/1000/dt) : null;
         console.log('[OPUS-SDP] RECV fmtp="'+(ic?.sdpFmtpLine??"?")+'" channels='+(ic?.channels??"?")+' bitrateKbps='+inK.toFixed(0));
         console.log('[OPUS-SDP] SEND fmtp="'+(oc?.sdpFmtpLine??"?")+'" channels='+(oc?.channels??"?")+' bitrateKbps='+(outK!=null?outK.toFixed(0):"?"));
+        // [OPUS-SDP] NACK proof — read the negotiated descriptions directly (getStats
+        // doesn't expose rtcp-fb). Confirms Opus retransmission is on in BOTH
+        // directions (?audionack). local = what WE offered/answered, remote = partner.
+        try{
+          const ld=p.currentLocalDescription?.sdp||"", rd=p.currentRemoteDescription?.sdp||"";
+          const nackLocal=/a=rtcp-fb:\d+ nack/.test(ld), nackRemote=/a=rtcp-fb:\d+ nack/.test(rd);
+          console.log('[OPUS-SDP] audio NACK negotiated: local='+nackLocal+' remote='+nackRemote+(nackLocal&&nackRemote?' → RETRANSMISSION ACTIVE both ways':(nackLocal||nackRemote?' → one-sided (partner lacks ?audionack)':' → OFF (default)')));
+        }catch{ /* description may be null mid-teardown */ }
         // [ICE-PATH] (Lever B): relay vs direct. The selected candidate pair's
         // candidateType reveals the path — "relay" = traffic going through a TURN
         // server (a prime suspect for added loss/latency); host/srflx/prflx = direct
@@ -4211,10 +4258,22 @@ function useRTC({ engineRef, send, onIceRecover }) {
       s.getTracks().forEach(t=>p.addTrack(t,s));
       await p.setRemoteDescription(new RTCSessionDescription(sdp));
       for(const c of pend.current){try{await p.addIceCandidate(new RTCIceCandidate(c));}catch{}} pend.current=[];
+      // ── AUDIOLITE auto-match ──────────────────────────────────────────────
+      // MIRROR the initiator's Opus profile so a ?audiolite flag set by ONE peer
+      // applies to BOTH directions — no need for both to type the same URL. We
+      // advertise the LOWER of the two bitrates (min) so the reduced profile wins,
+      // and adopt the initiator's stereo flag. The reduced maxaveragebitrate we
+      // advertise also caps the INITIATOR's encoder (RFC 7587 §6.1), so both send
+      // directions drop together. Falls back to our own OPUS_HIFI for a non-munged
+      // offer (default sessions stay byte-identical: 256k stereo both sides).
+      const matched=parseOpusProfileFromSdp(sdp?.sdp);
+      const ansBitrate=matched?Math.min(matched.maxBitrate,OPUS_MAX_BITRATE):OPUS_MAX_BITRATE;
+      const ansProfile=matched?{...matched.profile,maxaveragebitrate:String(ansBitrate)}:OPUS_HIFI;
       const a=await p.createAnswer();
-      a.sdp=mungeOpusHiFi(a.sdp);              // hi-fi stereo Opus (answer side)
+      a.sdp=mungeOpusHiFi(a.sdp, ansProfile);  // hi-fi/audiolite Opus — matched to initiator (NACK injected if ?audionack)
       await p.setLocalDescription(a);
-      await applySenderHiFi(p);                // raise the send bitrate to match
+      await applySenderHiFi(p, ansBitrate);    // send bitrate matched to the negotiated profile
+      if(matched) console.log("[OPUS-SDP] answerer auto-matched initiator profile: stereo="+(ansProfile.stereo??"?")+" maxaveragebitrate="+(ansProfile.maxaveragebitrate??"?")+" senderMaxBitrate="+ansBitrate);
       sRef.current({type:"rtc_answer",sdp:p.localDescription});
       setState("connecting");
     } catch(e){ console.error('[RTC] handleOffer error:',e); captureHandledError(e, { operation: "rtc_handleOffer" }); setState("failed"); }
