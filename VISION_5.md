@@ -9955,3 +9955,66 @@ deck audio-vs-waveform TIMING bug, distinct from the packet-loss issue. Investig
 - Smoke before push: 24 pass / 2 dep-skip / 1 fail — the fail (`e2e-sync`, a prod-relay flake)
   reproduced GREEN 2× in isolation; `e2e-opus` 5/5 confirmed the default Opus path unchanged.
 - NEXT: run the A/B ladder with Jake → pick the ship stereo bitrate (or pivot to pacing/CPU).
+
+---
+
+## Session end — June 29, 2026 — Audio loss levers: ?audionack + ?audiolite auto-match
+
+### SHIPPED (prod master @ 88e366e, content-verified live in main-Btc3mFMH.js)
+Two orthogonal, flag-gated levers for the confirmed ASYMMETRIC send-path packet loss
+(receiver of a busy sender sees concealMs~375 lostΔ~19; sender side clean; 3rd dogfood
+confirmation). Both DEFAULT OFF — prod negotiation unchanged (default-session SDP byte-identical).
+
+- **?audionack — LEAD candidate (loss RECOVERY, full quality).** Research surfaced the gap:
+  Chrome does NOT negotiate NACK for Opus by default (video gets it, audio doesn't). We now
+  inject `a=rtcp-fb:<opus-pt> nack` so genuinely-lost packets RETRANSMIT. Textbook fit for our
+  profile: direct P2P, ~20ms RTT, 160-220ms jitter buffer = a retransmit lands long before
+  playout; NACK beats FEC on BURSTY loss; keeps full 256k quality (NO tradeoff). If it works we
+  ship full quality and we're done. CAVEAT: currently needs the flag on BOTH peers (the
+  auto-match mirrors the audiolite PROFILE, not the nack line). For the Jake session both load
+  the same URL anyway. Optional follow-up: answerer-mirrors-nack for true one-flag behavior.
+
+- **?audiolite auto-match — bitrate FALLBACK (loss PREVENTION, quality tradeoff).** Fixes the
+  old crash: ?audiolite=64m munged only the RECV side → mismatched/asymmetric SDP → connection
+  hung up. Now the ANSWERER mirrors the initiator's parsed Opus profile (stereo + bitrate), so a
+  single flag set by ONE peer applies BOTH directions (no manual URL coordination, no mismatch).
+  Advertises the lower (min) bitrate, which per RFC 7587 also caps the initiator's encoder. NOTE
+  re-frame: the actual send bitrate is already capped by min(sender maxBitrate, partner fmtp), so
+  the "256k SEND" in the old log was a LABEL — the real lever is the encoder cap. The old crash
+  was the MONO fork (stereo=0 vs stereo=1), not the bitrate asymmetry; STEREO rungs (96/128) are
+  the safe ship candidates. channels=2 + stereo=0 is NORMAL (Opus rtpmap is always /2), not a bug.
+
+- **[OPUS-SDP] proof logging** now reports NACK negotiation (local/remote, read from the session
+  descriptions) → retransmission is provable, not inferred. ("RETRANSMISSION ACTIVE both ways" /
+  "one-sided" / "OFF").
+
+### NEXT JAKE SESSION — test both orthogonal levers in one build
+- `?audionack` on BOTH machines (lead — full quality). Watch [OPUS-SDP] for "RETRANSMISSION
+  ACTIVE both ways" + whether concealMs/lostΔ on the receiver drop.
+- `?audiolite=96` / `?audiolite=128` (stereo fallback — one machine sets it, auto-matches).
+- `?mirrordiag=1` to ALSO capture the waveform-freeze data (see PARKED below).
+
+### PARKED — waveform fps freeze (displayedProg stuck at 0.7222 while audio advances)
+Diagnosed but NOT fixed — BLOCKED on data. The mirror follower (remRaf) has coast + 3x catch-up +
+creep, so low-fps alone can NOT freeze it; a hard freeze at a constant means the RAF callback
+stopped entirely. Three candidates, disambiguated ONLY by the live log fields:
+(1) tab hidden/occluded → browser SUSPENDS raf (audio + 1s setInterval keep running) — NOT a bug;
+(2) main-thread long-task stall (CPU overload) — the shared-root-cause-with-audio-loss case;
+(3) stuck remAwaitPktRef hold on a playing flicker with sparse packets.
+Need `[MIRROR-DIAG] hidden=` and `[MIRROR-RAF] fps=/droppedFrames=` from a freeze window
+(requires ?mirrordiag=1). hidden=true → (1), unrelated to audio. hidden=false+low-fps → (2).
+Latent bug found: the visibility re-anchor handler at the deck is dead code (`if(local) return`
+with local always true) — likely the real repair if cause #1.
+
+### PARKED — solo-UI copy reframe (project_solo_first_class)
+Still uncommitted; this session STASHED it (stash@{0} "project_solo_first_class WIP") to ship the
+audio experiment CLEAN/isolated. It hides the `⟺` partner pill on connect (→ "Mixing with [name]"),
+which breaks smoke's partnerOf (greps `⟺`). When resuming: pop the stash AND update
+tools/smoke/lib/e2e.mjs partnerOf to also detect "Mixing with".
+
+### STATE
+- Prod `master` @ `88e366e` (was 2c3255a). One commit this session: the audio levers. Content-
+  verified live (audionack/AUDIO-NACK/a=rtcp-fb/auto-matched present in main-Btc3mFMH.js).
+- Smoke before push: 24 pass / 2 dep-skip / 1 fail — the fail (`e2e-sync`, prod-relay flake)
+  proven NON-CAUSAL via interleaved clean-vs-changed (6/6 identical) + 8/8 green in isolation;
+  `e2e-opus` (exercises the SDP path) PASSED. e2e-entry/rejoin/lock-stability flakes also cleared.
