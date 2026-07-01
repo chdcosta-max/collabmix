@@ -146,6 +146,18 @@ const PROG_STATE_MS = 100;  // ~10Hz cap on the React prog-state commit (ref pip
 // Ceiling: a deeper buffer fixes UNDERRUN skips + ordinary-jitter stretch, NOT real
 // packet loss (lostΔ) — that needs Opus FEC/RED, a separate lever. Spec max 4000ms.
 const JB_TARGET_MS = (()=>{ const v=URL_FLAGS.get("jbtarget"); if(v==null)return 220; const n=parseInt(v,10); return (Number.isFinite(n)&&n>=0&&n<=4000)?n:220; })();
+// ── DELAY-COMP CEILING (Lever: SYNC ROBUSTNESS under real latency) ───────────
+// The local-monitor delay-comp shifts LOCAL audio later to line it up with the partner's
+// jitter-buffered (late) stream. It's capped so we never delay the DJ's OWN decks too much
+// (laggy self-monitoring). The default 400ms cap is fine on loopback (buffer ~220ms) but
+// SATURATES under real network jitter, where NetEQ balloons the partner buffer to 500-650ms:
+// comp measures 650 but applies only 400 → ~250ms of un-compensated offset → the audible
+// "double-hitting kicks / out of sync" flam (reproduced locally with ?jbtarget=650). This
+// flag raises the ceiling to A/B how high it should go — bounded by the DelayNode's 1.0s max
+// (leave headroom → 950). Default 400 = byte-identical. The REAL win is keeping the buffer
+// shallow (?audiolite/?ptime, target buffer <400ms) so the cap never bites; this is the
+// graceful-degradation half for when it does. Watch [SYNC-COMP] measured-vs-applied to tune.
+const COMP_CAP_MS = (()=>{ const v=URL_FLAGS.get("compcap"); if(v==null)return 400; const n=parseInt(v,10); return (Number.isFinite(n)&&n>=0&&n<=950)?n:400; })();
 // SYNC TEMPO PRECISION fix — derive the sync rate from the FULL-PRECISION analyzed tempo
 // (beatPeriodSec), not the rounded display BPM. Two tracks that both round to e.g. "128.0"
 // but differ in the decimals previously got rate=1.0 (no tempo correction) → grids + audio
@@ -4001,6 +4013,9 @@ function useRTC({ engineRef, send, onIceRecover }) {
   // [JITTER-DIAG] so session-2 can correlate the distortion with the stretch rate.
   const prevJitterRef = useRef(null);
   const jitterLogTsRef = useRef(0);
+  // [SEND-DIAG] sender-side congestion telemetry (send-vs-receive root-cause diagnostic).
+  const sendDiagPrevRef = useRef(null);
+  const sendDiagTsRef = useRef(0);
   // A transport event (play/pause/seek/engage — local OR partner's) can interrupt
   // the inbound stream and make the jitter buffer re-converge to a new delay.
   // CollabMix calls this so the next poll RE-BASELINES instead of averaging a
@@ -4016,6 +4031,49 @@ function useRTC({ engineRef, send, onIceRecover }) {
     const HEALTH_MIN = 4;    // consecutive healthy windows before trusting a value
     const poll=async()=>{
       const p=pc.current; if(!p||stop) return;
+      // [SEND-DIAG] — SENDER-side congestion telemetry: is OUR OUTBOUND the bottleneck,
+      // or the partner's RECEIVE? The recv.getStats() below is receive-scoped (by design),
+      // so the sender lives on the whole PC — read p.getStats() here, throttled ~2s, and
+      // INDEPENDENT of receive state (we may be sending while the partner has no deck).
+      // Logs, on THIS machine: our outbound packet RATE (steady ~50/s = clean; sagging =
+      // shedding), per-packet send-queue wait (climbing = pacer backup/congestion),
+      // retransmits, encoder target, the pacer's availableOutgoingBitrate + Chrome's own
+      // qualityLimitationReason (none/cpu/bandwidth), AND the partner's RTCP report of how
+      // much of OUR send IT lost (remote-inbound). Always on (no flag) so the next
+      // two-machine session is conclusive about which end is at fault. Log-only.
+      try {
+        const nowMs = Date.now();
+        if (nowMs - sendDiagTsRef.current > 2000) {
+          sendDiagTsRef.current = nowMs;
+          const ps = await p.getStats();
+          let ob=null, ri=null, cp=null;
+          ps.forEach(r=>{
+            if(r.type==="outbound-rtp"&&r.kind==="audio")ob=r;
+            else if(r.type==="remote-inbound-rtp"&&r.kind==="audio")ri=r;
+            else if(r.type==="candidate-pair"&&(r.nominated||r.selected)&&r.state==="succeeded")cp=r;
+          });
+          if (ob) {
+            const nowS = { pkts: ob.packetsSent||0, rtx: ob.retransmittedPacketsSent||0,
+              sd: ob.totalPacketSendDelay||0, lost: ri?(ri.packetsLost||0):null, ts: nowMs };
+            const sp = sendDiagPrevRef.current;
+            if (sp) {
+              const dts=(nowMs-sp.ts)/1000, dPk=nowS.pkts-sp.pkts;
+              const pps = dts>0 ? dPk/dts : 0;
+              const sdMs = dPk>0 ? ((nowS.sd-sp.sd)/dPk)*1000 : 0;
+              const lostD = (nowS.lost!=null&&sp.lost!=null) ? (nowS.lost-sp.lost) : "?";
+              console.log("[SEND-DIAG] outPkt/s="+pps.toFixed(0)+" sendQueueMs="+sdMs.toFixed(1)+
+                " rtxΔ="+(nowS.rtx-sp.rtx)+" myLoss@partnerΔ="+lostD+
+                " fracLost="+(ri&&ri.fractionLost!=null?ri.fractionLost.toFixed(3):"?")+
+                " targetKbps="+(ob.targetBitrate!=null?(ob.targetBitrate/1000).toFixed(0):"?")+
+                " availOutKbps="+(cp&&cp.availableOutgoingBitrate!=null?(cp.availableOutgoingBitrate/1000).toFixed(0):"?")+
+                " qLimited="+(ob.qualityLimitationReason||"?")+
+                " rttMs="+(cp&&cp.currentRoundTripTime!=null?(cp.currentRoundTripTime*1000).toFixed(0):"?")+
+                " (per ~"+dts.toFixed(1)+"s)");
+            }
+            sendDiagPrevRef.current = nowS;
+          }
+        }
+      } catch { /* getStats can throw mid-teardown */ }
       try{
         // Bind to the CURRENT live audio receiver every tick. On renegotiation
         // (partner refresh / transport / track replace) Chrome makes a NEW
@@ -4086,7 +4144,7 @@ function useRTC({ engineRef, send, onIceRecover }) {
         // ms of stretch IS the audible "BPM changing"/distortion under real jitter.
         {
           const nj = { acc: inb.removedSamplesForAcceleration||0, dec: inb.insertedSamplesForDeceleration||0,
-            conc: inb.concealedSamples||0, lost: inb.packetsLost||0, jit: inb.jitter!=null?inb.jitter*1000:null, ts: now };
+            conc: inb.concealedSamples||0, lost: inb.packetsLost||0, disc: inb.packetsDiscarded||0, jit: inb.jitter!=null?inb.jitter*1000:null, ts: now };
           const pj = prevJitterRef.current;
           if (pj && now - jitterLogTsRef.current > 2000) {
             jitterLogTsRef.current = now;
@@ -4095,6 +4153,7 @@ function useRTC({ engineRef, send, onIceRecover }) {
             const concMs = ((nj.conc - pj.conc)/SAMPLE_HZ)*1000;
             console.log("[JITTER-DIAG] accelMs=" + accMs.toFixed(0) + " decelMs=" + decMs.toFixed(0) +
               " concealMs=" + concMs.toFixed(0) + " lostΔ=" + (nj.lost - pj.lost) +
+              " discΔ=" + (nj.disc - pj.disc) +
               " jitterMs=" + (nj.jit!=null?nj.jit.toFixed(1):"?") +
               " jbTargetMs=" + (inb.jitterBufferTargetDelay!=null ? ((inb.jitterBufferTargetDelay/emitted)*1000).toFixed(0) : "?") +
               " (per ~" + ((now-pj.ts)/1000).toFixed(1) + "s window)");
@@ -4381,6 +4440,22 @@ function useRTC({ engineRef, send, onIceRecover }) {
     try{
       await pc.current.setRemoteDescription(new RTCSessionDescription(sdp));
       for(const c of pend.current){try{await pc.current.addIceCandidate(new RTCIceCandidate(c));}catch{}} pend.current=[];
+      // Lever-reliability fix: the ANSWER may have negotiated a LOWER Opus profile than we
+      // OFFERED (partner set ?audiolite/?ptime alone → their answer advertises the reduced
+      // maxaveragebitrate/ptime, and RFC 7587 says that caps OUR encoder). Our offer-time
+      // applySenderHiFi used OUR profile, so without re-reading the answer, a partner-only
+      // flag never actually drops our (lossy) send — the exact bug that would give a false
+      // "flag didn't help". Re-apply the negotiated profile here. Default (no flag either
+      // side) re-applies the same 256k/no-ptime we already set → byte-identical.
+      try {
+        const ans = parseOpusProfileFromSdp(sdp?.sdp);
+        if (ans) {
+          const negBitrate = Math.min(ans.maxBitrate, OPUS_MAX_BITRATE);
+          const negPtime = (ans.ptime>0) ? ans.ptime : OPUS_PTIME;
+          await applySenderHiFi(pc.current, negBitrate, negPtime);
+          console.log("[OPUS-SDP] initiator re-applied negotiated send profile: maxBitrate="+negBitrate+" ptime="+(negPtime>0?negPtime+"ms":"(default 20ms)"));
+        }
+      } catch(e){ console.warn("[OPUS-SDP] initiator re-apply failed:", e?.message||e); }
     } catch(e){
       if (e.name === 'InvalidStateError') {
         console.log('[RTC] handleAnswer: peer already stable, ignoring late answer (likely glare resolved by remote offer)');
@@ -10271,7 +10346,7 @@ export default function CollabMix({ initialPage = "landing", djName = null }) {
       const e = eng.current; if (!e?.ctx || !e.monitorDelay) return;
       const c = rtc.compRef?.current || {};
       const noFrames = !!c.noFrames; // inbound silent/empty — measurement not meaningful
-      const measured = Math.max(0, Math.min(400, c.compMs || 0)); // clamp 0–400ms
+      const measured = Math.max(0, Math.min(COMP_CAP_MS, c.compMs || 0)); // clamp 0–COMP_CAP_MS (?compcap, default 400)
       // Hold the last applied delay while there are no inbound frames (don't slew
       // toward a meaningless 0). Apply the measured value only with real frames.
       const appliedMs = delayCompOn && !noFrames ? measured : 0;
