@@ -10018,3 +10018,91 @@ tools/smoke/lib/e2e.mjs partnerOf to also detect "Mixing with".
 - Smoke before push: 24 pass / 2 dep-skip / 1 fail — the fail (`e2e-sync`, prod-relay flake)
   proven NON-CAUSAL via interleaved clean-vs-changed (6/6 identical) + 8/8 green in isolation;
   `e2e-opus` (exercises the SDP path) PASSED. e2e-entry/rejoin/lock-stability flakes also cleared.
+
+---
+
+# Session end — June 30 / July 1, 2026 — THE REFRAME: Jake's dropouts are a TIMING/sync bug, not packet loss
+
+## HEADLINE DECISION (canonical — supersedes the "audio packet loss" framing for Jake's symptoms)
+Jake's "choppy audio / waveform lag / kicks double-hitting / out of sync" is a **TIMING problem**,
+not packet loss. Mechanism: the local-monitor delay-comp (`monitorDelay`, ~L535; it shifts LOCAL
+audio later to line up with the partner's jitter-buffered late stream) **SATURATES at its 400ms
+cap** when real network jitter balloons the partner buffer to 500–650ms. comp measures ~650 but
+applies only 400 → ~250ms un-compensated offset → the audible flam. Loss makes audio CUT OUT; this
+makes beats MIS-ALIGN — different failure mode. Why it held on loopback but broke with Jake:
+loopback has no jitter → buffer stays ~220ms → cap never bites. See memory
+`project_jake_dropouts_are_timing`.
+
+## THE NEW TOOL (removes the Jake bottleneck for this bug class)
+`?jbtarget=650` on two loopback tabs PINS a deep buffer = **Jake-latency proxy with ZERO network**.
+Reproduced Jake's exact numbers locally: comp measured=666 applied=400 residual=266ms (Jake's log:
+665→400). So the deep-buffer/cap-saturation class is now fixable + A/B-able locally, no Jake needed.
+
+## EARS OVER NUMBERS (Chad's feel test — decisive)
+- `?compcap=650` and `=800` (raise the cap): numbers align (measured=applied, residual 0) but STILL
+  double-kicks by ear → **REJECTED**. Raising the cap to match a deep buffer sounds bad.
+- Plain (jbtarget=220, shallow, comp~235): sounds good, barely any double-kick, **play/pause lag GONE**.
+- VERDICT: **KEEP THE BUFFER SHALLOW is the fix, NOT raise the cap.** (Lesson re-confirmed:
+  measured=applied only proves the delay was APPLIED, not that it SOUNDS aligned. Ears win.)
+- Play/pause control-vs-audio lag = the SAME buffer-depth problem (monitorDelay delay-line drains
+  after stop; deep = long tail = visible lag). Shallow fixes both symptoms. Not a second bug.
+
+## SHIPPED THIS SESSION (all pushed, content-verified live, default-safe/byte-identical with flags off)
+- **`?ptime=40/60`** (e636c08) — Opus frame size via `RTCRtpSender.setParameters encodings[].ptime`
+  (SDP `a=ptime` ALONE is ignored by Chrome — the "looks-set-ignored" trap). Verified takes live
+  (SEND=27 pkt/s). Auto-matches offer↔answer; has a "rejected" confession log if the browser refuses.
+- **`[SEND-DIAG]` sender telemetry + `packetsDiscarded` (discΔ)** (68b2014) — outbound pkt rate,
+  send-queue wait, retransmits, availableOutgoingBitrate, qualityLimitationReason, and the partner's
+  RTCP report of OUR send loss. Read via `p.getStats()` (receive telemetry is receiver-scoped).
+  Confirmed on loopback: our SEND is CLEAN → not outbound congestion. discΔ splits
+  arrived-but-dropped (receiver/CPU) from never-arrived (wire).
+- **Lever-reliability bugfix** (68b2014) — initiator re-reads the negotiated Opus profile in
+  `handleAnswer` and re-applies the (possibly-lower) send bitrate/ptime. Without it, a
+  `?audiolite`/`?ptime` flag set on the ANSWERER alone never dropped the initiator's real send.
+- **`?compcap=<ms>`** (68b2014, default 400 = byte-identical) — raises the delay-comp ceiling.
+  Kept as a **DIAGNOSTIC knob** (it proved the cap-saturation mechanism), NOT the fix.
+- **NACK proof re-log** (f2f3ed5) — re-prints `[OPUS-SDP] audio NACK negotiated` every 20s (gated
+  on `?audionack`) so it can't scroll off a long dogfood.
+
+## RESEARCH (investigation-only, both correctly PARKED/STOPPED)
+- **RED distance=2 — STOPPED.** NOT reachable via SDP: Chrome hard-wires Opus send-redundancy to
+  distance=1 (`kRedNumberOfRedundantEncodings=1`), does NOT read distance from SDP, and the
+  `WebRTC-Audio-Red-For-Opus` fieldtrial isn't page-settable. A `?red=2` flag would be a dead
+  "looks-set-ignored" trap. The ONLY page-reachable path is building RFC 2198 RED packets ourselves
+  via Encoded Transform (`RTCRtpScriptTransform`, stable Chrome 141+, Jitsi `RFC2198Encoder`
+  reference). Real build, 3× bitrate → pair with low base bitrate. STOPPED — aimed at an unconfirmed
+  end; revisit only if diagnosis proves bursty loss is the driver.
+- **Cloudflare Realtime (Lever 2) — PARKED.** A relay only helps the PATH case; does NOTHING for
+  last-mile/endpoint (their docs concede the last mile stays public-internet). TURN-both-ends >
+  their SFU for 2–4 people; ~$0 at our scale; latency delta must be measured not assumed. Revisit
+  ONLY if a Jake session shows the path is a big jitter source. It also independently endorsed our
+  existing `?ice=relay` + getStats-split as the cheap first experiment.
+
+## GHOST — do NOT re-chase (Chad's gut-check, correct)
+The shallow-buffer residual "slightly off" heard on TWO-TAB LOOPBACK is largely a **loopback/machine-
+specific artifact**: the Web-Audio-vs-`<audio>`-element output-path mismatch, a FIXED per-machine
+constant. A hand-tuned `?compoffset` (built + REVERTED this session) would measure Chad's laptop's
+constant and mean nothing for Jake, whose residual is **network-dominated and variable** (wrong value
+AND wrong shape — a fixed offset can't track a variable network term). Chasing it = re-solving the
+two-tab case already fixed weeks ago. If a residual PERSISTS after the buffer is confirmed shallow on
+Jake's REAL network, the right fix is architectural (route partner stream through Web Audio to kill
+the output-path mismatch for everyone, no tuning) — NOT before.
+
+## PENDING — Jake-gated (the one thing loopback CANNOT answer)
+Does **keep-shallow HOLD on Jake's real network?** — i.e. do `?audiolite`/`?ptime` reduce real jitter
+enough that NetEQ never balloons the buffer past ~220ms. Loopback has no jitter to reduce, so this is
+purely a Jake datapoint.
+- **NEXT JAKE SESSION:** `?audiolite=96` (or `128`) on **Chad or BOTH, never Jake-alone** (Chad is
+  always initiator, C<J). Console open, watch: `[JITTER-DIAG] jbTargetMs` (stays ~220?),
+  `[SYNC-COMP] measured` (stays <400, no saturation?), `[SEND-DIAG]` (send clean?).
+  SUCCESS = buffer shallow + comp unsaturated → the flam should not appear.
+- IF still off after buffer confirmed shallow → the architectural Web-Audio-routing fix (above).
+- Held levers: lower `?jbtarget` (e.g. 160) to cut absolute latency (trades underrun risk);
+  continuous ICE-path re-sample (audit item 4, not built).
+
+## STATE
+- Prod `master` @ `68b2014`. Commits this session: `f2f3ed5` (NACK re-log), `e636c08` (ptime),
+  `68b2014` (SEND-DIAG + lever-reliability fix + ?compcap). Each pushed on a GREEN full smoke
+  (25 pass / 0 fail / 2 dep-skip) and content-verified in the live bundle.
+- `?compoffset` built + REVERTED (loopback ghost). Working tree clean at `68b2014`.
+- New memory: `project_jake_dropouts_are_timing` (the reframe + `?jbtarget=650` local repro).
