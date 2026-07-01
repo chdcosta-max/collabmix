@@ -3793,11 +3793,28 @@ const OPUS_MAX_BITRATE = AUDIOLITE_ON ? AUDIOLITE_KBPS * 1000 : 256000;
 // tradeoff) — the lead candidate. Default OFF: prod negotiation unchanged.
 const AUDIO_NACK_ON = URL_FLAGS.get("audionack") != null;
 try { if (AUDIO_NACK_ON) console.log("[AUDIO-NACK] ON — negotiating Opus retransmission (a=rtcp-fb nack) on offer+answer; recovers bursty loss at full quality"); } catch {}
+// ── OPUS ptime / frame size (Lever: PACKET RATE) ─────────────────────────────
+// Opus emits ONE RTP packet per frame; at the 20ms default that's ~50 pkt/s
+// REGARDLESS of bitrate. ?ptime=40 / =60 raises the frame duration so the encoder
+// emits ~25 / ~17 pkt/s — FEWER, larger packets = less per-packet pacing/CPU
+// pressure on a loaded SEND pipeline. This attacks packet-COUNT loss that bitrate
+// reduction (?audiolite) can't: audiolite shrinks packet SIZE, ptime cuts packet
+// COUNT. Composable (?audiolite=96&ptime=40 does both). STEREO always. Default OFF.
+// MECHANISM: Chrome does NOT reliably honor `a=ptime` in SDP for the Opus ENCODER
+// frame size (the "looks set but ignored" trap). The path that actually takes is
+// RTCRtpSender.setParameters encodings[].ptime (WebRTC-Extensions, Chrome M107+),
+// applied in applySenderHiFi. The SDP a=ptime/maxptime only CARRIES the value to
+// the answerer (auto-match) and feeds the proof log — enforcement is setParameters.
+const _PTIME_RAW = URL_FLAGS.get("ptime");
+const PTIME_ON = _PTIME_RAW != null;
+// Snap to a valid Opus packetization size; anything else (incl. bare ?ptime) → 40ms.
+const OPUS_PTIME = PTIME_ON ? (()=>{ const n=parseInt(_PTIME_RAW,10); return [20,40,60,80,100,120].includes(n)?n:40; })() : 0;
+try { if (PTIME_ON) console.log("[OPUS-PTIME] ON — requesting "+OPUS_PTIME+"ms Opus frames (~"+Math.round(1000/OPUS_PTIME)+" pkt/s vs ~50 at 20ms) via setParameters + SDP; STEREO preserved"); } catch {}
 // `profile` defaults to this peer's own configured Opus params (OPUS_HIFI, from
 // the ?audiolite URL flag or the 256k stereo default). The ANSWERER passes the
 // initiator's parsed profile instead, so a single ?audiolite flag set by ONE peer
 // propagates to BOTH directions without manual URL coordination — see handleOffer.
-function mungeOpusHiFi(sdp, profile = OPUS_HIFI) {
+function mungeOpusHiFi(sdp, profile = OPUS_HIFI, ptime = OPUS_PTIME) {
   if (!sdp) return sdp;
   const lines = sdp.split(/\r\n/);
   let pt = null; // Opus payload type, from its rtpmap (opus/48000/2)
@@ -3825,6 +3842,15 @@ function mungeOpusHiFi(sdp, profile = OPUS_HIFI) {
     const idx = out.findIndex((l) => new RegExp("^a=rtpmap:" + pt + "\\s+opus").test(l));
     if (idx >= 0) out.splice(idx + 1, 0, `a=rtcp-fb:${pt} nack`);
   }
+  // ?ptime: media-level a=ptime/a=maxptime so the answerer can MIRROR the frame size
+  // (auto-match) and the proof log can read the signaled value. Chrome may ignore
+  // this for the encoder — the REAL enforcement is applySenderHiFi's setParameters.
+  // Replace any pre-existing ptime lines (idempotent across re-munges) then insert.
+  if (ptime > 0) {
+    for (let k = out.length - 1; k >= 0; k--) if (/^a=(ptime|maxptime):/i.test(out[k])) out.splice(k, 1);
+    const ri = out.findIndex((l) => new RegExp("^a=rtpmap:" + pt + "\\s+opus").test(l));
+    if (ri >= 0) out.splice(ri + 1, 0, `a=maxptime:${ptime}`, `a=ptime:${ptime}`);
+  }
   return out.join("\r\n");
 }
 // Pull the Opus fmtp params we care about out of a RECEIVED description (the
@@ -3844,16 +3870,30 @@ function parseOpusProfileFromSdp(sdp) {
   const profile = {};
   for (const k of ["stereo", "sprop-stereo", "maxaveragebitrate", "maxplaybackrate", "useinbandfec"]) if (params[k] != null) profile[k] = params[k];
   const mab = parseInt(params.maxaveragebitrate || "", 10);
-  return { profile, maxBitrate: Number.isFinite(mab) ? mab : OPUS_MAX_BITRATE };
+  // ptime is a media-level attribute (not in fmtp), so read it off the raw lines.
+  let ptime = 0; for (const l of lines) { const pm = l.match(/^a=ptime:(\d+)/i); if (pm) { ptime = parseInt(pm[1], 10) || 0; break; } }
+  return { profile, maxBitrate: Number.isFinite(mab) ? mab : OPUS_MAX_BITRATE, ptime };
 }
-async function applySenderHiFi(p, maxBitrate = OPUS_MAX_BITRATE) {
+async function applySenderHiFi(p, maxBitrate = OPUS_MAX_BITRATE, ptime = OPUS_PTIME) {
   try {
     const sender = (p.getSenders?.() || []).find((s) => s.track && s.track.kind === "audio");
     if (!sender) return;
     const params = sender.getParameters();
     if (!params.encodings || !params.encodings.length) params.encodings = [{}];
     params.encodings[0].maxBitrate = maxBitrate; // let the encoder push music-grade, not the ~32k default
-    await sender.setParameters(params);
+    // ptime via encodings (WebRTC-Extensions) — the path Chrome ACTUALLY honors for
+    // Opus frame size. If the browser rejects the field, retry WITHOUT it so bitrate
+    // still applies, and CONFESS in the log (never a silent no-op — Chad's ask).
+    if (ptime > 0) params.encodings[0].ptime = ptime;
+    try {
+      await sender.setParameters(params);
+    } catch (inner) {
+      if (ptime > 0) {
+        console.warn("[OPUS-PTIME] setParameters rejected ptime=" + ptime + "ms (" + (inner?.message || inner) + ") — retrying without; frame-size change did NOT take on this browser");
+        delete params.encodings[0].ptime;
+        await sender.setParameters(params);
+      } else throw inner;
+    }
   } catch (e) { console.warn("[OPUS-SDP] sender setParameters failed:", e?.message || e); }
 }
 
@@ -4148,7 +4188,40 @@ function useRTC({ engineRef, send, onIceRecover }) {
       };
       nackIv=setInterval(logNack,20000);
     }
-    return ()=>{ stop=true; if(timer)clearTimeout(timer); if(nackIv)clearInterval(nackIv); };
+    // [OPUS-SDP] ptime proof RE-LOG — confirm the FRAME SIZE change actually TOOK,
+    // not just that we asked. Chrome can ignore a=ptime, so the real proof is the
+    // measured PACKET RATE (20ms≈50 pkt/s, 40ms≈25, 60ms≈17). Each 20s tick logs:
+    // the SDP-signaled ptime (local/remote), the value the sender echoed back via
+    // getParameters (proves setParameters accepted it), and the measured SEND/RECV
+    // pkt/s over the interval (the definitive on-the-wire confirmation). Gated on
+    // ?ptime — a default session never sets it, so production stays silent.
+    let ptimeIv=null, ptimePrev=null;
+    if(PTIME_ON){
+      const logPtime=async()=>{
+        const p=pc.current; if(!p||stop) return;
+        try{
+          const ld=p.currentLocalDescription?.sdp||"", rd=p.currentRemoteDescription?.sdp||"";
+          const mL=ld.match(/^a=ptime:(\d+)/im), mR=rd.match(/^a=ptime:(\d+)/im);
+          const sdpL=mL?mL[1]+"ms":"?", sdpR=mR?mR[1]+"ms":"?";
+          // value Chrome echoed back for OUR sender — proves setParameters accepted ptime
+          let reqPt="?"; try{ const snd=(p.getSenders?.()||[]).find(s=>s.track&&s.track.kind==="audio"); const e=snd?.getParameters?.().encodings?.[0]; if(e&&e.ptime!=null) reqPt=e.ptime+"ms"; }catch{}
+          // measured packet rate over the interval — the definitive proof it took
+          let outPps="?", inPps="?";
+          const st=await p.getStats(); let o=null,i=null;
+          st.forEach(r=>{ if(r.type==="outbound-rtp"&&r.kind==="audio")o=r; if(r.type==="inbound-rtp"&&r.kind==="audio")i=r; });
+          const nowP={ ps:o?.packetsSent??null, pr:i?.packetsReceived??null, ts:Date.now() };
+          if(ptimePrev){
+            const dt=(nowP.ts-ptimePrev.ts)/1000;
+            if(dt>0){ if(nowP.ps!=null&&ptimePrev.ps!=null) outPps=((nowP.ps-ptimePrev.ps)/dt).toFixed(0);
+                      if(nowP.pr!=null&&ptimePrev.pr!=null) inPps=((nowP.pr-ptimePrev.pr)/dt).toFixed(0); } }
+          ptimePrev=nowP;
+          console.log("[OPUS-SDP] ptime negotiated (re-log): local="+sdpL+" remote="+sdpR+" senderReq="+reqPt+" | measured SEND="+outPps+" pkt/s RECV="+inPps+" pkt/s (20ms≈50, 40ms≈25, 60ms≈17)");
+        }catch{ /* stats/descriptions may be null mid-teardown */ }
+      };
+      logPtime();                          // prime the pkt/s baseline immediately
+      ptimeIv=setInterval(logPtime,20000);
+    }
+    return ()=>{ stop=true; if(timer)clearTimeout(timer); if(nackIv)clearInterval(nackIv); if(ptimeIv)clearInterval(ptimeIv); };
   },[state]);
 
   const capture = useCallback(() => {
@@ -4289,11 +4362,14 @@ function useRTC({ engineRef, send, onIceRecover }) {
       const matched=parseOpusProfileFromSdp(sdp?.sdp);
       const ansBitrate=matched?Math.min(matched.maxBitrate,OPUS_MAX_BITRATE):OPUS_MAX_BITRATE;
       const ansProfile=matched?{...matched.profile,maxaveragebitrate:String(ansBitrate)}:OPUS_HIFI;
+      // ptime auto-match: adopt the INITIATOR's frame size when they set it (a
+      // single ?ptime flag propagates), else fall back to our own OPUS_PTIME.
+      const ansPtime=(matched&&matched.ptime>0)?matched.ptime:OPUS_PTIME;
       const a=await p.createAnswer();
-      a.sdp=mungeOpusHiFi(a.sdp, ansProfile);  // hi-fi/audiolite Opus — matched to initiator (NACK injected if ?audionack)
+      a.sdp=mungeOpusHiFi(a.sdp, ansProfile, ansPtime);  // hi-fi/audiolite Opus — matched to initiator (NACK injected if ?audionack)
       await p.setLocalDescription(a);
-      await applySenderHiFi(p, ansBitrate);    // send bitrate matched to the negotiated profile
-      if(matched) console.log("[OPUS-SDP] answerer auto-matched initiator profile: stereo="+(ansProfile.stereo??"?")+" maxaveragebitrate="+(ansProfile.maxaveragebitrate??"?")+" senderMaxBitrate="+ansBitrate);
+      await applySenderHiFi(p, ansBitrate, ansPtime);    // send bitrate + frame size matched to the negotiated profile
+      if(matched) console.log("[OPUS-SDP] answerer auto-matched initiator profile: stereo="+(ansProfile.stereo??"?")+" maxaveragebitrate="+(ansProfile.maxaveragebitrate??"?")+" senderMaxBitrate="+ansBitrate+" ptime="+(ansPtime>0?ansPtime+"ms":"(default 20ms)"));
       sRef.current({type:"rtc_answer",sdp:p.localDescription});
       setState("connecting");
     } catch(e){ console.error('[RTC] handleOffer error:',e); captureHandledError(e, { operation: "rtc_handleOffer" }); setState("failed"); }
