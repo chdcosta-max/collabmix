@@ -4128,7 +4128,27 @@ function useRTC({ engineRef, send, onIceRecover }) {
       }catch{ /* getStats can throw mid-teardown */ }
     };
     timer=setTimeout(run,1500);
-    return ()=>{ stop=true; if(timer)clearTimeout(timer); };
+    // [OPUS-SDP] NACK proof RE-LOG — the one-shot above fires once ~2s after
+    // connect, so in a long dogfood it scrolls off before you can read it (Chad
+    // couldn't verify negotiation last session — the line was gone from both
+    // logs). Re-emit JUST the NACK status every 20s so it's always findable a
+    // short scroll up. Cheap: reads the cached SDP descriptions, no getStats.
+    // Gated on ?audionack — a default (flag-off) session has nothing to verify,
+    // so production stays quiet; the re-log only runs during the experiment.
+    let nackIv=null;
+    if(AUDIO_NACK_ON){
+      const logNack=()=>{
+        const p=pc.current; if(!p||stop) return;
+        try{
+          const ld=p.currentLocalDescription?.sdp||"", rd=p.currentRemoteDescription?.sdp||"";
+          if(!ld&&!rd) return;   // descriptions not set yet (early connect / mid-teardown)
+          const nackLocal=/a=rtcp-fb:\d+ nack/.test(ld), nackRemote=/a=rtcp-fb:\d+ nack/.test(rd);
+          console.log('[OPUS-SDP] audio NACK negotiated (re-log): local='+nackLocal+' remote='+nackRemote+(nackLocal&&nackRemote?' → RETRANSMISSION ACTIVE both ways':(nackLocal||nackRemote?' → one-sided (partner lacks ?audionack)':' → OFF (default)')));
+        }catch{ /* description may be null mid-teardown */ }
+      };
+      nackIv=setInterval(logNack,20000);
+    }
+    return ()=>{ stop=true; if(timer)clearTimeout(timer); if(nackIv)clearInterval(nackIv); };
   },[state]);
 
   const capture = useCallback(() => {
