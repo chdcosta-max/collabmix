@@ -10106,3 +10106,95 @@ purely a Jake datapoint.
   (25 pass / 0 fail / 2 dep-skip) and content-verified in the live bundle.
 - `?compoffset` built + REVERTED (loopback ghost). Working tree clean at `68b2014`.
 - New memory: `project_jake_dropouts_are_timing` (the reframe + `?jbtarget=650` local repro).
+
+---
+
+# Session end — July 1, 2026 (autonomous) — Jitter harness shipped; lever ladder ANSWERED locally: no audio lever keeps the buffer shallow under burst jitter
+
+## JOB 1 — ?ice=relay real-transit test: Chad's uplink is CLEAN
+Two-tab + `?ice=relay` (both tabs), 4 min, TURN relay confirmed on both sides
+(`[ICE-PATH] local=relay/udp remote=relay/udp`, rtt 25–33ms). With real internet
+transit (machine → TURN → machine) in the path: **jbTargetMs pinned at 220 for
+all 115 samples, comp measured ~227 max 239, zero conceal/loss/discard, rtp
+jitter mean 6ms.** Real transit through the relay does NOT balloon the buffer →
+the path from Chad through TURN is not the jitter source; Jake's jitter is his
+last mile / environment. (Also independently re-confirms TURN works, and that
+the PARKED Cloudflare lever stays parked.)
+
+## JOB 2 — jitter harness: TWO built, one sudo-blocked, one verified
+- `tools/netem/dummynet-jitter.sh` — the pf+dummynet kernel harness as specced
+  (delay toggle HIGH↔LOW + plr, lo0-scoped, skip-on-lo0 stripped, full cleanup,
+  self-verify instructions in header). **UNVERIFIED: needs sudo (password), which
+  an autonomous session doesn't have.** Run it manually when kernel-level ground
+  truth is wanted; if jbTargetMs doesn't balloon, suspect dummynet-inert-on-
+  modern-macOS and fall back to the proxy below.
+- `tools/netem/turn-jitter-proxy.mjs` — UNPRIVILEGED equivalent, VERIFIED. Local
+  UDP forwarder in front of the real TURN server; `VITE_TURN_URLS=turn:127.0.0.1:3479
+  npm run dev` + `?ice=relay` puts all media through it. Seeded/deterministic,
+  shapes only media frames (setup always crisp), HTTP control (POST :3480/shape),
+  per-leg byte accounting, optional bwKbps queue model. Zero machine residue.
+- `tools/smoke/measure-relay.mjs` — the run driver: two tabs, relay-proof gate,
+  N-minute measurement, jbTargetMs/[SYNC-COMP]/conceal/loss percentile report +
+  raw log to tools/smoke/out/. NETEM_URL/NETEM_PROFILE envs drive the proxy.
+- SELF-VERIFY PASSED after one calibration step. Frozen Jake-profile:
+  `{"highMs":250,"lowMs":10,"periodMs":1000,"plr":0.005,"noiseMs":20,"seed":1}`
+  (per-crossing; media crosses the proxy 2× → effective ~20↔500ms bursts, ~1%
+  loss). Reproduces Jake's exact signature ON DEMAND, no Jake needed:
+  jbTargetMs ~532–540 (Jake: 500–650), measured climbs ~450–480+ while applied
+  SATURATES flat at 400 — the cap-saturation flam mechanism.
+
+## THE LADDER (3-min runs, identical frozen profile, one lever at a time)
+| run | jbTargetMs p50 | measured p50 | applied
+| baseline            | 540 | 337 | saturates 400
+| ?audiolite=96 (took: targetKbps=96, fmtp 96000) | 536 | 334 | saturates 400
+| ?ptime=40 (took: 25 pkt/s)  | 528 | 385 | saturates 400
+| ?ptime=60 (took: 17 pkt/s)  | 541 | 400 | saturates 400
+| combo 96+40 (both took)     | 531 | 335 | saturates 400
+
+**VERDICT: NULL ACROSS THE BOARD — and mechanistically expected in hindsight.**
+NetEQ's buffer target tracks packet ARRIVAL-TIME variance. Bitrate/packet-rate
+levers only reduce jitter that is SELF-LOAD-INDUCED (own stream queueing a
+constrained link). Against exogenous burst jitter (other traffic, WiFi airtime
+stalls — the delay the network adds regardless of our load), they change nothing;
+ptime if anything worsens comp saturation (bigger frames = coarser recovery).
+Chad's success metric (jbTarget ~220, measured <400) is NOT achievable with
+these levers under burst jitter.
+
+## DISCOVERY — headless harness sends near-silent audio (caveat + follow-up)
+Per-leg proxy accounting: BOTH tabs send ~25kbps at full packet rate, identical
+for the kick fixture and a real music track → deck content is not reaching the
+encoder with real energy in headless Chrome. This does NOT touch the ladder
+conclusions (NetEQ target is arrival-timing-driven; packets flowed at full rate;
+ptime provably changed the stream and still nulled). It DOES mean: (a) the
+load-dependent/bwKbps branch is untestable headless (a cap can't bite a silent
+stream); (b) we still don't know the REAL mid-track send bitrate on a headed
+session — the [OPUS-SDP] one-shot fires at connect (before play; that's why it
+logs bitrateKbps=1). FOLLOW-UP (tiny, needs approval — src change): add outbound
+kbps to [SEND-DIAG] so the next real dogfood reports the true wire rate.
+
+## WHAT THIS MEANS FOR THE PENDING JAKE QUESTION
+"Do ?audiolite/?ptime reduce Jake's real jitter enough to keep the buffer
+shallow?" now has a strong local prior: **only if his jitter is self-load-induced
+— and our stream is featherweight (tens of kbps on the wire), so that's unlikely;
+if the jitter comes from anything else on his WiFi, these levers do nothing.**
+The next Jake session should still capture [JITTER-DIAG]/[SEND-DIAG] (now the
+levers' takes are provable), but the working assumption flips: stream-lightening
+is NOT the path to keep-shallow. The candidate paths that remain are the parked
+architectural one (route partner audio through Web Audio) and/or rethinking how
+comp handles a deep-but-honest buffer — the latter re-opens ears-rejected
+territory, so it needs Chad's call, not a default.
+
+## HOW TO RERUN (fully local, deterministic)
+1. `node tools/netem/turn-jitter-proxy.mjs &`
+2. `VITE_TURN_URLS="turn:127.0.0.1:3479" npm run dev &`
+3. `NETEM_URL=http://127.0.0.1:3480 NETEM_PROFILE='<frozen profile above>'
+   FLAGS="ice=relay&<lever>" DURATION_MIN=3 node tools/smoke/measure-relay.mjs`
+Raw logs from tonight: tools/smoke/out/relay-*.log
+
+## STATE
+- No src/ changes. New: tools/netem/ (2 files), tools/smoke/measure-relay.mjs,
+  this handoff. Pre-existing untracked measure-b2b/measure-disambig/out left as
+  found (separate B2B-accuracy thread).
+- Machine clean: pf/dummynet never touched (sudo unavailable); proxy + dev
+  server stopped after runs.
+- New memory: project_jitter_harness_and_ladder.
