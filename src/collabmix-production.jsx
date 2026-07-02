@@ -3,6 +3,7 @@ import { WORKER_SRC } from "./bpm-worker-source.js";
 import { logEvent, setSessionContext, captureHandledError } from "./utils/telemetry.js";
 import { createClockSync } from "./utils/clockSync.js";
 import { createConnQualityTracker } from "./conn-quality.js";
+import { resolveServerUrl } from "./ws-url-gate.js";
 import { connectRekordboxLibrary } from "./rekordbox-library.js";
 import {
   openCmDB,
@@ -429,13 +430,19 @@ const WF_AMBER_OVER = WF_FLAT ? 1 : _urlNum("wfAmberOver", 1.0);   // OPAQUE —
 // After deploying to Railway, replace this URL with your Railway server URL.
 // It should look like: wss://collabmix-server-production.up.railway.app
 const DEFAULT_SERVER_URL = "wss://collabmix-server-production.up.railway.app";
-// Test-only WS endpoint override (?wsurl=ws://localhost:8090). Gated behind
-// TEST_HOOKS (dev server or ?smoke=1) so a crafted link can NEVER redirect a real
-// user's socket to an attacker-controlled server — the override is inert for a
-// plain production load. Used by the smoke suite's local mock WS server to inject
-// deterministic latency / jitter / loss / reordering, conditions the production
-// relay can't reproduce (the stale-mirror / sparse-packet / interleave class).
-const SERVER_URL = (TEST_HOOKS && URL_FLAGS.get("wsurl")) || DEFAULT_SERVER_URL;
+// Test-only WS endpoint override (?wsurl=ws://localhost:8090), used by the smoke
+// suite's local mock WS server to inject deterministic latency / jitter / loss /
+// reordering, conditions the production relay can't reproduce. Dev builds honor
+// any ?wsurl; production builds honor it only with ?smoke=1 AND a loopback host,
+// so a crafted ?smoke=1&wsurl=wss://evil link cannot redirect a real user's
+// socket (SECURITY_REVIEW_2026-07-03 Vuln 1 — gate logic + unit gate in
+// src/ws-url-gate.js / tools/smoke/tests/wsurl-gate.smoke.mjs).
+const SERVER_URL = resolveServerUrl({
+  dev: !!(import.meta.env && import.meta.env.DEV),
+  smokeFlag: URL_FLAGS.get("smoke") === "1",
+  wsurl: URL_FLAGS.get("wsurl"),
+  defaultUrl: DEFAULT_SERVER_URL,
+});
 
 // ── ID3 / artwork extraction parameters ──────────────────────
 // Source-file window read into memory for parseID3. 4 MB covers any

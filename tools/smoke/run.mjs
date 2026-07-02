@@ -36,6 +36,7 @@ const TESTS = [
   { name: "rekordbox-grid",   file: "rekordbox-grid.smoke.mjs",   kind: "unit",  gates: "rekordbox.xml TEMPO→beatTimes (single + multi-tempo, piecewise)" },
   { name: "conn-quality",     file: "conn-quality.smoke.mjs",     kind: "unit",  gates: "?connwarn classifier: measured clean=good / deep-buffer=poor bands, July-2 blip immunity, 3-window escalate / 5-window clear sustain" },
   { name: "bpm-retry",        file: "bpm-retry.smoke.mjs",        kind: "audio", gates: "?bpmretry safety contract: flag-off payload identical (no key leak), clean track never retried, only validated hypotheses can change a result" },
+  { name: "wsurl-gate",       file: "wsurl-gate.smoke.mjs",       kind: "unit",  gates: "?smoke=1&wsurl=wss://evil link can NEVER redirect a prod socket (loopback-only override); suite's mock-relay + dev workflows survive" },
   { name: "e2e-entry",        file: "e2e-entry.smoke.mjs",        kind: "e2e",   gates: "two clients join one room (code + paste); distinct djIds; partners crossed" },
   { name: "e2e-track-mirror", file: "e2e-track-mirror.smoke.mjs", kind: "e2e",   gates: "driver load → partner mirrors title/BPM/waveform/beatTimes" },
   { name: "e2e-transport",    file: "e2e-transport.smoke.mjs",    kind: "e2e",   gates: "play/pause both ways; seek SEND→RECV→EXEC round-trip" },
