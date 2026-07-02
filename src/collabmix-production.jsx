@@ -128,6 +128,17 @@ const WF_GRID_COUPLE = URL_FLAGS.get("gridcouple") !== "0";
 // machines. Throttling the STATE (never the ref) frees that without touching the top
 // waveform's motion. ?progthrottle=0 reverts to the old 60Hz state for the A/B.
 const WF_PROG_THROTTLE = URL_FLAGS.get("progthrottle") !== "0";
+// Partner-mirror transit correction (default ON; ?mirrortsend=0 legacy A/B).
+// The mirror follower anchors its coast on the packet's SEND time (t_send, already
+// on every progress broadcast) instead of its ARRIVAL time. WS deck_updates ride
+// TCP, which delivers in-order CLUMPS under jitter (100-600ms gaps in real dogfood
+// logs); anchoring at arrival made the mirror inherit that clump delay as lag —
+// and since the render layer aligns the drawn playhead to the AUDIBLE position
+// assuming the follower tracks truth, every ms of follower lag showed up as
+// "audio leads the playhead" (the July 2 dogfood mirror bug). Send-time anchoring
+// removes the transit term entirely; it also makes the observed-rate slope exact
+// (Δvalue/Δt_send) instead of arrival-jitter-noisy.
+const MIRROR_TSEND = URL_FLAGS.get("mirrortsend") !== "0";
 const PROG_STATE_MS = 100;  // ~10Hz cap on the React prog-state commit (ref pipe stays 60Hz)
 // BUG #2 audio smoothness — jitter-buffer depth on the PARTNER's inbound audio
 // receiver. The browser default starts SHALLOW (~70ms) and HUNTS up to the depth a
@@ -6453,6 +6464,11 @@ function Deck({ id, ch, ctx:ac, color, local, remote, onChange, midi:mt, bpmResu
   const remPktRef=useRef(0);          // performance.now() of the last progress packet (staleness)
   const remStaleLoggedRef=useRef(false);
   const remDiagAtRef=useRef(0);       // throttle for [MIRROR-DIAG] interp log
+  // MIRROR_TSEND rolling window of (tRecv − tSend) samples. d = clockSkew +
+  // transit; the window MIN isolates (skew + minTransit), so d − min = this
+  // packet's clump hold-back. Window is time-pruned (15s) so sender clock
+  // resets (page reload) age out within seconds.
+  const remSkewWinRef=useRef([]);
   // [MIRROR-RAF] receiver RAF-cadence probe (Suspect B — reconcile contention). Pure
   // diagnostic, gated by ?mirrordiag=1. Measures the FOLLOWER RAF's own inter-frame
   // gap on the MIRROR machine: the 0.9ms drawMs probe times only the canvas blit, NOT
@@ -6582,6 +6598,24 @@ function Deck({ id, ch, ctx:ac, color, local, remote, onChange, midi:mt, bpmResu
       remPktRef.current=now; remStaleLoggedRef.current=false;         // fresh packet → staleness clears
       const justStarted=remAwaitPktRef.current;              // first packet since a play-START
       remAwaitPktRef.current=false;
+      // ── MIRROR_TSEND transit correction. excessMs = how much LATER than the
+      // window's best case this packet arrived (the TCP clump hold-back). The
+      // anchor below rolls to (now − excessMs): the coast extrapolates from
+      // send-aligned time, so clump delay never becomes mirror lag. No meta
+      // (old sender / non-progress rebroadcast) → excess 0 → legacy-identical.
+      // Capped at 2000ms so a sender clock reset degrades to bounded legacy
+      // behavior while the 15s window ages the stale min out.
+      let excessMs=0;
+      const tsMeta=remote.progressMeta;
+      if(MIRROR_TSEND && tsMeta && tsMeta.value===remote.progress && typeof tsMeta.tSend==="number"){
+        const d=tsMeta.tRecv-tsMeta.tSend;
+        const win=remSkewWinRef.current;
+        win.push({d,t:now});
+        while(win.length && now-win[0].t>15000) win.shift();
+        let dMin=Infinity; for(const s of win) if(s.d<dMin)dMin=s.d;
+        excessMs=Math.min(2000,Math.max(0,d-dMin));
+      }
+      const nowEff=now-excessMs;
 
       // REORDER GUARD (the harsh-network error killer). The driver's true position
       // is monotonic-forward (bar genuine seeks). So a packet whose progress sits
@@ -6608,7 +6642,7 @@ function Deck({ id, ch, ctx:ac, color, local, remote, onChange, midi:mt, bpmResu
         // Predict where TRUTH should be NOW from the PRIOR anchor (before we move it)
         // to tell a genuine forward seek from ordinary coast drift. The snap/smooth
         // decision is a track-seconds magnitude — independent of network cadence.
-        const dtPktMs=now-remTimeRef.current;
+        const dtPktMs=nowEff-remTimeRef.current;   // send-aligned when meta present (MIRROR_TSEND)
         const predictedTruth=remProgRef.current+(remRateRef.current||0)*dtPktMs;
         const truthJumpSec=(remote.progress-predictedTruth)*trackDurSec;
         // PRIMARY seek signal: the driver bumped seekEpoch on a real user seek/cue. A
@@ -6650,8 +6684,10 @@ function Deck({ id, ch, ctx:ac, color, local, remote, onChange, midi:mt, bpmResu
         }
 
         // Roll the anchor forward; remember the prior packet for the next slope.
+        // Anchor time is nowEff (arrival − clump excess): the RAF's elapsed then
+        // spans the transit hold-back, so modeled position lands on truth.
         remPrevProgRef.current=remProgRef.current; remPrevTimeRef.current=remTimeRef.current;
-        remProgRef.current=remote.progress; remTimeRef.current=now;
+        remProgRef.current=remote.progress; remTimeRef.current=nowEff;
 
         if(fwdSeek||genuineRewind){
           // Genuine transport jump — the ONLY time the displayed playhead may move
@@ -6688,6 +6724,7 @@ function Deck({ id, ch, ctx:ac, color, local, remote, onChange, midi:mt, bpmResu
             ' backwardMs='+(backwardSec*1000).toFixed(0)+
             ' rate='+rateBasis+
             ' baseRate='+(remRateRef.current*1e6).toFixed(2)+'e-6'+
+            ' clumpExcessMs='+excessMs.toFixed(0)+
             (coastSuspect?'  >>> COAST-SUSPECT (false-snap candidate → fix#1 seek-epoch)':'')+
             ' truthProg='+remote.progress.toFixed(4));
           // Mirror the NOTABLE events (snaps) into the downloadable Cmd+Option+L session
@@ -10182,6 +10219,14 @@ export default function CollabMix({ initialPage = "landing", djName = null }) {
       //    that let a network burst pile up N whole-App reconciles and starve the draw RAF.
       { const _pend = m.deckId==="A" ? pendPARef : pendPBRef;
         (_pend.current || (_pend.current = {}))[m.field] = m.value;
+        // Progress packets carry the sender's performance.now() at queue time
+        // (t_send, injected by useSync.send — same field the sync phase monitor
+        // reads). Thread it to the Deck's mirror follower so the coast can anchor
+        // on SEND-aligned time instead of arrival time (MIRROR_TSEND fix): a WS/
+        // TCP clump then no longer reads as mirror lag. Rides the same coalesced
+        // flush as the value it describes.
+        if (m.field === "progress" && typeof m.t_send === "number")
+          _pend.current.progressMeta = { value: m.value, tSend: m.t_send, tRecv: performance.now() };
         if (!pendRafRef.current) pendRafRef.current = requestAnimationFrame(flushPartnerFields); }
       // Symmetric counterpart to [ANALYZER-BROADCAST] — proves the partner
       // actually RECEIVED the refined beat grid (B2B mirror debugging + smoke).
