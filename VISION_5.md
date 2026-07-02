@@ -10268,3 +10268,83 @@ shows the REAL send rate; 256 = playing, ~1 = idle/silent).
 - Raw logs: tools/smoke/out/relay-rung-*.log, relay-energy-fixed-probe-1.log (the outKbps=256
   proof), relay-headed-energy-probe-1.log (the hasBuf=false smoking gun).
 - Memory: project_jitter_harness_and_ladder REWRITTEN (featherweight claim corrected).
+
+---
+
+# Session end — July 2/3, 2026 (overnight) — Mirror bug DIAGNOSED + FIXED (MIRROR_TSEND); dogfood logs parsed; e2e race fixed
+
+## LOG PARSE — confirms + corrections (Chad's reads, checked against artifacts)
+Only TWO files existed on this machine (no session-logs/ dir anywhere — repo, Desktop,
+Downloads, Documents, Dropbox, iCloud, Google Drive):
+- `~/Downloads/collabmix.vercel.app-1782962446298.log` — **this IS jake-twoway.log**
+  (Chrome default filename, never renamed). Proof: its owner "DJ Flux cfa7" has partner
+  "DJ Prism d4fc" = the local DJ of Chad's own session JSON (suffixes are client-stable);
+  deck B driven locally + [ANALYZER-BROADCAST] deck B = Jake loading/playing, as described.
+- `~/Downloads/mixsync-session-…-neon-haze-545.json` — Chad's Cmd+Opt+L export (4.4min slice).
+- **Phase 1/2 logs do NOT exist on this machine** — if they were saved, they're still on
+  Jake's machine / in chat. The Phase 1-2 claims rest on what was seen live.
+- ⚠ CAVEAT on "all night, every sample": the console log is EXACTLY 1000 lines — Chrome's
+  buffer cap — covering only the last ~7 min (two-way tail). Within that window every read
+  CONFIRMS: jbTargetMs 220 × 203 samples, comp max 269.1, one concealMs=20, one lostΔ=1,
+  DIRECT P2P rtt 25ms, 256k both ways, outKbps 256 while playing / 1 idle. Cleanest window
+  we've ever measured. audiolite verdict UNTESTED-NOT-FAILED stands (banked, not dead).
+- BPM pair CONFIRMED in detail on Jake's deck B (bad: period 0.6589s→88.2, periodIntegerLocked
+  =false crossValidated=false snapped=false firstBeatDpIdx=46, 443 beats; good: 0.4878s→123,
+  all guards true, idx=0, 641 beats). CORRECTION: implied durations differ (292s vs 313s) →
+  probably TWO DIFFERENT TRACKS, not same-file non-determinism. Awaiting Jake's filename(s).
+  Also confirmed: zero MIRROR-STALE (the warn is UNGATED, so zero = genuinely no >1.5s gaps).
+
+## THE MIRROR BUG — reproduced, diagnosed, FIXED (tonight's directive)
+**Repro:** clean loopback is SILKY (mirror lag 54±5ms, 120fps, zero backward steps) — the
+pipeline is capable. Deterministic repro via mock netem on deck_update only
+(`{latencyMs:80, jitterMs:260, seed:42}` ≈ real TCP WS clumping, Jake's documented 100-600ms
+pktGaps): lag blows out to p90 +130 / max +268ms with ±200ms wobble. Same seed every run.
+**Diagnosis (two parts, both required):**
+1. The follower anchored its coast at packet ARRIVAL time → TCP clump hold-back became
+   mirror lag; the slope rate-estimate wobbled on arrival jitter (the "jittery waveform").
+2. The render layer (gridcouple alignSec — applied to BOTH decks, and that's CORRECT:
+   local audio is monitorDelay-late, partner audio is jitter-buffer-late, both ≈comp)
+   draws the playhead at the AUDIBLE position ASSUMING the follower tracks truth →
+   **every ms of follower lag = "audio leads the playhead"**, no cushion. Jake's real
+   clumps ≈ up to a beat. Asymmetry = whichever WS direction clumps worse.
+**Fix — MIRROR_TSEND (default ON, `?mirrortsend=0` legacy A/B):** receiver-only, ZERO wire
+change (t_send is ALREADY on every progress broadcast — sync's phase monitor used it; the
+mirror dropped it). Thread {tSend,tRecv} through the coalescer; rolling-min (15s) of
+tRecv−tSend isolates clock-skew+minTransit; anchor at (arrival − clumpExcess); the rate
+slope becomes Δvalue/Δt_send (exact by construction). Sender clock resets degrade to
+bounded legacy behavior (2s cap + window aging). [MIRROR-NET-DIAG] logs clumpExcessMs.
+**Proof (identical seeded netem):** legacy p90 +130/max +268ms → fix p90 +13/max +25ms
+(10× tail collapse). Raw: tools/smoke/out/mirror-fix-{on,off}-1.log.
+**Permanent gate:** `e2e-mirror-clump` (mock suite; bounds p90<80/max<150 sit between
+legacy-fail and fixed-pass; also re-asserts monotonicity).
+
+## ALSO SHIPPED — e2e load→toggle race (approved follow-up)
+`loadAndPlay()` in lib/e2e.mjs (wait [ANALYZER-BROADCAST] → toggle → assert hasBuf=true);
+applied to e2e-comp (the energy-sensitive test — it had been measuring a silent-but-
+connected stream). Other tests gate timing, not energy — sweep them later if wanted.
+
+## GATES (both green before push)
+- Mock suite (`smoke:e2e -- --mock`): **22/22 PASS** incl. e2e-mirror-clump (new),
+  e2e-mirror-latency, e2e-mirror-slew, race-safe e2e-comp.
+- Full default smoke: **25 pass / 0 fail / 3 dep-skips** (the mock-gated trio — correct).
+
+## MORNING EYEBALL (Chad)
+Two-tab prod (or wait for next Jake session): default URL = fix ON. A/B: add
+`?mirrortsend=0` to BOTH tabs for legacy. `?mirrordiag=1` shows clumpExcessMs live.
+On loopback both look similar (clean network) — the difference shows under real WS jitter,
+so the REAL verify is the next Jake session: his screen, Chad's deck, watch whether the
+playhead sits on the kick.
+
+## PENDING
+- BPM misdetection repro — waiting on Jake's track file/name; fix direction per Chad:
+  guard-failure → tempo-ratio retry (×4/3, ×3/2, ×2) or surface low-confidence in UI.
+  Also flagged: what does SYNC do when engaged on a misdetected grid?
+- Phase 1/2 session logs (if Jake saved them) for the full-night confirm.
+- Jake headed-session [SEND-DIAG] outKbps reading + Ethernet-first decision tree (July 2).
+- Minor: Jake's early Phase-1 stutter on a zero-loss stream — first-minutes settling, deprioritized.
+
+## STATE
+- src: MIRROR_TSEND (flag + coalescer threading + follower anchor) — flag-gated, legacy
+  path byte-identical with ?mirrortsend=0. Tools: measure-mirror.mjs (dual-tab sampler,
+  netem/CPU-throttle axes), e2e-mirror-clump test, loadAndPlay helper.
+- New memory: project_mirror_pipeline_fix.
