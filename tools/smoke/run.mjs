@@ -65,12 +65,14 @@ const argv = process.argv.slice(2);
 const kindArg = (argv.find((a) => a.startsWith("--kind=")) || "").split("=")[1];
 const KINDS = kindArg ? new Set(kindArg.split(",").map((s) => s.trim())) : null;
 const LIST = argv.includes("--list");
-// --mock (or MOCK=1): spawn the LOCAL mock WS server and expose its URL to e2e
-// children via MOCK_WS_URL. Tests that opt in (via lib/e2e.mjs appUrl) connect the
-// app to it with ?wsurl=… so network conditions are deterministic + load-free.
-// Existing tests ignore MOCK_WS_URL → they keep hitting the production relay until
-// the deliberate full-suite migration (incremental rollout per the build plan).
-const USE_MOCK = argv.includes("--mock") || process.env.MOCK === "1";
+// Mock WS server: spawned BY DEFAULT since July 3 (the README's "deliberate
+// next step", pulled forward to kill the ambient e2e-sync prod-relay flake —
+// ~40% engage hangs on an UNTOUCHED tree, July 3 attribution). Tests that use
+// gotoApp()/appUrl() (e2e-sync + the mirror netem trio) route to it via
+// ?wsurl=… — deterministic, load-free, no prod dependency. Tests that goto the
+// TARGET directly still exercise the production relay (e2e-entry, reconnect,
+// etc.), so prod coverage isn't lost. Opt out: --no-mock or NO_MOCK=1.
+const USE_MOCK = !(argv.includes("--no-mock") || process.env.NO_MOCK === "1");
 const MOCK_PORT = Number(process.env.MOCK_PORT) || 8090;
 const wanted = TESTS.filter((t) => !KINDS || KINDS.has(t.kind));
 

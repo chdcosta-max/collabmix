@@ -85,8 +85,10 @@ production server (`../collabmix-server-repo/server.js` — keep the relay logic
 sync) with a **seeded** network-emulation layer.
 
 ```bash
-npm run smoke:e2e -- --mock      # spawn the mock; mock-aware tests route through it
-MOCK=1 npm run smoke:e2e         # same via env
+npm run smoke                    # the mock is spawned BY DEFAULT (July 3) —
+                                 # mock-aware tests (e2e-sync, mirror trio) route
+                                 # through it; direct-goto tests still hit prod
+npm run smoke:e2e -- --no-mock   # opt out (old behavior; e2e-sync back on prod)
 node tools/smoke/lib/mock-ws-server.mjs 8090   # run the mock standalone (manual)
 ```
 
