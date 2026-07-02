@@ -10440,3 +10440,69 @@ relay to remove the prod dependency.
   prod paths without ?connwarn=1). tools: mock stall mode, conn-quality unit gate,
   HELD patch. Memory: project_connwarn_shipped; mirror-fix memory updated with the
   stall-mode finding.
+
+---
+
+# Session end — July 2, 2026 (weekend housekeeping + read-only queue) — ALL LOCAL, push freeze
+
+## ⛔ PUSH FREEZE (Chad, this session) — expires Monday July 6
+NO pushes to master until Chad is back Monday (prod auto-deploys, unwatched). Everything below
+is COMMITTED LOCALLY on green gates, UNPUSHED. origin/master stays at `e089013` (the two
+already-pushed commits — standing laws + deny-list — went out BEFORE the freeze). Unpushed
+local: 9bce7bf, 753ceb5, 73675bc, dd6e680. Push together Monday after a full-suite run.
+Memory `project_weekend_freeze_and_updater` (DELETE after Monday).
+
+## Housekeeping
+- **Standing laws → CLAUDE.md** (8 laws, permanent; every future session inherits them).
+- **Deny floor** `.claude/settings.json` (force-added past .claude/ gitignore): rm -rf/-fr,
+  git push --force/-f, Read(.env*), Write/Edit(~/Music/**). READ-only music enforced at harness.
+- **Updater**: native user-owned build installed (~/.local/bin/claude, self-updating) + PATH line
+  in ~/.zshrc. PARKED for Chad Monday (needs sudo/new terminal): `source ~/.zshrc` +
+  `sudo npm -g uninstall @anthropic-ai/claude-code` (leftover root binary at /usr/local/bin).
+
+## Shipped behind flags (default OFF, gated, LOCAL)
+- **?bpmretry** (9bce7bf) — tempo-guard retry: ratio hypotheses ×4/3,×3/2,×2 each anchored to a
+  REAL autocorr peak near the hypothesis lag (±2.5 BPM window) so the unchanged crossValidated
+  test applies to independent evidence (a scaled estimate can't self-validate). Best validated
+  candidate wins; none → original + lowConfidence (state only, no UI). Flag-off byte-identical;
+  gated `bpm-retry` (audio, 6 checks). Calibration deliberately deferred to the audit corpus.
+- **e2e-sync flake killed structurally** (753ceb5) — smoke runner spawns the mock WS relay BY
+  DEFAULT (--no-mock opts out); e2e-sync + mirror trio run local/deterministic; direct-goto tests
+  keep prod coverage. Verified 3/3 green under full audit-grind CPU load (the contention that
+  flaked prod). Root cause was ambient prod-relay instability on the untouched tree (~40%).
+
+## Read-only deliverables (dd6e680, + audit report artifact gitignored)
+- **ANALYZER AUDIT** — 476 tracks, 0 errors. Honest read (report says so): 46.6% guard-fail is
+  inflated; real remediation target = **38 real tracks (8.0%)** genuinely uncertain (rest are
+  short sample/loop files where non-snap is correct, or near-integer fine grids). ~21 optimistically
+  ?bpmretry-reachable — CEILING not promise (hand-tested tracks had no ac peak at hypothesis).
+  Tools: tools/audit/analyzer-audit.mjs (resume-safe, m4a via afconvert-to-AIFF temp, READ-ONLY) +
+  audit-summary.mjs. Report: tools/audit/out/AUDIT_REPORT.md (out/ gitignored).
+- **ARCHITECTURE + RISK doc** (ultracode, 28 agents) — tools/docs/ARCHITECTURE_RISK.md, 9
+  subsystems, 40-row register (10 High/28 Med/2 Low), 62 claims adversarially verified (44
+  confirmed/17 amended/1 refuted). Surfaced TWO real bugs (documented, NOT fixed — need Chad):
+  - **#36 (High)**: dead hidden-tab re-anchor — `if(local)return` (jsx L6895) always true since
+    both decks pass local=true → **root cause of the PARKED waveform-fps-freeze**. Fix =
+    `if(buf)return`. Matches the repair MEMORY already hypothesized.
+  - **#37 (Med)**: seekEpoch deterministic snap defeated by the reorder guard for <0.75s backward
+    seeks (guard returns before the epoch check). Fix = test epoch before magnitude.
+  - Refuted claim of note: engage does NOT read the smoothed mirror phase — it reads the stable
+    packet anchor (stableProg, L10925) precisely because mirror wobble broke idempotency. Follower
+    comments (L6849) are stale/misleading → risk #38 (comment fix).
+- **SECURITY REVIEW** — tools/docs/SECURITY_REVIEW_2026-07-03.md. 1 HIGH, code-verified,
+  PRE-EXISTING: `?smoke=1` flips TEST_HOOKS → `?smoke=1&wsurl=wss://evil` redirects a victim's WS
+  (session MITM + PII) on one click. Comment at L432 ("can NEVER") is false. Fix: gate ?wsurl on
+  DEV-only, or require loopback host when opened by ?smoke=1. Should ride the next prod push.
+- **UI AUDIT** — tools/docs/UI_AUDIT.md, ranked. #1 crossfader banned blue→green gradient
+  (rgba(15,79,160)→rgba(31,201,122), jsx L12083); #2 grey text #9CA3AF×87/#5A5E66×36 vs
+  white-opacity tiers; #3 all-caps top-bar status. Transport row = the system done right (template).
+  Waveform correctly excluded (LOCKED). Doc discrepancy flagged: philosophy says 200ms, code+CLAUDE
+  say 150ms — reconcile the docs.
+
+## HELD (unchanged) — Monday daylight review
+tools/patches/loadtracktest-race-fix.HELD.patch — still held.
+
+## MONDAY TO-DO (Chad)
+1. Push the 4 local commits after a full-suite run. 2. Finish updater (2 sudo/terminal steps).
+3. Review: security HIGH (fix before/at push), architecture bugs #36 (fps-freeze root cause!)/#37,
+   UI audit list, bpmretry calibration against the audit corpus. 4. Decide the HELD patch.
