@@ -3,7 +3,7 @@
 // that measurement must survive a partner reload (renegotiation → rebind →
 // recover). Needs real WebRTC audio; SKIPs if RTC never connects (headless env).
 import { Suite } from "../lib/result.mjs";
-import { launch, capture, createRoom, joinByCode, loadTestTrack } from "../lib/e2e.mjs";
+import { launch, capture, createRoom, joinByCode, loadAndPlay } from "../lib/e2e.mjs";
 
 const TARGET = process.env.TARGET || "http://localhost:5173/";
 const Q = (TARGET.includes("?") ? "&" : "?") + "delaycomp=1&syncdebug=1";
@@ -24,9 +24,9 @@ try {
   await joinByCode(B, code);
   await B.waitForFunction(() => /⟺/.test(document.body.innerText), null, { timeout: 12000 }).catch(() => {});
 
-  // A is the audio source.
-  await loadTestTrack(A, "A");
-  await A.evaluate(() => window.__toggleDeck("A"));
+  // A is the audio source. loadAndPlay = race-safe (toggle-before-decode was a
+  // silent no-op → comp measured on a silent-but-connected stream).
+  await loadAndPlay(A, sA, "A");
 
   // Let RTC connect + jitter buffer fill + comp settle.
   await B.waitForTimeout(16000);

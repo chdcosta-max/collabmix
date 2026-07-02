@@ -121,6 +121,21 @@ export async function loadTestTrack(page, deck, url = FIXTURE_URL, overrides = n
   return page.evaluate(async ([d, u, o]) => window.__loadTestTrack(d, u, o), [deck, url, overrides]);
 }
 
+// Load a track and start playback RACE-SAFE. Toggling before the deck's decode
+// completes is a SILENT NO-OP (toggle() with hasBuf=false only flips the UI), so
+// the "playing" session streams a silent master mix — every timing assertion
+// still passes while energy-dependent behavior (real Opus bitrate, audible
+// content) is untested. Waits for the analyzer broadcast (the tail of the real
+// load path), toggles, then verifies the deck actually entered play.
+export async function loadAndPlay(page, sink, deck, url = FIXTURE_URL, overrides = null) {
+  await loadTestTrack(page, deck, url, overrides);
+  await sink.waitFor("[ANALYZER-BROADCAST]", 90000);
+  await page.evaluate((d) => window.__toggleDeck(d), deck);
+  const ok = await sink.waitFor("hasBuf=true", 5000);
+  if (!ok) throw new Error(`deck ${deck} toggled without a decoded buffer — playback never started`);
+  return true;
+}
+
 // Click a control on a given deck by visible text (e.g. PLAY, SYNC). Deck panels
 // are ordered A then B in the DOM; nth(0)=A, nth(1)=B.
 export async function clickDeckButton(page, deck, text) {
