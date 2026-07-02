@@ -188,6 +188,34 @@ Mix//Sync follows "Quiet Pro Tool" principles:
 See DESIGN_PHILOSOPHY.md for full details. When making visual
 choices, consult that doc, not training-data instincts.
 
+## Standing Laws (Chad, July 2026 — inherited by every session)
+
+These are settled decisions, not suggestions. Do not re-litigate them.
+
+1. **Green gates before any push.** Full `npm run smoke` GREEN before master
+   (which auto-deploys). Failures must be attributed, not waved off (see law 6).
+2. **New behavior ships DEFAULT OFF behind a URL flag** with a kill switch,
+   until Chad eyeballs/approves flipping the default. Default sessions stay
+   byte-identical.
+3. **Measure first. One lever at a time. Never re-tune against drifting
+   noise.** Deterministic conditions before conclusions; a frozen profile per
+   A/B ladder; calibrate once, then freeze.
+4. **Waveform rendering is OFF-LIMITS.** The top-waveform look is LOCKED and
+   shipped (tools/docs/WAVEFORM_LOCKED.md is the source of truth). Do not
+   touch it without Chad's explicit approval.
+5. **madmom / BeatNet / Beat This! are tested and REJECTED** (the SOTA
+   analyzer survey, tools/sota-eval/). Never re-suggest them or re-open the
+   analyzer-replacement lane.
+6. **Distrust flaky prod-relay gates.** The e2e suite's default relay is
+   shared production. Attribution protocol: COLD vite restart per tree swap,
+   isolation reruns, interleave clean-vs-changed — and remember 3-run samples
+   flip-flop at high ambient failure rates.
+7. **Chad's music library is READ-ONLY.** Any tool touching files under
+   ~/Music or other music folders may only read — never write, move, rename,
+   re-tag, or delete.
+8. **No refactors without approval.** Fix in place; propose structural change
+   separately and wait.
+
 ## Critical "Never Do" List
 
 - Never modify ../collabmix-booth or ../collabmix-decks worktrees
