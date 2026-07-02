@@ -36,7 +36,28 @@ L.push(`- snapped=false (shipped a non-integer-locked grid): ${ok.filter((r) => 
 L.push(`- firstBeatDpIdx > 8 (long unanchored intro — the melodic/soft-kick tell): ${ok.filter((r) => r.firstBeatDpIdx > 8).length}`);
 L.push(`- |bpmFromPeriod − intBpm| > 1.0 (far from any integer, ratio-error suspects): ${ok.filter((r) => (r.dIntBpm ?? 0) > 1).length}`);
 L.push("");
+// ── honest interpretation: a guard failure is NOT the same as a wrong BPM ──
+const both = ok.filter((r) => r.periodIntegerLocked === false && r.crossValidated === false);
+const SHORT = 90; // sample/loop one-shots are seconds long; real tracks are minutes
+const shortFail = both.filter((r) => (r.durSec ?? 999) < SHORT);
+const realFail = both.filter((r) => (r.durSec ?? 999) >= SHORT);
+const realFar = realFail.filter((r) => (r.dIntBpm ?? 0) >= 0.3);
+const realNear = realFail.filter((r) => (r.dIntBpm ?? 9) < 0.3);
+// bpmretry ratio-reachability heuristic (needs a live ac peak to actually resolve)
+let reach = 0;
+for (const r of realFar) { if (!r.bpmFromPeriod) continue;
+  for (const ratio of [4 / 3, 3 / 2, 2]) { let h = r.bpmFromPeriod * ratio; while (h > 175) h /= 2; while (h < 100) h *= 2;
+    if (Math.abs(h - Math.round(h)) < 0.15) { reach++; break; } } }
+L.push(`## How to read this (guard failure ≠ wrong BPM)`);
+L.push(`A tripped guard means the analyzer lacked strong evidence to SNAP the tempo to a whole number — not that the BPM is wrong. Three sub-cases:`);
+L.push(`- **Genuinely fractional-BPM tracks** — non-snap is CORRECT; the grid is fine.`);
+L.push(`- **Short sample/loop files** (< ${SHORT}s) — no stable track tempo to lock; expected, and not real DJ tracks. **${shortFail.length} of the ${both.length} double-guard failures are these.**`);
+L.push(`- **Real tracks (≥ ${SHORT}s) that are genuinely uncertain** — the actionable set: **${realFar.length} tracks** with the period ≥0.3 BPM off an integer (${realNear.length} more real tracks fail a guard but sit basically on an integer → grid likely fine).`);
+L.push(`- Of those ${realFar.length} genuinely-uncertain real tracks, **~${reach} are ratio-reachable** by ?bpmretry's ×4/3/×3/2/×2 hypotheses (heuristic — actual resolution needs a real autocorrelation peak at the hypothesis tempo, which the two tracks hand-tested July 3 did NOT have, so treat ~${reach} as an optimistic ceiling, not a promise).`);
+L.push(`- **Bottom line:** the headline "46.6%" overstates the problem. The real remediation target is on the order of **${realFar.length} tracks (${pct(realFar.length, ok.length)} of the library)**, and ?bpmretry addresses at most a subset of those.`);
+L.push("");
 L.push(`## (a) Tempo-guard failures, ranked by |bpmFromPeriod − intBpm| (the 88-BPM class)`);
+L.push(`*(NOTE: the top of this list is dominated by short sample/loop files — see durations — where non-snap is expected. Filter to ≥${SHORT}s durations for real tracks.)*`);
 L.push(`| track | shipped bpm | bpmFromPeriod | dInt | intLock | crossVal | dpIdx | beats | dur |`);
 L.push(`|---|---|---|---|---|---|---|---|---|`);
 for (const r of guardFail.slice(0, 40))
