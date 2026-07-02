@@ -1,0 +1,37 @@
+# HELD (July 3, 2026) — __loadTestTrack decode-await race fix. NOT SHIPPED.
+#
+# WHAT: makes the __loadTestTrack smoke hook await the deck's decoded buffer
+# (bufRefs identity-compare vs pre-load) before resolving, so every e2e caller
+# can toggle immediately without the silent hasBuf=false no-op. Supersedes the
+# per-test loadAndPlay sweep with zero test churn.
+#
+# WHY HELD, NOT GUILTY: initial interleave blamed this patch for e2e-sync
+# failures (45s engage hang / 97ms re-engage wander), but a cold-vite re-run
+# showed the CLEAN tree (1a6080c) failing 2/3 with the IDENTICAL signature —
+# tonight's e2e-sync instability is ambient (prod-relay / engage path), not
+# this patch. HOWEVER: this patch makes decks REALLY PLAY in every e2e test
+# for the first time (previously many toggled during the decode gap and ran
+# silent/parked). That shifts the whole suite's semantics and needs a STABLE
+# gate environment + a deliberate review of which tests were calibrated on
+# the masked regime (e2e-sync's 45ms idempotency bound especially) before it
+# lands. Apply with: git apply tools/patches/loadtracktest-race-fix.HELD.patch
+#
+--- a/src/collabmix-production.jsx
++++ b/src/collabmix-production.jsx
+@@ hook: window.__loadTestTrack @@
+       lib.setFile?.(id, file);            // so handleLibLoad's getFile resolves it
++      // RACE FIX: handleLibLoad resolves before the DECK's own decode lands,
++      // and toggle() in that gap is a silent no-op (hasBuf=false) — the
++      // "playing" run then streams a silent master mix while every timing
++      // assertion still passes (the July 1 harness artifact). Await the deck's
++      // decoded buffer (bufRefs — the same refs syncDecks' cross-correlation
++      // reads), compared by IDENTITY against the pre-load buffer so same-deck
++      // RE-loads are also covered. Callers may toggle the moment this resolves.
++      const prevBuf = bufRefs.current[d]?.current || null;
+       await handleLibLoad(track, d);
++      const bufT0 = Date.now();
++      while ((bufRefs.current[d]?.current || null) === prevBuf && Date.now() - bufT0 < 30000)
++        await new Promise((r) => setTimeout(r, 50));
++      if ((bufRefs.current[d]?.current || null) === prevBuf) throw new Error("deck " + d + " buffer not ready 30s after load");
+       console.log("[SMOKE-HOOK] loaded test track on deck " + d + " from " + url);
+       return true;

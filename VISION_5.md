@@ -10348,3 +10348,95 @@ playhead sits on the kick.
   path byte-identical with ?mirrortsend=0. Tools: measure-mirror.mjs (dual-tab sampler,
   netem/CPU-throttle axes), e2e-mirror-clump test, loadAndPlay helper.
 - New memory: project_mirror_pipeline_fix.
+
+---
+
+# Session end — July 3, 2026 (overnight, part 2) — ?connwarn shipped (DEFAULT OFF, awaiting eyeball); stall-and-flush mock mode; e2e-sync ambient instability documented
+
+## ?connwarn — the connection-quality forecast (WARN ONLY, default OFF)
+Passive good/marginal/poor from receiver-side stats ALREADY polled (zero new getStats):
+the [JITTER-DIAG] window deltas + comp rtt. Classifier is a pure module
+(`src/conn-quality.js`, rekordbox-grid.js pattern) wired into useRTC behind
+`?connwarn=1`. NO lever is auto-applied — levers stay manual until proven on a real
+bad network. Transitions log `[CONN-QUALITY] level=… — latest window: …`.
+
+### THE BANDS (derived from measured sessions — Chad asked to see these)
+| signal            | good  | marginal   | poor  | derivation |
+|-------------------|-------|------------|-------|------------|
+| jbTargetMs        | <260  | 260–379    | ≥380  | clean nights 220 flat; harness mild-jitter 225–229; Jake/harness deep 476–650. Poor edge = the 400ms comp cap minus playout headroom — warn AS saturation becomes possible, i.e. before the flam |
+| rtp jitterMs      | <25   | 25–49      | ≥50   | clean 2–19 (mean 5–11); deep-buffer runs 37–77 |
+| concealMs (/2s)   | <40   | 40–149     | ≥150  | clean 0 with one 20ms blip all night; congested bursts 200–420 |
+| lossPct (/2s)     | <2%   | 2–7.9%     | ≥8%   | clean 0–1 pkt; self-congestion 10–27% |
+| rttMs             | <600  | ≥600       | never | corroborator ONLY — a TURN long-haul adds honest baseline RTT with zero audible symptom; rtt alone must never paint poor |
+- Worst signal wins per ~2s window; SUSTAIN machine: 3 consecutive bad windows (~6s)
+  to escalate, 5 consecutive good (~10s) to clear. July 2's real clean-network blip
+  (one concealMs=20 + lostΔ=1 window) is a non-event twice over (below-band AND
+  unsustained).
+- HONESTY NOTE: no measured session ever LIVED in 230–476 jbTarget; the marginal band
+  is interpolated. The harness mid-profile run (below) landed there and HELD marginal,
+  so the band is reachable and stable — but its edges are constants in conn-quality.js,
+  one-line recalibratable when a real marginal session shows its numbers.
+
+### UI (Quiet Pro Tool)
+5px amber dot (`#f59e0b` — the semantic-indicator exception; same hue as this row's
+"analyzing…" note) in the deck identity row (`A · partner ●`), PARTNER-driven decks
+only. marginal = 55% opacity; poor = full + the row's standard dot glow. Tooltip:
+"Partner connection unstable — audio may drift" / poor: "…poor — audio may drop or
+drift". No modal, no red, nothing renders when good or when flag off.
+
+### PROOFS (jitter harness) + PERMANENT GATE
+- clean relay + connwarn: ZERO transitions over the run (stays good) ✓
+- frozen Jake profile: marginal (buffer ramp) → poor within ~10s of shaping, both tabs ✓
+- mid profile (120/10/800): buffer settles ~305–320 → MARGINAL, holds, no flap ✓
+- `conn-quality` unit gate (18 checks): band edges on measured profiles, July-2 blip
+  immunity, 3-up/5-down sustain, rtt-never-poor. Runs in the DEFAULT suite. (A mock
+  e2e gate can't exist for this: the mock shapes the WS control plane only — RTP/NetEQ
+  stats are physically out of its reach. Unit gate + live harness is the right split.)
+
+### MORNING EYEBALL (before default-ON)
+1. `?connwarn=1` two-tab loopback → play → NO dot ever (good is silent).
+2. Live amber: `node tools/netem/turn-jitter-proxy.mjs` + `VITE_TURN_URLS=turn:127.0.0.1:3479
+   npm run dev` + both tabs `?ice=relay&connwarn=1` + POST the frozen Jake profile to
+   :3480/shape (VISION_5 July 2) → amber dot on the partner deck within ~15s, tooltip on hover.
+3. If the look passes: flip default by changing `=== "1"` to `!== "0"` on CONN_WARN.
+
+## ALSO SHIPPED — stall-and-flush mock netem (approved follow-up)
+`stallMs` + `stallEveryMs` on the mock: TCP-faithful IN-ORDER clumping (hold FIFO per
+connection, flush together) — the mode the independent-jitter model couldn't express
+(it reorders, which TCP never does). Verified live: 40/296 packet gaps >300ms under
+450/600 stall. FINDING: under pure stall-and-flush the LEGACY mirror only degrades
+mildly (each flush ends with a fresh packet → anchor self-heals; p90 36ms vs dispersed
+jitter's 130) — real WiFi is a mix of both patterns; MIRROR_TSEND wins in both (p90 13).
+
+## HELD — __loadTestTrack decode-await race fix (patch parked, NOT guilty, NOT shipped)
+`tools/patches/loadtracktest-race-fix.HELD.patch`. Supersedes the approved loadAndPlay
+sweep (fixes every caller at the hook, zero test churn). Initial interleave blamed it
+for e2e-sync failures — a cold-vite re-run showed the CLEAN tree failing 2/3 with the
+IDENTICAL signature, so it is NOT causal. Held anyway because it makes decks REALLY
+play in every e2e test for the first time (many currently toggle inside the decode gap
+and run parked/silent) — a suite-semantics shift that needs a stable gate environment
+and a deliberate bound review (e2e-sync's 45ms idempotency bound especially) in
+daylight, not a 4am ship.
+
+## AMBIENT FINDING — e2e-sync unstable tonight EVEN ON CLEAN TREE (documented, not chased)
+~40% of e2e-sync runs tonight hang 45s in engage (phaseSeekMs=null) or wander ~97ms on
+re-engage — INCLUDING on untouched `1a6080c` with a cold vite. Earlier the same evening
+the full suite was green twice, so this degraded mid-night: prod-relay health at this
+hour and/or hours-loaded machine are the suspects (matches the known-flaky memory:
+"distrust flaky prod-relay gates"). Also fingered vite-HMR churn as an interleave
+confounder — attribution runs MUST cold-restart the dev server per tree swap (learned
+tonight, the hard way). Follow-up when convenient: route e2e-sync through the mock
+relay to remove the prod dependency.
+
+## GATES (shipping tree)
+- Unit suite: green (conn-quality 18/18 included).
+- Full default smoke: 25 pass / 1 fail / 3 mock-skips — the fail (e2e-lock-stability,
+  known-flaky set) 3/3 GREEN in cold isolation → non-causal batch contention. e2e-sync
+  passed this run; its earlier failures reproduced on the CLEAN tree (see above).
+- Mock trio through the rewritten netem seam: latency 10/10, slew 4/4, clump 4/4.
+
+## STATE
+- src: conn-quality.js (new) + connwarn wiring/UI (flag-gated, default OFF — inert in
+  prod paths without ?connwarn=1). tools: mock stall mode, conn-quality unit gate,
+  HELD patch. Memory: project_connwarn_shipped; mirror-fix memory updated with the
+  stall-mode finding.
