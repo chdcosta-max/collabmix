@@ -20,7 +20,9 @@ export async function launch() {
   try {
     return await chromium.launch({
       channel: "chrome",
-      headless: true,
+      // HEADFUL=1 opens real windows — needed when a measurement depends on real
+      // audio rendering energy (headless renders WebAudio silent on this rig).
+      headless: process.env.HEADFUL === "1" ? false : true,
       args: ["--autoplay-policy=no-user-gesture-required", "--use-fake-ui-for-media-stream", "--mute-audio"],
     });
   } catch (e) {

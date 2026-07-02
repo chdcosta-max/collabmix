@@ -146,10 +146,14 @@ http.createServer((req, res) => {
         console.log("[proxy] shaping OFF");
       } else {
         shape = { highMs: p.highMs ?? 75, lowMs: p.lowMs ?? 20, periodMs: p.periodMs ?? 600,
-                  plr: p.plr ?? 0, noiseMs: p.noiseMs ?? 0, seed: p.seed ?? 1, t0: Date.now() };
+                  plr: p.plr ?? 0, noiseMs: p.noiseMs ?? 0, seed: p.seed ?? 1,
+                  bwKbps: p.bwKbps ?? 0, maxQueueMs: p.maxQueueMs ?? 800, t0: Date.now() };
         rnd = mulberry32(shape.seed);
         for (const k of Object.keys(stats)) stats[k] = 0;
         stats.t0 = Date.now();
+        // reset per-leg counters too — stale sessions from a previous run would
+        // otherwise report phantom rates against the new window
+        for (const s of sessions.values()) { s.up.pkts = s.up.bytes = 0; s.down.pkts = s.down.bytes = 0; }
         console.log("[proxy] shaping ON " + JSON.stringify(shape));
       }
       res.writeHead(200, { "Content-Type": "application/json" });

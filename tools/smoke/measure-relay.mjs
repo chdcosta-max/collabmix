@@ -54,7 +54,18 @@ await B.waitForFunction(() => /⟺/.test(document.body.innerText), null, { timeo
 // load-dependent/bwKbps profiles). Real tracks outlast the run → no re-seek.
 const TRACK = process.env.TRACK || null;
 await loadTestTrack(A, "A", ...(TRACK ? [TRACK] : []));
+// Toggling before the deck's decode finishes is a SILENT NO-OP (hasBuf=false →
+// defensive UI flip only) and the whole run streams a silent master mix. Wait
+// for the analyzer broadcast (the tail of the real load path), then toggle,
+// then hard-verify the deck actually entered play and is advancing.
+await sA.waitFor("[ANALYZER-BROADCAST]", 90000);
 await A.evaluate(() => window.__toggleDeck("A"));
+const toggled = await sA.waitFor("hasBuf=true", 5000);
+if (!toggled) die("deck A toggled without a decoded buffer (hasBuf=false) — playback never started");
+await A.waitForTimeout(2500);
+const prog = await A.evaluate(() => window.__deckProg ? window.__deckProg("A") : null);
+if (prog != null && !(prog > 0.001)) die(`deck A is not advancing after play (prog=${prog}) — run would measure a silent stream`);
+console.log(`✓ deck A playing (prog=${prog == null ? "n/a" : prog.toFixed(4)})`);
 
 // Wait for the connection + the one-shot [ICE-PATH] proof line (fires ~2.5s+
 // after audio flows). If it never comes or says DIRECT, the run is invalid.

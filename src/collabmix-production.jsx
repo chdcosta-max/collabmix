@@ -4054,14 +4054,18 @@ function useRTC({ engineRef, send, onIceRecover }) {
           });
           if (ob) {
             const nowS = { pkts: ob.packetsSent||0, rtx: ob.retransmittedPacketsSent||0,
-              sd: ob.totalPacketSendDelay||0, lost: ri?(ri.packetsLost||0):null, ts: nowMs };
+              sd: ob.totalPacketSendDelay||0, lost: ri?(ri.packetsLost||0):null,
+              bytes: ob.bytesSent||0, ts: nowMs };
             const sp = sendDiagPrevRef.current;
             if (sp) {
               const dts=(nowMs-sp.ts)/1000, dPk=nowS.pkts-sp.pkts;
               const pps = dts>0 ? dPk/dts : 0;
+              // ACTUAL outbound wire rate (payload bytesSent delta) — targetKbps is only
+              // the encoder's configured cap; this is what the encoder really produced.
+              const outKbps = dts>0 ? ((nowS.bytes-sp.bytes)*8/1000)/dts : 0;
               const sdMs = dPk>0 ? ((nowS.sd-sp.sd)/dPk)*1000 : 0;
               const lostD = (nowS.lost!=null&&sp.lost!=null) ? (nowS.lost-sp.lost) : "?";
-              console.log("[SEND-DIAG] outPkt/s="+pps.toFixed(0)+" sendQueueMs="+sdMs.toFixed(1)+
+              console.log("[SEND-DIAG] outPkt/s="+pps.toFixed(0)+" outKbps="+outKbps.toFixed(0)+" sendQueueMs="+sdMs.toFixed(1)+
                 " rtxΔ="+(nowS.rtx-sp.rtx)+" myLoss@partnerΔ="+lostD+
                 " fracLost="+(ri&&ri.fractionLost!=null?ri.fractionLost.toFixed(3):"?")+
                 " targetKbps="+(ob.targetBitrate!=null?(ob.targetBitrate/1000).toFixed(0):"?")+
