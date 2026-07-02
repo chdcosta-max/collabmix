@@ -10198,3 +10198,73 @@ Raw logs from tonight: tools/smoke/out/relay-*.log
 - Machine clean: pf/dummynet never touched (sudo unavailable); proxy + dev
   server stopped after runs.
 - New memory: project_jitter_harness_and_ladder.
+
+---
+
+# Session end — July 2, 2026 — Load-dependent rung: ?audiolite=96 WORKS when jitter is self-congestion; harness had been measuring a silent stream (fixed)
+
+## CORRECTIONS to the July 1 late-session handoff (important — supersede in place)
+- **"Our stream is featherweight (~25kbps)" was WRONG** — an artifact of a harness bug, not
+  reality. A playing 256k-stereo session ACTUALLY SENDS the full 256kbps payload, **~281kbps on
+  the wire** (proxy per-leg ground truth + new [SEND-DIAG] outKbps=256). Two DJs both playing ≈
+  ~560kbps of continuous 50pps UDP on shared airtime. Self-congestion is PLAUSIBLE after all.
+- **The harness bug:** measure-relay toggled play before the deck's decode finished →
+  `toggle()` with hasBuf=false is a defensive UI-only no-op → deck never played → the whole
+  July 1 ladder streamed a SILENT master mix. Found via [PLAY-STATE] hasBuf=false in every raw
+  log. FIXED: wait for [ANALYZER-BROADCAST], toggle, hard-verify hasBuf=true + progress
+  advancing. Headless renders audio fine — the "headless silence" theory was wrong.
+- **The July 1 exogenous-ladder NULLS STILL STAND** — NetEQ's buffer target is driven by
+  arrival TIMING; packets flowed at full rate all night and ptime provably changed the packet
+  rate with no effect. Silence doesn't change arrival-time variance.
+- ⚠ FLAG (not fixed, needs decision): the e2e smoke tests share the same load→toggle race —
+  e2e-comp etc. have likely been measuring a silent-but-connected stream. Passing today, but
+  an energy gate (e.g. assert outKbps > threshold) would make them honest. Follow-up candidate.
+
+## SHIPPED THIS SESSION
+- **[SEND-DIAG] outKbps** (approved 2-liner, src) — actual outbound wire rate from bytesSent
+  delta, next to the targetKbps cap it was previously confused with. Log-only.
+- Harness: measure-relay load-race fix + play verification; HEADFUL=1 option in e2e launch;
+  proxy: bwKbps/maxQueueMs were silently dropped by the /shape whitelist (fixed), per-leg
+  counters reset on profile POST.
+
+## THE LOAD-DEPENDENT RUNG (one rung, as scoped — then stop)
+Real track (Kyotto via /@fs/), real 256k send confirmed, frozen profile
+`{"highMs":30,"lowMs":10,"periodMs":600,"plr":0.002,"noiseMs":5,"seed":1,"bwKbps":200,"maxQueueMs":900}`
+(cap sized ONCE from measured wire: baseline 281k = 40% over, audiolite 118k = 40% under). 3 min each:
+
+| run | B jbTargetMs | B comp measured | link queue | loss |
+| baseline 256k | p50 476 / p90 586 / max 627 | p50 270 / max 980 (applied pinned 400) | 2522 drops, pegged 900ms | bursts to 27% |
+| ?audiolite=96 | **220 flat, every sample** | ~219, never saturates | 0 drops, qMax 111ms | ~0 |
+
+**VERDICT: the lever LIVES for the self-congestion case.** When the jitter is load-coupled,
+audiolite=96 completely prevents the balloon AND the loss (same mechanism produces both —
+matches "worse while Jake plays"). Combined with July 1: levers do NOTHING vs exogenous burst
+jitter, EVERYTHING vs self-congestion. The Jake session determines which world he's in.
+
+## NEXT JAKE SESSION — decision tree (updated)
+**STEP ONE, before any flags: Jake plugs into ETHERNET.** (Chad's call. His 400Mbps/high-end
+rig means bandwidth+CPU were never it; WiFi timing stalls fit the buffer signature exactly.)
+1. **Wired baseline:** buffer sits ~220 → his case is environmental (WiFi) → the architectural
+   fix reprioritizes from "required" to "robustness"; the practical fix may be "plug in".
+2. **Still deep on Ethernet** → real path/exogenous jitter → levers won't help (July 1 nulls)
+   → architectural path required.
+3. **Back on WiFi + ?audiolite=96 (Chad or BOTH, never Jake-alone):** buffer stays shallow →
+   self-congestion confirmed → the lever ships for WiFi users.
+4. **WiFi + audiolite doesn't help** → exogenous WiFi stalls → environmental/architectural.
+Watch: [JITTER-DIAG] jbTargetMs, [SYNC-COMP] measured-vs-applied, [SEND-DIAG] outKbps (now
+shows the REAL send rate; 256 = playing, ~1 = idle/silent).
+
+## BANKED — DO NOT BUILD (Chad, July 1)
+- (a) The raised-cap ear-rejection (?compcap 650/800 "still double-kicks") was CONTAMINATED by
+  the output-path ghost (Web-Audio-vs-audio-element mismatch): deep comp has NEVER been
+  ear-tested ghost-free. **Web-Audio routing + deeper comp is a candidate PACKAGE**, not two
+  separate rejected ideas.
+- (b) Deep-buffer path parked idea: **quantize comp to whole beats** (NINJAM-style) so kicks
+  coincide at far less local delay than full-buffer compensation.
+
+## STATE
+- src change: [SEND-DIAG] outKbps only (log line). Tools: measure-relay fixes, proxy fixes,
+  HEADFUL launch option. Machine clean (proxy + dev server stopped; pf never touched).
+- Raw logs: tools/smoke/out/relay-rung-*.log, relay-energy-fixed-probe-1.log (the outKbps=256
+  proof), relay-headed-energy-probe-1.log (the hasBuf=false smoking gun).
+- Memory: project_jitter_harness_and_ladder REWRITTEN (featherweight claim corrected).
