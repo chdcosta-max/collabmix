@@ -266,29 +266,66 @@ function makeNetem(initial = {}) {
     latencyMs: Math.max(0, +c.latencyMs || 0),
     jitterMs: Math.max(0, +c.jitterMs || 0),
     lossPct: Math.min(1, Math.max(0, +c.lossPct || 0)),
+    // stall-and-flush (TCP-faithful clumping): the real WS rides TCP, which under
+    // jitter/loss delivers IN-ORDER BURSTS (head-of-line hold, then flush) — the
+    // independent per-message jitter above REORDERS, which TCP never does (and
+    // which the mirror's reorder-drop partially masks; July 3). With stallMs +
+    // stallEveryMs set, the path cycles [stallMs hold][stallEveryMs clear]:
+    // messages arriving during a hold queue FIFO per-connection and flush
+    // together at hold end; clear-phase messages pass with base latency only
+    // (jitter is ignored in this mode — clumping IS the disturbance).
+    stallMs: Math.max(0, +c.stallMs || 0),
+    stallEveryMs: Math.max(0, +c.stallEveryMs || 0),
     seed: (c.seed ?? 1) >>> 0,
     types: Array.isArray(c.types) && c.types.length ? c.types.slice() : null,
   });
   let cfg = normalize(initial);
   let typeSet = cfg.types ? new Set(cfg.types) : null;
   let rng = mulberry32(cfg.seed);
+  let stallT0 = Date.now();               // stall cycle phase anchor (reset on configure)
+  const stallQ = new Map();               // ws → { msgs: [], timer } — per-connection FIFO
+  const deliver = (ws, payload) => { try { if (ws.readyState === ws.OPEN) ws.send(payload); } catch {} };
   return {
     get config() { return { ...cfg }; },
     configure(next) {
       cfg = normalize({ ...cfg, ...next });
       typeSet = cfg.types ? new Set(cfg.types) : null;
       rng = mulberry32(cfg.seed); // re-seed on every reconfigure → deterministic from that point
+      stallT0 = Date.now();
+      // flush anything a previous profile left queued — never strand messages
+      for (const [ws, q] of stallQ) { clearTimeout(q.timer); q.timer = null; for (const p of q.msgs.splice(0)) deliver(ws, p); }
+      stallQ.clear();
     },
     send(ws, payload, ctx = {}) {
       if (!ws || ws.readyState !== ws.OPEN) return;
       // Client↔server RTT replies (ping→pong) must be immediate, like the real
       // server — they're a measurement baseline, not part of the emulated path.
       if (ctx.bypassNetem) { try { ws.send(payload); } catch {} return; }
+      const stallOn = cfg.stallMs > 0 && cfg.stallEveryMs > 0;
       const eligible = !typeSet || typeSet.has(ctx.type);
-      const idle = cfg.latencyMs === 0 && cfg.jitterMs === 0 && cfg.lossPct === 0;
+      const idle = cfg.latencyMs === 0 && cfg.jitterMs === 0 && cfg.lossPct === 0 && !stallOn;
       if (!eligible || idle) { try { ws.send(payload); } catch {} return; }
       // Deterministic loss (one draw per eligible message when loss is on).
       if (cfg.lossPct > 0 && rng() < cfg.lossPct) return; // dropped
+      if (stallOn) {
+        const cyc = cfg.stallMs + cfg.stallEveryMs;
+        const phase = (Date.now() - stallT0) % cyc;
+        const inStall = phase < cfg.stallMs;   // hold-first: shaping-on shows a clump immediately
+        let q = stallQ.get(ws);
+        if (!q) { q = { msgs: [], timer: null }; stallQ.set(ws, q); }
+        if (inStall || q.msgs.length) {        // in-order: never overtake a pending queue
+          q.msgs.push(payload);
+          if (!q.timer) {
+            const flushIn = (inStall ? cfg.stallMs - phase : 0) + cfg.latencyMs;
+            q.timer = setTimeout(() => { q.timer = null; for (const p of q.msgs.splice(0)) deliver(ws, p); }, flushIn);
+          }
+        } else if (cfg.latencyMs > 0) {
+          setTimeout(() => deliver(ws, payload), cfg.latencyMs);
+        } else {
+          deliver(ws, payload);
+        }
+        return;
+      }
       // Deterministic delay = latency ± jitter (one draw for jitter when on).
       let delay = cfg.latencyMs;
       if (cfg.jitterMs > 0) delay += (rng() * 2 - 1) * cfg.jitterMs;
