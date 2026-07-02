@@ -2,6 +2,7 @@ import { useState, useEffect, useRef, useCallback, useMemo } from "react";
 import { WORKER_SRC } from "./bpm-worker-source.js";
 import { logEvent, setSessionContext, captureHandledError } from "./utils/telemetry.js";
 import { createClockSync } from "./utils/clockSync.js";
+import { createConnQualityTracker } from "./conn-quality.js";
 import { connectRekordboxLibrary } from "./rekordbox-library.js";
 import {
   openCmDB,
@@ -139,6 +140,11 @@ const WF_PROG_THROTTLE = URL_FLAGS.get("progthrottle") !== "0";
 // removes the transit term entirely; it also makes the observed-rate slope exact
 // (Δvalue/Δt_send) instead of arrival-jitter-noisy.
 const MIRROR_TSEND = URL_FLAGS.get("mirrortsend") !== "0";
+// ?connwarn=1 — passive connection-quality indicator (good/marginal/poor from the
+// receiver-side stats already polled; see src/conn-quality.js for the bands and
+// their data derivation). WARN ONLY — never auto-applies audiolite or any other
+// lever. DEFAULT OFF pending Chad's UI eyeball (July 3 spec).
+const CONN_WARN = URL_FLAGS.get("connwarn") === "1";
 const PROG_STATE_MS = 100;  // ~10Hz cap on the React prog-state commit (ref pipe stays 60Hz)
 // BUG #2 audio smoothness — jitter-buffer depth on the PARTNER's inbound audio
 // receiver. The browser default starts SHALLOW (~70ms) and HUNTS up to the depth a
@@ -4024,6 +4030,11 @@ function useRTC({ engineRef, send, onIceRecover }) {
   // [JITTER-DIAG] so session-2 can correlate the distortion with the stretch rate.
   const prevJitterRef = useRef(null);
   const jitterLogTsRef = useRef(0);
+  // ?connwarn: sustained connection-quality level from the same JITTER-DIAG
+  // window deltas (no extra polling). State updates ONLY on sustained level
+  // transitions (see conn-quality.js tracker), so re-render cost is ~nil.
+  const connTrackerRef = useRef(null);
+  const [connQuality, setConnQuality] = useState("good");
   // [SEND-DIAG] sender-side congestion telemetry (send-vs-receive root-cause diagnostic).
   const sendDiagPrevRef = useRef(null);
   const sendDiagTsRef = useRef(0);
@@ -4038,6 +4049,8 @@ function useRTC({ engineRef, send, onIceRecover }) {
   useEffect(()=>{
     if(state!=="connected") return;
     let stop=false;
+    // fresh quality tracker per connection — a reconnect starts back at "good"
+    if(CONN_WARN){ connTrackerRef.current = createConnQualityTracker(); setConnQuality("good"); }
     const SAMPLE_HZ = 48000; // Opus
     const HEALTH_MIN = 4;    // consecutive healthy windows before trusting a value
     const poll=async()=>{
@@ -4159,7 +4172,8 @@ function useRTC({ engineRef, send, onIceRecover }) {
         // ms of stretch IS the audible "BPM changing"/distortion under real jitter.
         {
           const nj = { acc: inb.removedSamplesForAcceleration||0, dec: inb.insertedSamplesForDeceleration||0,
-            conc: inb.concealedSamples||0, lost: inb.packetsLost||0, disc: inb.packetsDiscarded||0, jit: inb.jitter!=null?inb.jitter*1000:null, ts: now };
+            conc: inb.concealedSamples||0, lost: inb.packetsLost||0, disc: inb.packetsDiscarded||0,
+            recv: inb.packetsReceived||0, jit: inb.jitter!=null?inb.jitter*1000:null, ts: now };
           const pj = prevJitterRef.current;
           if (pj && now - jitterLogTsRef.current > 2000) {
             jitterLogTsRef.current = now;
@@ -4172,6 +4186,27 @@ function useRTC({ engineRef, send, onIceRecover }) {
               " jitterMs=" + (nj.jit!=null?nj.jit.toFixed(1):"?") +
               " jbTargetMs=" + (inb.jitterBufferTargetDelay!=null ? ((inb.jitterBufferTargetDelay/emitted)*1000).toFixed(0) : "?") +
               " (per ~" + ((now-pj.ts)/1000).toFixed(1) + "s window)");
+            // ?connwarn — classify the SAME window the log prints (the bands in
+            // conn-quality.js were derived from these logs, so window semantics
+            // match by construction). WARN-ONLY: renders an indicator, never
+            // touches levers. State updates only on sustained transitions.
+            if (CONN_WARN && connTrackerRef.current) {
+              const lostD = Math.max(0, nj.lost - pj.lost);
+              const recvD = Math.max(0, nj.recv - (pj.recv || 0));
+              const r = connTrackerRef.current.push({
+                jbTargetMs: inb.jitterBufferTargetDelay!=null ? (inb.jitterBufferTargetDelay/emitted)*1000 : null,
+                jitterMs: nj.jit,
+                concealMs: concMs,
+                lostPct: (lostD + recvD) > 0 ? (lostD / (lostD + recvD)) * 100 : 0,
+                rttMs: compRef.current.rttMs,
+              });
+              if (r.changed) {
+                // level = the SUSTAINED classification; the reason describes the
+                // LATEST window, which mid-ramp may already sit a band higher.
+                console.log("[CONN-QUALITY] level=" + r.level + " — latest window: " + r.reason);
+                setConnQuality(r.level);
+              }
+            }
           }
           prevJitterRef.current = nj;
         }
@@ -4498,7 +4533,7 @@ function useRTC({ engineRef, send, onIceRecover }) {
   const handleRtc   = useCallback((msg)=>{ switch(msg.type){case"rtc_offer":handleOffer(msg);break;case"rtc_answer":handleAnswer(msg);break;case"rtc_ice":handleIce(msg);break;case"rtc_hangup":endCall();break;} },[handleOffer,handleAnswer,handleIce,endCall]);
 
   useEffect(()=>()=>endCall(),[]);
-  return { state, muted, remVol, setRemVol, autoplayBlocked, partnerAudioOn, siblingTab, toggleMonitor, startCall, endCall, toggleMute, handleRtc, compRef, markTransportEvent, enablePartnerAudio };
+  return { state, muted, remVol, setRemVol, autoplayBlocked, partnerAudioOn, siblingTab, toggleMonitor, startCall, endCall, toggleMute, handleRtc, compRef, markTransportEvent, enablePartnerAudio, connQuality };
 }
 
 // ── MIDI ─────────────────────────────────────────────────────
@@ -6395,7 +6430,7 @@ function PitchReadout({ rate, nativeBpm, enabled, displayText, tooltip, color, o
   );
 }
 
-function Deck({ id, ch, ctx:ac, color, local, remote, onChange, midi:mt, bpmResult, bpmAnalyze, eqHi=0, eqMid=0, eqLo=0, chanVol=1, loadFromLibrary=null, onTrackInfo=null, onSync=null, syncReady=true, syncRole=null, syncArmed=false, isMaster=false, onMasterToggle=null, onAddMusic=null, libraryEmpty=false, onLibraryTrackDrop=null, onProgUpdate=null, onWaveform=null, onSeekReady=null, remoteSeek=null, onToggleReady=null, onCueReady=null, remoteToggle=null, remoteCue=null, onTransportFire=null, isDriver=true, onNudgeReady=null, acNowRef=null, onBufferReady=null, barOneOffsetSec=0, onGridEdit=null, hasOverride=false, userGridOverride=null, onPitchInteract=null, onRateReady=null }) {
+function Deck({ id, ch, ctx:ac, color, local, remote, onChange, midi:mt, bpmResult, bpmAnalyze, eqHi=0, eqMid=0, eqLo=0, chanVol=1, loadFromLibrary=null, onTrackInfo=null, onSync=null, syncReady=true, syncRole=null, syncArmed=false, isMaster=false, onMasterToggle=null, onAddMusic=null, libraryEmpty=false, onLibraryTrackDrop=null, onProgUpdate=null, onWaveform=null, onSeekReady=null, remoteSeek=null, onToggleReady=null, onCueReady=null, remoteToggle=null, remoteCue=null, onTransportFire=null, isDriver=true, onNudgeReady=null, acNowRef=null, onBufferReady=null, barOneOffsetSec=0, onGridEdit=null, hasOverride=false, userGridOverride=null, onPitchInteract=null, onRateReady=null, connWarn=null }) {
   const [buf,setBuf]=useState(null),[name,setName]=useState(null),[play,setPlay]=useState(false);
   const [prog,setProg]=useState(0),[dur,setDur]=useState(0);
   const progRef=useRef(0); // mirror of prog for parent AnimatedZoomedWF without 60fps setState
@@ -7452,6 +7487,16 @@ function Deck({ id, ch, ctx:ac, color, local, remote, onChange, midi:mt, bpmResu
           <span style={{color:"#5A5E66"}}>·</span>
           <span style={{color:"#9CA3AF", fontWeight:500}}>{isDriver?"you":"partner"}</span>
           {play&&<span style={{width:5,height:5,borderRadius:"50%",background:color,boxShadow:`0 0 6px ${color}`,marginLeft:4}}/>}
+          {/* ?connwarn — passive quality forecast on the PARTNER-driven deck.
+              Semantic amber (the sanctioned indicator exception; same hue as the
+              analyzing… note in this row). Dot + plain-language tooltip only —
+              no modal, no red, warn-only. marginal = quiet 55%; poor = full + the
+              row's standard dot glow. */}
+          {!isDriver&&connWarn&&connWarn!=="good"&&
+            <span title={connWarn==="poor"?"Partner connection poor — audio may drop or drift":"Partner connection unstable — audio may drift"}
+              style={{display:"inline-flex",alignItems:"center",marginLeft:4,cursor:"default"}}>
+              <span style={{width:5,height:5,borderRadius:"50%",background:"#f59e0b",opacity:connWarn==="poor"?0.95:0.55,boxShadow:connWarn==="poor"?"0 0 6px #f59e0b88":"none",transition:"opacity 150ms cubic-bezier(0.4,0,0.2,1)"}}/>
+            </span>}
           {bpmResult?.analyzing&&<span style={{fontSize:8, color:"#f59e0b", marginLeft:"auto", letterSpacing:.5}}>analyzing…</span>}
         </div>
         {/* Title + metadata + key + BPM row */}
@@ -11932,7 +11977,7 @@ export default function CollabMix({ initialPage = "landing", djName = null }) {
           <div style={{ flex:1, display:"flex", alignItems:"flex-start", gap:10, padding:"10px 0 10px 10px", overflow:"hidden", minHeight:0 }}>
             <DeckArt artwork={libLoadA?.track?.artwork} fallback="A" color="#2E86DE"/>
             <div style={{ flex:1, overflow:"hidden", minHeight:0 }}>
-            <Deck id="A" ch={eng.current?.A} ctx={eng.current?.ctx} color="#2E86DE" local remote={pA} onChange={dh("A")} midi={midiEvt} bpmResult={bpm.results["A"]} bpmAnalyze={bpm.analyze} eqHi={eqA.hi} eqMid={eqA.mid} eqLo={eqA.lo} chanVol={eqA.vol} loadFromLibrary={libLoadA} onTrackInfo={handleTrackInfo} onSync={()=>handleSyncToggle("A")} syncReady={!!(bpm.results["B"]?.bpm || pB?.bpm)} syncRole={syncLocked ? (lastSlaveDeck === "A" ? "slave" : "master") : null} syncArmed={syncArmed} isMaster={masterDeck === "A"} onMasterToggle={handleMasterToggle} onAddMusic={()=>lib.addWatchedFolder?.({}).catch(()=>{})} libraryEmpty={(lib.library?.length||0)===0} onLibraryTrackDrop={(trackId)=>{const t=lib.library.find(x=>x.id===trackId);if(t)handleLibLoad(t,"A");}} onProgUpdate={handleProgA} onWaveform={setWfA} onSeekReady={onDeckASeekReady} onToggleReady={onDeckAToggleReady} onCueReady={onDeckACueReady} onRateReady={onDeckARateReady} onNudgeReady={onDeckANudgeReady} onTransportFire={handleTransportFire} isDriver={!deckDrivers.A || deckDrivers.A?.id === sync.djId} acNowRef={acNowRef} onBufferReady={onDeckABufferReady} barOneOffsetSec={barOneA * (bpm.results["A"]?.beatPeriodSec || 0)} onGridEdit={(fields) => libLoadA?.track?.id && lib.setGridEdit?.(libLoadA.track.id, fields)} hasOverride={!!userGridA} userGridOverride={userGridA} onPitchInteract={handlePitchInteract}/>
+            <Deck id="A" ch={eng.current?.A} ctx={eng.current?.ctx} color="#2E86DE" local remote={pA} onChange={dh("A")} midi={midiEvt} bpmResult={bpm.results["A"]} bpmAnalyze={bpm.analyze} eqHi={eqA.hi} eqMid={eqA.mid} eqLo={eqA.lo} chanVol={eqA.vol} loadFromLibrary={libLoadA} onTrackInfo={handleTrackInfo} onSync={()=>handleSyncToggle("A")} syncReady={!!(bpm.results["B"]?.bpm || pB?.bpm)} syncRole={syncLocked ? (lastSlaveDeck === "A" ? "slave" : "master") : null} syncArmed={syncArmed} isMaster={masterDeck === "A"} onMasterToggle={handleMasterToggle} onAddMusic={()=>lib.addWatchedFolder?.({}).catch(()=>{})} libraryEmpty={(lib.library?.length||0)===0} onLibraryTrackDrop={(trackId)=>{const t=lib.library.find(x=>x.id===trackId);if(t)handleLibLoad(t,"A");}} onProgUpdate={handleProgA} onWaveform={setWfA} onSeekReady={onDeckASeekReady} onToggleReady={onDeckAToggleReady} onCueReady={onDeckACueReady} onRateReady={onDeckARateReady} onNudgeReady={onDeckANudgeReady} onTransportFire={handleTransportFire} isDriver={!deckDrivers.A || deckDrivers.A?.id === sync.djId} acNowRef={acNowRef} onBufferReady={onDeckABufferReady} barOneOffsetSec={barOneA * (bpm.results["A"]?.beatPeriodSec || 0)} onGridEdit={(fields) => libLoadA?.track?.id && lib.setGridEdit?.(libLoadA.track.id, fields)} hasOverride={!!userGridA} userGridOverride={userGridA} onPitchInteract={handlePitchInteract} connWarn={CONN_WARN?rtc.connQuality:null}/>
             </div>
           </div>
         </div>
@@ -12045,7 +12090,7 @@ export default function CollabMix({ initialPage = "landing", djName = null }) {
           <div style={{ flex:1, display:"flex", alignItems:"flex-start", gap:10, padding:"10px 0 10px 10px", overflow:"hidden", minHeight:0 }}>
             <DeckArt artwork={libLoadB?.track?.artwork} fallback="B" color="#A855F7"/>
             <div style={{ flex:1, overflow:"hidden", minHeight:0 }}>
-            <Deck id="B" ch={eng.current?.B} ctx={eng.current?.ctx} color="#A855F7" local remote={pB} onChange={dh("B")} midi={midiEvt} bpmResult={bpm.results["B"]} bpmAnalyze={bpm.analyze} eqHi={eqB.hi} eqMid={eqB.mid} eqLo={eqB.lo} chanVol={eqB.vol} loadFromLibrary={libLoadB} onTrackInfo={handleTrackInfo} onSync={()=>handleSyncToggle("B")} syncReady={!!(bpm.results["A"]?.bpm || pA?.bpm)} syncRole={syncLocked ? (lastSlaveDeck === "B" ? "slave" : "master") : null} syncArmed={syncArmed} isMaster={masterDeck === "B"} onMasterToggle={handleMasterToggle} onAddMusic={()=>lib.addWatchedFolder?.({}).catch(()=>{})} libraryEmpty={(lib.library?.length||0)===0} onLibraryTrackDrop={(trackId)=>{const t=lib.library.find(x=>x.id===trackId);if(t)handleLibLoad(t,"B");}} onProgUpdate={handleProgB} onWaveform={setWfB} onSeekReady={onDeckBSeekReady} onToggleReady={onDeckBToggleReady} onCueReady={onDeckBCueReady} onRateReady={onDeckBRateReady} onNudgeReady={onDeckBNudgeReady} onTransportFire={handleTransportFire} isDriver={!deckDrivers.B || deckDrivers.B?.id === sync.djId} acNowRef={acNowRef} onBufferReady={onDeckBBufferReady} barOneOffsetSec={barOneB * (bpm.results["B"]?.beatPeriodSec || 0)} onGridEdit={(fields) => libLoadB?.track?.id && lib.setGridEdit?.(libLoadB.track.id, fields)} hasOverride={!!userGridB} userGridOverride={userGridB} onPitchInteract={handlePitchInteract}/>
+            <Deck id="B" ch={eng.current?.B} ctx={eng.current?.ctx} color="#A855F7" local remote={pB} onChange={dh("B")} midi={midiEvt} bpmResult={bpm.results["B"]} bpmAnalyze={bpm.analyze} eqHi={eqB.hi} eqMid={eqB.mid} eqLo={eqB.lo} chanVol={eqB.vol} loadFromLibrary={libLoadB} onTrackInfo={handleTrackInfo} onSync={()=>handleSyncToggle("B")} syncReady={!!(bpm.results["A"]?.bpm || pA?.bpm)} syncRole={syncLocked ? (lastSlaveDeck === "B" ? "slave" : "master") : null} syncArmed={syncArmed} isMaster={masterDeck === "B"} onMasterToggle={handleMasterToggle} onAddMusic={()=>lib.addWatchedFolder?.({}).catch(()=>{})} libraryEmpty={(lib.library?.length||0)===0} onLibraryTrackDrop={(trackId)=>{const t=lib.library.find(x=>x.id===trackId);if(t)handleLibLoad(t,"B");}} onProgUpdate={handleProgB} onWaveform={setWfB} onSeekReady={onDeckBSeekReady} onToggleReady={onDeckBToggleReady} onCueReady={onDeckBCueReady} onRateReady={onDeckBRateReady} onNudgeReady={onDeckBNudgeReady} onTransportFire={handleTransportFire} isDriver={!deckDrivers.B || deckDrivers.B?.id === sync.djId} acNowRef={acNowRef} onBufferReady={onDeckBBufferReady} barOneOffsetSec={barOneB * (bpm.results["B"]?.beatPeriodSec || 0)} onGridEdit={(fields) => libLoadB?.track?.id && lib.setGridEdit?.(libLoadB.track.id, fields)} hasOverride={!!userGridB} userGridOverride={userGridB} onPitchInteract={handlePitchInteract} connWarn={CONN_WARN?rtc.connQuality:null}/>
             </div>
           </div>
         </div>
