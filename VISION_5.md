@@ -10506,3 +10506,62 @@ tools/patches/loadtracktest-race-fix.HELD.patch — still held.
 1. Push the 4 local commits after a full-suite run. 2. Finish updater (2 sudo/terminal steps).
 3. Review: security HIGH (fix before/at push), architecture bugs #36 (fps-freeze root cause!)/#37,
    UI audit list, bpmretry calibration against the audit corpus. 4. Decide the HELD patch.
+
+---
+
+# Session end — July 2, 2026 (evening) — FREEZE LIFTED: Jake-dogfood push shipped
+
+## What shipped (master e089013 → 605cbf9, live bundle main-Dau1T4sz.js)
+Chad lifted the weekend freeze FOR THIS PUSH ONLY (same-night Jake dogfood). Pushed the
+freeze-period commits (9bce7bf bpmretry+audit tools, 753ceb5 mock-relay default, 73675bc,
+dd6e680 review artifacts, a7e8a61 handoff) PLUS the new security fix:
+
+- **Security HIGH fix (605cbf9)** — SECURITY_REVIEW_2026-07-03 Vuln 1 closed. ?wsurl now
+  resolves via `src/ws-url-gate.js` (pure module, conn-quality pattern): dev builds honor any
+  ?wsurl; production builds honor it ONLY with ?smoke=1 AND a loopback host. A crafted
+  `?smoke=1&wsurl=wss://evil` link falls back to the default relay. Permanent gate
+  `wsurl-gate` (unit, 12 checks: lookalike-host/userinfo/schemeless tricks all fall back;
+  suite loopback + dev paths survive). ALSO verified in a real browser against BOTH the
+  local production build (vite preview) and LIVE prod: exploit link → default relay only;
+  loopback link → mock relay; plain load unchanged.
+- bpmretry stays DEFAULT OFF (calibration vs audit corpus pending). HELD patch untouched.
+
+## Gates + deploy verification
+- Full `npm run smoke`: **31 passed / 0 failed / 0 skipped** (704s), cold vite, stray dev
+  server killed first. e2e-opus slow (320s) but green.
+- Deploy content-verified: bundle main-DhZm6kIO.js → main-Dau1T4sz.js; new bundle contains
+  the gate marker (`[::1]`), connwarn, bpmretry strings.
+- Prod loads CLEAN (headless Chrome): plain + `?connwarn=1`, zero console/page errors,
+  room-create connects to the default relay.
+
+## connwarn decision (Chad's step 3 — "your call")
+Kept DEFAULT OFF; verified `?connwarn=1` works on live prod instead. Rationale: standing
+law 2 (Chad hasn't eyeballed the UI yet) + zero code risk on push night. Tonight BOTH
+clients should load `https://collabmix.vercel.app/?connwarn=1` (each side classifies its
+own receiver stats; amber dot appears on the PARTNER deck row only when marginal/poor —
+silent on a clean network; [JITTER-DIAG] console line every ~2s proves stats are flowing).
+Eyeball live, then decide the default flip (CONN_WARN `=== "1"` → `!== "0"`).
+
+## Found along the way (not fixed — flagging, scope discipline)
+1. **SessionStart master-sync hook false-alarms "DIVERGED" when local is merely AHEAD**
+   (.claude/settings.local.json: it checks ==, then local-behind, else DIVERGED — no
+   ahead branch, so every freeze-style unpushed state screams DIVERGED). Tonight's alarm
+   was exactly this; verified ahead-5/behind-0 before pushing. Fix = add an
+   `elif git merge-base --is-ancestor "$R" "$L"` → "AHEAD (ok to push after gates)" branch.
+2. **`npm run lint` is broken project-wide** — eslint 9+ installed but no flat
+   `eslint.config.js` (legacy .eslintrc format gone too). Pre-existing, unrelated to
+   tonight's diff.
+3. **Chrome LNA blocks ws://localhost from the https prod page**
+   (`ERR_BLOCKED_BY_LOCAL_NETWORK_ACCESS_CHECKS`): `TARGET=https://…vercel.app` + local
+   mock relay cannot work in current Chrome — pre-existing platform behavior, NOT the gate
+   (verified the gate resolves the override; the browser refuses the local hop). Mock-routed
+   e2e is dev/preview-only; direct-goto tests keep prod coverage, as designed.
+4. Untracked leftovers in the tree, not mine, left alone: tools/smoke/measure-b2b.mjs,
+   measure-disambig.mjs, tools/smoke/out/.
+
+## Pending
+- Jake session tonight: connwarn eyeball (→ default-flip decision), plus the standing
+  next-session checklist (Ethernet first, ?audiolite decision tree — see July 2 handoff).
+- Monday items that survive: updater sudo steps, bpmretry calibration vs audit corpus,
+  HELD patch daylight review, architecture bugs #36/#37, UI audit list, hook ahead-branch
+  fix, lint config.
