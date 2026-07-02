@@ -145,6 +145,11 @@ const MIRROR_TSEND = URL_FLAGS.get("mirrortsend") !== "0";
 // their data derivation). WARN ONLY — never auto-applies audiolite or any other
 // lever. DEFAULT OFF pending Chad's UI eyeball (July 3 spec).
 const CONN_WARN = URL_FLAGS.get("connwarn") === "1";
+// ?bpmretry=1 — analyzer tempo-guard retry (default OFF). On guard failure the
+// worker retries ratio hypotheses (×4/3, ×3/2, ×2) with a fresh DP pass and
+// ships the best cross-validated winner; still-unvalidated grids are marked
+// lowConfidence in the result (state only — no UI yet). July 3 spec.
+const BPM_RETRY = URL_FLAGS.get("bpmretry") === "1";
 const PROG_STATE_MS = 100;  // ~10Hz cap on the React prog-state commit (ref pipe stays 60Hz)
 // BUG #2 audio smoothness — jitter-buffer depth on the PARTNER's inbound audio
 // receiver. The browser default starts SHALLOW (~70ms) and HUNTS up to the depth a
@@ -638,7 +643,7 @@ function useBPM() {
     const onsetAnchor = ONSET_GRID && !opts?.skipOnsetAnchor;
     console.log("[ONSET-GRID] deck " + id + " analysis dispatch — onsetAnchor=" + onsetAnchor);
     // Transfer ArrayBuffers (O(1) vs O(n) structured clone) — avoids 10-30s stall on large tracks
-    worker.current.postMessage({ cd, sr: buf.sampleRate, id, onsetAnchor }, cd.map(a => a.buffer));
+    worker.current.postMessage({ cd, sr: buf.sampleRate, id, onsetAnchor, bpmRetry: BPM_RETRY }, cd.map(a => a.buffer));
   }, []);
   return { results, analyze };
 }

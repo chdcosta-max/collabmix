@@ -102,7 +102,7 @@ function dphase(mono,sr,bpm){
 // fallback). One number to change.
 const ONSET_FRAC = 0.15;
 self.onmessage=function(e){
-  const{cd,sr,id,onsetAnchor}=e.data;const len=cd[0].length,nc=cd.length;
+  const{cd,sr,id,onsetAnchor,bpmRetry}=e.data;const len=cd[0].length,nc=cd.length;
   // Unmistakable participation proof — printed at analysis start for EVERY
   // track so the ?onsetgrid flag crossing the page→worker boundary is provable,
   // never assumed.
@@ -142,8 +142,21 @@ self.onmessage=function(e){
   const mxA=Math.max(...ac),mnA=Math.min(...ac),rng=mxA-mnA||1;
   const conf=Math.min(100,Math.round(((top.val-mnA)/rng)*100));
   const cands=peaks.slice(0,5).map(p=>({bpm:rv((60/(p.idx+ml))*ar,100,175),score:p.val}));
+  // ── ?bpmretry attempt wrapper (default OFF; flag crosses page→worker as
+  // e.data.bpmRetry). The ENTIRE grid build below (fold → DP beat tracker →
+  // period mean → snap guards → phase/downbeat → anchor → beatTimes) runs as
+  // one attempt at a given raw tempo. On tempo-guard failure the driver at the
+  // bottom retries at ×4/3, ×3/2, ×2 of the raw autocorr tempo (the observed
+  // misdetection classes — Jake's 88.2 case) and keeps the best candidate that
+  // CROSS-VALIDATES ON ITS OWN FRESH EVIDENCE (a re-run DP, not a scaled
+  // estimate — scaling both estimators by the same ratio would rubber-stamp
+  // itself). No validated winner → the original result ships, marked
+  // lowConfidence (state only, no UI). With bpmRetry falsy the single attempt
+  // posts a payload byte-identical to the pre-retry worker.
+  const runAttempt=(rawIn)=>{
+  const bpm=rv(rawIn,100,175); // shadows the outer autocorr fold for this attempt
   // Beat phase detection — octave-adjust lag to match folded BPM range (100-175)
-  let adjLag=lag;let bChk=raw;while(bChk<100){bChk*=2;adjLag=Math.floor(adjLag/2);}while(bChk>175){bChk/=2;adjLag=adjLag*2;}
+  let adjLag=(60/rawIn)*ar;let bChk=rawIn;while(bChk<100){bChk*=2;adjLag=Math.floor(adjLag/2);}while(bChk>175){bChk/=2;adjLag=adjLag*2;}
   adjLag=Math.max(1,adjLag);
   // Float beat lag: eliminates drift for fractional BPMs (e.g. 120.6 BPM)
   const floatBeatLag=(60/bChk)*ar;
@@ -1418,5 +1431,52 @@ self.onmessage=function(e){
   };
   const beatTimes=Float32Array.from(dpBeatsFloat,f=>f*hop/sr);
   const beatAttacks=Float32Array.from(beatAttackSlopes);
-  self.postMessage({id,bpm:finalBpm,confidence:conf,candidates:cands,beatPhaseFrac,beatPeriodSec:finalPeriod,beatPhaseSec,firstBar1AnchorSec,snapped,phase,beatTimes,beatAttacks});
+  return {payload:{id,bpm:finalBpm,confidence:conf,candidates:cands,beatPhaseFrac,beatPeriodSec:finalPeriod,beatPhaseSec,firstBar1AnchorSec,snapped,phase,beatTimes,beatAttacks},
+    guards:{snapped,periodIntegerLocked,crossValidated,dIntBpm:bpmFromPeriod==null?Infinity:Math.abs(bpmFromPeriod-intBpm)}};
+  }; // end runAttempt
+  let att=runAttempt(raw);
+  if(!bpmRetry){ self.postMessage(att.payload); return; }
+  // ── ?bpmretry driver: guards failed → try the ratio hypotheses, best
+  // (smallest |bpmFromPeriod−intBpm|) VALIDATED candidate wins.
+  // Each hypothesis is anchored to a REAL autocorrelation peak near the
+  // hypothesis lag (parabolic-interpolated), NOT to raw×ratio: the scaled
+  // estimate is synthetic (it inherits the original error ×ratio and is not
+  // independent evidence), while a genuine peak near the hypothesis lag is a
+  // real second estimator — so the UNCHANGED crossValidated definition
+  // applies (fresh DP period + real ac peak must both sit within 0.25 of the
+  // same integer). No peak within ±3 lags → that ratio dies immediately.
+  const peakNear=(tempo)=>{
+    // tempo-domain window (±2.5 BPM) converted to lags — a fixed ±3-lag window
+    // is ±8 BPM at fast tempos and ±1.5 at slow (badly conditioned).
+    const lagLo=(60/(tempo+2.5))*ar, lagHi=(60/Math.max(1,tempo-2.5))*ar;
+    const iLo=Math.max(1,Math.floor(lagLo)-ml), iHi=Math.min(ac.length-2,Math.ceil(lagHi)-ml);
+    if(iHi<iLo) return null;
+    let bi=-1,bv=-Infinity;
+    for(let i=iLo;i<=iHi;i++){
+      if(ac[i]>=ac[i-1]&&ac[i]>=ac[i+1]&&ac[i]>bv){bv=ac[i];bi=i;}
+    }
+    if(bi<0) return null;
+    const yL=ac[bi-1],yC=ac[bi],yR=ac[bi+1];const den=yL-2*yC+yR;
+    let fr=0; if(den<0){fr=(yL-yR)/(2*den); if(fr>0.5)fr=0.5; else if(fr<-0.5)fr=-0.5;}
+    return (60/(bi+ml+fr))*ar;
+  };
+  let retried=false, retryRatio=null;
+  if(!att.guards.snapped){
+    let best=null;
+    for(const r of [4/3,3/2,2]){
+      const rawH=peakNear(raw*r);
+      if(rawH==null){ console.log('[BPM-RETRY] x'+r.toFixed(3)+': no ac peak near hypothesis lag — skipped'); continue; }
+      const c=runAttempt(rawH);
+      console.log('[BPM-RETRY] x'+r.toFixed(3)+': acPeak='+rawH.toFixed(3)+' freshPeriodBpm='+(c.payload.beatPeriodSec>0?(60/c.payload.beatPeriodSec).toFixed(3):'-')+' validated='+(c.guards.periodIntegerLocked||c.guards.crossValidated));
+      if(c.guards.periodIntegerLocked||c.guards.crossValidated){
+        if(!best||c.guards.dIntBpm<best.c.guards.dIntBpm) best={c,r};
+      }
+    }
+    if(best){ att=best.c; retried=true; retryRatio=best.r;
+      console.log('[BPM-RETRY] guard failure resolved at x'+best.r.toFixed(3)+' -> '+att.payload.bpm+' bpm (dInt='+att.guards.dIntBpm.toFixed(3)+')');
+    } else {
+      console.log('[BPM-RETRY] no ratio hypothesis validated -> keeping original, lowConfidence=true');
+    }
+  }
+  self.postMessage(Object.assign({},att.payload,{lowConfidence:!att.guards.snapped,bpmRetried:retried,bpmRetryRatio:retryRatio}));
 };`;
